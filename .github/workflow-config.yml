@@ -7,8 +7,8 @@
 # - auto: PR 생성 시 자동 실행 여부 (없으면 해당 없음, 수동 트리거는 enabled만 체크)
 
 # Shared workflow version pin for jhw7500/automation.
-automation_ref: v1.79
-automation_commit: dd12d04d5a0392616ead83b9654a8ea1745fbc3d
+automation_ref: v1.80
+automation_commit: 1e2dc6610c96b73bf6ec0f12ea05322f17f3122a
 
 # PR 자동 리뷰 스위치(최상위). 공유 워크플로우가 이 키를 읽는다.
 # **미지정 시 false 다** — 그래서 종전에는 `review:request` 라벨을 붙인 PR 만 리뷰를
