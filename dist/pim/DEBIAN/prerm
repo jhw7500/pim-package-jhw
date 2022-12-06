@@ -1,0 +1,19 @@
+#!/bin/bash
+
+############################################################
+# prerm script main
+############################################################
+
+case "$1" in
+upgrade)
+  echo "prerm upgrade"
+  ;;
+
+remove)
+  echo "prerm remove"
+  ;;
+
+*)
+  echo "Unrecognized prerm argument '$1'"
+
+esac

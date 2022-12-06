@@ -1,0 +1,31 @@
+#!/bin/sh
+
+#sd mount 
+#/opt/pim/bin/automnt_sd_for_emmc_boot.sh &
+
+wpa_cli -p /run/wpa_supplicant -i wlp1s0 set_network 0 bgscan '"simple:3:-70:3000
+"'
+wpa_cli -p /run/wpa_supplicant -i wlp1s0 autoscan "periodic:30"
+
+touch /var/run/vsd.pipe
+/opt/pim/bin/vsd &
+PIMCAM -j /root/shared_v/edgeconf_pim.json &
+#streamApp -c 0x5 -w 2560 -h 720 -W 2560 -H 720 &
+#/opt/pim/bin/df_check.sh &
+sleep 15
+#AE Off
+i2ctransfer -f -y -a 1 w4@0x3c 0x50 0x02 0x02 0x90
+i2ctransfer -f -y -a 2 w4@0x3c 0x50 0x02 0x02 0x90
+i2ctransfer -f -y -a 1 w4@0x3c 0x50 0x06 0x02 0x00
+i2ctransfer -f -y -a 2 w4@0x3c 0x50 0x06 0x02 0x00
+
+#rotate
+/opt/pim/bin/cam_rotate_setting.sh
+
+#bg scan check
+/opt/pim/bin/bgscan_polling.sh &
+#Network Test
+#/opt/pim/bin/wifilog_for_pim.sh &
+#iperf3 -s -p 8554 &
+
+exit 0

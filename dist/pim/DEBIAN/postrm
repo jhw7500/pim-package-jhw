@@ -1,0 +1,23 @@
+#!/bin/bash
+
+############################################################
+# postrm script main
+############################################################
+
+case "$1" in
+purge)
+  echo "purge purge"
+  ;;
+
+upgrade)
+  echo "purge upgrade"
+  ;;
+
+remove)
+  echo "postrm remove"
+  ;;
+
+*)
+  echo "Unrecognized postrm argument '$1'"
+
+esac

@@ -1,0 +1,19 @@
+#!/bin/bash
+
+############################################################
+# preinst script main
+############################################################
+
+case "$1" in
+install)
+  echo "preinst install"
+  ;;
+
+upgrade)
+  echo "preinst upgrade"
+  ;;
+
+*)
+  echo "Unrecognized preinst argument '$1'"
+
+esac

@@ -1,0 +1,6 @@
+[submodule "vsd"]
+	path = vsd
+	url = http://cantops.iptime.org:31406/mhkim/vsd.git
+[submodule "ord"]
+	path = ord
+	url = http://cantops.iptime.org:31406/hwjo/ord.git

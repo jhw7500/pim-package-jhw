@@ -1,0 +1,12 @@
+Package: pim 
+Version: 0.0.1
+Section: devel
+Priority: optional
+Architecture: arm64 
+Depends: 
+Recommends: 
+Maintainer: user <user@gmail.com> 
+Homepage: 
+Description: PIM application 
+0.0.1 : First version
+

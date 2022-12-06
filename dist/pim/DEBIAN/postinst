@@ -1,0 +1,20 @@
+#!/bin/bash
+
+############################################################
+# postinst script main
+############################################################
+
+case "$1" in
+configure)
+  echo "postinst configure"
+  ;;
+
+upgrade)
+  echo "postinst upgrade"
+  # 업그레이드시 파일 설치 전 수행 되어야 할 내용을 bash 스크립트로 기술
+  ;;
+
+*)
+  echo "Unrecognized postinst argument '$1'"
+
+esac
