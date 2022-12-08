@@ -9,6 +9,7 @@ wpa_cli -p /run/wpa_supplicant -i wlp1s0 autoscan "periodic:30"
 
 touch /var/run/vsd.pipe
 /opt/pim/bin/vsd &
+/opt/pim/bin/ord &
 PIMCAM -j /root/shared_v/edgeconf_pim.json &
 #streamApp -c 0x5 -w 2560 -h 720 -W 2560 -H 720 &
 #/opt/pim/bin/df_check.sh &
