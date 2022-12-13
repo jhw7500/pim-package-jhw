@@ -10,7 +10,7 @@ if [[ ! -s "$TEST_CONFIG_FILE" ]]; then
 	echo "can't find $TEST_CONFIG_FILE"
 	result=1 ; 
 else
-	cam0_rot=$(cat $TEST_CONFIG_FILE | grep cam_ch1_rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')	
+	cam0_rot=$(cat $TEST_CONFIG_FILE | grep cam_ch0_rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')	
 	if [[ "$cam0_rot" == *"$SUCCESS_VAL"* ]] ; then
 		i2ctransfer -f -y -a 2 w4@0x11 0x10 0x0c 0x00 0x03         #rotate ch0
 		echo "cam_ch0 set rotate $cam0_rot"
@@ -19,7 +19,7 @@ else
 		echo "cam_ch0 set rotate $cam0_rot"
 	fi
 
-	cam1_rot=$(cat $TEST_CONFIG_FILE | grep cam_ch2_rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')	
+	cam1_rot=$(cat $TEST_CONFIG_FILE | grep cam_ch1_rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')	
 	if [[ "$cam1_rot" == *"$SUCCESS_VAL"* ]] ; then
 		i2ctransfer -f -y -a 2 w4@0x12 0x10 0x0c 0x00 0x03         #rotate ch1
 		echo "cam_ch1 set rotate $cam1_rot"
@@ -28,7 +28,7 @@ else
 		echo "cam_ch1 set rotate $cam1_rot"
 	fi
 
-	cam2_rot=$(cat $TEST_CONFIG_FILE | grep cam_ch3_rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')	
+	cam2_rot=$(cat $TEST_CONFIG_FILE | grep cam_ch2_rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')	
 	if [[ "$cam2_rot" == *"$SUCCESS_VAL"* ]] ; then
 		i2ctransfer -f -y -a 1 w4@0x11 0x10 0x0c 0x00 0x03         #rotate ch2
 		echo "cam_ch2 set rotate $cam2_rot"
@@ -37,7 +37,7 @@ else
 		echo "cam_ch2 set rotate $cam2_rot"
 	fi
 	
-	cam3_rot=$(cat $TEST_CONFIG_FILE | grep cam_ch4_rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')	
+	cam3_rot=$(cat $TEST_CONFIG_FILE | grep cam_ch3_rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')	
 	if [[ "$cam3_rot" == *"$SUCCESS_VAL"* ]] ; then
 		i2ctransfer -f -y -a 1 w4@0x12 0x10 0x0c 0x00 0x03         #rotate ch3
 		echo "cam_ch3 set rotate $cam3_rot"
