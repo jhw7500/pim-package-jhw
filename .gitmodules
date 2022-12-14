@@ -4,3 +4,6 @@
 [submodule "ord"]
 	path = ord
 	url = http://cantops.iptime.org:31406/hwjo/ord.git
+[submodule "vcm"]
+	path = vcm
+	url =http://cantops.iptime.org:31406/hwjo/_vcm
