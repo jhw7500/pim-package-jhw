@@ -1,5 +1,5 @@
 Package: pim 
-Version: 0.0.2
+Version: 0.0.3
 Section: devel
 Priority: optional
 Architecture: arm64 
@@ -9,4 +9,5 @@ Maintainer: user <user@gmail.com>
 Homepage: 
 Description: PIM application 
 0.0.1 : First version
-
+0.0.2 : vcm, ord add
+0.0.3 : vcm, ord bug fix
