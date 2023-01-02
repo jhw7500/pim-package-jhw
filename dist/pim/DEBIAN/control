@@ -1,5 +1,5 @@
 Package: pim 
-Version: 0.0.5
+Version: 0.0.6
 Section: devel
 Priority: optional
 Architecture: arm64 
@@ -13,3 +13,4 @@ Description: PIM application
 0.0.3 : vcm, ord bug fix
 0.0.4 : oht protocol verifying
 0.0.5 : add srt
+0.0.6 : srt always enable & log file
