@@ -2,7 +2,7 @@
 
 #update excute
 
-dpkg -i pim.deb
+dpkg -i /shared/pim.deb
 
 if [ $? -eq 0 ];then
 	echo "dpkg install success!"
