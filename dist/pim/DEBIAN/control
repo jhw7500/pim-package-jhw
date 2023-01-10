@@ -16,3 +16,4 @@ Description: PIM application
 0.0.6 : srt always enable & log file
 0.0.7 : vsd version print add
 0.0.8 : srt touch time & log
+0.0.9 : cathe thread & file close & etc
