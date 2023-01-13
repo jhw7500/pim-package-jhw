@@ -1,5 +1,5 @@
 Package: pim 
-Version: 0.0.9
+Version: 0.1.0
 Section: devel
 Priority: optional
 Architecture: arm64 
@@ -17,3 +17,4 @@ Description: PIM application
 0.0.7 : vsd version print add
 0.0.8 : srt touch time & log
 0.0.9 : cathe thread & file close & etc
+0.1.0 : use for pointimage patch(vhl_name)
