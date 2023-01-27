@@ -1,10 +1,22 @@
 #!/bin/sh
 
+#booting LED control
+#ALL LED OFF
+echo none > /sys/devices/platform/leds/leds/gpio1_led/trigger
+echo 0 > /sys/devices/platform/leds/leds/gpio1_led/brightness
+echo none > /sys/devices/platform/leds/leds/gpio2_led/trigger
+echo 0 > /sys/devices/platform/leds/leds/gpio2_led/brightness
+echo none > /sys/devices/platform/leds/leds/gpio3_led/trigger
+echo 0 > /sys/devices/platform/leds/leds/gpio3_led/brightness
+#booting LED status : Green LED & Red LED on 
+echo 1 > /sys/devices/platform/leds/leds/gpio1_led/brightness
+echo 1 > /sys/devices/platform/leds/leds/gpio2_led/brightness   
+
+
 #sd mount 
 #/opt/pim/bin/automnt_sd_for_emmc_boot.sh &
 
-wpa_cli -p /run/wpa_supplicant -i wlp1s0 set_network 0 bgscan '"simple:3:-70:3000
-"'
+wpa_cli -p /run/wpa_supplicant -i wlp1s0 set_network 0 bgscan '"simple:3:-70:300"'
 wpa_cli -p /run/wpa_supplicant -i wlp1s0 autoscan "periodic:30"
 
 touch /var/run/vsd.pipe
