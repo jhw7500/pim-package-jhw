@@ -1,0 +1,23 @@
+{
+   "ORD" : {
+      "event_auto_remove" : true,
+      "copy_margin_sec" : 10,
+      "debug_level" : 0,
+      "log_level" : 2,
+      "copy_margin_MB" : 1024,
+      "ip_static" : "",
+      "port_num" : 10007,
+      "cache_thread" : true,
+      "disk_manage" : true,
+      "disk_full_per" : 90,
+      "disk_limit_per" : 80,
+      "disk_limit_file" : 14400
+   },
+   "VCM" : {
+      "debug_level" : 0,
+      "log_level" : 2,
+      "ip_static" : "",
+      "port_num" : 10009,
+      "srt_enable" : true
+   }
+}

@@ -1,5 +1,5 @@
 Package: pim 
-Version: 0.1.0
+Version: 0.1.1
 Section: devel
 Priority: optional
 Architecture: arm64 
@@ -18,3 +18,4 @@ Description: PIM application
 0.0.8 : srt touch time & log
 0.0.9 : cathe thread & file close & etc
 0.1.0 : use for pointimage patch
+0.1.1 : disk manage, json, etc
