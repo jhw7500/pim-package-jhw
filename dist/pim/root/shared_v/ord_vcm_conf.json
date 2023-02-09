@@ -9,9 +9,9 @@
       "port_num" : 10007,
       "cache_thread" : true,
       "disk_manage" : true,
-      "disk_full_per" : 90,
+      "disk_full_per" : 95,
       "disk_limit_per" : 80,
-      "disk_limit_file" : 14400
+      "disk_limit_file" : 15600
    },
    "VCM" : {
       "debug_level" : 0,

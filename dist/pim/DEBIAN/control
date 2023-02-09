@@ -19,4 +19,4 @@ Description: PIM application
 0.0.9 : cathe thread & file close & etc
 0.1.0 : use for pointimage patch
 0.1.1 : disk manage, json, etc
-0.1.2 : overaly, log, etc
+0.1.2 : overaly, log, cpu usage..
