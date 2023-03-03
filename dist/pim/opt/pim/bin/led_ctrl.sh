@@ -25,7 +25,7 @@ function BLUE_LED_Blinking(){
 }
 
 function LED_CTRL(){
-    if [ -e ${FLAG_PATH}/err_cam0.log ]; then
+    if [ -e ${LOG_PATH}/err_cam0.log ]; then
         TEST_RESULT=1
         #green off
 	    echo 0 > /sys/devices/platform/leds/leds/gpio2_led/brightness
@@ -35,7 +35,7 @@ function LED_CTRL(){
         echo 0 > /sys/devices/platform/leds/leds/gpio1_led/brightness
         sleep 2
     fi
-    if [ -e ${FLAG_PATH}/err_cam1.log ]; then
+    if [ -e ${LOG_PATH}/err_cam1.log ]; then
         TEST_RESULT=1
         #green off
 	    echo 0 > /sys/devices/platform/leds/leds/gpio2_led/brightness
@@ -49,7 +49,7 @@ function LED_CTRL(){
         echo 0 > /sys/devices/platform/leds/leds/gpio1_led/brightness
         sleep 2
     fi
-    if [ -e ${FLAG_PATH}/err_cam2.log ]; then
+    if [ -e ${LOG_PATH}/err_cam2.log ]; then
         TEST_RESULT=1
         #green off
 	    echo 0 > /sys/devices/platform/leds/leds/gpio2_led/brightness
@@ -67,7 +67,7 @@ function LED_CTRL(){
         echo 0 > /sys/devices/platform/leds/leds/gpio1_led/brightness
         sleep 2
     fi
-    if [ -e ${FLAG_PATH}/err_cam3.log ]; then
+    if [ -e ${LOG_PATH}/err_cam3.log ]; then
         TEST_RESULT=1
         #green off
 	    echo 0 > /sys/devices/platform/leds/leds/gpio2_led/brightness
@@ -89,7 +89,7 @@ function LED_CTRL(){
         echo 0 > /sys/devices/platform/leds/leds/gpio1_led/brightness
         sleep 2
     fi
-    if [ -e ${FLAG_PATH}/err_wifi.log ]; then
+    if [ -e ${LOG_PATH}/err_wifi.log ]; then
         TEST_RESULT=1
         #green red on 0.5s off 0.5s
         echo 1 > /sys/devices/platform/leds/leds/gpio2_led/brightness
@@ -99,7 +99,7 @@ function LED_CTRL(){
         echo 0 > /sys/devices/platform/leds/leds/gpio1_led/brightness
         sleep 0.5
     fi
-    if [ -e ${FLAG_PATH}/err_eth0.log ]; then
+    if [ -e ${LOG_PATH}/err_eth0.log ]; then
         TEST_RESULT=1
         #grenn on 
         echo 1 > /sys/devices/platform/leds/leds/gpio2_led/brightness
@@ -109,7 +109,7 @@ function LED_CTRL(){
         echo 0 > /sys/devices/platform/leds/leds/gpio1_led/brightness
         sleep 0.5
     fi
-    if [ -e ${FLAG_PATH}/err_sdcard.log ]; then
+    if [ -e ${LOG_PATH}/err_sdcard.log ]; then
         TEST_RESULT=1
         #green off
 	    echo 0 > /sys/devices/platform/leds/leds/gpio2_led/brightness
@@ -135,7 +135,7 @@ function LED_CTRL(){
         echo 0 > /sys/devices/platform/leds/leds/gpio1_led/brightness
         sleep 2
     fi
-    if [ -e ${FLAG_PATH}/err_cpu_temp.log ]; then
+    if [ -e ${LOG_PATH}/err_cpu_temp.log ]; then
         TEST_RESULT=1
         #grenn off red on 0.5s off 0.5s
         echo 0 > /sys/devices/platform/leds/leds/gpio2_led/brightness
@@ -144,7 +144,7 @@ function LED_CTRL(){
         echo 0 > /sys/devices/platform/leds/leds/gpio1_led/brightness
         sleep 0.5
     fi
-    if [ -e ${FLAG_PATH}/err_volt.log ]; then
+    if [ -e ${LOG_PATH}/err_volt.log ]; then
         TEST_RESULT=1
         #green off red on 0.5s off 0.5s
         echo 0 > /sys/devices/platform/leds/leds/gpio2_led/brightness
