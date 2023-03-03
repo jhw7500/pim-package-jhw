@@ -15,7 +15,7 @@ then
     exit 0
 else
     echo "CPU TEMP : $CPU_TEMP℃ - Error"
-	echo "${timestamp} CPU TEMP ERR" >> ${FLAG_PATH}/err_cpu_temp.log
+	echo "${timestamp} CPU TEMP ERR" >> ${LOG_PATH}/err_cpu_temp.log
     exit 1
 fi
 

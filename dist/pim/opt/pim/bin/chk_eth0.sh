@@ -17,7 +17,7 @@ fi
 if [ $result -eq 1 ]
 then
 	exit 1
-	echo "${timestamp} ETH0 ERR" >> ${FLAG_PATH}/err_eth0.log	
+	echo "${timestamp} ETH0 ERR" >> ${LOG_PATH}/err_eth0.log	
 else
 	exit 0
 fi

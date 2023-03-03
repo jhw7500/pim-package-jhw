@@ -11,11 +11,11 @@ if [ $(echo "$volt_min < $volt_data" | bc) -eq 1 ]; then
         exit 0
 	else
 		echo "Voltage High error : $volt_data"
-		echo "${timestamp} CPU TEMP ERR" >> ${FLAG_PATH}/err_volt.log
+		echo "${timestamp} CPU TEMP ERR" >> ${LOG_PATH}/err_volt.log
         exit 1
 	fi
 else
 	echo "Voltage Low error : $volt_data"
-    echo "${timestamp} CPU TEMP ERR" >> ${FLAG_PATH}/err_volt.log
+    echo "${timestamp} CPU TEMP ERR" >> ${LOG_PATH}/err_volt.log
     exit 1
 fi

@@ -25,7 +25,7 @@ else
         	echo "cam0 check success"
 	    else
 	        echo "cam0 disconected!"
-			echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log	
+			echo "${timestamp} CAM0 ERR" >> ${LOG_PATH}/err_cam0.log	
 			result=1;
 	    fi
 	else
@@ -44,7 +44,7 @@ else
         	echo "cam1 check success"
 	    else
 	        echo "cam1 disconected!"
-            echo "${timestamp} CAM1 ERR" >> ${FLAG_PATH}/err_cam1.log	
+            echo "${timestamp} CAM1 ERR" >> ${LOG_PATH}/err_cam1.log	
 			result=1;
 	    fi
 	else
@@ -64,7 +64,7 @@ else
         	echo "cam2 check success"
 	    else
 	        echo "cam2 disconected!"
-            echo "${timestamp} CAM2 ERR" >> ${FLAG_PATH}/err_cam2.log	
+            echo "${timestamp} CAM2 ERR" >> ${LOG_PATH}/err_cam2.log	
 			result=1;
 	    fi
 	else
@@ -84,7 +84,7 @@ else
         	echo "cam3 check success"
 	    else
 	        echo "cam3 disconected!"
-            echo "${timestamp} CAM3 ERR" >> ${FLAG_PATH}/err_cam3.log	
+            echo "${timestamp} CAM3 ERR" >> ${LOG_PATH}/err_cam3.log	
 			result=1;
 	    fi
 

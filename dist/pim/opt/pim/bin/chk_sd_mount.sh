@@ -10,7 +10,7 @@ CHECK_MOUNT_WELL() {
         exit 0
     else
         echo "SDCARD mount fail"
-		echo "${timestamp} SDCARD MNT ERR" >> ${FLAG_PATH}/err_sdcard.log
+		echo "${timestamp} SDCARD MNT ERR" >> ${LOG_PATH}/err_sdcard.log
         exit 1
     fi
 }
