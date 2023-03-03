@@ -8,6 +8,7 @@ ETH0_PING=$(ping 199.10.100.20 -c 3 -W 3 -s 1000)
 
 if [[ $ETH0_PING != *"$_success_value"* ]]; then
 	echo "${timestamp} ETH0 ERR" 	
+	echo "${timestamp} ETH0 ERR" >> ${LOG_PATH}/err_eth0.log	
 	result=1;
 else 
 	echo "ETH0 pass"
@@ -16,8 +17,7 @@ fi
 
 if [ $result -eq 1 ]
 then
-	exit 1
-	echo "${timestamp} ETH0 ERR" >> ${LOG_PATH}/err_eth0.log	
+	exit 1	
 else
 	exit 0
 fi
