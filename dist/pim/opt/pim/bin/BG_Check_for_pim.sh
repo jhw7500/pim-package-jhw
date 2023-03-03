@@ -4,7 +4,7 @@ TEST_RESULT=0;
 
 
 function CLEAR_CHK_LOG() {
-    rm ${FLAG_PATH}/*.*
+    rm ${LOG_PATH}/*.*
 }
 
 CLEAR_CHK_LOG
