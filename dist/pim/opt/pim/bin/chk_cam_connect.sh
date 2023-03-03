@@ -5,6 +5,7 @@ LOG_PATH="/opt/pim/bin/chk_log"
 SUCCESS_VAL="true"
 FAIL_VAL="error"
 result=0;
+timestamp=`date +"%Y-%m-%d %T,%3N"`
 
 
 if [[ ! -s "$TEST_CONFIG_FILE" ]]; then 
@@ -24,7 +25,7 @@ else
         	echo "cam0 check success"
 	    else
 	        echo "cam0 disconected!"
-            touch ${FLAG_PATH}/err_cam0.log
+			echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log	
 			result=1;
 	    fi
 	else
@@ -43,7 +44,7 @@ else
         	echo "cam1 check success"
 	    else
 	        echo "cam1 disconected!"
-            touch ${FLAG_PATH}/err_cam1.log
+            echo "${timestamp} CAM1 ERR" >> ${FLAG_PATH}/err_cam1.log	
 			result=1;
 	    fi
 	else
@@ -63,7 +64,7 @@ else
         	echo "cam2 check success"
 	    else
 	        echo "cam2 disconected!"
-            touch ${FLAG_PATH}/err_cam2.log
+            echo "${timestamp} CAM2 ERR" >> ${FLAG_PATH}/err_cam2.log	
 			result=1;
 	    fi
 	else
@@ -83,7 +84,7 @@ else
         	echo "cam3 check success"
 	    else
 	        echo "cam3 disconected!"
-            touch ${FLAG_PATH}/err_cam3.log
+            echo "${timestamp} CAM3 ERR" >> ${FLAG_PATH}/err_cam3.log	
 			result=1;
 	    fi
 

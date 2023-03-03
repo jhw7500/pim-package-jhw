@@ -1,5 +1,6 @@
 #!/bin/bash
 LOG_PATH="/opt/pim/bin/chk_log"
+timestamp=`date +"%Y-%m-%d %T,%3N"`
 volt_min=20.4
 volt_max=27.6
 
@@ -10,11 +11,11 @@ if [ $(echo "$volt_min < $volt_data" | bc) -eq 1 ]; then
         exit 0
 	else
 		echo "Voltage High error : $volt_data"
-        touch ${FLAG_PATH}/err_volt.log
+		echo "${timestamp} CPU TEMP ERR" >> ${FLAG_PATH}/err_volt.log
         exit 1
 	fi
 else
 	echo "Voltage Low error : $volt_data"
-    touch ${FLAG_PATH}/err_volt.log
+    echo "${timestamp} CPU TEMP ERR" >> ${FLAG_PATH}/err_volt.log
     exit 1
 fi
