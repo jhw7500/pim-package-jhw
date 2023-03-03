@@ -1,5 +1,5 @@
 Package: pim 
-Version: 0.1.2
+Version: 0.1.3
 Section: devel
 Priority: optional
 Architecture: arm64 
@@ -20,3 +20,4 @@ Description: PIM application
 0.1.0 : use for pointimage patch
 0.1.1 : disk manage, json, etc
 0.1.2 : overaly, log, cpu usage..
+0.1.3 : zombie, rtc res, broken pipe
