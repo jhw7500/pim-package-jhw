@@ -50,7 +50,7 @@ i2ctransfer -f -y -a 1 w4@0x3c 0x51 0x00 0x11 0x54
 #iperf3 -s -p 8554 &
 
 #bg check
-#/opt/pim/bin/BG_Check_for_pim.sh &
+/opt/pim/bin/BG_Check_for_pim.sh &
 /opt/pim/bin/led_ctrl.sh &
 
 

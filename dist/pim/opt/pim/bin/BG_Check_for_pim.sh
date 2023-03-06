@@ -1,10 +1,8 @@
 #!/bin/bash
-LOG_PATH="/opt/pim/bin/chk_log"
-TEST_RESULT=0;
-
+FLAG_PATH="/opt/pim/bin/bg_chk_flag"
 
 function CLEAR_CHK_LOG() {
-    rm ${LOG_PATH}/*.*
+    rm ${FLAG_PATH}/*.*
 }
 
 CLEAR_CHK_LOG
@@ -22,5 +20,5 @@ while true; do
     #power check
     /opt/pim/bin/chk_voltage.sh
 
-    sleep 5
+    sleep 10
 done
