@@ -53,5 +53,6 @@ i2ctransfer -f -y -a 1 w4@0x3c 0x51 0x00 0x11 0x54
 /opt/pim/bin/BG_Check_for_pim.sh &
 /opt/pim/bin/led_ctrl.sh &
 
+/opt/pim/bin/log_to_gz.sh /var/log/cantops 90
 
 exit 0

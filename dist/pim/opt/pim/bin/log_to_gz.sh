@@ -1,6 +1,6 @@
 #!/bin/bash
 INPUT_PATH=$1
-LIMIT_DATE=2
+LIMIT_DATE=$2
 if [ -z "$INPUT_PATH" ];then
     echo "failed : you should input path"
     exit 1
@@ -51,9 +51,9 @@ for gz in $INPUT_PATH*/*.log.gz
         echo "epoch2:"${day2_epoch}
         date_diff=`echo "(${day1_epoch} - ${day2_epoch})/86400" |bc`
         echo "date_diff:"$date_diff
-        if [ ${date_diff} -gt 2 ]; then
+        if [ ${date_diff} -gt ${LIMIT_DATE} ]; then
             rm ${INPUT_PATH}/${gz_name}.log.gz
-            echo "rm log"${gz_name}".log.gz"
+            echo "rm "${gz_name}".log.gz"
             #gzip ${INPUT_PATH}/${log_name}.log &\
             echo "========================="
         else
