@@ -19,11 +19,11 @@ echo 1 > /sys/devices/platform/leds/leds/gpio2_led/brightness
 wpa_cli -p /run/wpa_supplicant -i wlp1s0 set_network 0 bgscan  '"simple:3:-70:300"'
 wpa_cli -p /run/wpa_supplicant -i wlp1s0 autoscan "periodic:30"
 
+sleep 3
 touch /var/run/vsd.pipe
 /opt/pim/bin/vsd &
 /opt/pim/bin/ord &
 /opt/pim/bin/vcm &
-sleep 3
 PIMCAM -j /root/shared_v/edgeconf_pim.json &
 #streamApp -c 0x5 -w 2560 -h 720 -W 2560 -H 720 &
 #/opt/pim/bin/df_check.sh &
