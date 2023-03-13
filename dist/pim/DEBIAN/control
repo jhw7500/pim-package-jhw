@@ -1,4 +1,4 @@
-Package: pim 
+Package: pim-module
 Version: 0.1.5
 Section: devel
 Priority: optional
