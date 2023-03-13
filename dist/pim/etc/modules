@@ -4,3 +4,4 @@
 # at boot time, one per line. Lines beginning with "#" are ignored.
 
 max9296
+rtc_ds1307
