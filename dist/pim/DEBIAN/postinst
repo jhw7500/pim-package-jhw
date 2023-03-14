@@ -4,9 +4,13 @@
 # postinst script main
 ############################################################
 
+mydir='/var/log/cantops'
 case "$1" in
 configure)
   echo "postinst configure"
+  if [ ! -d  $mydir ]; then
+	mkdir $mydir
+  fi
   ;;
 
 upgrade)
