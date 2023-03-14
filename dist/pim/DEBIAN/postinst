@@ -8,8 +8,16 @@ mydir='/var/log/cantops'
 case "$1" in
 configure)
   echo "postinst configure"
+  systemctl set-default multi-user.target
+  systemctl stop imx8-isp
+  systemctl disable imx8-isp
+
   if [ ! -d  $mydir ]; then
 	mkdir $mydir
+  fi
+  
+  if [ ! -f  /root/shared_v/edgeconf_pim.json ]; then
+	cp /opt/pim/config/edgeconf_pim.json /root/shared_v/
   fi
   ;;
 

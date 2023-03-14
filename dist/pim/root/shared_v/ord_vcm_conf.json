@@ -21,6 +21,6 @@
       "port_num" : 10009,
       "srt_enable" : true,
       "srt_auto_sync" : true,
-      "srt_test" : true
+      "srt_test" : false
    }
 }
