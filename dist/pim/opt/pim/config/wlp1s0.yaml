@@ -1,0 +1,9 @@
+network:
+  version: 2
+  renderer: networkd
+  wifis:
+    wlp1s0:
+      access-points:                 
+        KMH_AP:
+          password: 1qaz2wsx
+      dhcp4: yes
