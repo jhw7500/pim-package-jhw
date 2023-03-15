@@ -4,7 +4,6 @@
 # postinst script main
 ############################################################
 
-mydir='/var/log/cantops'
 case "$1" in
 configure)
   echo "postinst configure"
@@ -13,8 +12,8 @@ configure)
   systemctl disable imx8-isp
   systemctl restart rsyslog
 
-  if [ ! -d  $mydir ]; then
-	mkdir $mydir
+  if [ ! -d  /var/log/cantops ]; then
+	mkdir /var/log/cantops
   fi
   
   if [ ! -f  /root/shared_v/edgeconf_pim.json ]; then
@@ -22,6 +21,11 @@ configure)
         logger -t pim apply default edgeconf_pim.json
 	cp /opt/pim/config/edgeconf_pim.json /root/shared_v/
   fi
+
+  if [ ! -d  /root/boot ]; then
+    mkdir /root/boot
+  fi
+
 
   logger -t pim install pim.deb
   ;;
