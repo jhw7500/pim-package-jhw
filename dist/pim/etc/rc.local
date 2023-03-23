@@ -56,7 +56,7 @@ PIMCAM -j /root/shared_v/edgeconf_pim.json &
 /opt/pim/bin/BG_Check_for_pim.sh &
 /opt/pim/bin/led_ctrl.sh &
 
-/opt/pim/bin/log_to_gz.sh /var/log/cantops 90
-mount /dev/mmcblk2p1 /root/boot
+/opt/pim/bin/log_to_gz.sh /var/log/cantops 30
+#mount /dev/mmcblk2p1 /root/boot
 
 exit 0

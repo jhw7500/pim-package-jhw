@@ -1,5 +1,5 @@
 Package: pim-module
-Version: 0.1.6
+Version: 0.1.7
 Section: devel
 Priority: optional
 Architecture: arm64 
@@ -24,3 +24,4 @@ Description: PIM application
 0.1.4 : led control add
 0.1.5 : vsd cpu, srt sync, evt copy, json, log manage, etc..
 0.1.6 : streamApp, PIMCAM, etc..
+0.1.7 : syslog

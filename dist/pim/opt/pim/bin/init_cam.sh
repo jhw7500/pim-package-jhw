@@ -1,5 +1,6 @@
 pkill -9 vcm
 pkill -9 ord
+pkill -9 vsd
 pkill -9 streamApp
 pkill -9 PIMCAM
 sleep 2
@@ -15,5 +16,6 @@ sleep 1
 modprobe imx8-media-dev
 sleep 5
 PIMCAM -j /root/shared_v/edgeconf_pim.json &
-/opt/pim/bin/vcm &
+/opt/pim/bin/vsd &
 /opt/pim/bin/ord &
+/opt/pim/bin/vcm &

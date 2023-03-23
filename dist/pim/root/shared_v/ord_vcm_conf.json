@@ -3,7 +3,7 @@
       "event_auto_remove" : true,
       "copy_margin_sec" : 10,
       "debug_level" : 0,
-      "log_level" : 2,
+      "log_level" : 5,
       "copy_margin_MB" : 1024,
       "ip_static" : "",
       "port_num" : 10007,
@@ -16,7 +16,7 @@
    },
    "VCM" : {
       "debug_level" : 0,
-      "log_level" : 2,
+      "log_level" : 5,
       "ip_static" : "",
       "port_num" : 10009,
       "srt_enable" : true,
