@@ -1,5 +1,6 @@
 #!/bin/sh
 
+modprobe imx8-media-dev
 #booting LED control
 #ALL LED OFF
 echo none > /sys/devices/platform/leds/leds/gpio1_led/trigger
@@ -12,22 +13,22 @@ echo 0 > /sys/devices/platform/leds/leds/gpio3_led/brightness
 echo 1 > /sys/devices/platform/leds/leds/gpio1_led/brightness
 echo 1 > /sys/devices/platform/leds/leds/gpio2_led/brightness   
 
-
 #sd mount 
 #/opt/pim/bin/automnt_sd_for_emmc_boot.sh &
 
 wpa_cli -p /run/wpa_supplicant -i wlp1s0 set_network 0 bgscan  '"simple:3:-70:300"'
 wpa_cli -p /run/wpa_supplicant -i wlp1s0 autoscan "periodic:30"
 
-sleep 3
+#sleep 3
 touch /var/run/vsd.pipe
+PIMCAM -j /root/shared_v/edgeconf_pim.json &
 /opt/pim/bin/vsd &
 /opt/pim/bin/ord &
 /opt/pim/bin/vcm &
-PIMCAM -j /root/shared_v/edgeconf_pim.json &
+
 #streamApp -c 0x5 -w 2560 -h 720 -W 2560 -H 720 &
 #/opt/pim/bin/df_check.sh &
-sleep 15
+#sleep 15
 #AE Off
 #i2ctransfer -f -y -a 1 w4@0x3c 0x50 0x02 0x02 0x90
 #i2ctransfer -f -y -a 2 w4@0x3c 0x50 0x02 0x02 0x90
@@ -35,13 +36,14 @@ sleep 15
 #i2ctransfer -f -y -a 2 w4@0x3c 0x50 0x06 0x02 0x00
 
 #AP1302 register setting for AE-On at dual booting
-i2ctransfer -f -y -a 2 w4@0x3c 0x50 0x02 0x02 0x99
-i2ctransfer -f -y -a 1 w4@0x3c 0x50 0x02 0x02 0x99
-i2ctransfer -f -y -a 2 w4@0x3c 0x51 0x00 0x11 0x54
-i2ctransfer -f -y -a 1 w4@0x3c 0x51 0x00 0x11 0x54
+#i2ctransfer -f -y -a 2 w4@0x3c 0x50 0x02 0x02 0x99
+#i2ctransfer -f -y -a 1 w4@0x3c 0x50 0x02 0x02 0x99
+#i2ctransfer -f -y -a 2 w4@0x3c 0x51 0x00 0x11 0x54
+#i2ctransfer -f -y -a 1 w4@0x3c 0x51 0x00 0x11 0x54
 
 #rotate
-/opt/pim/bin/cam_rotate_setting.sh
+/opt/pim/bin/cam_ae_setting.sh &
+/opt/pim/bin/cam_rotate_setting.sh &
 
 #bg scan check
 /opt/pim/bin/bgscan_polling.sh &
@@ -54,6 +56,7 @@ i2ctransfer -f -y -a 1 w4@0x3c 0x51 0x00 0x11 0x54
 /opt/pim/bin/BG_Check_for_pim.sh &
 /opt/pim/bin/led_ctrl.sh &
 
-/opt/pim/bin/log_to_gz.sh /var/log/cantops 90
+/opt/pim/bin/log_to_gz.sh /var/log/cantops 30
+#mount /dev/mmcblk2p1 /root/boot
 
 exit 0

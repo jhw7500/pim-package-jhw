@@ -7,7 +7,6 @@
 case "$1" in
 install)
   echo "preinst install"
-  systemctl set-default muil-user.target
   systemctl disable NetworkManager
   ln -sf /usr/share/zoneinfo/Asia/Seoul /etc/localtime
   timedatectl set-ntp false

@@ -5,6 +5,7 @@ SUCCESS_VAL="true"
 FAIL_VAL="error"
 result=1;
 
+sleep 15
 
 if [[ ! -s "$TEST_CONFIG_FILE" ]]; then 
 	echo "can't find $TEST_CONFIG_FILE"
