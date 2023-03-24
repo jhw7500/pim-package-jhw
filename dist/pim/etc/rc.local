@@ -1,6 +1,6 @@
 #!/bin/sh
 
-modprobe imx8-media-dev
+#modprobe imx8-media-dev
 #booting LED control
 #ALL LED OFF
 echo none > /sys/devices/platform/leds/leds/gpio1_led/trigger
