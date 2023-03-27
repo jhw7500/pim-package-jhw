@@ -445,6 +445,7 @@ fi
   echo "check edge config"  
   if [ ! -f  /root/shared_v/edgeconf*.json ]; then
     logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp edgeconf_pim.json"
+    mkdir -p /root/shared_v
     cp /etc/defaultconf.json /root/shared_v/edgeconf_pim.json
   fi
 
