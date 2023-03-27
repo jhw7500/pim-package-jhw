@@ -21,7 +21,8 @@ wpa_cli -p /run/wpa_supplicant -i wlp1s0 autoscan "periodic:30"
 
 #sleep 3
 touch /var/run/vsd.pipe
-PIMCAM -j /root/shared_v/edgeconf_pim.json &
+#PIMCAM -j /root/shared_v/edgeconf_pim.json &
+/opt/pim/bin/restart_app.sh PIMCAM &
 /opt/pim/bin/vsd &
 /opt/pim/bin/ord &
 /opt/pim/bin/vcm &
