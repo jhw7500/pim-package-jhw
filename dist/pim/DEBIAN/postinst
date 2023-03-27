@@ -22,6 +22,21 @@ configure)
 	cp /opt/pim/config/edgeconf_pim.json /root/shared_v/
   fi
 
+  if [ ! -f  /etc/netplan/eth0.yaml ]; then
+        logger -t pim apply default eth0.yaml
+        cp /opt/pim/config/eth0.yaml /etc/netplan/
+  fi
+
+  if [ ! -f  /etc/netplan/eth1.yaml ]; then
+        logger -t pim apply default eth1.yaml
+        cp /opt/pim/config/eth1.yaml /etc/netplan/
+  fi
+
+  if [ ! -f  /etc/netplan/wlp1s0.yaml ]; then
+        logger -t pim apply default wlp1s0.yaml
+        cp /opt/pim/config/wlp1s0.yaml /etc/netplan/
+  fi
+
   if [ ! -d  /root/boot ]; then
     mkdir /root/boot
   fi
