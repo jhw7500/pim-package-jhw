@@ -21,18 +21,18 @@ else
         echo "cam01 error"
         #echo "I2cwrite 0x90 0x0010 0x31"
         i2ctransfer -f -y -a 2 w3@0x48 0x00 0x10 0x31
-        sleep 1
+        sleep 3
 
         #echo "SER0 chk I2cwrite 0x80 0x0010 0x21"
         i2ctransfer -f -y -a 2 w3@0x40 0x00 0x10 0x21
-        sleep 1
+        sleep 3
 
         if [[ "$cam01_res" == *"$CAM1_ERR"* ]]; then
                 echo "CAM1_ERR : $cam01_res"
         fi
 
         if [[ "$cam01_res" == *"$CAM0_ERR"* ]]; then
-                echo "CAM0 ERR : $cam01_res"
+                echo "CAM0_ERR : $cam01_res"
         fi
 
         if [[ "$cam01_res" == *"$CAM01_ERR"* ]]; then
@@ -46,16 +46,16 @@ else
         echo "cam23 error"
         #echo "I2cwrite 0x90 0x0010 0x31"
         i2ctransfer -f -y -a 1 w3@0x48 0x00 0x10 0x31
-        sleep 1
+        sleep 3
         #echo "SER1 chk I2cwrite 0x80 0x0010 0x21"
         i2ctransfer -f -y -a 1 w3@0x40 0x00 0x10 0x21
-        sleep 1
+        sleep 3
         if [[ "$cam23_res" == *"$CAM3_ERR"* ]]; then
-                echo "CAM2_ERR : $cam23_res"
+                echo "CAM3_ERR : $cam23_res"
         fi
 
         if [[ "$cam23_res" == *"$CAM2_ERR"* ]]; then
-                echo "CAM2 ERR : $cam23_res"
+                echo "CAM2_ERR : $cam23_res"
         fi
 
         if [[ "$cam23_res" == *"$CAM23_ERR"* ]]; then
