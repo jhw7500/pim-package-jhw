@@ -7,6 +7,9 @@
 case "$1" in
 purge)
   echo "purge purge"
+  rm -r /opt/pim
+  cat /dev/null > /etc/rc.local
+  sysetmctl set-default graphical.target
   ;;
 
 upgrade)

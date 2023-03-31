@@ -11,6 +11,9 @@ configure)
   systemctl stop imx8-isp
   systemctl disable imx8-isp
   systemctl restart rsyslog
+  echo "alias lm='ls -ltr /mnt |tail -20'" >> /root/.bashrc
+  echo "alias clog='cat /var/log/syslog |tail -100'" >> /root/.bashrc
+  
 
   if [ ! -d  /var/log/cantops ]; then
 	mkdir /var/log/cantops
