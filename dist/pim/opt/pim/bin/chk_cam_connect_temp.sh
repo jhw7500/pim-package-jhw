@@ -4,8 +4,8 @@ SUCCESS_VAL="0xfa"
 CAM0_ERR="0xda"
 CAM1_ERR="0xea"
 CAM01_ERR="0x16"
-CAM2_ERR="0x36"
-CAM3_ERR=""
+CAM2_ERR="0xda"
+CAM3_ERR="0xea"
 CAM23_ERR="0x16"
 timestamp=`date +"%Y-%m-%d %T,%3N"`
 
