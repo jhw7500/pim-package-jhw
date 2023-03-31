@@ -51,7 +51,7 @@ else
         i2ctransfer -f -y -a 1 w3@0x40 0x00 0x10 0x21
         sleep 1
         if [[ "$cam23_res" == *"$CAM3_ERR"* ]]; then
-                echo "CAM2_ERR : $cam23_res"
+                echo "CAM3_ERR : $cam23_res"
         fi
 
         if [[ "$cam23_res" == *"$CAM2_ERR"* ]]; then
