@@ -58,6 +58,7 @@ touch /var/run/vsd.pipe
 /opt/pim/bin/led_ctrl.sh &
 
 /opt/pim/bin/log_to_gz.sh /var/log/cantops 30
+/opt/pim/bin/chk_mem.sh &
 #mount /dev/mmcblk2p1 /root/boot
 
 exit 0
