@@ -54,6 +54,8 @@
       "cam_ch2_rotate" : false,
       "cam_ch3" : true,
       "cam_ch3_rotate" : false,
+	  "cam_width" : 1280,
+	  "cam_height" : 720,
       "event_auto_remove" : true,
       "event_storage_size" : 10,
       "floor" : "NONAME",
