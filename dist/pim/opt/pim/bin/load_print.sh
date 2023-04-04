@@ -1,6 +1,6 @@
 #!/bin/bash 
 function load_print() { 
-        _cpu_load=`top -b -d 0 -n2 | grep -Po '[0-9.]+ id' | awk '{print 100-$1}' | tail -n 1` 
+        _cpu_load=$(mpstat | tail -1 | awk '{print 100-$NF}')
         mem_tot=`cat /proc/meminfo | grep ^MemTotal| grep -Po '[0-9.]+ kB' | awk '{print $1}'` 
         mem_avail=`cat /proc/meminfo | grep ^MemAvailable | grep -Po '[0-9.]+ kB' | awk '{print $1}'` 
         _ram_load=`echo "$mem_tot $mem_avail"|awk '{printf "%.1f", ($1 - $2)/$1*100}'` 
