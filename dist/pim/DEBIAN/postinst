@@ -11,6 +11,8 @@ configure)
   systemctl stop imx8-isp
   systemctl disable imx8-isp
   systemctl restart rsyslog
+  systemctl stop connman-wait-online.service
+  systemctl disable connman-wait-online.service
   echo "alias lm='ls -ltr /mnt |tail -20'" >> /root/.bashrc
   echo "alias clog='cat /var/log/syslog |tail -100'" >> /root/.bashrc
   
@@ -23,21 +25,6 @@ configure)
         echo "default edgeconf_pim.json" 
         logger -t pim apply default edgeconf_pim.json
 	cp /opt/pim/config/edgeconf_pim.json /root/shared_v/
-  fi
-
-  if [ ! -f  /etc/netplan/eth0.yaml ]; then
-        logger -t pim apply default eth0.yaml
-        cp /opt/pim/config/eth0.yaml /etc/netplan/
-  fi
-
-  if [ ! -f  /etc/netplan/eth1.yaml ]; then
-        logger -t pim apply default eth1.yaml
-        cp /opt/pim/config/eth1.yaml /etc/netplan/
-  fi
-
-  if [ ! -f  /etc/netplan/wlp1s0.yaml ]; then
-        logger -t pim apply default wlp1s0.yaml
-        cp /opt/pim/config/wlp1s0.yaml /etc/netplan/
   fi
 
   if [ ! -d  /root/boot ]; then

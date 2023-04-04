@@ -8,7 +8,8 @@ if [ ! -z "$service" ]; then
 	pgrep "$service" >/dev/null; status=$?
 	if [ "$status" -eq 0 ]; then
 		pid=$(ps -C $service |grep $service |awk '{print $1}')
-		echo $service" pid:":${pid}
+		#echo $service" pid:":${pid}
+		logger -s -p local0.alret -t $service [SYS] kill -9 $service
 		sudo kill -9 $pid
 	fi
 fi
@@ -19,8 +20,10 @@ if [ ! -z "$service" ]; then
         pgrep "$service" >/dev/null; status=$?
         if [ "$status" -eq 0 ]; then
                 pid=$(ps -C $service |grep $service |awk '{print $1}')
-                echo $service" pid:":${pid}
-                sudo kill -9 $pid
+                #echo $service" pid:":${pid}
+                #sudo kill -9 $pid
+		logger -s -p local0.alret -t $service [SYS] killall -s KILL $service
+		sudo killall -s KILL $service
         fi
 fi
 
@@ -30,8 +33,10 @@ if [ ! -z "$service" ]; then
         pgrep "$service" >/dev/null; status=$?
         if [ "$status" -eq 0 ]; then
                 pid=$(ps -C $service |grep $service |awk '{print $1}')
-                echo $service" pid:":$pid
-                sudo kill -9 $pid
+                #echo $service" pid:":$pid
+                #sudo kill -9 $pid
+		logger -s -p local0.alret -t $service [SYS] killall -s KILL $service
+		sudo killall -s KILL $service
         fi
 fi
 
