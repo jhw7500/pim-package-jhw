@@ -7,8 +7,8 @@
 case "$1" in
 install)
   echo "preinst install"
-  systemctl disable NetworkManager
   ln -sf /usr/share/zoneinfo/Asia/Seoul /etc/localtime
+  timedatectl set-timezone Asia/Seoul
   timedatectl set-ntp false
   ;;
 
