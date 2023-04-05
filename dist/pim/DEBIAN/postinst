@@ -25,6 +25,10 @@ configure)
   if [ ! -d  /var/log/cantops ]; then
 	mkdir /var/log/cantops
   fi
+
+  if [ ! -d  /share ]; then
+	mkdir /share
+  fi
   
   if [ ! -f  /root/shared_v/edgeconf_pim.json ]; then
         logger -s -p local0.notice -t $service apply default edgeconf_pim.json
@@ -62,6 +66,10 @@ configure)
 
   sed 's/imx8mpevk/pim-camera-v015/' -i /etc/hostname
   sed 's/imx8mpevk/pim-camera-v015/' -i /etc/hosts
+
+  /root/SOMBASE_TEST/mfg60n-aarch64-9.32.0.6.sh install
+  lmu -reg FCC
+  iw reg set US
 
   logger -p local0.notice -t $service install pim.deb
   ;;
