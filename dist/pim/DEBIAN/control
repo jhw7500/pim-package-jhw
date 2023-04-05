@@ -1,5 +1,5 @@
 Package: pim
-Version: 0.1.9
+Version: 0.2.0
 Section: devel
 Priority: optional
 Architecture: arm64 
@@ -27,3 +27,4 @@ Description: PIM application
 0.1.7 : syslog
 0.1.8 : PIMCAM, restart_app.sh
 0.1.9 : chk_mem.sh, postinst, rc.local, log
+0.2.0 : rtc reset, log

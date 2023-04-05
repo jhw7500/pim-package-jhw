@@ -35,7 +35,6 @@ if [ ! -z "$service" ]; then
         if [ "$status" -eq 0 ]; then
                 pid=$(ps -C $service |grep $service |awk '{print $1}')
                 #echo $service" pid:":${pid}
-		pmap -x ${pid} | tail -1
                 mem=$(pmap -x $pid |tail -1 |awk '{print "Kbytes:"$3" RSS:"$4" Dirty:"$5}')
 		logger -p local0.info -t $service [MEM] ${mem}
         fi
@@ -47,7 +46,6 @@ if [ ! -z "$service" ]; then
         if [ "$status" -eq 0 ]; then
                 pid=$(ps -C $service |grep $service |awk '{print $1}')
                 #echo $service" pid:":${pid}
-		pmap -x ${pid} | tail -1
                 mem=$(pmap -x $pid |tail -1 |awk '{print "Kbytes:"$3" RSS:"$4" Dirty:"$5}')
 		logger -p local0.info -t $service [MEM] ${mem}
         fi
