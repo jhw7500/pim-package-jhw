@@ -73,9 +73,11 @@ END
   sed 's/imx8mpevk/pim-camera-v015/' -i /etc/hostname
   sed 's/imx8mpevk/pim-camera-v015/' -i /etc/hosts
 
+:<<'END'
   /root/SOMBASE_TEST/mfg60n-aarch64-9.32.0.6.sh install
   lmu -reg FCC
   iw reg set US
+END
 
   logger -p local0.notice -t $service install pim.deb
   ;;
