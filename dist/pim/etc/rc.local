@@ -14,7 +14,7 @@ echo 1 > /sys/devices/platform/leds/leds/gpio1_led/brightness
 echo 1 > /sys/devices/platform/leds/leds/gpio2_led/brightness   
 
 #sd mount 
-/opt/pim/bin/automnt_sd_for_emmc_boot.sh &
+#/opt/pim/bin/automnt_sd_for_emmc_boot.sh &
 
 wpa_cli -p /run/wpa_supplicant -i wlp1s0 set_network 0 bgscan  '"simple:3:-70:300"'
 wpa_cli -p /run/wpa_supplicant -i wlp1s0 autoscan "periodic:30"

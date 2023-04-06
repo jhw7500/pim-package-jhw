@@ -36,7 +36,7 @@ configure)
 	cp /opt/pim/config/edgeconf_pim.json /root/shared_v/
   fi
 
-:<<'END'
+#:<<'END'
   systemctl stop NetworkManager
   systemctl disable NetworkManager
 
@@ -56,7 +56,7 @@ configure)
   fi
 
   netplan apply
-END
+#END
 
 
   if [ ! -d  /root/boot ]; then
