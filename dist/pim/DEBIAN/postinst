@@ -13,10 +13,8 @@ configure)
   systemctl restart rsyslog
   systemctl stop connman-wait-online.service
   systemctl disable connman-wait-online.service
-  systemctl stop connman.service
-  systemctl disable connman.service
-  systemctl stop NetworkManager
-  systemctl disable NetworkManager
+#  systemctl stop connman.service
+#  systemctl disable connman.service
   echo "alias lm='ls -ltr /mnt |tail -20'" >> /root/.bashrc
   echo "alias clog='cat /var/log/syslog |tail -100'" >> /root/.bashrc
   
@@ -35,6 +33,10 @@ configure)
 	cp /opt/pim/config/edgeconf_pim.json /root/shared_v/
   fi
 
+:<<'END'
+  systemctl stop NetworkManager
+  systemctl disable NetworkManager
+
   if [ ! -f  /etc/netplan/eth0.yaml ]; then
         logger -s -p local0.notice -t $service apply default netplan eth0
         cp /opt/pim/config/eth0.yaml /etc/netplan/
@@ -50,11 +52,15 @@ configure)
         cp /opt/pim/config/wlp1s0.yaml /etc/netplan/
   fi
 
+  netplan apply
+END
+
+
   if [ ! -d  /root/boot ]; then
     mkdir /root/boot
   fi
 
-  netplan apply
+  (echo root; echo root;) | passwd root
   (echo user; echo user;) | smbpasswd -as user
   useradd semes && (echo semes; echo semes;) | passwd semes
 
