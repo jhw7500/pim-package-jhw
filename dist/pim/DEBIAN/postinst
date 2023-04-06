@@ -13,8 +13,11 @@ configure)
   systemctl restart rsyslog
   systemctl stop connman-wait-online.service
   systemctl disable connman-wait-online.service
-#  systemctl stop connman.service
-#  systemctl disable connman.service
+  systemctl stop systemd-network-wait-online.service
+  systemctl disable systemd-network-wait-online.service
+  systemctl mask systemd-networkd-wait-online.service
+  systemctl stop connman.service
+  systemctl disable connman.service
   echo "alias lm='ls -ltr /mnt |tail -20'" >> /root/.bashrc
   echo "alias clog='cat /var/log/syslog |tail -100'" >> /root/.bashrc
   
