@@ -3,5 +3,5 @@
 # This file contains the names of kernel modules that should be loaded
 # at boot time, one per line. Lines beginning with "#" are ignored.
 
-#max9296
+max9296
 rtc_ds1307
