@@ -36,10 +36,15 @@ for log in $INPUT_PATH*/*.log
             #echo "========================="
         fi
 
-done
+    done
 
+FILE=$(find /var/log/cantops -name *gz)
+
+if [[ "$FILE" == *.log.gz ]]; then
+echo "exist"
 for gz in $INPUT_PATH*/*.log.gz
     do
+	echo $gz
         gz_name=${gz:(${#INPUT_PATH}+2):-7}
         #echo "gz_name:"$gz_name
         #echo "TO_DAY:"$TO_DAY
@@ -49,11 +54,12 @@ for gz in $INPUT_PATH*/*.log.gz
         #echo "epoch2:"${day2_epoch}
         date_diff=`echo "(${day1_epoch} - ${day2_epoch})/86400" |bc`
         #echo "date_diff:"$date_diff
-        if [ ${date_diff} -gt ${LIMIT_DATE} ]; then
+        if [[ ${date_diff} -gt ${LIMIT_DATE} ]]; then
             rm ${INPUT_PATH}/g${gz_name}.log.gz
             #echo "rm "g${gz_name}".log.gz"
             #gzip ${INPUT_PATH}/${log_name}.log &\
             #echo "========================="
         fi
 
-done
+    done
+fi

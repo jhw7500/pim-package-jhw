@@ -7,6 +7,7 @@
 case "$1" in
 install)
   echo "preinst install"
+  git config --global user.name "hwjo" && git config --global user.email "hwjo@cantops.biz"
   ln -sf /usr/share/zoneinfo/Asia/Seoul /etc/localtime
   timedatectl set-timezone Asia/Seoul
   timedatectl set-ntp false

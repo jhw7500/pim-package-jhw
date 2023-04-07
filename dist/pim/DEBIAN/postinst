@@ -20,10 +20,6 @@ configure)
   systemctl mask systemd-networkd-wait-online.service
   systemctl stop connman.service
   systemctl disable connman.service
-  echo "alias lm='ls -ltr /mnt |tail -20'" >> /root/.bashrc
-  echo "alias clog='cat /var/log/syslog |tail -100'" >> /root/.bashrc
-  echo "alias dpkgp='dpkg -i --force-overwrite pim.deb'" >> /root/.bashrc
-  source ~/.bashrc
   
   service=package
 
@@ -34,6 +30,7 @@ configure)
   if [ ! -d  /share ]; then
 	mkdir /share
   fi
+
   
   if [ ! -f  /root/shared_v/edgeconf_pim.json ]; then
         logger -s -p local0.notice -t $service apply default edgeconf_pim.json
@@ -69,7 +66,7 @@ configure)
 
   (echo root; echo root;) | passwd root
   (echo user; echo user;) | smbpasswd -as user
-  useradd semes && (echo semes; echo semes;) | passwd semes
+  useradd -m semes && (echo semes; echo semes;) | passwd semes
 
   chmod 777 /mnt
   chmod 777 /share
@@ -87,6 +84,9 @@ configure)
   lmu -reg FCC
   iw reg set US
 END
+
+  source /root/.bashrc
+  systemctl daemon-reload
 
   logger -p local0.notice -t $service install pim.deb
   ;;
