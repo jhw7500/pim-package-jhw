@@ -23,6 +23,6 @@ if [ ! -z "$service" ]; then
 fi
 done
 
-sleep 1
+sleep 60
 done
 
