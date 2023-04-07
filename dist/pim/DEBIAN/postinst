@@ -18,8 +18,8 @@ configure)
   systemctl stop systemd-network-wait-online.service
   systemctl disable systemd-network-wait-online.service
   systemctl mask systemd-networkd-wait-online.service
-  systemctl stop connman.service
-  systemctl disable connman.service
+#  systemctl stop connman.service
+#  systemctl disable connman.service
   
   service=package
 
@@ -86,6 +86,7 @@ configure)
 END
 
   source /root/.bashrc
+  systemctl restart connman
   systemctl daemon-reload
 
   logger -p local0.notice -t $service install pim.deb

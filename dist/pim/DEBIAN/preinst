@@ -8,13 +8,16 @@ case "$1" in
 install)
   echo "preinst install"
   git config --global user.name "hwjo" && git config --global user.email "hwjo@cantops.biz"
-  ln -sf /usr/share/zoneinfo/Asia/Seoul /etc/localtime
-  timedatectl set-timezone Asia/Seoul
-  timedatectl set-ntp false
+  /root/SOMBASE_TEST/mfg60n-aarch64-9.32.0.6.sh install
+  lmu -reg FCC
+  iw set US
   ;;
 
 upgrade)
   echo "preinst upgrade"
+  ln -sf /usr/share/zoneinfo/Asia/Seoul1 /etc/localtime
+  timedatectl set-timezone Asia/Seoul
+  timedatectl set-ntp false
   ;;
 
 *)
