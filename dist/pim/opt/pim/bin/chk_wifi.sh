@@ -1,5 +1,5 @@
 #!/bin/bash
-FLAG_PATH="/opt/pim/bin/bg_chk_flag"
+FLAG_PATH="/tmp"
 tag=$(basename "$0")
 timestamp=`date +"%Y-%m-%d %T,%3N"`
 
