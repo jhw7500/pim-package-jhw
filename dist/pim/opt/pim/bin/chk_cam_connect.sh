@@ -28,7 +28,7 @@ cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
 
 
 if [[ ! -s "$TEST_CONFIG_FILE" ]]; then 
-	logger -p local0.priority -t $tag [CHK] Not Found $TEST_CONFIG_FILE
+	logger -p local0.error -t $tag [CHK] Not Found $TEST_CONFIG_FILE
 	result=1 ; 
 else
 	cam_ch0_en=$(cat $TEST_CONFIG_FILE | grep cam_ch0 | grep -v rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')	
@@ -39,7 +39,7 @@ else
 	#CAM0, CAM1 ENABLE
 	if [[ "$cam_ch0_en" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch1_en" == *"$ENABLE_VAL"* ]]; then
 		if [[ "$cam01_res" == *"$SUCCESS_VAL"*  ]]; then
-			echo "cam01 ok"
+			logger -p local0.notice -t $tag [CHK] CAM0 CAM1 OK
 		else
 			for i in {1..5}; do
 				i2ctransfer -f -y -a 2 w3@0x48 0x00 0x10 0x31
@@ -51,22 +51,22 @@ else
 				cam01_res=$(i2ctransfer -f -y -a 2 w2@0x48 0x00 0x13 r1)
 				
 				if [[ "$cam01_res" == *"$CAM1_ERR"* ]]; then
-					logger -p local0.priority -t $tag [CHK] CAM1_ERR : $cam01_res $i
+					logger -p local0.error -t $tag [CHK] CAM1_ERR : $cam01_res $i
 					echo "${timestamp} CAM1 ERR" >> ${FLAG_PATH}/err_cam1.log	
 					break
 				elif [[ "$cam01_res" == *"$CAM0_ERR"* ]]; then
-					logger -p local0.priority -t $tag [CHK] CAM0_ERR : $cam01_res $i
+					logger -p local0.error -t $tag [CHK] CAM0_ERR : $cam01_res $i
 					echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log	
 					break
 				elif [[ "$cam01_res" == *"$CAM01_ERR"* ]]; then
-					logger -p local0.priority -t $tag [CHK] CAM0_ERR : $cam01_res $i
-					logger -p local0.priority -t $tag [CHK] CAM1_ERR : $cam01_res $i
+					logger -p local0.error -t $tag [CHK] CAM0_ERR : $cam01_res $i
+					logger -p local0.error -t $tag [CHK] CAM1_ERR : $cam01_res $i
 					echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log	
 					echo "${timestamp} CAM1 ERR" >> ${FLAG_PATH}/err_cam1.log	
 					break
 				else 
-					logger -p local0.priority -t $tag [CHK] CAM0_ERR : $cam01_res $i
-					logger -p local0.priority -t $tag [CHK] CAM1_ERR : $cam01_res $i
+					logger -p local0.error -t $tag [CHK] CAM0_ERR : $cam01_res $i
+					logger -p local0.error -t $tag [CHK] CAM1_ERR : $cam01_res $i
 					echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log	
 					echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log	
 				fi	
@@ -77,17 +77,17 @@ else
 	#CAM0 ENABLE ONLY
 	if [[ "$cam_ch0_en" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch1_en" == *"$DISABLE_VAL"* ]]; then
 		if [[ "$cam01_res" == *"$CAM0_EN_ERR"*  ]]; then
-			logger -p local0.priority -t $tag [CHK] CAM0_ERR : $cam01_res $i
+			logger -p local0.error -t $tag [CHK] CAM0_ERR : $cam01_res $i
 			echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log	
 		else
-			echo "cam0 ok"
+			logger -p local0.notice -t $tag [CHK] CAM0 OK
 		fi
 	fi
 	
 	#CAM2,CAM3 ENABLE
 	if [[ "$cam_ch2_en" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch3_en" == *"$ENABLE_VAL"* ]]; then
 		if [[ "$cam23_res" == *"$SUCCESS_VAL"*  ]]; then
-			echo "cam23 ok"
+			logger -p local0.notice -t $tag [CHK] CAM2 CAM3 OK
 		else
 			for i in {1..5}; do	
 				i2ctransfer -f -y -a 1 w3@0x48 0x00 0x10 0x31
@@ -96,22 +96,22 @@ else
 				sleep 3
 				cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
 				if [[ "$cam23_res" == *"$CAM3_ERR"* ]]; then
-					logger -p local0.priority -t $tag [CHK] CAM3_ERR : $cam23_res $i
+					logger -p local0.error -t $tag [CHK] CAM3_ERR : $cam23_res $i
 					echo "${timestamp} CAM3 ERR" >> ${FLAG_PATH}/err_cam3.log	
 					break
 				elif [[ "$cam23_res" == *"$CAM2_ERR"* ]]; then
-					logger -p local0.priority -t $tag [CHK] CAM2_ERR : $cam23_res $i
+					logger -p local0.error -t $tag [CHK] CAM2_ERR : $cam23_res $i
 					echo "${timestamp} CAM2 ERR" >> ${FLAG_PATH}/err_cam2.log	
 					break
 				elif [[ "$cam23_res" == *"$CAM23_ERR"* ]]; then
-					logger -p local0.priority -t $tag [CHK] CAM3_ERR : $cam23_res $i
-					logger -p local0.priority -t $tag [CHK] CAM2_ERR : $cam23_res $i
+					logger -p local0.error -t $tag [CHK] CAM3_ERR : $cam23_res $i
+					logger -p local0.error -t $tag [CHK] CAM2_ERR : $cam23_res $i
 					echo "${timestamp} CAM2 ERR" >> ${FLAG_PATH}/err_cam2.log	
 					echo "${timestamp} CAM3 ERR" >> ${FLAG_PATH}/err_cam3.log	
 					break
 				else
-					logger -p local0.priority -t $tag [CHK] CAM3_ERR : $cam23_res $i
-					logger -p local0.priority -t $tag [CHK] CAM2_ERR : $cam23_res $i					
+					logger -p local0.error -t $tag [CHK] CAM3_ERR : $cam23_res $i
+					logger -p local0.error -t $tag [CHK] CAM2_ERR : $cam23_res $i					
 					echo "${timestamp} CAM2 ERR" >> ${FLAG_PATH}/err_cam2.log	
 					echo "${timestamp} CAM3 ERR" >> ${FLAG_PATH}/err_cam3.log						
 				fi
@@ -122,10 +122,10 @@ else
 	#CAM0, CAM1, CAM2 ENABLE
 	if [[ "$cam_ch2_en" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch3_en" == *"$DISABLE_VAL"* ]]; then
 		if [[ "$cam23_res" == *"$CAM012_EN_ERR"*  ]]; then
-			logger -p local0.priority -t $tag [CHK] CAM2_ERR : $cam23_res $i
+			logger -p local0.error -t $tag [CHK] CAM2_ERR : $cam23_res $i
 			echo "${timestamp} CAM2 ERR" >> ${FLAG_PATH}/err_cam2.log	
 		else
-			echo "cam2 ok"
+			logger -p local0.notice -t $tag [CHK] CAM2 OK
 		fi
 	fi
 fi

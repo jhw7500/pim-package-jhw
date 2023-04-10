@@ -10,12 +10,12 @@ if [ $(echo "$volt_min < $volt_data" | bc) -eq 1 ]; then
 	if [ $(echo "$volt_max > $volt_data" | bc) -eq 1 ] ; then
         	exit 0
 	else
-		logger -p local0.priority -t $tag [CHK] Voltage High error : $volt_data
+		logger -p local0.error -t $tag [CHK] Voltage High error : $volt_data
 		echo "${timestamp} CPU TEMP ERR" >> ${FLAG_PATH}/err_volt.log
-        	exit 1
+        exit 1
 	fi
 else
-	logger -p local0.priority -t $tag [CHK] Voltage Low error : $volt_data
+	logger -p local0.error -t $tag [CHK] Voltage Low error : $volt_data
 	echo "${timestamp} CPU TEMP ERR" >> ${FLAG_PATH}/err_volt.log
 	exit 1
 fi
