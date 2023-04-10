@@ -16,8 +16,8 @@ echo 1 > /sys/devices/platform/leds/leds/gpio2_led/brightness
 #sd mount 
 /opt/pim/bin/automnt_sd_for_emmc_boot.sh &
 
-wpa_cli -p /run/wpa_supplicant -i wlp1s0 set_network 0 bgscan  '"simple:3:-70:300"'
-wpa_cli -p /run/wpa_supplicant -i wlp1s0 autoscan "periodic:30"
+#wpa_cli -p /run/wpa_supplicant -i wlp1s0 set_network 0 bgscan  '"simple:3:-70:300"'
+#wpa_cli -p /run/wpa_supplicant -i wlp1s0 autoscan "periodic:30"
 
 #sleep 3
 touch /var/run/vsd.pipe
@@ -55,7 +55,6 @@ touch /var/run/vsd.pipe
 
 #bg check
 /opt/pim/bin/BG_Check_for_pim.sh &
-/opt/pim/bin/led_ctrl.sh &
 
 /opt/pim/bin/log_to_gz.sh /var/log/cantops 30 > /dev/null
 /opt/pim/bin/chk_mem.sh &
