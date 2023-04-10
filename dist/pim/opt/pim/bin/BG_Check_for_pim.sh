@@ -46,8 +46,8 @@ function MAKE_RESULT_FLAG() {
 
 
 while true; do
-	sleep 10
-	CLEAR_CHK_LOG
+    sleep 10
+    CLEAR_CHK_LOG
     #cam connect check
     /opt/pim/bin/chk_cam_connect.sh
     #wifi check
@@ -62,4 +62,5 @@ while true; do
     /opt/pim/bin/chk_voltage.sh
     #make result cmd
     MAKE_RESULT_FLAG
+    /opt/pim/bin/led_ctrl.sh
 done

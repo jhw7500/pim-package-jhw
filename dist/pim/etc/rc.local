@@ -55,7 +55,6 @@ touch /var/run/vsd.pipe
 
 #bg check
 /opt/pim/bin/BG_Check_for_pim.sh &
-/opt/pim/bin/led_ctrl.sh &
 
 /opt/pim/bin/log_to_gz.sh /var/log/cantops 30 > /dev/null
 /opt/pim/bin/chk_mem.sh &
