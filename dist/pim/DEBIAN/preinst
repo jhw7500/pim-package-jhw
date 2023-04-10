@@ -9,8 +9,8 @@ install)
   echo "preinst install"
   git config --global user.name "hwjo" && git config --global user.email "hwjo@cantops.biz"
   /root/SOMBASE_TEST/mfg60n-aarch64-9.32.0.6.sh install
-  lmu -reg FCC
-  iw set US
+#  lmu -reg FCC
+#  iw set US
   ;;
 
 upgrade)
