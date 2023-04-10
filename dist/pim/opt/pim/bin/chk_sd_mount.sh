@@ -1,5 +1,5 @@
 #!/bin/bash
-FLAG_PATH="/opt/pim/bin/chk_log"
+FLAG_PATH="/tmp"
 SUCCESS_VAL="/dev/mmcblk1p1"
 timestamp=`date +"%Y-%m-%d %T,%3N"`
 tag=$(basename "$0")

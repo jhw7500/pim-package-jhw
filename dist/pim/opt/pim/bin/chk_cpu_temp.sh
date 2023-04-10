@@ -1,6 +1,6 @@
 #!/bin/bash
 
-FLAG_PATH="/opt/pim/bin/bg_chk_flag"
+FLAG_PATH="/tmp"
 tag=$(basename "$0")
 
 CPU_TMP_VAL=$(cat /sys/devices/virtual/thermal/thermal_zone0/temp)
