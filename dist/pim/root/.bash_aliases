@@ -1,0 +1,6 @@
+alias lm='ls -ltr /mnt |tail -20'
+alias dpkgp='dpkg -i --force-overwrite pim.deb'
+alias logg='cat /var/log/syslog | grep $1'
+alias logt='cat /var/log/syslog | tail -n $1'
+#alias loggt='cat /var/log/syslog | grep $1 -a | tail -n $2'
+#alias logtg='cat /var/log/syslog | tail -n $1 | grep $2 -a'

@@ -1,5 +1,5 @@
 Package: pim-test
-Version: 0.2.0
+Version: 0.2.1
 Section: devel
 Priority: optional
 Architecture: arm64 
@@ -28,3 +28,4 @@ Description: PIM application
 0.1.8 : PIMCAM, restart_app.sh
 0.1.9 : chk_mem.sh, postinst, rc.local, log
 0.2.0 : rtc reset, log
+0.2.1 : add max9296, wdt enable, etc
