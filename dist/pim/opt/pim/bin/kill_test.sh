@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 #service=$1
 #logger -s -t 'sh   ' streamApp PIMCAM vcm 
@@ -40,7 +40,5 @@ if [ ! -z "$service" ]; then
 		sudo killall -s KILL $service
         fi
 fi
-
-/opt/pim/bin/vcm &
 
 exit "$status"

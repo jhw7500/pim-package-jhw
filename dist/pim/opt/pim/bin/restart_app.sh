@@ -18,6 +18,7 @@ while [ 1 ]; do
 				fi
 				sleep 1
 			done
+			/opt/pim/bin/vcm &
 			/usr/bin/PIMCAM -j /root/shared_v/edgeconf_pim.json &
 		fi
 	fi

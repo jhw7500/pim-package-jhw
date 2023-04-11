@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 #service=$1
 #logger -s -t 'sh   ' streamApp PIMCAM vcm 
