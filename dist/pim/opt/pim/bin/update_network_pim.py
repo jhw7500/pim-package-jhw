@@ -234,9 +234,9 @@ if edgeconf['NETWORK']['WLAN0']['chmask'] == True :
             f.write("    key_mgmt=WPA-PSK\n")    
         elif edgeconf['NETWORK']['WLAN0']['security'] == 'EAP' :
             f.write("    key_mgmt=WPA-EAP\n    eap=PEAP\n")    
-            f.write("    identity=")
+            f.write("    identity=\"")
             f.write(edgeconf['NETWORK']['WLAN0']['identity'])
-            f.write("\n    password=\"")
+            f.write("\"\n    password=\"")
             f.write(edgeconf['NETWORK']['WLAN0']['passwd'])
             f.write("\"\n")
         elif edgeconf['NETWORK']['WLAN0']['security'] == 'OPEN' :
