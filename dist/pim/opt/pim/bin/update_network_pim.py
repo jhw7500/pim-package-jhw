@@ -210,41 +210,52 @@ with open("/tmp/wlp1s0.yaml", "w") as f :
         f.write("      dhcp-identifier: mac\n")
     f.close()
 
-with open("/tmp/wpa_supplicant.conf", "w") as f :
-    f.write("ctrl_interface=/var/run/wpa_supplicant\n")
-    f.write("bgscan=\"")
-    f.write(edgeconf['NETWORK']['WLAN0']['bgscan'])
-    f.write("\"\n")
-    f.write("freq_list=")
-    freq_list=edgeconf['NETWORK']['WLAN0']['mask_freq']
-    output_str= ' '.join(str(item) for item in freq_list)
-    f.write(output_str)
-    f.write("\n")
-    f.write("\n")
-    f.write("network={")
-    f.write("\n")
-    f.write("    ssid=\"")
-    f.write(edgeconf['NETWORK']['WLAN0']['ssid'])
-    f.write("\"\n")
-    if edgeconf['NETWORK']['WLAN0']['security'] == 'PSK' :
-        f.write("    psk=\"")
-        f.write(edgeconf['NETWORK']['WLAN0']['passwd'])
+if edgeconf['NETWORK']['WLAN0']['chmask'] == True :
+    with open("/tmp/wpa_supplicant.conf", "w") as f :
+        f.write("ctrl_interface=/var/run/wpa_supplicant\n")
+        f.write("bgscan=\"")
+        f.write(edgeconf['NETWORK']['WLAN0']['bgscan'])
         f.write("\"\n")
-        f.write("    key_mgmt=WPA-PSK\n")    
-    elif edgeconf['NETWORK']['WLAN0']['security'] == 'EAP' :
-        f.write("    key_mgmt=WPA-EAP\n    eap=PEAP\n")    
-        f.write("    identity=")
-        f.write(edgeconf['NETWORK']['WLAN0']['identity'])
-        f.write("\n    password=\"")
-        f.write(edgeconf['NETWORK']['WLAN0']['passwd'])
+        f.write("freq_list=")
+        freq_list=edgeconf['NETWORK']['WLAN0']['mask_freq']
+        output_str= ' '.join(str(item) for item in freq_list)
+        f.write(output_str)
+        f.write("\n")
+        f.write("\n")
+        f.write("network={")
+        f.write("\n")
+        f.write("    ssid=\"")
+        f.write(edgeconf['NETWORK']['WLAN0']['ssid'])
         f.write("\"\n")
-    elif edgeconf['NETWORK']['WLAN0']['security'] == 'OPEN' :
-        f.write("    key_mgmt=NONE\n")    
-    f.write("    scan_freq=")
-    f.write(output_str)
-    f.write("\n")
-    f.write("}\n")
-    f.close()
+        if edgeconf['NETWORK']['WLAN0']['security'] == 'PSK' :
+            f.write("    psk=\"")
+            f.write(edgeconf['NETWORK']['WLAN0']['passwd'])
+            f.write("\"\n")
+            f.write("    key_mgmt=WPA-PSK\n")    
+        elif edgeconf['NETWORK']['WLAN0']['security'] == 'EAP' :
+            f.write("    key_mgmt=WPA-EAP\n    eap=PEAP\n")    
+            f.write("    identity=")
+            f.write(edgeconf['NETWORK']['WLAN0']['identity'])
+            f.write("\n    password=\"")
+            f.write(edgeconf['NETWORK']['WLAN0']['passwd'])
+            f.write("\"\n")
+        elif edgeconf['NETWORK']['WLAN0']['security'] == 'OPEN' :
+            f.write("    key_mgmt=NONE\n")    
+        f.write("    scan_freq=")
+        f.write(output_str)
+        f.write("\n")
+        f.write("}\n")
+        f.close()
+        
+    file_wpa_supplicant = '/etc/wpa_supplicant/wpa_supplicant.conf'
+    if os.path.isfile(file_wpa_supplicant) == False or cmp('/tmp/wpa_supplicant.conf',file_wpa_supplicant) == False :
+        subprocess.call(['cp','/tmp/wpa_supplicant.conf',file_wpa_supplicant])
+        subprocess.call(['chmod','644',file_wpa_supplicant])
+        change_wpa_supplicant_flag = True
+
+    subprocess.call(['rm','/tmp/wpa_supplicant.conf'])
+
+
 
 #wpa_autoscan_parm = ''
 #wpa_bgscan_parm = ''
@@ -265,13 +276,7 @@ with open("/tmp/wpa_supplicant.conf", "w") as f :
     
 #    f.close()
 
-file_wpa_supplicant = '/etc/wpa_supplicant/wpa_supplicant.conf'
-if os.path.isfile(file_wpa_supplicant) == False or cmp('/tmp/wpa_supplicant.conf',file_wpa_supplicant) == False :
-    subprocess.call(['cp','/tmp/wpa_supplicant.conf',file_wpa_supplicant])
-    subprocess.call(['chmod','644',file_wpa_supplicant])
-    change_wpa_supplicant_flag = True
 
-subprocess.call(['rm','/tmp/wpa_supplicant.conf'])
 
 file_conn_wlan0 = '/etc/netplan/wlp1s0.yaml'
 if os.path.isfile(file_conn_wlan0) == False or cmp('/tmp/wlp1s0.yaml',file_conn_wlan0) == False :
@@ -283,5 +288,6 @@ subprocess.call(['rm','/tmp/wlp1s0.yaml'])
 if change_netplan_flag == True :
     subprocess.call(['netplan','generate'])
     subprocess.call(['netplan','apply'])
-    subprocess.call(['/opt/pim/bin/set_wpa_suppl.sh'])
+    if edgeconf['NETWORK']['WLAN0']['chmask'] == True :
+        subprocess.call(['/opt/pim/bin/set_wpa_suppl.sh'])
 #subprocess.call(['wpa_cli','-i', 'wlan0','scan'])
