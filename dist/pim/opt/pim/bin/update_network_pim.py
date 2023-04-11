@@ -157,7 +157,7 @@ with open("/tmp/wlp1s0.yaml", "w") as f :
         f.write("        ")
         if edgeconf['NETWOR']['WLAN0']['chmask'] == True :
             f.write("dummy_ssid: {}")
-        else
+        else :
             f.write(edgeconf['NETWORK']['WLAN0']['ssid'])
             f.write(":\n")
             f.write("          password: ")
@@ -169,7 +169,7 @@ with open("/tmp/wlp1s0.yaml", "w") as f :
         f.write("        ")
         if edgeconf['NETWOR']['WLAN0']['chmask'] == True :
             f.write("dummy_ssid: {}")
-        else
+        else :
             f.write(edgeconf['NETWORK']['WLAN0']['ssid'])
             f.write(":\n")
             f.write("          auth:\n")
@@ -186,7 +186,7 @@ with open("/tmp/wlp1s0.yaml", "w") as f :
         f.write("        ")
         if edgeconf['NETWOR']['WLAN0']['chmask'] == True :
             f.write("dummy_ssid: {}")
-        else
+        else :
             f.write(edgeconf['NETWORK']['WLAN0']['ssid'])
         f.write(": {}\n")
     
