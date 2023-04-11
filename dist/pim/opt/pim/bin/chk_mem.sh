@@ -11,7 +11,7 @@ do
 #service=streamApp
 cpu=$(mpstat |tail -1 | awk '{print 100-$NF}')
 mem=$(sar -r 0 |tail -1 | awk '{print $5}')
-logger -s -p local0.notice -t $tag [CHK] total cpu ${cpu}% memory ${mem}%
+logger -p local0.notice -t $tag [CHK] total cpu ${cpu}% memory ${mem}%
 
 for service in $group; do
 if [ ! -z "$service" ]; then
