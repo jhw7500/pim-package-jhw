@@ -1,8 +1,9 @@
 #!/bin/bash
 INPUT_PATH=$1
 LIMIT_DATE=$2
+tag=$(basename "$0")
 if [ -z "$INPUT_PATH" ];then
-    echo "failed : you should input path"
+    logger -p local0.crit -t $tag [CHK] failed : you should input path
     exit 1
 fi
 
@@ -10,7 +11,7 @@ fi
 #echo "input path : " $INPUT_PATH
 
 if [ ! -d "$INPUT_PATH" ]; then
-    echo "failed : $INPUT_PATH is not directory"
+    logger -p local0.crit -t $tag [CHK] failed : $INPUT_PATH is not directory
     exit 1
 fi
 
@@ -32,8 +33,7 @@ for log in $INPUT_PATH*/*.log
 
             gzip ${INPUT_PATH}/${log_name}.log
             mv ${INPUT_PATH}/${log_name}.log.gz ${INPUT_PATH}/g${log_name}.log.gz
-            #echo "${log_name}.log converted"
-            #echo "========================="
+            logger -p local0.notice -t $tag [CHK] ${log_name}.log converted
         fi
 
     done
@@ -41,10 +41,10 @@ for log in $INPUT_PATH*/*.log
 FILE=$(find /var/log/cantops -name *gz)
 
 if [[ "$FILE" == *.log.gz ]]; then
-echo "exist"
+#echo "exist"
 for gz in $INPUT_PATH*/*.log.gz
     do
-	echo $gz
+	#echo $gz
         gz_name=${gz:(${#INPUT_PATH}+2):-7}
         #echo "gz_name:"$gz_name
         #echo "TO_DAY:"$TO_DAY
@@ -56,7 +56,7 @@ for gz in $INPUT_PATH*/*.log.gz
         #echo "date_diff:"$date_diff
         if [[ ${date_diff} -gt ${LIMIT_DATE} ]]; then
             rm ${INPUT_PATH}/g${gz_name}.log.gz
-            #echo "rm "g${gz_name}".log.gz"
+            logger -p local0.notice -t $tag [CHK] remove "g${gz_name}".log.gz
             #gzip ${INPUT_PATH}/${log_name}.log &\
             #echo "========================="
         fi

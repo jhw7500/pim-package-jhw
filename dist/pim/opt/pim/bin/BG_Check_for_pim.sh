@@ -49,7 +49,7 @@ while true; do
     sleep 10
     CLEAR_CHK_LOG
     #cam connect check
-    /opt/pim/bin/chk_cam_connect.sh
+    /opt/pim/bin/chk_cam_connect.sh 2>/dev/null
     #wifi check
     /opt/pim/bin/chk_wifi.sh
     #eth0 check

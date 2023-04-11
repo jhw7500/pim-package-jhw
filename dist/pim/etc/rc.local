@@ -47,14 +47,14 @@ touch /var/run/vsd.pipe
 #/opt/pim/bin/cam_rotate_setting.sh &
 
 #bg scan check
-/opt/pim/bin/bgscan_polling.sh &
+/opt/pim/bin/bgscan_polling.sh & 2>/dev/null
 
 #Network Test
 #/opt/pim/bin/wifilog_for_pim.sh &
 #iperf3 -s -p 8554 &
 
 #bg check
-/opt/pim/bin/BG_Check_for_pim.sh &
+/opt/pim/bin/BG_Check_for_pim.sh & 2>/dev/null
 
 /opt/pim/bin/log_to_gz.sh /var/log/cantops 30 > /dev/null
 /opt/pim/bin/chk_mem.sh &
