@@ -1,0 +1,11 @@
+[Unit]
+Description=PIM CAM Operate Check Service
+After=syslog.service
+
+[Service]
+User=root
+WorkingDirectory=/root
+ExecStart=/opt/pim/bin/chk_cam_operate.sh
+
+[Install]
+WantedBy=multi-user.target
