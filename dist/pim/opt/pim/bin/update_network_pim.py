@@ -155,7 +155,7 @@ with open("/tmp/wlp1s0.yaml", "w") as f :
     if edgeconf['NETWORK']['WLAN0']['security'] == 'PSK' :
         f.write("      access-points:\n")
         f.write("        ")
-        if edgeconf['NETWOR']['WLAN0']['chmask'] == True :
+        if edgeconf['NETWORK']['WLAN0']['chmask'] == True :
             f.write("dummy_ssid: {}\n")
         else :
             f.write(edgeconf['NETWORK']['WLAN0']['ssid'])
@@ -184,7 +184,7 @@ with open("/tmp/wlp1s0.yaml", "w") as f :
     elif edgeconf['NETWORK']['WLAN0']['security'] == 'OPEN' :
         f.write("      access-points:\n")
         f.write("        ")
-        if edgeconf['NETWOR']['WLAN0']['chmask'] == True :
+        if edgeconf['NETWORK']['WLAN0']['chmask'] == True :
             f.write("dummy_ssid: {}\n")
         else :
             f.write(edgeconf['NETWORK']['WLAN0']['ssid'])
