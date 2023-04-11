@@ -212,9 +212,9 @@ with open("/tmp/wlp1s0.yaml", "w") as f :
 
 with open("/tmp/wpa_supplicant.conf", "w") as f :
     f.write("ctrl_interface=/var/run/wpa_supplicant\n")
-    f.write("bgscan=")
+    f.write("bgscan=\"")
     f.write(edgeconf['NETWORK']['WLAN0']['bgscan'])
-    f.write("\n")
+    f.write("\"\n")
     f.write("freq_list=")
     freq_list=edgeconf['NETWORK']['WLAN0']['mask_freq']
     output_str= ' '.join(str(item) for item in freq_list)
@@ -223,21 +223,21 @@ with open("/tmp/wpa_supplicant.conf", "w") as f :
     f.write("\n")
     f.write("network={")
     f.write("\n")
-    f.write("    ssid=")
+    f.write("    ssid=\"")
     f.write(edgeconf['NETWORK']['WLAN0']['ssid'])
-    f.write("\n")
+    f.write("\"\n")
     if edgeconf['NETWORK']['WLAN0']['security'] == 'PSK' :
-        f.write("    psk=")
+        f.write("    psk=\"")
         f.write(edgeconf['NETWORK']['WLAN0']['passwd'])
-        f.write("\n")
+        f.write("\"\n")
         f.write("    key_mgmt=WPA-PSK\n")    
     elif edgeconf['NETWORK']['WLAN0']['security'] == 'EAP' :
         f.write("    key_mgmt=WPA-EAP\n    eap=PEAP\n")    
         f.write("    identity=")
         f.write(edgeconf['NETWORK']['WLAN0']['identity'])
-        f.write("\n    password=")
+        f.write("\n    password=\"")
         f.write(edgeconf['NETWORK']['WLAN0']['passwd'])
-        f.write("\n")
+        f.write("\"\n")
     elif edgeconf['NETWORK']['WLAN0']['security'] == 'OPEN' :
         f.write("    key_mgmt=NONE\n")    
     f.write("    scan_freq=")
