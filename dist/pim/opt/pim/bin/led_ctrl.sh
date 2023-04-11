@@ -1,5 +1,5 @@
 #!/bin/bash
-FLAG_PATH="/opt/pim/bin/bg_chk_flag"
+FLAG_PATH="/tmp"
 TEST_RESULT=0;
 
 function LED_init(){
