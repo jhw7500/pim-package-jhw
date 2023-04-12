@@ -87,8 +87,8 @@ do
 			logger -p local0.notice -t $tag [CHK] check_num:$check_num cnt:$filecnt 
 			if [ "$check_num" -gt "$filecnt" ]; then
 				((retry++))
-				echo "cam file check error and reset($retry)"
-				logger -p local0.error -t $tag [CHK] $check_num !=$filecnt file cnt check fail retry:$retry
+				#echo "cam file check error and reset($retry)"
+				logger -s -p local0.alert -t $tag [CHK] $check_num !=$filecnt file cnt check fail retry:$retry
 				if [ "$retry" -le 3 ]; then
 					/opt/pim/bin/kill_test.sh				
 				elif [ "$retry" -le 5 ]; then
@@ -97,7 +97,7 @@ do
 					reboot
 				fi
 			else
-				logger -p local0.notice -t $tag [CHK] mp4.srt file cnt check ok
+				logger -s -p local0.alert -t $tag [CHK] mp4.srt file cnt check ok
 				retry=0
 			fi
 		fi
