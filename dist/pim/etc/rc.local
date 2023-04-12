@@ -43,7 +43,7 @@ touch /var/run/vsd.pipe
 #i2ctransfer -f -y -a 1 w4@0x3c 0x51 0x00 0x11 0x54
 
 #rotate
-/opt/pim/bin/cam_ae_setting.sh &
+#/opt/pim/bin/cam_ae_setting.sh &
 #/opt/pim/bin/cam_rotate_setting.sh &
 
 #bg scan check
