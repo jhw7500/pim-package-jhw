@@ -1,6 +1,6 @@
 #!/bin/bash
 TEST_CONFIG_FILE="/root/shared_v/edgeconf_pim.json"
-FLAG_PATH="/opt/pim/bin/bg_chk_flag"
+FLAG_PATH="/tmp"
 tag=$(basename "$0")
 
 SUCCESS_VAL="0xfa"

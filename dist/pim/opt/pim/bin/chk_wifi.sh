@@ -37,9 +37,9 @@ else
 				_success_value=" 0% packet loss"
 				IP_ADDR=$(cat "$TEST_CONFIG_FILE" | grep wifi_test_ip_addr | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
 				WIFI_SIG=$(iw wlp1s0 link | grep signal | cut -d':' -f2 | tr -d ' ' | tr -d 'dBm')
-				logger -p local0.error -t $tag [CHK] WIFI SSID : $WIFI_SSID
-				logger -p local0.error -t $tag [CHK] WIFI IP ADDR : $IP_ADDR
-				logger -p local0.error -t $tag [CHK] WIFI Signal : $WIFI_SIG dBm
+				logger -p local0.info -t $tag [CHK] WIFI SSID : $WIFI_SSID
+				logger -p local0.info -t $tag [CHK] WIFI IP ADDR : $IP_ADDR
+				logger -p local0.info -t $tag [CHK] WIFI Signal : $WIFI_SIG dBm
 				WIFI_PING=$(ping $IP_ADDR -c 3 -W 3 -s 1000)	
 				if [[ $WIFI_PING != *"$_success_value"* ]]; then
 					logger -p local0.error -t $tag [CHK] WIFI PING ERR
