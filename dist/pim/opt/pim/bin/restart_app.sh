@@ -1,8 +1,10 @@
-#!/bin/sh
+#!/bin/bash
 
 service=$1
 status=0
 status2=0
+tag=$(basename "$0")
+
 while [ 1 ]; do 
 	if [ ! -z "$service" ]; then
 		pgrep "$service" >/dev/null; status=$?
@@ -12,12 +14,19 @@ while [ 1 ]; do
 			while [ 1 ]; do 
 				pgrep streamApp >/dev/null; status2=$?
 				if [ "$status2" -eq 0 ]; then
-					echo "Not yet" > /dev/null
+					#echo "Not yet" > /dev/null
+					logger -p local0.notice -t $tag [CHK] streamApp exit not yet
 				else
-					break
+					pgrep vcm >/dev/null; status2=$?
+					if [ "$status2" -eq 0 ]; then
+						logger -p local0.notice -t $tag [CHK] vcm not yet
+					else
+						break
+					fi
 				fi
 				sleep 1
 			done
+			logger -p local0.notice -t $tag [CHK] PIMCAM, streamApp start 
 			/opt/pim/bin/vcm &
 			/usr/bin/PIMCAM -j /root/shared_v/edgeconf_pim.json &
 		fi

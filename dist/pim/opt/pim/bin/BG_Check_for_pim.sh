@@ -2,7 +2,7 @@
 FLAG_PATH="/tmp"
 
 function CLEAR_CHK_LOG() {
-	rm ${FLAG_PATH}/err_*
+	rm ${FLAG_PATH}/err_* 2>/dev/null
 }
 
 function MAKE_RESULT_FLAG() {

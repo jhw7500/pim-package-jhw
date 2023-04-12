@@ -1,8 +1,10 @@
 #!/bin/bash
 
-killall -s KILL restart_app.sh
-/opt/pim/bin/kill_test.sh
-/opt/pim/bin/kill_pid.sh
+tag=$(basename "$0")
+logger -p local0.notice -t $tag [CHK] module reset..
+#killall -s KILL restart_app.sh
+#/opt/pim/bin/kill_test.sh
+/opt/pim/bin/kill_all.sh
 
 sleep 2
 modprobe -r imx8-media-dev
@@ -17,7 +19,7 @@ sleep 1
 modprobe imx8-media-dev
 sleep 5
 #PIMCAM -j /root/shared_v/edgeconf_pim.json &
-#/opt/pim/bin/vsd &
-#/opt/pim/bin/ord &
-#/opt/pim/bin/vcm &
 /opt/pim/bin/restart_app.sh PIMCAM &
+#/opt/pim/bin/kill_pid.sh
+/opt/pim/bin/ord &
+/opt/pim/bin/vsd &

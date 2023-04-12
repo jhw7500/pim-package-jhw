@@ -23,7 +23,7 @@ echo 1 > /sys/devices/platform/leds/leds/gpio2_led/brightness
 touch /var/run/vsd.pipe
 #PIMCAM -j /root/shared_v/edgeconf_pim.json &
 /opt/pim/bin/restart_app.sh PIMCAM &
-/opt/pim/bin/vcm &
+#/opt/pim/bin/vcm &
 /opt/pim/bin/ord &
 /opt/pim/bin/vsd &
 
@@ -43,7 +43,7 @@ touch /var/run/vsd.pipe
 #i2ctransfer -f -y -a 1 w4@0x3c 0x51 0x00 0x11 0x54
 
 #rotate
-#/opt/pim/bin/cam_ae_setting.sh &
+/opt/pim/bin/cam_ae_setting.sh &
 #/opt/pim/bin/cam_rotate_setting.sh &
 
 #bg scan check

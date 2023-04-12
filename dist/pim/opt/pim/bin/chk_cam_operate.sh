@@ -6,10 +6,12 @@ FILE_JSON_=/root/shared_v/ord_vcm_conf.json
 tag=$(basename "$0")
 ENABLE_VAL=true
 DISABLE_VAL=false
-check_num=0
+retry=0
+
 while :
 do
 	startTime=$(cat $FILE_ | tr -d '\n')
+	check_num=0
 	if [ -n "$startTime"  ]; then
 		curTimeEpoch=$(date "+%s")
 		logger -p local0.notice -t $tag [CHK] start_video_time_ : $startTime
@@ -46,7 +48,7 @@ do
                                 if [ -f /mnt/*"$mp4date"-ch1.mp4 ]; then
                                         logger -p local0.info -t $tag [CHK] *"$mp4date"-ch1.mp4 exist
                                 else
-                                        logger -p local0.error -t $tag [CHK] *"$mp4date"-ch1.mp4 exist
+                                        logger -p local0.error -t $tag [CHK] *"$mp4date"-ch1.mp4 not exist
                                 fi
 				((check_num++))
                         fi
@@ -81,11 +83,22 @@ do
 			#echo $mp4date
 			filecnt=$(ls -l /mnt/*"$mp4date"* |grep ^- |wc -l)
 			#echo $filecnt
+			logger -p local0.notice -t $tag [CHK] mp4date:$mp4date
+			logger -p local0.notice -t $tag [CHK] check_num:$check_num cnt:$filecnt 
 			if [ "$check_num" -gt "$filecnt" ]; then
-				logger -p local0.error -t $tag [CHK] mp4,srt file cnt check fail
-				/opt/pim/bin/kill_test.sh
+				((retry++))
+				echo "cam file check error and reset($retry)"
+				logger -p local0.error -t $tag [CHK] $check_num !=$filecnt file cnt check fail retry:$retry
+				if [ "$retry" -le 3 ]; then
+					/opt/pim/bin/kill_test.sh				
+				elif [ "$retry" -le 5 ]; then
+					/opt/pim/bin/init_cam.sh
+				else
+					reboot
+				fi
 			else
 				logger -p local0.notice -t $tag [CHK] mp4.srt file cnt check ok
+				retry=0
 			fi
 		fi
 	fi
