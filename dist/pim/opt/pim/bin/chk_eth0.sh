@@ -26,7 +26,7 @@ if [[ $ETH0_PING != *"$_success_value"* ]]; then
 	if (( $err_count > 2 )) ; then
 		echo "${timestamp} ETH0 PING ERR" >> ${FLAG_PATH}/err_eth0.log
 		logger -p local0.error -t $tag [CHK] ETH0 199.10.100.20 PING ERR 3TIME	
-		rm ${FLAG_PATH}/"$ERR_CNT" 
+		echo 2 >> ${FLAG_PATH}/"$ERR_CNT" 
 	fi
 else	
 	#ping success
