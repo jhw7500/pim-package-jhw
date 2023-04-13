@@ -44,7 +44,7 @@ function MAKE_RESULT_FLAG() {
 	printf "%d" $result > ${FLAG_PATH}/bg_chk_flag.bin
 }
 
-
+sleep 10
 while true; do
     sleep 10
     CLEAR_CHK_LOG

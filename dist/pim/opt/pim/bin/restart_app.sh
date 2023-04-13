@@ -5,7 +5,7 @@ status=0
 status2=0
 tag=$(basename "$0")
 
-while [ 1 ]; do 
+while [ 1 ]; do
 	if [ ! -z "$service" ]; then
 		pgrep "$service" >/dev/null; status=$?
 		if [ "$status" -eq 0 ]; then
@@ -31,8 +31,7 @@ while [ 1 ]; do
 			/usr/bin/PIMCAM -j /root/shared_v/edgeconf_pim.json &
 		fi
 	fi
-	sleep 1;
+	sleep 1
 done
-
 exit "$status"
 
