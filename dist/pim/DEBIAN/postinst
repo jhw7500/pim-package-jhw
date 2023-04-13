@@ -18,6 +18,8 @@ configure)
   systemctl stop systemd-network-wait-online.service
   systemctl disable systemd-network-wait-online.service
   systemctl mask systemd-networkd-wait-online.service
+  systemctl stop nfs-client.target
+  systemctl disable nfs-client.target
 #  systemctl stop connman.service
 #  systemctl disable connman.service
   
