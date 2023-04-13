@@ -28,7 +28,7 @@
       "used" : "WLAN0"
    },
    "VHL_CAM" : {
-      "bitrate" : 2048,
+      "bitrate" : 1048,
       "cam_ch0" : true,
       "cam_ch0_rotate" : false,
       "cam_ch1" : true,
