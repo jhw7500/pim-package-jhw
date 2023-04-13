@@ -22,7 +22,7 @@ while [ 1 ]; do
 						logger -p local0.notice -t $tag [CHK] vcm not yet
 					else
 						pgrep BG_Check_for_pim.sh >/dev/null; status2=$?
-						if [ "$status2" -eq 0]; then
+						if [ "$status2" -eq 0 ]; then
 							logger -p local0.notice -t $tag [CHK] BG_Check_for_pim not yet
 						else
 							break
