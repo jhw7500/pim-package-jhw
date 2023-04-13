@@ -4,6 +4,7 @@ ERR_CNT="ping_err_cnt"
 tag=$(basename "$0")
 _success_value=" 0% packet loss"
 timestamp=`date +"%Y-%m-%d %T,%3N"`
+MAX_CNT=2
 
 ETH0_PING=$(ping 199.10.100.20 -c 3 -W 3 -s 1000)
 
@@ -23,7 +24,7 @@ if [[ $ETH0_PING != *"$_success_value"* ]]; then
 	logger -p local0.info -t $tag [CHK] ETH0 199.10.100.20 PING ERR	
 	err_count_check
 	err_count=$(cat ${FLAG_PATH}/$ERR_CNT)	
-	if (( ${err_count} > 2 )) ; then
+	if [ $(echo "$err_count > $MAX_CNT" | bc) -eq 1 ]; then
 		echo "${timestamp} ETH0 PING ERR" >> ${FLAG_PATH}/err_eth0.log
 		logger -p local0.error -t $tag [CHK] ETH0 199.10.100.20 PING ERR 3TIME	
 		echo 2 >> ${FLAG_PATH}/"$ERR_CNT"
