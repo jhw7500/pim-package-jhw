@@ -44,12 +44,10 @@ function MAKE_RESULT_FLAG() {
 	printf "%d" $result > ${FLAG_PATH}/bg_chk_flag.bin
 }
 
-sleep 10
+CLEAR_CHK_LOG
+sleep 20
 while true; do
-    sleep 10
     CLEAR_CHK_LOG
-    #cam connect check
-    /opt/pim/bin/chk_cam_connect.sh 2>/dev/null
     #wifi check
     /opt/pim/bin/chk_wifi.sh
     #eth0 check
@@ -60,7 +58,10 @@ while true; do
     /opt/pim/bin/chk_cpu_temp.sh
     #power check
     /opt/pim/bin/chk_voltage.sh
+    #cam connect check
+    /opt/pim/bin/chk_cam_connect.sh 2>/dev/null
     #make result cmd
     MAKE_RESULT_FLAG
     /opt/pim/bin/led_ctrl.sh
+    sleep 1
 done

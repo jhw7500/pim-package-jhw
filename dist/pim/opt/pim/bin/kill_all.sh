@@ -2,7 +2,7 @@
 
 tag=$(basename "$0")
 logger -p local0.notice -t $tag kill_all start
-list="restart_app.sh vcm ord vsd streamApp PIMCAM"
+list="BG_Check_for_pim.sh restart_app.sh vcm ord vsd streamApp PIMCAM"
 #list="chk_mem.sh"
 
 for service in $list; do

@@ -94,6 +94,7 @@ do
 				elif [ "$retry" -le 5 ]; then
 					/opt/pim/bin/init_cam.sh
 				else
+					logger -s -p local0.alert -t $tag "[CHK] retry:$retry reboot.."
 					reboot
 				fi
 			else
