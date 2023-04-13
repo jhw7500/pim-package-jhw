@@ -68,7 +68,7 @@ else
 					logger -p local0.error -t $tag [CHK] CAM0_ERR : $cam01_res $i
 					logger -p local0.error -t $tag [CHK] CAM1_ERR : $cam01_res $i
 					echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log	
-					echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log	
+					echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam1.log	
 				fi	
 			done
 		fi
