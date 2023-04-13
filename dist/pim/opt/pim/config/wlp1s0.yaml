@@ -4,6 +4,6 @@ network:
   wifis:
     wlp1s0:
       access-points:                 
-        KMH_AP:
-          password: 1qaz2wsx
+        PIM_TEST_2:
+          password: 1qaz2wsx!!
       dhcp4: yes

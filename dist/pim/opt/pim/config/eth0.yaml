@@ -3,5 +3,5 @@ network:
   renderer: networkd
   ethernets:
     eth0:
-      #addresses: [100.100.100.101/24]
-      dhcp4: yes
+      addresses: [100.100.100.101/24]
+      dhcp4: no
