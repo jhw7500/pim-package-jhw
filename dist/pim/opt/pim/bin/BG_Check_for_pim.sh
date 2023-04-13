@@ -47,21 +47,30 @@ function MAKE_RESULT_FLAG() {
 CLEAR_CHK_LOG
 sleep 20
 while true; do
+    #echo "START!! BG_CHK"
     CLEAR_CHK_LOG
     #wifi check
+    #echo "wifi"
     /opt/pim/bin/chk_wifi.sh
     #eth0 check
+    #echo "eth0"
     /opt/pim/bin/chk_eth0.sh
     #sd mount check
+    #echo "sd"
     /opt/pim/bin/chk_sd_mount.sh
     #cpu temp check
+    #echo "temp"
     /opt/pim/bin/chk_cpu_temp.sh
     #power check
+    #echo "volt"
     /opt/pim/bin/chk_voltage.sh
     #cam connect check
+    #echo "cam"
     /opt/pim/bin/chk_cam_connect.sh 2>/dev/null
     #make result cmd
+    #echo "make flag"
     MAKE_RESULT_FLAG
+    #echo "led"
     /opt/pim/bin/led_ctrl.sh
     sleep 1
 done

@@ -218,6 +218,4 @@ function LED_CTRL(){
 }
 
 LED_init
-while true; do
-	LED_CTRL
-done
+LED_CTRL
