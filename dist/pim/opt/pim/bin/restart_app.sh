@@ -15,15 +15,15 @@ while [ 1 ]; do
 				pgrep streamApp >/dev/null; status2=$?
 				if [ "$status2" -eq 0 ]; then
 					#echo "Not yet" > /dev/null
-					logger -p local0.notice -t $tag [CHK] streamApp exit not yet
+					logger -p local0.notice [CHK][$tag:$LINENO] streamApp exit not yet
 				else
 					pgrep vcm >/dev/null; status2=$?
 					if [ "$status2" -eq 0 ]; then
-						logger -p local0.notice -t $tag [CHK] vcm not yet
+						logger -p local0.notice [CHK][$tag:$LINENO] vcm not yet
 					else
 						pgrep BG_Check_for_pim.sh >/dev/null; status2=$?
 						if [ "$status2" -eq 0 ]; then
-							logger -p local0.notice -t $tag [CHK] BG_Check_for_pim not yet
+							logger -p local0.notice [CHK][$tag:$LINENO] BG_Check_for_pim not yet
 						else
 							break
 						fi
@@ -31,7 +31,7 @@ while [ 1 ]; do
 				fi
 				sleep 1
 			done
-			logger -p local0.notice -t $tag [CHK] PIMCAM, streamApp, vcm, BG_Check_for_pim start 
+			logger -p local0.notice [CHK][$tag:$LINENO] PIMCAM, streamApp, vcm, BG_Check_for_pim start 
 			/opt/pim/bin/vcm &
 			/usr/bin/PIMCAM -j /root/shared_v/edgeconf_pim.json &
 			/opt/pim/bin/BG_Check_for_pim.sh & 2>/dev/null

@@ -21,12 +21,12 @@ function err_count_check(){
 
 if [[ $ETH0_PING != *"$_success_value"* ]]; then
 	#ping fail
-	logger -p local0.info -t $tag [CHK] ETH0 199.10.100.20 PING ERR	
+	logger -p local0.info [CHK][$tag:$LINENO] ETH0 199.10.100.20 PING ERR	
 	err_count_check
 	err_count=$(cat ${FLAG_PATH}/$ERR_CNT)	
 	if [[ $(echo "$err_count > $MAX_CNT" | bc) -eq 1 ]]; then
 		echo "${timestamp} ETH0 PING ERR" >> ${FLAG_PATH}/err_eth0.log
-		logger -p local0.error -t $tag [CHK] ETH0 199.10.100.20 PING ERR 3TIME	
+		logger -p local0.error [CHK][$tag:$LINENO] ETH0 199.10.100.20 PING ERR 3TIME	
 		echo $MAX_CNT > ${FLAG_PATH}/"$ERR_CNT"
 	fi
 else	

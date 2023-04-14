@@ -3,7 +3,7 @@ INPUT_PATH=$1
 LIMIT_DATE=$2
 tag=$(basename "$0")
 if [ -z "$INPUT_PATH" ];then
-    logger -p local0.crit -t $tag [CHK] failed : you should input path
+    logger -p local0.crit [CHK][$tag:$LINENO] failed : you should input path
     exit 1
 fi
 
@@ -11,7 +11,7 @@ fi
 #echo "input path : " $INPUT_PATH
 
 if [ ! -d "$INPUT_PATH" ]; then
-    logger -p local0.crit -t $tag [CHK] failed : $INPUT_PATH is not directory
+    logger -p local0.crit [CHK][$tag:$LINENO] failed : $INPUT_PATH is not directory
     exit 1
 fi
 
@@ -33,7 +33,7 @@ for log in $INPUT_PATH*/*.log
 
             gzip ${INPUT_PATH}/${log_name}.log
             mv ${INPUT_PATH}/${log_name}.log.gz ${INPUT_PATH}/g${log_name}.log.gz
-            logger -p local0.notice -t $tag [CHK] ${log_name}.log converted
+            logger -p local0.notice [CHK][$tag:$LINENO] ${log_name}.log converted
         fi
 
     done
@@ -56,7 +56,7 @@ for gz in $INPUT_PATH*/*.log.gz
         #echo "date_diff:"$date_diff
         if [[ ${date_diff} -gt ${LIMIT_DATE} ]]; then
             rm ${INPUT_PATH}/g${gz_name}.log.gz
-            logger -p local0.notice -t $tag [CHK] remove "g${gz_name}".log.gz
+            logger -p local0.notice [CHK][$tag:$LINENO] remove "g${gz_name}".log.gz
             #gzip ${INPUT_PATH}/${log_name}.log &\
             #echo "========================="
         fi

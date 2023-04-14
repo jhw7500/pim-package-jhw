@@ -1,7 +1,7 @@
 #!/bin/bash
 
 tag=$(basename "$0")
-logger -p local0.notice -t $tag [CHK] module reset..
+logger -p local0.notice [CHK][$tag:$LINENO] module reset..
 #killall -s KILL restart_app.sh
 #/opt/pim/bin/kill_test.sh
 /opt/pim/bin/kill_all.sh

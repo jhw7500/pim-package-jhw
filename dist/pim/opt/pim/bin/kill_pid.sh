@@ -14,7 +14,7 @@ if [ ! -z "$service" ]; then
 		#echo $service" pid:"$pid
 		if [ -n "$pid" ]; then
 			echo $service" pid:"${pid}
-                	logger -p local0.notice -t $tag [SYS] kill $service
+                	logger -p local0.notice [CHK][$tag:$LINENO] kill $service
                 	#sudo kill -9 $pid
 			sudo killall -9 $service
 			#sleep 0.5

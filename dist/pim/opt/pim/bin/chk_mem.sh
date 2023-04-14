@@ -11,7 +11,7 @@ do
 #service=streamApp
 cpu=$(mpstat |tail -1 | awk '{print 100-$NF}')
 mem=$(sar -r 0 |tail -1 | awk '{print $5}')
-logger -p local0.notice -t $tag [CHK] total cpu ${cpu}% memory ${mem}%
+logger -p local0.notice [CHK][$tag:$LINENO] total cpu ${cpu}% memory ${mem}%
 
 for service in $group; do
 if [ ! -z "$service" ]; then
@@ -20,7 +20,7 @@ if [ ! -z "$service" ]; then
 		pid=$(ps -C $service |grep $service |awk '{print $1}')		
 		#echo $service" pid:":${pid}
 		mem=$(pmap -x $pid |tail -1 |awk '{print "Kbytes:"$3" RSS:"$4" Dirty:"$5}')
-		logger -p local0.info -t $tag [CHK] $service ${mem}
+		logger -p local0.info [CHK][$tag:$LINENO] $service ${mem}
 	fi
 fi
 done

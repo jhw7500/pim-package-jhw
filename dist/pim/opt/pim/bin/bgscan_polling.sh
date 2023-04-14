@@ -6,11 +6,11 @@ DISABLE_VAL="false"
 tag=$(basename "$0")
 
 if [[ ! -s "$TEST_CONFIG_FILE" ]]; then 
-	logger -p local0.error -t $tag [BGS] Not Found $TEST_CONFIG_FILE
+	logger -p local0.error [BGS][$tag:$LINENO] Not Found $TEST_CONFIG_FILE
 else
 	chmask_en=$(cat $TEST_CONFIG_FILE | grep chmask | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')	
 	if [[ "$chmask_en" == *"$DISABLE_VAL"* ]] ; then	
-		logger -p local0.notice -t $tag [BGS] channel mask disable
+		logger -p local0.notice [BGS][$tag:$LINENO] channel mask disable
 		while true; do
 			IW_DEV_RESULT=$(iw dev)
 			BGSCAN_CHK=$(wpa_cli -p /run/wpa_supplicant -i wlp1s0 get_network 0 bgscan)
@@ -25,7 +25,7 @@ else
 			fi
 		done
 	else
-		logger -p local0.notice -t $tag [BGS] channel mask enable	
+		logger -p local0.notice [BGS][$tag:$LINENO] channel mask enable	
 	fi
 fi
 

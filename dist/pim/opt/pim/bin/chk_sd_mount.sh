@@ -12,7 +12,7 @@ CHECK_MOUNT_WELL() {
 	if [ ! -d "$folder" ]; then
 		mkdir $folder
 		if [ $? -ne 0 ]; then
-			logger -p local0.error -t $tag "[CHK] sd mkdir $folder error"
+			logger -p local0.error "[CHK][$tag:$LINENO] sd mkdir $folder error"
 			echo "${timestamp} SDCARD MNT ERR" >> ${FLAG_PATH}/err_sdcard.log
 			exit 1
 		fi
@@ -24,7 +24,7 @@ CHECK_MOUNT_WELL() {
 		rm $folder/$file > /dev/null 2>&1
 		if [ $? -eq 0 ]; then
 			#echo "rm ok"
-			logger -p local0.notice -t $tag "[CHK] sd mount & write ok"
+			logger -p local0.info "[CHK][$tag:$LINENO] sd mount & write ok"
 			exit 0
 		else
 			#echo "rm error"
@@ -36,7 +36,7 @@ CHECK_MOUNT_WELL() {
 		exit 1
 	fi
     else
-        logger -p local0.error -t $tag [CHK] SD MOUNT ERR
+        logger -p local0.error [CHK][$tag:$LINENO] SD MOUNT ERR
 	echo "${timestamp} SDCARD MNT ERR" >> ${FLAG_PATH}/err_sdcard.log
         exit 1
     fi

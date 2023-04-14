@@ -12,7 +12,7 @@ if [ $(echo "$CPU_TEMP < $MAX_CPU_TEMP" | bc) -eq 1 ]
 then
 	exit 0
 else
-	logger -p local0.error -t $tag [CHK] CPU TEMP ERR : $CPU_TEMP 
+	logger -p local0.error [CHK][$tag:$LINENO] CPU TEMP ERR : $CPU_TEMP 
 	echo "${timestamp} CPU TEMP ERR" >> ${FLAG_PATH}/err_cpu_temp.log
 	exit 1
 fi
