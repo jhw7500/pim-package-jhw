@@ -51,19 +51,19 @@ while true; do
     CLEAR_CHK_LOG
     #wifi check
     #echo "wifi"
-    /opt/pim/bin/chk_wifi.sh
+    /opt/pim/bin/chk_wifi.sh 2>/dev/null
     #eth0 check
     #echo "eth0"
-    /opt/pim/bin/chk_eth0.sh
+    /opt/pim/bin/chk_eth0.sh 2>/dev/null
     #sd mount check
     #echo "sd"
-    /opt/pim/bin/chk_sd_mount.sh
+    /opt/pim/bin/chk_sd_mount.sh 2>/dev/null
     #cpu temp check
     #echo "temp"
-    /opt/pim/bin/chk_cpu_temp.sh
+    /opt/pim/bin/chk_cpu_temp.sh 2>/dev/null
     #power check
     #echo "volt"
-    /opt/pim/bin/chk_voltage.sh
+    /opt/pim/bin/chk_voltage.sh 2>/dev/null
     #cam connect check
     #echo "cam"
     /opt/pim/bin/chk_cam_connect.sh 2>/dev/null
@@ -71,6 +71,6 @@ while true; do
     #echo "make flag"
     MAKE_RESULT_FLAG
     #echo "led"
-    /opt/pim/bin/led_ctrl.sh
+    /opt/pim/bin/led_ctrl.sh 2>/dev/null
     sleep 1
 done
