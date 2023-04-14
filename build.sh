@@ -46,3 +46,4 @@ cp ${BASEDIR}/vsd/build/vsd ${BASEDIR}/release/pim/opt/pim/bin/
 cp ${BASEDIR}/vcm/build/vcm ${BASEDIR}/release/pim/opt/pim/bin/
 cd ${BASEDIR}/release
 dpkg -b pim
+mv pim.deb pim-mp.deb
