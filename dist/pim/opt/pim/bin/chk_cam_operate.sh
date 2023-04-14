@@ -10,7 +10,7 @@ retry=0
 
 while :
 do
-	startTime=$(cat $FILE_ | tr -d '\n')
+	startTime=$(cat $FILE_ | tr -d '\n' 2>/dev/null)
 	check_num=0
 	if [ -n "$startTime"  ]; then
 		curTimeEpoch=$(date "+%s")
