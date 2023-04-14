@@ -1,7 +1,9 @@
 #!/bin/bash
 FLAG_PATH="/tmp"
+tag=$(basename "$0")
 
 function CLEAR_CHK_LOG() {
+	touch $FLAG_PATH/bg_chk_flag.bin
 	rm ${FLAG_PATH}/err_* 2>/dev/null
 }
 
@@ -45,9 +47,10 @@ function MAKE_RESULT_FLAG() {
 }
 
 CLEAR_CHK_LOG
-touch $FLAG_PATH/bg_chk_flag.bin
-sleep 20
+sleep 30
+logger -p local0.notice -t $tag [CHK] check roop start
 while true; do
+    sleep 0.5
     #echo "START!! BG_CHK"
     CLEAR_CHK_LOG
     #wifi check
@@ -73,5 +76,4 @@ while true; do
     MAKE_RESULT_FLAG
     #echo "led"
     /opt/pim/bin/led_ctrl.sh 2>/dev/null
-    sleep 1
 done
