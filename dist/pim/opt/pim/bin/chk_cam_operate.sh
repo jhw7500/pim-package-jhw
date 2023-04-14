@@ -7,6 +7,7 @@ tag=$(basename "$0")
 ENABLE_VAL=true
 DISABLE_VAL=false
 retry=0
+touch $FILE_
 
 while :
 do
