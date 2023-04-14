@@ -15,7 +15,7 @@ function err_count_check(){
 		new_w_count=$(expr $old_w_count + 1);
 		echo $new_w_count >> ${FLAG_PATH}/"$ERR_CNT"
 	else
-		echo 1 >> ${FLAG_PATH}/"$ERR_CNT"
+		echo 1 > ${FLAG_PATH}/"$ERR_CNT"
 	fi
 }
 
@@ -24,10 +24,10 @@ if [[ $ETH0_PING != *"$_success_value"* ]]; then
 	logger -p local0.info -t $tag [CHK] ETH0 199.10.100.20 PING ERR	
 	err_count_check
 	err_count=$(cat ${FLAG_PATH}/$ERR_CNT)	
-	if [ $(echo "$err_count > $MAX_CNT" | bc) -eq 1 ]; then
+	if [[ $(echo "$err_count > $MAX_CNT" | bc) -eq 1 ]]; then
 		echo "${timestamp} ETH0 PING ERR" >> ${FLAG_PATH}/err_eth0.log
 		logger -p local0.error -t $tag [CHK] ETH0 199.10.100.20 PING ERR 3TIME	
-		echo 2 >> ${FLAG_PATH}/"$ERR_CNT"
+		echo $MAX_CNT > ${FLAG_PATH}/"$ERR_CNT"
 	fi
 else	
 	#ping success
