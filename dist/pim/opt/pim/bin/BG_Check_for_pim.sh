@@ -45,6 +45,7 @@ function MAKE_RESULT_FLAG() {
 }
 
 CLEAR_CHK_LOG
+touch $FLAG_PATH/bg_chk_flag.bin
 sleep 20
 while true; do
     #echo "START!! BG_CHK"
