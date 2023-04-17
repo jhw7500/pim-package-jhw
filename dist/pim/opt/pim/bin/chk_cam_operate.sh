@@ -11,7 +11,7 @@ touch $FILE_
 
 while :
 do
-	startTime=$(cat $FILE_ | tr -d '\n' 2>/dev/null)
+	startTime=$(cat $FILE_ 2>/dev/null| tr -d '\n')
 	check_num=0
 	if [ -n "$startTime"  ]; then
 		curTimeEpoch=$(date "+%s")
