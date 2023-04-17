@@ -1,9 +1,10 @@
 #!/bin/bash
 #for PIM Camera sdcard Test
-VERSION="20221108"
-COUNT_PATH="/root/count"
-SDA_PATH="/mnt/sda"
-SDB_PATH="/mnt/sdb"
+VERSION="20230417"
+ROOT_PATH=/root/SOMBASE_TEST
+COUNT_PATH="${ROOT_PATH}/count"
+SDA_PATH="/mnt"
+SDB_PATH="/mnt_b"
 WRITE_COUNT="sd_write_count"
 MAX_CP_COUNT=5
 FILE_BLK_SIZE=1M
@@ -11,8 +12,7 @@ FILE_SIZE=10
 
 function SDCARD_Mount() {
 	#echo "  SD CARD MOUNT"
-	/root/automnt_sda.sh &
-	/root/automnt_sdb.sh &
+	${ROOT_PATH}/automnt_sdb.sh &
 	
 	Check_SDA_find;
 	Check_SDB_find;
@@ -25,7 +25,7 @@ function Write_count(){
 		new_w_count=$(expr $old_w_count + 1);
 		echo $new_w_count >> ${COUNT_PATH}/"$WRITE_COUNT"
 	else
-		echo 1 >> ${COUNT_PATH}/"$WRITE_COUNT"
+		echo 1 > ${COUNT_PATH}/"$WRITE_COUNT"
 	fi
 }
 
@@ -89,9 +89,9 @@ function Check_SDB_Remain_space() {
 
 function Generate_Random_file(){
 	#Generate Random file 
-	TEST_FILE="/root/RANDOM_1.bin"		  
+	TEST_FILE="${ROOT_PATH}/RANDOM_1.bin"		  
 	dd if=/dev/urandom of=$TEST_FILE bs=$FILE_BLK_SIZE count=$FILE_SIZE conv=fsync > /dev/null 2>&1
-	TEST_FILE="/root/RANDOM_2.bin"		  
+	TEST_FILE="${ROOT_PATH}/RANDOM_2.bin"		  
 	dd if=/dev/urandom of=$TEST_FILE bs=$FILE_BLK_SIZE count=$FILE_SIZE conv=fsync > /dev/null 2>&1
 }
 
@@ -176,7 +176,7 @@ case $var in
 		echo "TEST $1  version = $VERSION" 
 		Generate_Random_file;
 		SDCARD_Mount;
-		TEST_FILE="/root/RANDOM_1.bin"		  
+		TEST_FILE="${ROOT_PATH}/RANDOM_1.bin"		  
 		do_test_SDA;
 		rm ${COUNT_PATH}/"$WRITE_COUNT" > /dev/null 
 		#echo "Clear SD card A"
@@ -185,7 +185,7 @@ case $var in
 		echo " "
 		echo " "
 
-		TEST_FILE="/root/RANDOM_2.bin"		  
+		TEST_FILE="${ROOT_PATH}/RANDOM_2.bin"		  
 		do_test_SDB;
 		rm ${COUNT_PATH}/"$WRITE_COUNT" > /dev/null 
 		#echo "Clear SD card B"

@@ -9,13 +9,13 @@ while true; do
             if [ -d /sys/bus/mmc/devices/mmc0:*/block/mmcblk0/mmcblk0p1 ]; then
                 mout_dev=`df | grep '/mnt/sdb' | awk '{print $1}'`
                 if [ -z $mout_dev ]; then
-                    if [ ! -d /mnt/sdb ]; then
-                        mkdir -p /mnt/sdb
+                    if [ ! -d /mnt_b ]; then
+                        mkdir -p /mnt_b
                     fi
                     mount /dev/mmcblk0p1 /mnt/sdb
                 elif [ $mout_dev != "/dev/mmcblk0p1" ]; then
-                    umount /mnt/sdb
-                    mount /dev/mmcblk0p1 /mnt/sdb
+                    umount /mnt_b
+                    mount /dev/mmcblk0p1 /mnt_b
                 fi
                 mnt_state_=1
                 mnt_cnt_=0
@@ -25,7 +25,7 @@ while true; do
             if [ ! -d /sys/bus/mmc/devices/mmc0:*/block/mmcblk0/mmcblk0p1 ]; then
                 mnt_cnt_=`expr $mnt_cnt_ + 1`
                 if [ $mnt_cnt_ -ge 4 ]; then
-                    umount /mnt/sdb
+                    umount /mnt_b
                     mnt_state_=0
                 fi
             else
