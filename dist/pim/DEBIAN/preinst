@@ -21,9 +21,9 @@ install)
 
 upgrade)
   echo "preinst upgrade"
-#  ln -sf /usr/share/zoneinfo/Asia/Seoul1 /etc/localtime
-#  timedatectl set-timezone Asia/Seoul
-#  timedatectl set-ntp false
+  ln -sf /usr/share/zoneinfo/Asia/Seoul1 /etc/localtime
+  timedatectl set-timezone Asia/Seoul
+  timedatectl set-ntp false
   ;;
 
 *)

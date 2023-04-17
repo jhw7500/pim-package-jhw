@@ -1,0 +1,11 @@
+#!/bin/bash
+
+tag=$(basename "$0")
+key=CHK
+/opt/pim/bin/kill_all.sh
+logger -s -p local0.notice "[$key][$tag:$LINENO] umount /mnt"
+umount /mnt
+logger -s -p local0.notice "[$key][$tag:$LINENO] reboot -f"
+reboot -f
+
+exit $status

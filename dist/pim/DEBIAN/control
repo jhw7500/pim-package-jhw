@@ -1,5 +1,5 @@
 Package: pim-mp
-Version: 0.2.3
+Version: 0.2.4
 Section: devel
 Priority: optional
 Architecture: arm64 
@@ -31,3 +31,4 @@ Description: PIM application
 0.2.1 : add max9296, wdt enable, etc
 0.2.2 : err cmd, cam-operate, kill*.sh, etc..
 0.2.3 : 3Gbps, ae, awb, log, version, bg app bug fix, default setting..
+0.2.4 : module log, log system, hwclock, creboot..

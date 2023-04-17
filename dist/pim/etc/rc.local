@@ -56,7 +56,7 @@ touch /var/run/vsd.pipe
 #bg check
 #/opt/pim/bin/BG_Check_for_pim.sh & 2>/dev/null
 
-/opt/pim/bin/log_to_gz.sh /var/log/cantops 30 &> /dev/null
+#/opt/pim/bin/log_to_gz.sh /var/log/cantops 30 &> /dev/null
 /opt/pim/bin/chk_mem.sh &
 #mount /dev/mmcblk2p1 /root/boot
 
