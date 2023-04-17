@@ -12,15 +12,15 @@ configure)
   timedatectl set-timezone Asia/Seoul
   timedatectl set-ntp false
   systemctl set-default multi-user.target
-  systemctl stop imx8-isp
+#  systemctl stop imx8-isp
   systemctl disable imx8-isp
   systemctl restart rsyslog
-  systemctl stop connman-wait-online.service
-  systemctl disable connman-wait-online.service
-  systemctl stop systemd-network-wait-online.service
+#  systemctl stop connman-wait-online.service
+#  systemctl disable connman-wait-online.service
+#  systemctl stop systemd-network-wait-online.service
   systemctl disable systemd-network-wait-online.service
   systemctl mask systemd-networkd-wait-online.service
-  systemctl stop nfs-client.target
+#  systemctl stop nfs-client.target
   systemctl disable nfs-client.target
 #  systemctl stop connman.service
 #  systemctl disable connman.service
