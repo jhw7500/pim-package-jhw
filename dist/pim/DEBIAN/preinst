@@ -13,6 +13,7 @@ install)
   rm /var/lib/dpkg/lock*
   dpkg --configure -a
   dpkg --purge pim
+  dpkg --purge pim-test
 #  git config --global user.name "hwjo" && git config --global user.email "hwjo@cantops.biz"
 #  /root/SOMBASE_TEST/mfg60n-aarch64-9.32.0.6.sh install
 #  lmu -reg FCC
@@ -21,9 +22,6 @@ install)
 
 upgrade)
   echo "preinst upgrade"
-  ln -sf /usr/share/zoneinfo/Asia/Seoul1 /etc/localtime
-  timedatectl set-timezone Asia/Seoul
-  timedatectl set-ntp false
   ;;
 
 *)
