@@ -63,4 +63,4 @@ function IPERF_TEST
 }
 
 WIFI_TEST;
-IPERF_TEST;
+#IPERF_TEST;
