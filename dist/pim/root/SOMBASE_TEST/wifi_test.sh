@@ -1,6 +1,6 @@
 #!/bin/bash
 
-IP_ADDR="192.168.0.2"
+IP_ADDR="192.168.0.5"
 
 function WIFI_TEST() {
 	PCI_FIND=$(lspci | grep -o 'Marvell Technology')
