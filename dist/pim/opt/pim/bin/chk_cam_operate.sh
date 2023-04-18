@@ -88,18 +88,18 @@ do
 			logger -p local0.info [CHK][$tag:$LINENO] check_num:$check_num cnt:$filecnt 
 			if [ "$check_num" -gt "$filecnt" ]; then
 				((retry++))
-				#echo "cam file check error and reset($retry)"
-				logger -s -p local0.alert [CHK][$tag:$LINENO] $check_num !=$filecnt file cnt check fail retry:$retry
+				echo "cam file check error and cam reset ($retry)"
+				logger -s -p local0.alert "[CHK][$tag:$LINENO] $check_num !=$filecnt file cnt check fail ($retry)"
 				if [ "$retry" -le 3 ]; then
 					/opt/pim/bin/kill_test.sh				
 				elif [ "$retry" -le 5 ]; then
 					/opt/pim/bin/init_cam.sh
 				else
-					logger -s -p local0.alert [CHK][$tag:$LINENO] "retry:$retry reboot..."
+					logger -s -p local0.alert [CHK][$tag:$LINENO] "reboot...($retry)"
 					reboot
 				fi
 			else
-				logger -s -p local0.alert [CHK][$tag:$LINENO]  mp4,srt file cnt check ok
+				logger -s -p local0.alert "[CHK][$tag:$LINENO] mp4,srt file cnt check ok ($retry)"
 				retry=0
 			fi
 		fi
