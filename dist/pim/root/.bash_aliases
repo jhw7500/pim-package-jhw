@@ -34,4 +34,5 @@ alias ssr='systemctl restart $1'
 alias sse='systemctl eanble $1'
 alias ssd='systemctl disable $1'
 alias ssg='systemctl |grep $1'
-
+alias camcheck1='i2ctransfer -f -y 1 w2@0x48 0x00 0x13 r1'
+alias camcheck2='i2ctransfer -f -y 2 w2@0x48 0x00 0x13 r1'
