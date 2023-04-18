@@ -89,7 +89,7 @@ configure)
 
   source /root/.bashrc
   source /root/.bash_aliases
-  systemctl restart connman
+  #systemctl restart connman
   systemctl enable cam-operate
   systemctl daemon-reload
 
