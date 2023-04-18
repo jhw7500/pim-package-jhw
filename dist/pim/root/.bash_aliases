@@ -1,3 +1,4 @@
+
 alias lmt='ls -ltr /mnt |tail -n $1'
 alias lmh='ls -ltr /mnt |head -n $1'
 alias let='ls -ltr /mnt/event |tail -n $1'
@@ -5,6 +6,7 @@ alias leh='ls -ltr /mnt/event |head -n $1'
 alias lst='ls -l --time-style full-iso $1'
 alias dpkgif='dpkg -i --force-overwrite $1'
 alias dpkglg='dpkg -l |grep $1'
+alias tslogf='tail -f /var/log/syslog'
 alias slogg='cat /var/log/syslog | grep $1 -a'
 alias slogt='cat /var/log/syslog | tail -n $1'
 alias slogh='cat /var/log/syslog | head -n $1'

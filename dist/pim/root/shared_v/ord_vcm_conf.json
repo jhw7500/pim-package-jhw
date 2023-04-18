@@ -22,7 +22,7 @@
       "srt_enable" : true,
       "srt_auto_sync" : true,
       "srt_test" : false,
-      "srt_period" : 550,
-      "srt_set_index" : 0
+      "srt_period" : 500,
+      "srt_set_index" : 1
    }
 }
