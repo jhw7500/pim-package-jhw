@@ -20,5 +20,5 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 47 6	* * 7	root	test -x /usr/sbin/anacron || ( cd / && run-parts --report /etc/cron.weekly )
 52 6	1 * *	root	test -x /usr/sbin/anacron || ( cd / && run-parts --report /etc/cron.monthly )
 #
-00 00   * * *   root    /opt/pim/bin/log_to_gz.sh /var/log/cantops 30
-11 59   * * *   root    logrotate /etc/logrotate.d/rsyslog
+#00 00   * * *   root    /opt/pim/bin/log_to_gz.sh /var/log/cantops 30
+#11 59   * * *   root    logrotate /etc/logrotate.d/rsyslog
