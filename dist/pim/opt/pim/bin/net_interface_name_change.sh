@@ -2,6 +2,8 @@
 iname=$1
 oname=$2
 file=/etc/netplan/$3
+tag=$(basename "$0")
+
 str=$(grep -r match $file)
 if [ -z "$str" ]; then
     echo "      match:" >> $file
@@ -15,8 +17,9 @@ if [ -z "$str" ]; then
     echo "      set-name:" >> $file
 fi
 
-mac=$(ifconfig $1 | grep "ether " |awk '{print $2}')
-echo $mac
+mac=$(ifconfig $iname | grep "ether " |awk '{print $2}')
+logger -p local0.notice [CHK][$tag:$LINENO] $iname:$mac to $oname
+#echo $mac
 #sed -i '/macaddress/macaddress: $mac/' /etc/netplan/$file
 sed -i "/macaddress:/ c\        macaddress: $mac" $file
 sed -i "/set-name:/ c\      set-name: $oname" $file
