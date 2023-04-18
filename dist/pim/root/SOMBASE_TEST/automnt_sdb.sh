@@ -7,12 +7,12 @@ while true; do
     case $mnt_state_ in
         0)
             if [ -d /sys/bus/mmc/devices/mmc0:*/block/mmcblk0/mmcblk0p1 ]; then
-                mout_dev=`df | grep '/mnt/sdb' | awk '{print $1}'`
+                mout_dev=`df | grep '/mnt_b' | awk '{print $1}'`
                 if [ -z $mout_dev ]; then
                     if [ ! -d /mnt_b ]; then
                         mkdir -p /mnt_b
                     fi
-                    mount /dev/mmcblk0p1 /mnt/sdb
+                    mount /dev/mmcblk0p1 /mnt_b
                 elif [ $mout_dev != "/dev/mmcblk0p1" ]; then
                     umount /mnt_b
                     mount /dev/mmcblk0p1 /mnt_b
