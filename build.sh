@@ -45,5 +45,7 @@ cp ${BASEDIR}/ord/build/ord ${BASEDIR}/release/pim/opt/pim/bin/
 cp ${BASEDIR}/vsd/build/vsd ${BASEDIR}/release/pim/opt/pim/bin/
 cp ${BASEDIR}/vcm/build/vcm ${BASEDIR}/release/pim/opt/pim/bin/
 cd ${BASEDIR}/release
+version=$(cat ../dist/pim/DEBIAN/control| grep Version |grep -v ^$#| cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n' | tr -d ' ')
+echo version:$version
 dpkg -b pim
-mv pim.deb pim-mp.deb
+cp pim.deb pim-mp-$version.deb
