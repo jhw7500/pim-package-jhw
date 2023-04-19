@@ -92,7 +92,7 @@ configure)
   #systemctl restart connman
   systemctl enable cam-operate
   systemctl daemon-reload
-
+  
   logger -p local0.notice -t $service install pim.deb
   ;;
 
