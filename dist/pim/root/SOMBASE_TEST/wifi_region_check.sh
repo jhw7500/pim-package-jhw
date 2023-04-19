@@ -1,6 +1,6 @@
 #!/bin/bash
 success_val=" country: US"
-RES=$(cat /var/log/dmesg.0 | grep  "Firmware OTP region: 10")
+RES=$(cat /var/log/dmesg.0 | grep  "Firmware OTP region:")
 
 if [[ $RES != *"$success_val"* ]]; then
 	echo "   wifi region write fail $RES"
