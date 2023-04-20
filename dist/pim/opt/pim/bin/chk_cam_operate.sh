@@ -93,6 +93,7 @@ do
 				if [ "$retry" -le 3 ]; then
 					/opt/pim/bin/kill_test.sh
 				elif [ "$retry" -le 5 ]; then
+                    logger -p local0.err [CHK][$tag:$LINENO] module init
 					/opt/pim/bin/init_cam.sh
 				else
 					logger -p local0.emerg [CHK][$tag:$LINENO] "reboot...($retry)"
