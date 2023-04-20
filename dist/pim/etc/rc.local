@@ -1,5 +1,5 @@
 #!/bin/sh
-
+#/opt/pim/bin/eth_name_exchange.sh &
 modprobe imx8-media-dev
 #booting LED control
 #ALL LED OFF

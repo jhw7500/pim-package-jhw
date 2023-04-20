@@ -6,3 +6,5 @@ netplan apply
 /opt/pim/bin/net_interface_name_change.sh ens0 eth0 eth1.yaml
 /opt/pim/bin/net_interface_name_change.sh ens1 eth1 eth0.yaml
 netplan apply
+
+#systemctl restart connman

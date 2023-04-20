@@ -11,8 +11,8 @@ touch $FILE_
 
 while :
 do
+    check_num=0
 	startTime=$(cat $FILE_ 2>/dev/null| tr -d '\n')
-	check_num=0
 	if [ -n "$startTime"  ]; then
 		curTimeEpoch=$(date "+%s")
 		logger -p local0.info [CHK][$tag:$LINENO] start_video_time_ : $startTime
@@ -38,7 +38,7 @@ do
 			#echo $ch
 			if [[ "$cam_ch0_en" == *"$ENABLE_VAL"* ]]; then
 				if [ -f /mnt/*"$mp4date"-ch0.mp4 ]; then
-					logger -p local0.notice [CHK][$tag:$LINENO] *"$mp4date"-ch0.mp4 exist
+					logger -p local0.info [CHK][$tag:$LINENO] *"$mp4date"-ch0.mp4 exist
 				else
 					logger -p local0.error [CHK][$tag:$LINENO] *"$mp4date"-ch0.mp4 not exist
 				fi
@@ -47,36 +47,36 @@ do
 			#done
                         if [[ "$cam_ch1_en" == *"$ENABLE_VAL"* ]]; then
                                 if [ -f /mnt/*"$mp4date"-ch1.mp4 ]; then
-                                        logger -p local0.notice [CHK][$tag:$LINENO] *"$mp4date"-ch1.mp4 exist
+                                        logger -p local0.info [CHK][$tag:$LINENO] *"$mp4date"-ch1.mp4 exist
                                 else
                                         logger -p local0.error [CHK][$tag:$LINENO] *"$mp4date"-ch1.mp4 not exist
                                 fi
-				((check_num++))
+				                ((check_num++))
                         fi
                         if [[ "$cam_ch2_en" == *"$ENABLE_VAL"* ]]; then
                                 if [ -f /mnt/*"$mp4date"-ch2.mp4 ]; then
-                                        logger -p local0.notice [CHK][$tag:$LINENO] *"$mp4date"-ch2.mp4 exist
+                                        logger -p local0.info [CHK][$tag:$LINENO] *"$mp4date"-ch2.mp4 exist
                                 else
                                         logger -p local0.error [CHK][$tag:$LINENO] *"$mp4date"-ch2.mp4 not exist
                                 fi
-				((check_num++))
+				                ((check_num++))
                         fi
                         if [[ "$cam_ch3_en" == *"$ENABLE_VAL"* ]]; then
                                 if [ -f /mnt/*"$mp4date"-ch3.mp4 ]; then
-                                        logger -p local0.notice [CHK][$tag:$LINENO] *"$mp4date"-ch3.mp4 exist
+                                        logger -p local0.info [CHK][$tag:$LINENO] *"$mp4date"-ch3.mp4 exist
                                 else
                                         logger -p local0.error [CHK][$tag:$LINENO] *"$mp4date"-ch3.mp4 not exist
                                 fi
-				((check_num++))
+				                ((check_num++))
                         fi
-			srt_en=$(cat $FILE_JSON_ | grep srt_enable | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
+			            srt_en=$(cat $FILE_JSON_ | grep srt_enable | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
                         if [[ "$srt_en" == *"$ENABLE_VAL"* ]]; then
                                 if [ -f /mnt/*"$mp4date"-data.srt ]; then
-                                        logger -p local0.notice [CHK][$tag:$LINENO] *"$mp4date"-data.srt exist
+                                        logger -p local0.info [CHK][$tag:$LINENO] *"$mp4date"-data.srt exist
                                 else
                                         logger -p local0.error [CHK][$tag:$LINENO] *"$mp4date"-data.srt exist
                                 fi
-				((check_num++))
+				                ((check_num++))
                         fi
 
 			#echo $check_num
@@ -84,22 +84,22 @@ do
 			#echo $mp4date
 			filecnt=$(ls -l /mnt/*"$mp4date"* |grep ^- |wc -l)
 			#echo $filecnt
-			logger -p local0.info [CHK][$tag:$LINENO] mp4date:$mp4date
-			logger -p local0.info [CHK][$tag:$LINENO] check_num:$check_num cnt:$filecnt 
+			logger -p local0.debug [CHK][$tag:$LINENO] mp4date:$mp4date
+			logger -p local0.debug [CHK][$tag:$LINENO] check_num:$check_num cnt:$filecnt 
 			if [ "$check_num" -gt "$filecnt" ]; then
 				((retry++))
 				echo "cam file check error and cam reset ($retry)"
-				logger -s -p local0.alert "[CHK][$tag:$LINENO] $check_num !=$filecnt file cnt check fail ($retry)"
+				logger -p local0.error "[CHK][$tag:$LINENO] $check_num !=$filecnt file cnt check fail ($retry)"
 				if [ "$retry" -le 3 ]; then
-					/opt/pim/bin/kill_test.sh				
+					/opt/pim/bin/kill_test.sh
 				elif [ "$retry" -le 5 ]; then
 					/opt/pim/bin/init_cam.sh
 				else
-					logger -s -p local0.alert [CHK][$tag:$LINENO] "reboot...($retry)"
-					reboot
+					logger -p local0.emerg [CHK][$tag:$LINENO] "reboot...($retry)"
+					creboot
 				fi
 			else
-				logger -s -p local0.alert "[CHK][$tag:$LINENO] mp4,srt file cnt check ok ($retry)"
+				logger -p local0.info "[CHK][$tag:$LINENO] mp4,srt file cnt check ok ($retry)"
 				retry=0
 			fi
 		fi
