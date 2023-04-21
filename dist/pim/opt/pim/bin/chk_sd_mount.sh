@@ -3,8 +3,13 @@ FLAG_PATH="/tmp"
 SUCCESS_VAL="/dev/mmcblk1p1"
 timestamp=`date +"%Y-%m-%d %T,%3N"`
 tag=$(basename "$0")
-folder=/mnt/event
+folder=/mnt/test
 file=sd_write_test
+
+if [ ! -d  $folder ]; then
+    logger -p local0.notice "[CHK][$tag:$LINENO] mkdir $folder"
+    mkdir $folder
+fi
 
 CHECK_MOUNT_WELL() {
     chk_mnt=$(df)
