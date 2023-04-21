@@ -210,6 +210,8 @@ with open("/tmp/wlp1s0.yaml", "w") as f :
         f.write("      dhcp-identifier: mac\n")
     f.close()
 
+change_wpa_supplicant_flag = False
+
 if edgeconf['NETWORK']['WLAN0']['chmask'] == True :
     with open("/tmp/wpa_supplicant.conf", "w") as f :
         f.write("ctrl_interface=/var/run/wpa_supplicant\n")
