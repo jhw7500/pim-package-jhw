@@ -21,8 +21,16 @@ if [ ! -z "$service" ]; then
                 #logger -p local0.emerg "[$KEY][$tag:$LINENO] reboot.."
                 defunct=$(ps -ef |grep defunct | grep -v grep)
                 logger -p local0.notice [$KEY][$tag:$LINENO] $defunct
-                sleep 1
-				reboot
+                umount /mnt
+                if [ -z "$defunct" ]; then
+                    logger -p local0.emerg "[$KEY][$tag:$LINENO] normal reboot.."
+                    sleep 1
+                    reboot
+                else
+                    logger -p local0.emerg "[$KEY][$tag:$LINENO] force reboot because zombie"
+				    sleep 1
+                    reboot -f
+                fi
                 break
 			else
                 		#pid=$(ps -C $service |grep $service |awk '{print $1}')
