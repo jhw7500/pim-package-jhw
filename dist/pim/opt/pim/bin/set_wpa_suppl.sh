@@ -1,4 +1,5 @@
 #!/bin/bash
+tag=$(basename "$0")
 
 /usr/bin/killall wpa_supplicant
 for ((var=0 ; var < 5; var++)); do
