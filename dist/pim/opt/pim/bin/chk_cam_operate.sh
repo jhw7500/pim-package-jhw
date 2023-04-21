@@ -100,7 +100,7 @@ do
 					creboot
 				fi
 			else
-				logger -p local0.info "[$KEY][$tag:$LINENO] mp4,srt file cnt check ok ($retry)"
+				logger -p local0.notice "[$KEY][$tag:$LINENO] mp4,srt file cnt check ok ($retry)"
 				retry=0
 			fi
 		fi
