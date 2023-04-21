@@ -21,5 +21,6 @@ sleep 5
 #PIMCAM -j /root/shared_v/edgeconf_pim.json &
 /opt/pim/bin/restart_app.sh PIMCAM &
 #/opt/pim/bin/kill_pid.sh
+/opt/pim/bin/vcm &
 /opt/pim/bin/ord &
 /opt/pim/bin/vsd &
