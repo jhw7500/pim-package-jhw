@@ -4,7 +4,7 @@ tag=$(basename "$0")
 logger -p local0.notice [CHK][$tag:$LINENO] kill_all start
 list="BG_Check_for_pim.sh restart_app.sh vcm ord vsd streamApp PIMCAM"
 #list="chk_mem.sh"
-limitcnt=15
+limitcnt=20
 key=CHK
 for service in $list; do
 if [ ! -z "$service" ]; then
@@ -15,8 +15,10 @@ if [ ! -z "$service" ]; then
 	        pgrep "$service" >/dev/null; status=$?
 	        if [ "$status" -eq 0 ]; then
 			if [ "$cnt" -ge "$limitcnt" ]; then
-				logger -s -p local0.notice [$key][$tag:$LINENO] $limitcnt sec over! 
-				break
+				logger -p local0.notice [$key][$tag:$LINENO] $limitcnt sec over! 
+                logger -p local0.emerg "[$key][$tag:$LINENO] reboot.."
+				reboot
+                break
 			else
                 		#pid=$(ps -C $service |grep $service |awk '{print $1}')
                 		#echo $service" pid:":${pid}
@@ -32,5 +34,6 @@ if [ ! -z "$service" ]; then
 	done
 fi
 done
+
 
 exit $status
