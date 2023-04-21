@@ -1,5 +1,5 @@
 Package: pim-mp
-Version: 0.2.4
+Version: 0.2.5
 Section: devel
 Priority: optional
 Architecture: arm64 
@@ -32,3 +32,4 @@ Description: PIM application
 0.2.2 : err cmd, cam-operate, kill*.sh, etc..
 0.2.3 : 3Gbps, ae, awb, log, version, bg app bug fix, default setting..
 0.2.4 : module log, log system, hwclock, creboot..
+0.2.5 : add option for runtime check, module log, mmc, eth name exchange, journal, sd write check dir, reboot for zombie
