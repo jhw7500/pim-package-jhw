@@ -21,7 +21,7 @@
          "passwd" : "1qaz2wsx!!",
          "security" : "PSK",
          "ssid" : "PIM_TEST",
-		 "chmask" : true,
+		 "chmask" : false,
 		 "mask_freq" : [ 5745, 5765 ], 
 		 "bgscan" : "simple:3:-65:30"
       },
