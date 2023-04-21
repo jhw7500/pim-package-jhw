@@ -16,7 +16,10 @@ if [ ! -z "$service" ]; then
 	        if [ "$status" -eq 0 ]; then
 			if [ "$cnt" -ge "$limitcnt" ]; then
 				logger -p local0.notice [$key][$tag:$LINENO] $limitcnt sec over! 
-                logger -p local0.emerg "[$key][$tag:$LINENO] reboot.."
+                #logger -p local0.emerg "[$key][$tag:$LINENO] reboot.."
+                defunct=$(ps -ef |grep defunct | grep -v grep)
+                logger -p local0.notice [$key][$tag:$LINENO] $defunct
+                sleep 1
 				reboot
                 break
 			else
