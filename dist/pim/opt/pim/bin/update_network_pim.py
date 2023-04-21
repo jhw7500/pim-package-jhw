@@ -285,7 +285,7 @@ if os.path.isfile(file_conn_wlan0) == False or cmp('/tmp/wlp1s0.yaml',file_conn_
 
 subprocess.call(['rm','/tmp/wlp1s0.yaml'])
 
-if change_netplan_flag == True :
+if change_netplan_flag == True or change_wpa_supplicant_flag == True :
     subprocess.call(['/usr/bin/killall','wpa_supplicant'])
     subprocess.call(['netplan','generate'])
     subprocess.call(['netplan','apply'])

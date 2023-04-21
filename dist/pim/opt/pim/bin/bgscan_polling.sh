@@ -25,6 +25,7 @@ else
 			fi
 		done
 	else
+		/opt/pim/bin/set_wpa_suppl.sh
 		logger -p local0.notice [BGS][$tag:$LINENO] channel mask enable	
 	fi
 fi
