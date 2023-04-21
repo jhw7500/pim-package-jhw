@@ -9,6 +9,7 @@ hostname=pim-camera-v016
 case "$1" in
 configure)
   echo "postinst configure"
+  /opt/pim/bin/auto_fs_sizeup.sh 2 2
   timedatectl set-timezone Asia/Seoul
   timedatectl set-ntp false
   systemctl set-default multi-user.target

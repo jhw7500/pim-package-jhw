@@ -9,6 +9,7 @@ DISABLE_VAL=false
 retry=0
 touch $FILE_
 
+logger -p local0.notice [CHK][$tag:$LINENO] cam-operate daemon start
 while :
 do
     check_num=0

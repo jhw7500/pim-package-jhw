@@ -5,7 +5,8 @@
 tag=$(basename "$0")
 logger -p local0.notice [CHK][$tag:$LINENO] kill_test.sh start
 
-list="BG_Check_for_pim.sh vcm streamApp PIMCAM"
+#list="BG_Check_for_pim.sh vcm streamApp PIMCAM"
+list="BG_Check_for_pim.sh streamApp PIMCAM"
 
 for service in $list; do
 if [ ! -z "$service" ]; then
