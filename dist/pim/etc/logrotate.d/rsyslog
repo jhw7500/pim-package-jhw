@@ -2,13 +2,13 @@
 /var/log/cantops/local0.log
 /var/log/syslog
 {
-	rotate 30
-	daily
+	rotate 10
+	weekly
 	missingok
 	notifempty
-    dateext
 	delaycompress
 	compress
+    dateext
 	postrotate
 		/usr/lib/rsyslog/rsyslog-rotate
 	endscript
@@ -31,9 +31,9 @@
 	weekly
 	missingok
 	notifempty
-    dateext
-	compress
 	delaycompress
+    compress
+    dateext
 	sharedscripts
 	postrotate
 		/usr/lib/rsyslog/rsyslog-rotate
