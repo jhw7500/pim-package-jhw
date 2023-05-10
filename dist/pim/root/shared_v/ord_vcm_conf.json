@@ -7,7 +7,6 @@
       "copy_margin_MB" : 1024,
       "ip_static" : "",
       "port_num" : 10007,
-      "cache_thread" : false,
       "disk_manage" : true,
       "target_copy" : true,
       "disk_full_per" : 95,
@@ -24,6 +23,6 @@
       "srt_test" : false,
       "srt_period" : 500,
       "srt_set_index" : 1,
-      "file_time_recording" : false
+      "file_time_recording" : true
    }
 }
