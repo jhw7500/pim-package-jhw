@@ -3,13 +3,13 @@
 tag=$(basename "$0")
 # skip in favour of systemd timer
 if [ -d /run/systemd/system ]; then
-    logger -s -p local0.crit "[CRON][$tag:$LINENO] logrotate systemd err"
+    logger -s -p local0.err "[CRON][$tag:$LINENO] logrotate systemd err"
     exit 0
 fi
 
 # this cronjob persists removals (but not purges)
 if [ ! -x /usr/sbin/logrotate ]; then
-    logger -s -p local0.crit "[CRON][$tag:$LINENO] logrotate sbin err"
+    logger -s -p local0.err "[CRON][$tag:$LINENO] logrotate sbin err"
     exit 0
 fi
 
@@ -18,6 +18,6 @@ logger -s -p local0.notice "[CRON][$tag:$LINENO] /usr/sbin/logrotate /etc/logrot
 EXITVALUE=$?
 if [ $EXITVALUE != 0 ]; then
     #/usr/bin/logger -t logrotate "ALERT exited abnormally with [$EXITVALUE]"
-    logger -s -p local0.crit "[LOG][$tag:$LINENO] logrotate exited abnormally with[$EXITVALUE]"
+    logger -s -p local0.err "[CRON][$tag:$LINENO] logrotate exited abnormally with[$EXITVALUE]"
 fi
 exit $EXITVALUE
