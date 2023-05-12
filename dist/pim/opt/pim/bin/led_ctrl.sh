@@ -129,7 +129,7 @@ function LED_CTRL(){
     fi
 	
     
-	if [ -e ${FLAG_PATH}/err_eth0.log ]; then
+	if [ -e ${FLAG_PATH}/err_eth1.log ]; then
         TEST_RESULT=1
         #grenn on 
         echo 1 > /sys/devices/platform/leds/leds/gpio2_led/brightness
