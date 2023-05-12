@@ -10,6 +10,7 @@ logger -p local0.notice [CHK][$tag:$LINENO] kill_all start
 
 for service in $list; do
 if [ ! -z "$service" ]; then
+    logger -p local0.notice [CHK][$tag:$LINENO] $service
 	cnt=0
         while :
         do
@@ -47,6 +48,6 @@ if [ ! -z "$service" ]; then
 	done
 fi
 done
-
+logger -p local0.notice [CHK][$tag:$LINENO] kill_all end
 
 exit $status

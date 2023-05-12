@@ -42,10 +42,10 @@ configure)
 	cp /opt/pim/config/edgeconf_pim.json /root/shared_v/
   fi
 
-#:<<'END'
   systemctl stop NetworkManager
   systemctl disable NetworkManager
 
+:<<'END'
   if [ ! -f  /etc/netplan/eth0.yaml ]; then
         logger -s -p local0.notice -t $service apply default netplan eth0
         cp /opt/pim/config/eth0.yaml /etc/netplan/
@@ -60,8 +60,7 @@ configure)
         logger -s -p local0.notice -t $service apply default netplan wlp1s0
         cp /opt/pim/config/wlp1s0.yaml /etc/netplan/
   fi
-
-#END
+END
 
 
   if [ ! -d  /root/boot ]; then
@@ -86,7 +85,7 @@ configure)
   #/root/SOMBASE_TEST/mfg60n-aarch64-9.32.0.6.sh install
   #lmu -reg FCC
   #iw reg set US
-
+  python /opt/pim/bin/update_network_pim.py
   source /root/.bashrc
   source /root/.bash_aliases
   #netplan apply

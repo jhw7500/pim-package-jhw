@@ -10,11 +10,20 @@ retry=0
 touch $FILE_
 KEY=RST
 logger -p local0.notice [$KEY][$tag:$LINENO] cam-operate daemon start
+rec_time=$(cat $FILE_JSON | grep recording_time | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
+rec_time=$((rec_time*60))
+rec_time=$((rec_time+90))
+#echo rec_time:$rec_time
+logger -p local0.notice [$KEY][$tag:$LINENO] "empty reset time : $rec_time sec"
+#rec_time=$((rec_time+10))
+timer=0
+
 while :
 do
     check_num=0
 	startTime=$(cat $FILE_ 2>/dev/null| tr -d '\n')
 	if [ -n "$startTime"  ]; then
+        timer=0
 		curTimeEpoch=$(date "+%s")
 		logger -p local0.info [$KEY][$tag:$LINENO] start_video_time_ : $startTime
 		logger -p local0.info [$KEY][$tag:$LINENO] cur_time : $(date "+%Y%m%d %H:%M:%S")
@@ -91,19 +100,31 @@ do
 				((retry++))
 				echo "cam file check error and cam reset ($retry)"
 				logger -p local0.error "[$KEY][$tag:$LINENO] $check_num !=$filecnt file cnt check fail ($retry)"
-				if [ "$retry" -le 3 ]; then
+#:<<'END'
+				if [ "$retry" -le 4 ]; then
 					/opt/pim/bin/kill_test.sh
 				elif [ "$retry" -le 5 ]; then
 					/opt/pim/bin/init_cam.sh
 				else
-					logger -p local0.emerg [$KEY][$tag:$LINENO] "reboot...($retry)"
+                    logger -p local0.crit "[$KEY][$tag:$LINENO] retry($retry) over"
+					logger -p local0.emerg "[$KEY][$tag:$LINENO] over reboot...($retry)"
+                    sleep 1
 					creboot
 				fi
+#END
 			else
-				logger -p local0.notice "[$KEY][$tag:$LINENO] mp4,srt file cnt check ok ($retry)"
+				logger -p local0.info "[$KEY][$tag:$LINENO] mp4,srt file cnt check ok ($retry)"
 				retry=0
 			fi
 		fi
+    elif [ "$timer" -gt "$rec_time" ]; then 
+        logger -p local0.crit "[$KEY][$tag:$LINENO] streamApp all file not create"
+        logger -p local0.emerg "[$KEY][$tag:$LINENO] empty reboot...($retry)"
+        sleep 1
+        creboot
 	fi
-	sleep 5
+
+	sleep 10
+    timer=$((timer+10))
 done
+

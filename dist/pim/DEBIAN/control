@@ -1,5 +1,5 @@
 Package: pim-mp
-Version: 0.2.6
+Version: 0.2.7
 Section: devel
 Priority: optional
 Architecture: arm64 
@@ -34,3 +34,4 @@ Description: PIM application
 0.2.4 : module log, log system, hwclock, creboot..
 0.2.5 : add option for runtime check, module log, mmc, eth name exchange, journal, sd write check dir, reboot for zombie
 0.2.6 : streamApp(1.2), ord(2.6), vcm(2.6)
+0.2.7 : streamApp(1.2), ord(2.7), vcm(2.6), network config, empty reset

@@ -6,9 +6,10 @@ tag=$(basename "$0")
 KEY=RST
 logger -p local0.notice [$KEY][$tag:$LINENO] kill_test.sh start
 #list="BG_Check_for_pim.sh vcm streamApp PIMCAM"
-list="BG_Check_for_pim.sh streamApp PIMCAM"
+list="BG_Check_for_pim.sh vcm streamApp PIMCAM"
 
 for service in $list; do
+logger -p local0.notice [$KEY][$tag:$LINENO] $service 
 if [ ! -z "$service" ]; then
 	#pgrep "$service" >/dev/null; status=$?
 	#echo $service:$status
@@ -20,7 +21,7 @@ if [ ! -z "$service" ]; then
 		sudo killall -s KILL $service
 	#fi
 fi
-
 done
+logger -p local0.notice [$KEY][$tag:$LINENO] kill_test.sh end
 #/opt/pim/bin/vcm &
 exit 0

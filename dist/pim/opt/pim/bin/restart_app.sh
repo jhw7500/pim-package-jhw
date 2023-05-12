@@ -28,7 +28,7 @@ while [ 1 ]; do
 				sleep 1
 			done
 			logger -p local0.notice [$KEY][$tag:$LINENO] PIMCAM, streamApp, BG_Check_for_pim start 
-			#/opt/pim/bin/vcm &
+			/opt/pim/bin/vcm &
 			/usr/bin/PIMCAM -j /root/shared_v/edgeconf_pim.json &
 			/opt/pim/bin/BG_Check_for_pim.sh & 2>/dev/null
 		fi
