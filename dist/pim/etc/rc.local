@@ -1,5 +1,7 @@
 #!/bin/sh
 #/opt/pim/bin/eth_name_exchange.sh &
+#export GST_DEBUG=3
+#export PointImageApp_DEBUG=main:*,libfilewriter:*,writer:1,
 modprobe imx8-media-dev
 #booting LED control
 #ALL LED OFF

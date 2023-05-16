@@ -10,9 +10,11 @@
       "port_num" : 10007,
       "disk_manage" : true,
       "target_copy" : true,
+      "target_remove" : true,
       "disk_full_per" : 95,
       "disk_limit_per" : 80,
-      "disk_limit_file" : 15600
+      "disk_limit_file" : 15600,
+      "disk_manage_period" : 30
    },
    "VCM" : {
       "debug_level" : 0,

@@ -10,7 +10,7 @@ KEY=MEM
 while :
 do
 #service=streamApp
-cpu=$(mpstat |tail -1 | awk '{print 100-$NF}')
+cpu=$(mpstat 1 1|tail -1 | awk '{print 100-$NF}')
 mem=$(sar -r 0 |tail -1 | awk '{print $5}')
 logger -p local0.notice [$KEY][$tag:$LINENO] total cpu ${cpu}% memory ${mem}%
 
