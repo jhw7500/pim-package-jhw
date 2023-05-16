@@ -4,6 +4,7 @@ tag=$(basename "$0")
 logger -p local0.notice [RST][$tag:$LINENO] module reset..
 #killall -s KILL restart_app.sh
 #/opt/pim/bin/kill_test.sh
+#systemctl restart cam-operate
 /opt/pim/bin/kill_all.sh
 
 sleep 3

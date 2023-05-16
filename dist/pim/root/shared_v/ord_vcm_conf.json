@@ -1,5 +1,6 @@
 {
    "ORD" : {
+      "vhl_max" : 1,
       "event_auto_remove" : true,
       "copy_margin_sec" : 10,
       "debug_level" : 0,

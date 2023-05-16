@@ -31,6 +31,7 @@ while [ 1 ]; do
 			/opt/pim/bin/vcm &
 			/usr/bin/PIMCAM -j /root/shared_v/edgeconf_pim.json &
 			/opt/pim/bin/BG_Check_for_pim.sh & 2>/dev/null
+	                #systemctl restart cam-operate
 		fi
 	fi
 	sleep 1
