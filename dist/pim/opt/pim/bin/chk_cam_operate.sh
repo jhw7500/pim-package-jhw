@@ -35,9 +35,9 @@ do
 
     startTime=$(cat $FILE_ 2>/dev/null| tr -d '\n')
 	if [ -n "$startTime"  ]; then
-        timer=0
+        #timer=0
 		curTimeEpoch=$(date "+%s")
-		logger -p local0.info [$KEY][$tag:$LINENO] start_video_time_ : $startTime
+		logger -p local0.notice [$KEY][$tag:$LINENO] start_video_time_ : $startTime
 		logger -p local0.info [$KEY][$tag:$LINENO] cur_time : $(date "+%Y%m%d %H:%M:%S")
 		#echo $(date "+%Y%m%d %H:%M:%S")
 
@@ -45,8 +45,9 @@ do
 		#echo $curTimeEpoch
 		#echo $startTimeEpoch
 		diffEpoch=$(echo "$curTimeEpoch - $startTimeEpoch" |bc)
-		logger -p local0.info [$KEY][$tag:$LINENO] diffEpoch : $diffEpoch
+		logger -p local0.info "[$KEY][$tag:$LINENO] diffEpoch : $diffEpoch"
 		if [ "$diffEpoch" -ge 5 ]; then
+            timer=0
 			cat /dev/null > $FILE_
 			#cam_ch0_en=$(cat $FILE_JSON | grep cam_ch0 | grep -v rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
 			#cam_ch1_en=$(cat $FILE_JSON | grep cam_ch1 | grep -v rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
