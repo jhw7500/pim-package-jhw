@@ -9,14 +9,14 @@ logger -p local0.notice [$KEY][$tag:$LINENO] kill_test.sh start
 list="BG_Check_for_pim.sh vcm streamApp PIMCAM"
 
 for service in $list; do
-logger -p local0.notice [$KEY][$tag:$LINENO] $service 
+#logger -p local0.notice [$KEY][$tag:$LINENO] $service 
 if [ ! -z "$service" ]; then
 	#pgrep "$service" >/dev/null; status=$?
 	#echo $service:$status
 	#if [ "$status" -eq 0 ]; then
 		#pid=$(ps -C $service |grep $service |awk '{print $1}')
 		#echo $service" pid:":${pid}
-		logger -p local0.notice [$KEY][$tag:$LINENO] killall $service
+		logger -p local0.notice '[$KEY][$tag:$LINENO] kill $service'
 		#sudo kill -9 $pid
 		sudo killall -s KILL $service
 	#fi
