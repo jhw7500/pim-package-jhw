@@ -6,12 +6,12 @@ result=1;
 ETH1_PING=$(ping 199.10.100.20 -c 3 -W 3 -s 1000) 
 
 if [[ $ETH1_PING != *"$_success_value"* ]]; then
-	echo "${timestamp} ETH0 ERR" 
+	echo "${timestamp} ETH1 ERR" 
 	ping 199.10.100.123 -c 3 -W 3 -s 1000 
-	echo "   ETH0 fail"
+	echo "   ETH1 fail"
 	result=1;
 else 
-	echo "   ETH0 pass"
+	echo "   ETH1 pass"
 	result=0;
 fi		
 
