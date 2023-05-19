@@ -37,7 +37,7 @@ do
 	if [ -n "$startTime"  ]; then
         #timer=0
 		curTimeEpoch=$(date "+%s")
-		logger -p local0.notice [$KEY][$tag:$LINENO] start_video_time_ : $startTime
+		logger -p local0.info [$KEY][$tag:$LINENO] start_video_time_ : $startTime
 		logger -p local0.info [$KEY][$tag:$LINENO] cur_time : $(date "+%Y%m%d %H:%M:%S")
 		#echo $(date "+%Y%m%d %H:%M:%S")
 
