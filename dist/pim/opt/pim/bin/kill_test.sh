@@ -16,7 +16,7 @@ if [ ! -z "$service" ]; then
 	#if [ "$status" -eq 0 ]; then
 		#pid=$(ps -C $service |grep $service |awk '{print $1}')
 		#echo $service" pid:":${pid}
-		logger -p local0.notice '[$KEY][$tag:$LINENO] kill $service'
+		logger -p local0.notice "[$KEY][$tag:$LINENO] kill $service"
 		#sudo kill -9 $pid
 		sudo killall -s KILL $service
 	#fi
