@@ -14,9 +14,11 @@ if [ ! -z "$service" ]; then
 	cnt=0
         while :
         do
-		sudo killall -s KILL $service
-	        pgrep "$service" >/dev/null; status=$?
-	        if [ "$status" -eq 0 ]; then
+		    sudo killall -s KILL $service
+	        #pgrep "$service" >/dev/null; status=$?
+	        #if [ "$status" -eq 0 ]; then
+            pid=$(ps -ef |grep $service |grep -v grep |awk '{print $2}')
+            if [ -n "$pid" ]; then
 			if [ "$cnt" -ge "$limitcnt" ]; then
 				logger -p local0.notice [$KEY][$tag:$LINENO] $limitcnt sec over! 
                 #logger -p local0.emerg "[$KEY][$tag:$LINENO] reboot.."

@@ -20,7 +20,7 @@ sleep 3
 modprobe imx8-media-dev
 sleep 5
 #PIMCAM -j /root/shared_v/edgeconf_pim.json &
-/opt/pim/bin/restart_app.sh PIMCAM &
+/opt/pim/bin/restart_app.sh &
 #/opt/pim/bin/kill_pid.sh
-/opt/pim/bin/ord &
-/opt/pim/bin/vsd &
+#/opt/pim/bin/ord &
+#/opt/pim/bin/vsd &
