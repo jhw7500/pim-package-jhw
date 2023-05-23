@@ -141,17 +141,20 @@ do
 			if [ "$check_num" -gt "$filecnt" ]; then
 				((retry++))
 				echo "cam file check error and cam reset ($retry)"
-				logger -p local0.error "[$KEY][$tag:$LINENO] $check_num !=$filecnt file cnt check fail ($retry)"
+				logger -p local0.error "[$KEY][$tag:$LINENO] $check_num != $filecnt file cnt check fail ($retry)"
 #:<<'END'
 				if [ "$retry" -le 4 ]; then
+                    logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/kill_test.sh ($retry)"
 					/opt/pim/bin/kill_test.sh
 				elif [ "$retry" -le 5 ]; then
+                    logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh ($retry)"
 					/opt/pim/bin/init_cam.sh
 				else
                     logger -p local0.crit "[$KEY][$tag:$LINENO] retry($retry) over"
-					logger -p local0.emerg "[$KEY][$tag:$LINENO] over reboot...($retry)"
+					logger -p local0.emerg "[$KEY][$tag:$LINENO] creboot...($retry)"
                     sleep 1
 					creboot
+                    logger -p local0.emerg "[$KEY][$tag:$LINENO] creboot end"
 				fi
 #END
 			else
@@ -163,9 +166,10 @@ do
 
     if [ "$timer" -gt "$rec_time" ]; then 
         logger -p local0.crit "[$KEY][$tag:$LINENO] streamApp all file not create"
-        logger -p local0.emerg "[$KEY][$tag:$LINENO] empty reboot...($retry)"
+        logger -p local0.emerg "[$KEY][$tag:$LINENO] creboot...($retry)"
         sleep 1
         creboot
+        logger -p local0.emerg "[$KEY][$tag:$LINENO] creboot end"
 	fi
 
 	sleep 5
