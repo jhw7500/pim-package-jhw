@@ -9,8 +9,8 @@ tag=$(basename "$0")
 cp /opt/pim/config/edgeconf_pim.json /root/shared_v/
 
 #network setting
-python3 update_eap_id.py
-python3 update_network_pim.py
+python3 /opt/pim/bin/update_eap_id.py
+python3 /opt/pim/bin/update_network_pim.py
 
 #log init
 rm /var/log/cantops/*.*
