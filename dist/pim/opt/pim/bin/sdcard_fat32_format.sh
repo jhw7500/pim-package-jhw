@@ -13,6 +13,7 @@ CHECK_SDCARD() {
 
 #kill pim camera app
 KILL_PIM_CAMERA_APP() {
+    systemctl stop cam-operate
     pid=`ps -ef | grep 'restart_app' | grep -v 'grep' | awk '{print $2}'`
     if [ -z $pid ]
     then
