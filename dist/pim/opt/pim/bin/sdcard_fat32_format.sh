@@ -1,5 +1,6 @@
 #!/bin/bash
 SUCCESS_VAL="/dev/mmcblk1p1"
+tag=$(basename "$0")
 
 #SD card check
 CHECK_SDCARD() {
@@ -45,6 +46,7 @@ EOF
     sleep 1
     mount /dev/mmcblk1p1 /mnt
     sleep 1
+	logger -p local0.notice [SDC][$tag:$LINENO] SD card fat32 format
 }
 
 CHECK_MOUNT_WELL() {
