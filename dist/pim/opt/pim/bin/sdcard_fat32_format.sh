@@ -12,24 +12,16 @@ CHECK_SDCARD() {
 
 #kill pim camera app
 KILL_PIM_CAMERA_APP() {
-    pid=`ps -ef | grep 'PIM' | grep -v 'grep' | awk '{print $2}'`
+    pid=`ps -ef | grep 'restart_app' | grep -v 'grep' | awk '{print $2}'`
     if [ -z $pid ]
     then
-        echo "already killed PIM CAM"
+        echo "already killed restart_app"
     else
         kill $pid
         sleep 1
         echo "kill $pid"
     fi
-    pid2=`ps -ef | grep 'streamApp' | grep -v 'grep' | awk '{print $2}'`
-    if [ -z $pid2 ]
-    then
-        echo "already killed StreamApp"
-    else
-        kill $pid2
-        sleep 1
-        echo "kill $pid2"
-    fi
+	/opt/pim/bin/kill_test.sh
 }
 
 #fdisk partition process
