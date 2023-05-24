@@ -2,7 +2,7 @@
 
 tag=$(basename "$0")
 
-logger -p local0.notice [FIN][$tag:$LINENO] FACTORY INIT
+logger -p local0.notice [FIN][$tag:$LINENO] FACTORY INIT START
 #kill streamApp, PIMCAM, sd card format 
 /opt/pim/bin/sdcard_fat32_format.sh
 
@@ -18,4 +18,4 @@ python3 /opt/pim/bin/update_network_pim.py
 
 #log init
 rm /var/log/cantops/*.*
-#logger -p local0.notice [FIN][$tag:$LINENO] FACTORY INIT
+logger -p local0.notice [FIN][$tag:$LINENO] FACTORY INIT FINISH
