@@ -1,4 +1,7 @@
 #!/bin/sh
+tag=$(basename "$0")
+KEY=RST
+logger -p local0.notice "[$KEY][$tag:$LINENO] rc.local start : Booting"
 #/opt/pim/bin/eth_name_exchange.sh &
 #export GST_DEBUG=3
 #export PointImageApp_DEBUG=main:*,libfilewriter:*,writer:1,
@@ -60,6 +63,7 @@ touch /var/run/vsd.pipe
 
 #/opt/pim/bin/log_to_gz.sh /var/log/cantops 30 &> /dev/null
 /opt/pim/bin/chk_mem.sh &
+/opt/pim/bin/chk_temp.sh &
 #mount /dev/mmcblk2p1 /root/boot
 
 exit 0

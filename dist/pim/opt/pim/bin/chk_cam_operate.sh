@@ -24,10 +24,13 @@ cam_ch2_en=$(cat $FILE_JSON | grep cam_ch2 | grep -v rotate | cut -d':' -f2 | cu
 cam_ch3_en=$(cat $FILE_JSON | grep cam_ch3 | grep -v rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
 srt_en=$(cat $FILE_JSON_ | grep srt_enable | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
 time_rec_en=$(cat $FILE_JSON_ |grep file_time_recording | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
+vhl_name=$(cat $FILE_JSON | grep vhl_name | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n' | tr -d ' ' )
 logger -p local0.notice [$KEY][$tag:$LINENO] ch0_en:$cam_ch0_en ch1_en:$cam_ch1_en ch2_en:$cam_ch2_en ch3_en:$cam_ch3_en srt_en:$srt_en time_rec_en:$time_rec_en
+logger -p local0.info [$KEY][$tag:$LINENO] vhl_name:$vhl_name
 while :
 do
     check_num=0
+    file_cnt=0
     if [[ "$time_rec_en" != *"$ENABLE_VAL"* ]]; then
         sleep 30
         continue
@@ -54,94 +57,136 @@ do
 			#cam_ch2_en=$(cat $FILE_JSON | grep cam_ch2 | grep -v rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
 			#cam_ch3_en=$(cat $FILE_JSON | grep cam_ch3 | grep -v rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
 			mp4date=$(date -d "$startTime" "+%Y%m%d_%H%M%S")
-			#ch0_file=$(find /mnt -name *"$mp4date"-ch0.mp4)
-			#echo $ch0_file
-			#list="cam_ch0_en cam_ch1_en"
-			#for ch in $list; do
-			#echo $ch
+            #mp4date=$(echo $startTime)
+            logger -p local0.info "[$KEY][$tag:$LINENO] mp4date : $mp4date"
 			if [[ "$cam_ch0_en" == *"$ENABLE_VAL"* ]]; then
                 ((check_num++))
-				if [ -f /mnt/*"$mp4date"-ch0.mp4 ]; then
-					logger -p local0.info [$KEY][$tag:$LINENO] *"$mp4date"-ch0.mp4 exist
-				else
-					logger -p local0.error [$KEY][$tag:$LINENO] *"$mp4date"-ch0.mp4 not exist
-                    if [ -f /tmp/ch0.mp4 ]; then
-                        ch_time=$(cat /tmp/ch0.mp4 2>/dev/null| tr -d '\n')
-                        logger -p local0.error [$KEY][$tag:$LINENO] ch0_time : $ch_time
-                        ((check_num--))
+                if [ -f /tmp/ch0.mp4 ]; then
+                    ch_time=$(cat /tmp/ch0.mp4 2>/dev/null| tr -d '\n')
+                    logger -p local0.info "[$KEY][$tag:$LINENO] ch0.mp4 : $ch_time"
+                    ((file_cnt++))
+    				#if [ -f /mnt/*${mp4date}-ch0.mp4 ]; then
+                    if [ -f /mnt/${vhl_name}_${mp4date}-ch0.mp4 ]; then
+			    		logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch0.mp4 exist"
+	    			else
+		    			logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch0.mp4 not exist"
                     fi
-				fi
-                rm /tmp/ch0.mp4
+:<<'END'
+                    test=$(echo ${vhl_name}_${ch_time:0:8}_${ch_time:9:2}${ch_time:12:2}${ch_time:15:2}-ch0.mp4)
+                    logger -p local0.notice "[$KEY][$tag:$LINENO] rename:$test"
+                    if [[ "$mp4date" == "$ch_time" ]]; then
+                        echo ok > /dev/null
+                    else
+                        logger -p local0.error "[$KEY][$tag:$LINENO] ch0 time error ( ch0.mp4 : $ch_time )"
+                    fi
+END
+                else
+                    logger -p local0.error "[$KEY][$tag:$LINENO] ch0 file not create ( mp4date : $mp4date )"
+                fi
 			fi
-			#done
+
+
             if [[ "$cam_ch1_en" == *"$ENABLE_VAL"* ]]; then
                 ((check_num++))
-                if [ -f /mnt/*"$mp4date"-ch1.mp4 ]; then
-                    logger -p local0.info [$KEY][$tag:$LINENO] *"$mp4date"-ch1.mp4 exist
-                else
-                    logger -p local0.error [$KEY][$tag:$LINENO] *"$mp4date"-ch1.mp4 not exist
-                    if [ -f /tmp/ch1.mp4 ]; then
-                        ch_time=$(cat /tmp/ch1.mp4 2>/dev/null| tr -d '\n')
-                        logger -p local0.error [$KEY][$tag:$LINENO] ch1_time : $ch_time
-                        ((check_num--))
+                if [ -f /tmp/ch1.mp4 ]; then
+                    ch_time=$(cat /tmp/ch1.mp4 2>/dev/null| tr -d '\n')
+                    logger -p local0.info "[$KEY][$tag:$LINENO] ch1.mp4 : $ch_time"
+                    ((file_cnt++))
+                    if [ -f /mnt/${vhl_name}_${mp4date}-ch1.mp4 ]; then
+                        logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch1.mp4 exist"
+                    else
+                        logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch1.mp4 not exist"
                     fi
+:<<'END'
+                    if [[ "$mp4date" == "$ch_time" ]]; then
+                        echo ok > /dev/null
+                    else
+                        logger -p local0.error "[$KEY][$tag:$LINENO] ch1 time error ( ch1.mp4 : $ch_time )"
+                    fi
+END
+                else
+                    logger -p local0.error "[$KEY][$tag:$LINENO] ch1 file not create ( mp4date : $mp4date )"
                 fi
                 rm /tmp/ch1.mp4
             fi
+
             if [[ "$cam_ch2_en" == *"$ENABLE_VAL"* ]]; then
                 ((check_num++))
-                if [ -f /mnt/*"$mp4date"-ch2.mp4 ]; then
-                    logger -p local0.info [$KEY][$tag:$LINENO] *"$mp4date"-ch2.mp4 exist
-                else
-                    logger -p local0.error [$KEY][$tag:$LINENO] *"$mp4date"-ch2.mp4 not exist
-                    if [ -f /tmp/ch2.mp4 ]; then
-                        ch_time=$(cat /tmp/ch2.mp4 2>/dev/null| tr -d '\n')
-                        logger -p local0.error [$KEY][$tag:$LINENO] ch2_time : $ch_time
-                        ((check_num--))
+                if [ -f /tmp/ch2.mp4 ]; then
+                    ch_time=$(cat /tmp/ch2.mp4 2>/dev/null| tr -d '\n')
+                    logger -p local0.info "[$KEY][$tag:$LINENO] ch2.mp4 : $ch_time"
+                    ((file_cnt++))
+                    if [ -f /mnt/${vhl_name}_${mp4date}-ch2.mp4 ]; then
+                        logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch2.mp4 exist"
+                    else
+                        logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch2.mp4 not exist"
                     fi
+:<<'END'
+                    if [[ "$mp4date" == "$ch_time" ]]; then
+                        echo ok > /dev/null
+                    else
+                        logger -p local0.error "[$KEY][$tag:$LINENO] time error ( ch2_time : $ch_time )"
+                    fi
+END
+                else
+                    logger -p local0.error "[$KEY][$tag:$LINENO] ch2 file not create ( mp4date : $mp4date )"
                 fi
                 rm /tmp/ch2.mp4
             fi
+
             if [[ "$cam_ch3_en" == *"$ENABLE_VAL"* ]]; then
                 ((check_num++))
-                if [ -f /mnt/*"$mp4date"-ch3.mp4 ]; then
-                    logger -p local0.info [$KEY][$tag:$LINENO] *"$mp4date"-ch3.mp4 exist
-                else
-                    logger -p local0.error [$KEY][$tag:$LINENO] *"$mp4date"-ch3.mp4 not exist
-                    if [ -f /tmp/ch3.mp4 ]; then
-                        ch_time=$(cat /tmp/ch3.mp4 2>/dev/null| tr -d '\n')
-                        logger -p local0.error [$KEY][$tag:$LINENO] ch3_time : $ch_time
-                        ((check_num--))
+                if [ -f /tmp/ch3.mp4 ]; then
+                    ch_time=$(cat /tmp/ch3.mp4 2>/dev/null| tr -d '\n')
+                    logger -p local0.info "[$KEY][$tag:$LINENO] ch3.mp4 : $ch_time"
+                    ((file_cnt++))
+                    if [ -f /mnt/${vhl_name}_${mp4date}-ch3.mp4 ]; then
+                        logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch3.mp4 exist"
+                    else
+                        logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch3.mp4 not exist"
                     fi
+:<<'END'
+                    if [[ "$mp4date" == "$ch_time" ]]; then
+                        echo ok > /dev/null
+                    else
+                        logger -p local0.error "[$KEY][$tag:$LINENO] time error ( ch3.mp4 : $ch_time )"
+                    fi
+END
+                else
+                    logger -p local0.error "[$KEY][$tag:$LINENO] ch3 file not create ( mp4date : $mp4date )"
                 fi
                 rm /tmp/ch3.mp4
             fi
-			#srt_en=$(cat $FILE_JSON_ | grep srt_enable | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
+
             if [[ "$srt_en" == *"$ENABLE_VAL"* ]]; then
                 ((check_num++))
-                if [ -f /mnt/*"$mp4date"-data.srt ]; then
-                    logger -p local0.info [$KEY][$tag:$LINENO] *"$mp4date"-data.srt exist
-                else
-                    logger -p local0.error [$KEY][$tag:$LINENO] *"$mp4date"-data.srt not exist
-                    if [ -f /tmp/date.srt ]; then
-                        ch_time=$(cat /tmp/data.srt 2>/dev/null| tr -d '\n')
-                        logger -p local0.error [$KEY][$tag:$LINENO] srt_time : $ch_time
-                        ((check_num--))
+                if [ -f /tmp/data.srt ]; then
+                    ch_time=$(cat /tmp/data.srt 2>/dev/null| tr -d '\n')
+                    logger -p local0.info "[$KEY][$tag:$LINENO] data.srt : $ch_time"
+                    ((file_cnt++))
+                    if [ -f /mnt/${vhl_name}_${mp4date}-data.srt ]; then
+                        logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-data.srt exist"
+                    else
+                        logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-data.srt not exist"
                     fi
+:<<'END'
+                    if [[ "$mp4date" == "$ch_time" ]]; then
+                        echo ok > /dev/null
+                    else
+                        logger -p local0.error "[$KEY][$tag:$LINENO] time error ( srt_time : $ch_time )"
+                    fi
+END
+                else
+                    logger -p local0.error "[$KEY][$tag:$LINENO] srt file not create ( mp4date : $mp4date )"
                 fi
                 rm /tmp/data.srt
             fi
-			#echo $check_num
-			#echo $ch0_file
-			#echo $mp4date
-			filecnt=$(ls -l /mnt/*"$mp4date"* |grep ^- |wc -l)
-			#echo $filecnt
-			logger -p local0.debug [$KEY][$tag:$LINENO] mp4date:$mp4date
-			logger -p local0.debug [$KEY][$tag:$LINENO] check_num:$check_num cnt:$filecnt 
-			if [ "$check_num" -gt "$filecnt" ]; then
+
+			#logger -p local0.debug [$KEY][$tag:$LINENO] mp4date:$mp4date
+			logger -p local0.info "[$KEY][$tag:$LINENO] check_num:$check_num cnt:$file_cnt"
+			if [ "$check_num" -gt "$file_cnt" ]; then
 				((retry++))
-				echo "cam file check error and cam reset ($retry)"
-				logger -p local0.error "[$KEY][$tag:$LINENO] $check_num != $filecnt file cnt check fail ($retry)"
+				logger -p local0.error "[$KEY][$tag:$LINENO] $check_num != $file_cnt file cnt check fail ($retry)"
 #:<<'END'
 				if [ "$retry" -le 4 ]; then
                     logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/kill_test.sh ($retry)"
@@ -150,7 +195,7 @@ do
                     logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh ($retry)"
 					/opt/pim/bin/init_cam.sh
 				else
-                    logger -p local0.crit "[$KEY][$tag:$LINENO] retry($retry) over"
+                    logger -p local0.error "[$KEY][$tag:$LINENO] retry($retry) over"
 					logger -p local0.emerg "[$KEY][$tag:$LINENO] creboot...($retry)"
                     sleep 1
 					creboot
@@ -165,7 +210,7 @@ do
     fi
 
     if [ "$timer" -gt "$rec_time" ]; then 
-        logger -p local0.crit "[$KEY][$tag:$LINENO] streamApp all file not create"
+        logger -p local0.error "[$KEY][$tag:$LINENO] streamApp all file not create"
         logger -p local0.emerg "[$KEY][$tag:$LINENO] creboot...($retry)"
         sleep 1
         creboot

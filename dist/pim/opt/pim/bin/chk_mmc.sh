@@ -23,7 +23,7 @@ then
     logger -p local0.crit [$KEY][$tag:$LINENO] mmc Type A:$typead% Type B:$typebd%
 elif [ $typead -ge 40 ] || [ $typebd -ge 40 ]
 then
-    logger -p local0.err [$KEY][$tag:$LINENO] mmc Type A:$typead% Type B:$typebd%
+    logger -p local0.error [$KEY][$tag:$LINENO] mmc Type A:$typead% Type B:$typebd%
 else
     logger -p local0.notice [$KEY][$tag:$LINENO] mmc Type A:$typead% Type B:$typebd%
 fi
