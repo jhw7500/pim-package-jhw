@@ -10,8 +10,8 @@ case "$1" in
 configure)
   echo "postinst configure"
   /opt/pim/bin/auto_fs_sizeup.sh 2 2
-  #timedatectl set-timezone Asia/Seoul
-  timedatectl set-timezone Etc/UTC
+  timedatectl set-timezone Asia/Seoul
+  #timedatectl set-timezone Etc/UTC
   timedatectl set-ntp false
   systemctl set-default multi-user.target
 #  systemctl stop imx8-isp
