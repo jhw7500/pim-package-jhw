@@ -51,7 +51,7 @@ do
 		if [ "$diffEpoch" -ge 5 ]; then
             timer=0
 			#cat /dev/null > $FILE_
-            logger -p local0.notice "[$KEY][$tag:$LINENO] startTime : $startTime"
+            logger -p local0.info "[$KEY][$tag:$LINENO] startTime : $startTime"
 			mp4date=$(date -d "$startTime" "+%Y%m%d_%H%M%S")
             #mp4date=$(echo $startTime)
             logger -p local0.info "[$KEY][$tag:$LINENO] mp4date : $mp4date"
@@ -60,7 +60,7 @@ do
             logger -p local0.info "[$KEY][$tag:$LINENO] next startTimeEpoch : $startTimeEpoch"
             startTime=$(date -d @$startTimeEpoch +"%Y%m%d %H:%M:%S")
             echo "$startTime" > $FILE_
-            logger -p local0.notice "[$KEY][$tag:$LINENO] next startTime : $startTime"
+            logger -p local0.info "[$KEY][$tag:$LINENO] next startTime : $startTime"
 			if [[ "$cam_ch0_en" == *"$ENABLE_VAL"* ]]; then
                 ((check_num++))
                 if [ -f /tmp/ch0.mp4 ]; then
