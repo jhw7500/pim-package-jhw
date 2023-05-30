@@ -1,6 +1,6 @@
 #!/bin/bash
 
-FILE_=/tmp/start_video_time_
+FILE_=/tmp/start_video_time
 FILE_JSON=/root/shared_v/edgeconf_pim.json
 FILE_JSON_=/root/shared_v/ord_vcm_conf.json
 tag=$(basename "$0")
@@ -12,7 +12,7 @@ KEY=RST
 logger -p local0.notice [$KEY][$tag:$LINENO] cam-operate daemon start
 rec_time=$(cat $FILE_JSON | grep recording_time | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
 rec_time=$((rec_time*60))
-rec_time=$((rec_time+90))
+rst_time=$((rec_time+90))
 #rec_time=$((rec_time+90))
 #echo rec_time:$rec_time
 logger -p local0.notice [$KEY][$tag:$LINENO] "empty reset time : $rec_time sec"
@@ -51,14 +51,17 @@ do
 		logger -p local0.info "[$KEY][$tag:$LINENO] diffEpoch : $diffEpoch"
 		if [ "$diffEpoch" -ge 5 ]; then
             timer=0
-			cat /dev/null > $FILE_
-			#cam_ch0_en=$(cat $FILE_JSON | grep cam_ch0 | grep -v rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
-			#cam_ch1_en=$(cat $FILE_JSON | grep cam_ch1 | grep -v rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
-			#cam_ch2_en=$(cat $FILE_JSON | grep cam_ch2 | grep -v rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
-			#cam_ch3_en=$(cat $FILE_JSON | grep cam_ch3 | grep -v rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
+			#cat /dev/null > $FILE_
+            logger -p local0.notice "[$KEY][$tag:$LINENO] startTime : $startTime"
 			mp4date=$(date -d "$startTime" "+%Y%m%d_%H%M%S")
             #mp4date=$(echo $startTime)
             logger -p local0.info "[$KEY][$tag:$LINENO] mp4date : $mp4date"
+            logger -p local0.info "[$KEY][$tag:$LINENO] startTimeEpoch : $startTimeEpoch"
+            startTimeEpoch=$((startTimeEpoch+rec_time))
+            logger -p local0.info "[$KEY][$tag:$LINENO] next startTimeEpoch : $startTimeEpoch"
+            startTime=$(date -d @$startTimeEpoch +"%Y%m%d %H:%M:%S")
+            echo "$startTime" > $FILE_
+            logger -p local0.notice "[$KEY][$tag:$LINENO] next startTime : $startTime"
 			if [[ "$cam_ch0_en" == *"$ENABLE_VAL"* ]]; then
                 ((check_num++))
                 if [ -f /tmp/ch0.mp4 ]; then
@@ -83,6 +86,7 @@ END
                 else
                     logger -p local0.error "[$KEY][$tag:$LINENO] ch0 file not create ( mp4date : $mp4date )"
                 fi
+                rm /tmp/ch0.mp4
 			fi
 
 
@@ -209,7 +213,7 @@ END
 		fi
     fi
 
-    if [ "$timer" -gt "$rec_time" ]; then 
+    if [ "$timer" -gt "$rst_time" ]; then 
         logger -p local0.error "[$KEY][$tag:$LINENO] streamApp all file not create"
         logger -p local0.emerg "[$KEY][$tag:$LINENO] creboot...($retry)"
         sleep 1

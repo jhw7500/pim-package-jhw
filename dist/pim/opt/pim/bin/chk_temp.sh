@@ -15,8 +15,8 @@ CPU_TMP_VAL1=$(cat /sys/devices/virtual/thermal/thermal_zone1/temp)
 CPU_TEMP0=$(echo "$CPU_TMP_VAL0/1000" | bc)
 CPU_TEMP1=$(echo "$CPU_TMP_VAL1/1000" | bc)
 
-logger -p local0.info "[CHK][$tag:$LINENO] CPU_TMP_VAL0:$CPU_TEMP_VAL0"
-logger -p local0.info "[CHK][$tag:$LINENO] CPU_TMP_VAL1:$CPU_TEMP_VAL0"
+logger -p local0.info "[CHK][$tag:$LINENO] CPU_TMP_VAL0:$CPU_TEMP0"
+logger -p local0.info "[CHK][$tag:$LINENO] CPU_TMP_VAL1:$CPU_TEMP1"
 
 if [ "$CPU_TEMP0" -gt "$CPU_TEMP_MAX0" ]; then
     CPU_TEMP_MAX0=$((CPU_TEMP0))
