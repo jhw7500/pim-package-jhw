@@ -9,13 +9,12 @@ DISABLE_VAL=false
 retry=0
 touch $FILE_
 KEY=RST
-logger -p local0.notice [$KEY][$tag:$LINENO] cam-operate daemon start
+logger -p local0.notice "[$KEY][$tag:$LINENO] cam-operate daemon start"
 rec_time=$(cat $FILE_JSON | grep recording_time | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
 rec_time=$((rec_time*60))
 rst_time=$((rec_time+90))
 #rec_time=$((rec_time+90))
 #echo rec_time:$rec_time
-logger -p local0.notice [$KEY][$tag:$LINENO] "empty reset time : $rec_time sec"
 #rec_time=$((rec_time+10))
 timer=0
 cam_ch0_en=$(cat $FILE_JSON | grep cam_ch0 | grep -v rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
@@ -25,8 +24,8 @@ cam_ch3_en=$(cat $FILE_JSON | grep cam_ch3 | grep -v rotate | cut -d':' -f2 | cu
 srt_en=$(cat $FILE_JSON_ | grep srt_enable | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
 time_rec_en=$(cat $FILE_JSON_ |grep file_time_recording | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
 vhl_name=$(cat $FILE_JSON | grep vhl_name | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n' | tr -d ' ' )
-logger -p local0.notice [$KEY][$tag:$LINENO] ch0_en:$cam_ch0_en ch1_en:$cam_ch1_en ch2_en:$cam_ch2_en ch3_en:$cam_ch3_en srt_en:$srt_en time_rec_en:$time_rec_en
-logger -p local0.info [$KEY][$tag:$LINENO] vhl_name:$vhl_name
+logger -p local0.notice "[$KEY][$tag:$LINENO] ch0:$cam_ch0_en ch1:$cam_ch1_en ch2:$cam_ch2_en ch3:$cam_ch3_en srt:$srt_en time_rec_en:$time_rec_en"
+logger -p local0.notice "[$KEY][$tag:$LINENO] vhl_name:$vhl_name rec_time:$rec_time rst_time:$rst_time"
 while :
 do
     check_num=0
