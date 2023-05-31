@@ -31,6 +31,7 @@ while :
 do
     check_num=0
     file_cnt=0
+    file_time_err=0
     if [[ "$time_rec_en" != *"$ENABLE_VAL"* ]]; then
         sleep 30
         continue
@@ -57,7 +58,7 @@ do
 		#echo $startTimeEpoch
 		diffEpoch=$(echo "$curTimeEpoch - $startTimeEpoch" |bc)
 		logger -p local0.info "[$KEY][$tag:$LINENO] diffEpoch : $diffEpoch"
-		if [ "$diffEpoch" -ge 5 ]; then
+		if [ "$diffEpoch" -ge 2 ]; then
             timer=0
 			cat /dev/null > $FILE_
             logger -p local0.info "[$KEY][$tag:$LINENO] startTime : $startTime"
@@ -83,7 +84,8 @@ END
 			    		logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch0.mp4 exist"
 	    			else
 		    			logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch0.mp4 not exist"
-                        ((file_cnt--))
+                        #((file_cnt--))
+                        ((file_time_err++))
                     fi
 :<<'END'
                     test=$(echo ${vhl_name}_${ch_time:0:8}_${ch_time:9:2}${ch_time:12:2}${ch_time:15:2}-ch0.mp4)
@@ -111,7 +113,8 @@ END
                         logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch1.mp4 exist"
                     else
                         logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch1.mp4 not exist"
-                        ((file_cnt--))
+                        #((file_cnt--))
+                        ((file_time_err++))
                     fi
 :<<'END'
                     if [[ "$mp4date" == "$ch_time" ]]; then
@@ -136,7 +139,8 @@ END
                         logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch2.mp4 exist"
                     else
                         logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch2.mp4 not exist"
-                        ((file_cnt--))
+                        #((file_cnt--))
+                        ((file_time_err++))
                     fi
 :<<'END'
                     if [[ "$mp4date" == "$ch_time" ]]; then
@@ -161,7 +165,8 @@ END
                         logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch3.mp4 exist"
                     else
                         logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch3.mp4 not exist"
-                        ((file_cnt--))
+                        #((file_cnt--))
+                        ((file_time_err++))
                     fi
 :<<'END'
                     if [[ "$mp4date" == "$ch_time" ]]; then
@@ -186,7 +191,8 @@ END
                         logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-data.srt exist"
                     else
                         logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-data.srt not exist"
-                        ((file_cnt--))
+                        #((file_cnt--))
+                        ((file_time_err++))
                     fi
 :<<'END'
                     if [[ "$mp4date" == "$ch_time" ]]; then
@@ -204,28 +210,33 @@ END
 			#logger -p local0.debug [$KEY][$tag:$LINENO] mp4date:$mp4date
 			logger -p local0.info "[$KEY][$tag:$LINENO] check_num:$check_num cnt:$file_cnt"
 			if [ "$check_num" -gt "$file_cnt" ]; then
-				#((retry++))
-				logger -p local0.error "[$KEY][$tag:$LINENO] $check_num != $file_cnt file cnt check fail ($retry)"
+				((retry++))
+				logger -p local0.error "[$KEY][$tag:$LINENO] $check_num != $file_cnt file cnt check fail"
 #:<<'END'
-				if [ "$retry" -le 1 ]; then
-                    logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/kill_test.sh ($retry)"
+				if [ "$retry" -le 0 ]; then
+                    logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/kill_test.sh (retry:$retry)"
 					/opt/pim/bin/kill_test.sh
 				elif [ "$retry" -le 3 ]; then
-                    logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh ($retry)"
+                    logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh (retry:$retry)"
 					/opt/pim/bin/init_cam.sh
 				else
-                    logger -p local0.error "[$KEY][$tag:$LINENO] retry($retry) over"
-					logger -p local0.emerg "[$KEY][$tag:$LINENO] creboot...($retry)"
+                    logger -p local0.error "[$KEY][$tag:$LINENO] retry:$retry over"
+					logger -p local0.emerg "[$KEY][$tag:$LINENO] creboot...(retry:$retry)"
                     sleep 1
 					creboot
                     logger -p local0.emerg "[$KEY][$tag:$LINENO] creboot end"
 				fi
-                ((retry++))
+                #((retry++))
 #END
 			else
-				logger -p local0.info "[$KEY][$tag:$LINENO] mp4,srt file cnt check ok ($retry)"
+				logger -p local0.info "[$KEY][$tag:$LINENO] mp4,srt file cnt check ok (retry:$retry)"
 				retry=0
 			fi
+
+            if [ "$file_time_err" -ne 0 ]; then
+                logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/kill_test.sh (file_time_err:$file_time_err)"
+                /opt/pim/bin/kill_test.sh
+            fi
 		fi
     fi
 
