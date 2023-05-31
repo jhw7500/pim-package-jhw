@@ -35,7 +35,15 @@ do
         continue
     fi
 
+    if [ -f /tmp/kill_flag ]; then
+        logger -p local0.notice "[$KEY][$tag:$LINENO] kill_flag set"
+        rm /tmp/kill_flag
+        cat /dev/null > $FILE_
+        timer=0
+    fi
+
     startTime=$(cat $FILE_ 2>/dev/null| tr -d '\n')
+
 	if [ -n "$startTime"  ]; then
         #timer=0
 		curTimeEpoch=$(date "+%s")

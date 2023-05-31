@@ -8,6 +8,7 @@ logger -p local0.notice [$KEY][$tag:$LINENO] kill_test.sh start
 #list="BG_Check_for_pim.sh vcm streamApp PIMCAM"
 list="BG_Check_for_pim.sh vcm streamApp PIMCAM"
 
+touch /tmp/kill_flag
 for service in $list; do
 #logger -p local0.notice [$KEY][$tag:$LINENO] $service 
 if [ ! -z "$service" ]; then

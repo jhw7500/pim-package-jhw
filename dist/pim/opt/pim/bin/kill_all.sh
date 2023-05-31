@@ -7,7 +7,7 @@ limitcnt=20
 KEY=RST
 
 logger -p local0.notice [CHK][$tag:$LINENO] kill_all start
-
+touch /tmp/kill_flag
 for service in $list; do
 if [ ! -z "$service" ]; then
     logger -p local0.notice [CHK][$tag:$LINENO] $service
