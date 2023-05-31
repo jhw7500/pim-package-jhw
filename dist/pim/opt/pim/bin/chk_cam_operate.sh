@@ -1,6 +1,6 @@
 #!/bin/bash
 
-FILE_=/tmp/start_video_time
+FILE_=/tmp/start_video_time_
 FILE_JSON=/root/shared_v/edgeconf_pim.json
 FILE_JSON_=/root/shared_v/ord_vcm_conf.json
 tag=$(basename "$0")
@@ -50,17 +50,19 @@ do
 		logger -p local0.info "[$KEY][$tag:$LINENO] diffEpoch : $diffEpoch"
 		if [ "$diffEpoch" -ge 5 ]; then
             timer=0
-			#cat /dev/null > $FILE_
+			cat /dev/null > $FILE_
             logger -p local0.info "[$KEY][$tag:$LINENO] startTime : $startTime"
 			mp4date=$(date -d "$startTime" "+%Y%m%d_%H%M%S")
             #mp4date=$(echo $startTime)
             logger -p local0.info "[$KEY][$tag:$LINENO] mp4date : $mp4date"
+:<<'END'
             logger -p local0.info "[$KEY][$tag:$LINENO] startTimeEpoch : $startTimeEpoch"
             startTimeEpoch=$((startTimeEpoch+rec_time))
             logger -p local0.info "[$KEY][$tag:$LINENO] next startTimeEpoch : $startTimeEpoch"
             startTime=$(date -d @$startTimeEpoch +"%Y%m%d %H:%M:%S")
             echo "$startTime" > $FILE_
             logger -p local0.info "[$KEY][$tag:$LINENO] next startTime : $startTime"
+END
 			if [[ "$cam_ch0_en" == *"$ENABLE_VAL"* ]]; then
                 ((check_num++))
                 if [ -f /tmp/ch0.mp4 ]; then
