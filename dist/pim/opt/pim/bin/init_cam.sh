@@ -7,20 +7,18 @@ logger -p local0.notice [RST][$tag:$LINENO] module reset..
 #systemctl restart cam-operate
 /opt/pim/bin/kill_all.sh
 
-sleep 3
+#sleep 3
 rmmod imx8-media-dev
-sleep 3
+#sleep 3
 rmmod max9296
 #rmmod imx8-media-dev
 #rmmod max9296
 
-sleep 3
+sleep 2
 modprobe max9296
-sleep 3
+sleep 2
 modprobe imx8-media-dev
-sleep 5
-#PIMCAM -j /root/shared_v/edgeconf_pim.json &
+sleep 2
 /opt/pim/bin/restart_app.sh &
+#/opt/pim/bin/kill_test.sh
 #/opt/pim/bin/kill_pid.sh
-#/opt/pim/bin/ord &
-#/opt/pim/bin/vsd &

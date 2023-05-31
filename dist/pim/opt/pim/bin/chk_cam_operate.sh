@@ -26,6 +26,7 @@ time_rec_en=$(cat $FILE_JSON_ |grep file_time_recording | cut -d':' -f2 | cut -d
 vhl_name=$(cat $FILE_JSON | grep vhl_name | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n' | tr -d ' ' )
 logger -p local0.notice "[$KEY][$tag:$LINENO] ch0:$cam_ch0_en ch1:$cam_ch1_en ch2:$cam_ch2_en ch3:$cam_ch3_en srt:$srt_en time_rec_en:$time_rec_en"
 logger -p local0.notice "[$KEY][$tag:$LINENO] vhl_name:$vhl_name rec_time:$rec_time rst_time:$rst_time"
+
 while :
 do
     check_num=0
@@ -82,6 +83,7 @@ END
 			    		logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch0.mp4 exist"
 	    			else
 		    			logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch0.mp4 not exist"
+                        ((file_cnt--))
                     fi
 :<<'END'
                     test=$(echo ${vhl_name}_${ch_time:0:8}_${ch_time:9:2}${ch_time:12:2}${ch_time:15:2}-ch0.mp4)
@@ -109,6 +111,7 @@ END
                         logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch1.mp4 exist"
                     else
                         logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch1.mp4 not exist"
+                        ((file_cnt--))
                     fi
 :<<'END'
                     if [[ "$mp4date" == "$ch_time" ]]; then
@@ -133,6 +136,7 @@ END
                         logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch2.mp4 exist"
                     else
                         logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch2.mp4 not exist"
+                        ((file_cnt--))
                     fi
 :<<'END'
                     if [[ "$mp4date" == "$ch_time" ]]; then
@@ -157,6 +161,7 @@ END
                         logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch3.mp4 exist"
                     else
                         logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch3.mp4 not exist"
+                        ((file_cnt--))
                     fi
 :<<'END'
                     if [[ "$mp4date" == "$ch_time" ]]; then
@@ -181,6 +186,7 @@ END
                         logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-data.srt exist"
                     else
                         logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-data.srt not exist"
+                        ((file_cnt--))
                     fi
 :<<'END'
                     if [[ "$mp4date" == "$ch_time" ]]; then
@@ -198,13 +204,13 @@ END
 			#logger -p local0.debug [$KEY][$tag:$LINENO] mp4date:$mp4date
 			logger -p local0.info "[$KEY][$tag:$LINENO] check_num:$check_num cnt:$file_cnt"
 			if [ "$check_num" -gt "$file_cnt" ]; then
-				((retry++))
+				#((retry++))
 				logger -p local0.error "[$KEY][$tag:$LINENO] $check_num != $file_cnt file cnt check fail ($retry)"
 #:<<'END'
-				if [ "$retry" -le 4 ]; then
+				if [ "$retry" -le 1 ]; then
                     logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/kill_test.sh ($retry)"
 					/opt/pim/bin/kill_test.sh
-				elif [ "$retry" -le 5 ]; then
+				elif [ "$retry" -le 3 ]; then
                     logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh ($retry)"
 					/opt/pim/bin/init_cam.sh
 				else
@@ -214,6 +220,7 @@ END
 					creboot
                     logger -p local0.emerg "[$KEY][$tag:$LINENO] creboot end"
 				fi
+                ((retry++))
 #END
 			else
 				logger -p local0.info "[$KEY][$tag:$LINENO] mp4,srt file cnt check ok ($retry)"

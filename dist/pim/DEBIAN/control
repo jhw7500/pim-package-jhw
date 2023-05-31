@@ -1,5 +1,5 @@
 Package: pim-mp
-Version: 0.1.0
+Version: 0.3.3
 Section: devel
 Priority: optional
 Architecture: arm64 
@@ -40,3 +40,4 @@ Description: PIM application
 0.3.0 : ord(2.9) for disk exception, cam-operate for timesync
 0.3.1 : timezone UTC, ord(3.0) for rsyslog afet timesync, cam-operate logic, chk_temp, factory reset, etc..
 0.3.2 : timezone KST, streamApp(1.4), restartApp
+0.3.3 : max9296(1.2), ch0 check err fix, log

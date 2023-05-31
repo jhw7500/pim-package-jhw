@@ -2,8 +2,8 @@
 /var/log/cantops/local0.log
 /var/log/syslog
 {
-	rotate 10
-	weekly
+	rotate 6
+	monthly
 	missingok
 	notifempty
 	delaycompress
@@ -27,8 +27,8 @@
 /var/log/debug
 /var/log/messages
 {
-	rotate 4
-	weekly
+	rotate 6
+	monthly
 	missingok
 	notifempty
 	delaycompress
