@@ -1,7 +1,7 @@
 #!/bin/bash
 
 tag=$(basename "$0")
-list="BG_Check_for_pim.sh restart_app.sh vcm ord vsd streamApp PIMCAM"
+list="BG_Check_for_pim.sh restart_app.sh vcm streamApp PIMCAM"
 #list="chk_mem.sh"
 limitcnt=20
 KEY=RST
