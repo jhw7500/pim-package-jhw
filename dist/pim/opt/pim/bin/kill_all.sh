@@ -24,7 +24,7 @@ if [ ! -z "$service" ]; then
                 #logger -p local0.emerg "[$KEY][$tag:$LINENO] reboot.."
                 defunct=$(ps -ef |grep defunct | grep -v grep)
                 logger -p local0.notice [$KEY][$tag:$LINENO] $defunct
-                umount /mnt
+                umount /mnt/sd_cam
                 if [ -z "$defunct" ]; then
                     logger -p local0.emerg "[$KEY][$tag:$LINENO] normal reboot.."
                     sleep 1

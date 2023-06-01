@@ -3,7 +3,9 @@ FLAG_PATH="/tmp"
 tag=$(basename "$0")
 timestamp=`date +"%Y-%m-%d %T,%3N"`
 
-TEST_CONFIG_FILE="/root/shared_v/edgeconf_pim.json"
+JSON_PREFIX=edgeconf_
+JOSN_SUFFIX=.json
+TEST_CONFIG_FILE=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} |grep -v '/$' | tail -1 |tr -d '\r\n')
 PCI_FIND=$(lspci | grep -o 'Marvell Technology')
 
 

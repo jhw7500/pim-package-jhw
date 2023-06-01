@@ -13,7 +13,7 @@ while [ 1 ]; do
         pid=$(ps -ef |grep streamApp |grep -v grep |awk '{print $2}')
         if [ -z "$pid" ]; then
             logger -p local0.emerg "[$KEY][$tag:$LINENO] PIMCAM streamApp start"
-	        /usr/bin/PIMCAM -j /root/shared_v/edgeconf_pim.json &
+	        /usr/bin/PIMCAM &
             pid=$(ps -ef |grep BG_Check_for_pim.sh |grep -v grep |awk '{print $2}')
             if [ -z "$pid" ]; then
                 logger -p local0.emerg "[$KEY][$tag:$LINENO] BG_Check_for_pim.sh start"

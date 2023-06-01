@@ -5,6 +5,8 @@
 ############################################################
 
 hostname=pim-camera-v016
+tag=$(basename "$0")
+KEY=PACKAGE
 
 case "$1" in
 configure)
@@ -37,9 +39,12 @@ configure)
 	mkdir /share
   fi
 
+  if [ ! -d /mnt/sd_cam ]; then
+    mkdir /mnt/sd_cam
+  fi
   
-  if [ ! -f  /root/shared_v/edgeconf_pim.json ]; then
-        logger -s -p local0.notice -t $service apply default edgeconf_pim.json
+  if [ ! -f  /root/shared_v/edgeconf*.json ]; then
+    logger -s -p local0.notice "[$KEY][$tag:$LINENO] apply default edgeconf_pim.json"
 	cp /opt/pim/config/edgeconf_pim.json /root/shared_v/
   fi
 
@@ -48,17 +53,17 @@ configure)
 
 :<<'END'
   if [ ! -f  /etc/netplan/eth0.yaml ]; then
-        logger -s -p local0.notice -t $service apply default netplan eth0
+        logger -s -p local0.notice "[$KEY][$tag:$LINENO] apply default netplan eth0"
         cp /opt/pim/config/eth0.yaml /etc/netplan/
   fi
 
   if [ ! -f  /etc/netplan/eth1.yaml ]; then
-        logger -s -p local0.notice -t $service apply default netplan eth1
+        logger -s -p local0.notice "[$KEY][$tag:$LINENO] apply default netplan eth1"
         cp /opt/pim/config/eth1.yaml /etc/netplan/
   fi
 
-  if [ ! -f  /etc/netplan/wlp1s0.yaml ]; then
-        logger -s -p local0.notice -t $service apply default netplan wlp1s0
+  if [ ! -f /etc/netplan/wlp1s0.yaml ]; then 
+        logger -s -p local0.notice "[$KEY][$tag:$LINENO] apply default netplan wlp1s0"
         cp /opt/pim/config/wlp1s0.yaml /etc/netplan/
   fi
 END
@@ -72,7 +77,7 @@ END
   (echo user; echo user;) | smbpasswd -as user
   useradd -m semes && (echo semes; echo semes;) | passwd semes
 
-  chmod 777 /mnt
+  chmod -R 777 /mnt/sd_cam
   chmod 777 /share
 
   sed 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' -i /etc/ssh/sshd_config

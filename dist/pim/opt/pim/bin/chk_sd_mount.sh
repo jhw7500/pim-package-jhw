@@ -3,7 +3,7 @@ FLAG_PATH="/tmp"
 SUCCESS_VAL="/dev/mmcblk1p1"
 timestamp=`date +"%Y-%m-%d %T,%3N"`
 tag=$(basename "$0")
-folder=/mnt/test
+folder=/mnt/sd_cam/test
 file=sd_write_test
 
 if [ ! -d  $folder ]; then

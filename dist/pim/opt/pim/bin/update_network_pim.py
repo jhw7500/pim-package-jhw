@@ -44,15 +44,21 @@ def calcu_set_gateway_ip(ip_str, sub_str):
     
     return str(ipadd.network[1])
 
-def search_conf(pattern):
+def search_conf(path, prefix, suffix):
     conf_file = ""
+    pattern = path + '/' + prefix + '*' + suffix
+    #print("pattern : "+pattern)
     conf_list = glob.glob(pattern)
+    #print("conf_list[0] : "+conf_list[0])
     if len(conf_list) == 1:
         return conf_list[0]
     else :
         return False
 
 def get_global_conf():
+    #target = r"/root/shared_v/edgeconf_*.json"
+    #global_conf_path = glob.glob(target)
+    #print("json_path : "+global_conf_path[0])
     global_conf_path = "/root/shared_v/edgeconf_pim.json"
 #    global_conf_path = ""
 #    try:
@@ -66,7 +72,8 @@ def get_global_conf():
 
 #################################################
 
-json_path = get_global_conf()
+#json_path = get_global_conf()
+json_path = search_conf("/root/shared_v", "edgeconf_", ".json")
 #print("json_path : "+json_path)
 
 with open(json_path, "r") as f :

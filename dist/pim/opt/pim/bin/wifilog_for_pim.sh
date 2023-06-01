@@ -1,5 +1,5 @@
 #!/bin/bash
-_root_path="/mnt/wifilog"
+_root_path="/mnt/sd_cam/wifilog"
 prevmac="none"
 
 function LogWrite() {

@@ -45,7 +45,7 @@ EOF
     echo "make FAT32 file system "
     mkfs.fat -F 32 -I /dev/mmcblk1p1
     sleep 1
-    mount /dev/mmcblk1p1 /mnt
+    mount /dev/mmcblk1p1 /mnt/sd_cam
     sleep 1
 	logger -p local0.notice [SDC][$tag:$LINENO] SD card fat32 format
 }

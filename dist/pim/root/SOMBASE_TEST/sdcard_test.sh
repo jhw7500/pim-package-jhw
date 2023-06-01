@@ -3,7 +3,7 @@
 VERSION="20230417"
 ROOT_PATH=/root/SOMBASE_TEST
 COUNT_PATH="${ROOT_PATH}/count"
-SDA_PATH="/mnt"
+SDA_PATH="/mnt/sd_cam"
 SDB_PATH="/mnt_b"
 WRITE_COUNT="sd_write_count"
 MAX_CP_COUNT=5
