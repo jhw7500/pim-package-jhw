@@ -40,7 +40,7 @@
       "cam_width" : 1280,
       "cam_height" : 720,
       "event_auto_remove" : true,
-      "event_storage_size" : 15,
+      "event_storage_size" : 5,
       "floor" : "NONAME",
       "fps" : 15,
       "line" : "NONAME",
