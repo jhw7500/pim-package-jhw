@@ -7,6 +7,7 @@ logger -p local0.notice [FIN][$tag:$LINENO] FACTORY INIT START
 /opt/pim/bin/sdcard_fat32_format.sh
 
 #edgeconf_pim.json init
+rm /root/shared_v/edgeconf_*.json
 cp /opt/pim/config/edgeconf_pim.json /root/shared_v/
 
 #ord_vcm_conf.json init
