@@ -32,6 +32,7 @@ while [ 1 ]; do
                 echo "ok" >/dev/null
             else
                 echo "no" >/dev/null
+                sleep 0.5
                 logger -p local0.emerg "[$KEY][$tag:$LINENO] $service start $status"
                 /opt/pim/bin/$service &
             fi

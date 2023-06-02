@@ -42,7 +42,11 @@ configure)
   if [ ! -d /mnt/sd_cam ]; then
     mkdir /mnt/sd_cam
   fi
-  
+
+  if [ -d /mnt/event ]; then
+    rm -r /mnt/event
+  fi
+
   if [ ! -f  /root/shared_v/edgeconf*.json ]; then
     logger -s -p local0.notice "[$KEY][$tag:$LINENO] apply default edgeconf_pim.json"
 	cp /opt/pim/config/edgeconf_pim.json /root/shared_v/
