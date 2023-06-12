@@ -23,4 +23,4 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 #00 00   * * *   root    /opt/pim/bin/log_to_gz.sh /var/log/cantops 30
 00 00   1 * *   root    logrotate /etc/logrotate.d/rsyslog
 00 00   * * *   root    /opt/pim/bin/chk_mmc.sh
-
+00  *   * * *   root    hwclock --systohc

@@ -14,7 +14,7 @@ install)
   dpkg --configure -a
   dpkg --purge pim
   dpkg --purge pim-test
-  systemctl stop rsyslog
+#  systemctl stop rsyslog
 #  git config --global user.name "hwjo" && git config --global user.email "hwjo@cantops.biz"
 #  /root/SOMBASE_TEST/mfg60n-aarch64-9.32.0.6.sh install
 #  lmu -reg FCC
@@ -23,7 +23,7 @@ install)
 
 upgrade)
   echo "preinst upgrade"
-  systemctl stop rsyslog
+#  systemctl stop rsyslog
   ;;
 
 *)

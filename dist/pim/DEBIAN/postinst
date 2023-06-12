@@ -19,6 +19,7 @@ configure)
 #  systemctl stop imx8-isp
   systemctl disable imx8-isp
   systemctl restart rsyslog
+  systemctl restart cron
 #  systemctl stop connman-wait-online.service
 #  systemctl disable connman-wait-online.service
 #  systemctl stop systemd-network-wait-online.service
@@ -103,7 +104,7 @@ END
   systemctl enable cam-operate
   systemctl daemon-reload
   
-  logger -p local0.notice -t $service install pim.deb
+  logger -p local0.notice "[$KEY][$tag:$LINENO] install pim.deb"
   ;;
 
 upgrade)

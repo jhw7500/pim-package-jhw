@@ -56,7 +56,7 @@ do
 		startTimeEpoch=$(date -d "$startTime" "+%s")
 		diffEpoch=$(echo "$curTimeEpoch - $startTimeEpoch" |bc)
         logger -p local0.info "[$KEY][$tag:$LINENO] start_video_time_:$startTime, cur_time:$(date '+%Y%m%d %H:%M:%S'), diff:$diffEpoch"
-		if [ "$diffEpoch" -gt 1 ]; then
+		if [ "$diffEpoch" -ge 5 ]; then
             timer=0
 			cat /dev/null > $FILE_
             #logger -p local0.info "[$KEY][$tag:$LINENO] startTime : $startTime"

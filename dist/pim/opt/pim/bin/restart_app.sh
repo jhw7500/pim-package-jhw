@@ -7,10 +7,10 @@ KEY=RST
 list="vsd ord vcm"
 
 while [ 1 ]; do
-    pid=$(ps -ef |grep PIMCAM |grep -v grep |awk '{print $2}')
+    pid=$(ps -ef |grep streamApp |grep -v grep |awk '{print $2}')
     if [ -z "$pid" ]; then
-        logger -p local0.notice "[$KEY][$tag:$LINENO] PIMCAM killed"
-        pid=$(ps -ef |grep streamApp |grep -v grep |awk '{print $2}')
+        logger -p local0.notice "[$KEY][$tag:$LINENO] streamApp killed"
+        pid=$(ps -ef |grep PIMCAM |grep -v grep |awk '{print $2}')
         if [ -z "$pid" ]; then
             logger -p local0.emerg "[$KEY][$tag:$LINENO] PIMCAM streamApp start"
 	        /usr/bin/PIMCAM &
@@ -20,7 +20,8 @@ while [ 1 ]; do
                 /opt/pim/bin/BG_Check_for_pim.sh & 2>/dev/null
             fi
         else
-            logger -p local0.notice  "[$KEY][$tag:$LINENO] streamApp($pid) kill not yet"
+            logger -p local0.notice  "[$KEY][$tag:$LINENO] PIMCAM($pid) kill not yet"
+            killall -s KILL PIMCAM
         fi
     fi
 
