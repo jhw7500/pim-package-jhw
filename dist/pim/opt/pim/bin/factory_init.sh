@@ -8,7 +8,7 @@ logger -p local0.notice [FIN][$tag:$LINENO] FACTORY INIT START
 
 #edgeconf_pim.json init
 rm /root/shared_v/edgeconf_*.json
-cp /opt/pim/config/edgeconf_pim.json /root/shared_v/
+cp /opt/pim/config/edgeconf_*.json /root/shared_v/
 
 #ord_vcm_conf.json init
 cp /opt/pim/config/ord_vcm_conf.json /root/shared_v/
