@@ -1,6 +1,6 @@
 #!/bin/bash
 #for PIM Camera sdcard Test
-VERSION="20230417"
+VERSION="20230721"
 ROOT_PATH=/root/SOMBASE_TEST
 COUNT_PATH="${ROOT_PATH}/count"
 SDA_PATH="/mnt/sd_cam"
@@ -13,7 +13,7 @@ FILE_SIZE=10
 function SDCARD_Mount() {
 	#echo "  SD CARD MOUNT"
 	${ROOT_PATH}/automnt_sdb.sh &
-	
+	sleep 5;
 	Check_SDA_find;
 	Check_SDB_find;
 }
@@ -30,19 +30,45 @@ function Write_count(){
 }
 
 function Check_SDA_find() {
-	SDCARDA_FIND=$(cat /proc/partitions | grep -o 'mmcblk1p1')
-	if [ "$SDCARDA_FIND" != "mmcblk1p1" ]; then
-		echo "SDCARD A MOUNT error"
+	SDCARDA_INSERT=$(cat /proc/partitions | grep -o 'mmcblk1p1')
+	if [ "$SDCARDA_INSERT" != "mmcblk1p1" ]; then
+		echo "SDCARD A insert error"
 		exit 1
 	fi
+	
+	SDCARDA_FS=$(file -s /dev/mmcblk1p1 |grep -o 'FAT (32 bit)')
+	if [ "$SDCARDA_FS" != "FAT (32 bit)" ]; then
+		echo "SDCARD A format error"
+		exit 1
+	fi
+	
+	SDCARDA_MNT=$(df | grep -o 'mmcblk1p1')
+	if [ "$SDCARDA_MNT" != "mmcblk1p1" ]; then
+		echo "SDCARD A mount error"
+		exit 1
+	fi	
+	
 }
 
 function Check_SDB_find() {
 	SDCARDB_FIND=$(cat /proc/partitions | grep -o 'mmcblk0p1')
 	if [ "$SDCARDB_FIND" != "mmcblk0p1" ]; then
-		echo "SDCARD B MOUNT error"
+		echo "SDCARD B insert error"
 		exit 1
 	fi
+
+	SDCARDB_FS=$(file -s /dev/mmcblk0p1 |grep -o 'FAT (32 bit)')
+	if [ "$SDCARDB_FS" != "FAT (32 bit)" ]; then
+		echo "SDCARD B format error"
+		exit 1
+	fi
+	
+	SDCARDB_MNT=$(df | grep -o 'mmcblk0p1')
+	if [ "$SDCARDB_MNT" != "mmcblk0p1" ]; then
+		echo "SDCARD B mount error $SDCARDB_MNT"
+		exit 1
+	fi		
+	
 }
 
 
@@ -174,13 +200,13 @@ var=$1
 case $var in
     START) 
 		echo "TEST $1  version = $VERSION" 
+		SDCARD_Mount
 		Generate_Random_file;
-		SDCARD_Mount;
 		TEST_FILE="${ROOT_PATH}/RANDOM_1.bin"		  
 		do_test_SDA;
 		rm ${COUNT_PATH}/"$WRITE_COUNT" > /dev/null 
 		#echo "Clear SD card A"
-		rm -rf $SDB_PATH/* > /dev/null 
+		rm -rf $SDA_PATH/* > /dev/null 
 		echo "SD card A SUCCESS"
 		echo " "
 		echo " "
