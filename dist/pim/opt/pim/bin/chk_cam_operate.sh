@@ -7,7 +7,7 @@ tag=$(basename "$0")
 ENABLE_VAL=true
 DISABLE_VAL=false
 retry=0
-touch $FILE_
+#touch $FILE_
 KEY=RST
 logger -p local0.notice "[$KEY][$tag:$LINENO] cam-operate daemon start"
 JSON_PREFIX=edgeconf_
@@ -16,6 +16,7 @@ FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} |grep -v '/$' |
 rec_time=$(cat $FILE_JSON | grep recording_time | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
 rec_time=$((rec_time*60))
 rst_time=$((rec_time+90))
+#rst_time=40
 #rec_time=$((rec_time+90))
 #echo rec_time:$rec_time
 #rec_time=$((rec_time+10))
@@ -48,6 +49,7 @@ do
         timer=0
     fi
 
+    #if [ -e "$FILE_" ]; then
     startTime=$(cat $FILE_ 2>/dev/null| tr -d '\n')
 
 	if [ -n "$startTime"  ]; then
@@ -61,6 +63,7 @@ do
 			cat /dev/null > $FILE_
             #logger -p local0.info "[$KEY][$tag:$LINENO] startTime : $startTime"
 			mp4date=$(date -d "$startTime" "+%Y%m%d_%H%M%S")
+            mp4date2=$(date -d "$startTime" "+%Y%m%d_%H%M")
             #mp4date=$(echo $startTime)
             logger -p local0.info "[$KEY][$tag:$LINENO] check_date : $mp4date"
 :<<'END'
@@ -73,8 +76,11 @@ do
 END
 			if [[ "$cam_ch0_en" == *"$ENABLE_VAL"* ]]; then
                 ((check_num++))
-                if [ -f ${mnt_folder}/${vhl_name}_${mp4date}-ch0.mp4 ]; then
+                if [ -f "${mnt_folder}/${vhl_name}_${mp4date}"-ch0.mp4 ]; then
 			        logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch0.mp4 exist"
+                    ((file_cnt++))
+                elif [ -f "${mnt_folder}/${vhl_name}_${mp4date2}"*-ch0.mp4 ]; then
+                    logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-ch0.mp4 exist"
                     ((file_cnt++))
 	    		else
 		    		logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch0.mp4 not exist"
@@ -95,8 +101,11 @@ END
 
             if [[ "$cam_ch1_en" == *"$ENABLE_VAL"* ]]; then
                 ((check_num++))
-                if [ -f ${mnt_folder}/${vhl_name}_${mp4date}-ch1.mp4 ]; then
+                if [ -f "${mnt_folder}/${vhl_name}_${mp4date}"-ch1.mp4 ]; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch1.mp4 exist"
+                    ((file_cnt++))
+                elif [ -f "${mnt_folder}/${vhl_name}_${mp4date2}"*-ch1.mp4 ]; then
+                    logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-ch1.mp4 exist"
                     ((file_cnt++))
                 else
                     logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch1.mp4 not exist"
@@ -107,8 +116,11 @@ END
 
             if [[ "$cam_ch2_en" == *"$ENABLE_VAL"* ]]; then
                 ((check_num++))
-                if [ -f ${mnt_folder}/${vhl_name}_${mp4date}-ch2.mp4 ]; then
+                if [ -f "${mnt_folder}/${vhl_name}_${mp4date}"-ch2.mp4 ]; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch2.mp4 exist"
+                    ((file_cnt++))
+                elif [ -f "${mnt_folder}/${vhl_name}_${mp4date2}"*-ch2.mp4 ]; then
+                    logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-ch2.mp4 exist"
                     ((file_cnt++))
                 else
                     logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch2.mp4 not exist"
@@ -119,8 +131,11 @@ END
 
             if [[ "$cam_ch3_en" == *"$ENABLE_VAL"* ]]; then
                 ((check_num++))
-                if [ -f ${mnt_folder}/${vhl_name}_${mp4date}-ch3.mp4 ]; then
+                if [ -f "${mnt_folder}/${vhl_name}_${mp4date}"-ch3.mp4 ]; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch3.mp4 exist"
+                    ((file_cnt++))
+                elif [ -f "${mnt_folder}/${vhl_name}_${mp4date2}"*-ch3.mp4 ]; then
+                    logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-ch3.mp4 exist"
                     ((file_cnt++))
                 else
                     logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch3.mp4 not exist"
@@ -131,8 +146,11 @@ END
 
             if [[ "$srt_en" == *"$ENABLE_VAL"* ]]; then
                 ((check_num++))
-                if [ -f ${mnt_folder}/${vhl_name}_${mp4date}-data.srt ]; then
+                if [ -f "${mnt_folder}/${vhl_name}_${mp4date}"-data.srt ]; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-data.srt exist"
+                    ((file_cnt++))
+                elif [ -f "${mnt_folder}/${vhl_name}_${mp4date2}"*-data.srt ]; then
+                    logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-data.srt exist"
                     ((file_cnt++))
                 else
                     logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-data.srt not exist"
@@ -154,13 +172,13 @@ END
 					/opt/pim/bin/init_cam.sh
 				else
                     logger -p local0.error "[$KEY][$tag:$LINENO] retry:$retry over"
-					logger -p local0.emerg "[$KEY][$tag:$LINENO] creboot...(retry:$retry)"
+					logger -p local0.emerg "[$KEY][$tag:$LINENO] Rebooting...(retry:$retry)"
                     sleep 1
 					creboot
                     logger -p local0.emerg "[$KEY][$tag:$LINENO] creboot end"
 				fi
 			else
-				logger -p local0.info "[$KEY][$tag:$LINENO] mp4,srt file cnt check ok (retry:$retry)"
+				logger -p local0.notice "[$KEY][$tag:$LINENO] mp4,srt file cnt check ok (retry:$retry)"
 				retry=0
 			fi
 :<<'END'
@@ -174,7 +192,7 @@ END
 
     if [ "$timer" -gt "$rst_time" ]; then 
         logger -p local0.error "[$KEY][$tag:$LINENO] streamApp all file not create"
-        logger -p local0.emerg "[$KEY][$tag:$LINENO] creboot...($retry)"
+        logger -p local0.emerg "[$KEY][$tag:$LINENO] Rebooting...($retry)"
         sleep 1
         creboot
         logger -p local0.emerg "[$KEY][$tag:$LINENO] creboot end"

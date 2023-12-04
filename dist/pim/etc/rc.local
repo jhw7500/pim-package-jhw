@@ -27,6 +27,7 @@ echo 1 > /sys/devices/platform/leds/leds/gpio2_led/brightness
 #sleep 3
 touch /var/run/vsd.pipe
 #PIMCAM -j /root/shared_v/edgeconf_pim.json &
+PIMCAM -d 20 -m 3 &
 /opt/pim/bin/restart_app.sh &
 #/opt/pim/bin/vcm &
 #/opt/pim/bin/ord &

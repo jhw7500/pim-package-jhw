@@ -30,7 +30,6 @@ configure)
 #  systemctl stop connman.service
 #  systemctl disable connman.service
   
-  service=package
 
   if [ ! -d  /var/log/cantops ]; then
 	mkdir /var/log/cantops
@@ -49,9 +48,15 @@ configure)
   fi
 
   if [ ! -f  /root/shared_v/edgeconf*.json ]; then
-    logger -s -p local0.notice "[$KEY][$tag:$LINENO] apply default edgeconf_pim.json"
+    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp edgeconf_pim.json"
 	cp /opt/pim/config/edgeconf_pim.json /root/shared_v/
   fi
+
+  if [ ! -f  /opt/pim/config/edgeconf*default.json ]; then
+    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp edgeconf_pim_default.json"
+    cp /opt/pim/config/edgeconf_pim.json /opt/pim/config/edgeconf_pim_default.json
+  fi
+
 
   systemctl stop NetworkManager
   systemctl disable NetworkManager

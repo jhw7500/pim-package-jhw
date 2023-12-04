@@ -28,8 +28,7 @@
       "used" : "WLAN0"
    },
    "VHL_CAM" : {
-      "id" : "semes",
-      "passwd" : "semes",
+      "id" : "user",
       "bitrate" : 1024,
       "cam_ch0" : true,
       "cam_ch0_rotate" : false,
