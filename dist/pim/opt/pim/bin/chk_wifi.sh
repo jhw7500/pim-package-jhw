@@ -40,7 +40,7 @@ else
 			WIFI_SSID=$(iw wlp1s0 link | grep SSID | cut -d':' -f2)
 			if [ -z "$WIFI_SSID" ] ; then
 				logger -p local0.error [CHK][$tag:$LINENO] WIFI CONNECT ERR
-				echo "${timestamp} $WIFI IP" >> ${FLAG_PATH}/err_wifi.log
+				echo "${timestamp} $WIFI_IP" >> ${FLAG_PATH}/err_wifi.log
 			else
 				_success_value=" 0% packet loss"
 				IP_ADDR=$(cat "$TEST_CONFIG_FILE" | grep wifi_test_ip_addr | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
