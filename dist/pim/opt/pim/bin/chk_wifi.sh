@@ -29,6 +29,12 @@ else
 		logger -p local0.error [CHK][$tag:$LINENO] WIFI IW ERR
 		echo "${timestamp} WIFI ERR" >> ${FLAG_PATH}/err_wifi.log
 	else
+		WIFI_IP=$(ifconfig wlp1s0 | awk '/inet / {print $2}')
+		if [ -z "$WIFI_IP" ] ; then
+			logger -p local0.info [CHK][$tag:$LINENO] WIFI IP ADDR : $WIFI_IP
+			echo "${timestamp} WIFI ERR" >> ${FLAG_PATH}/wifi_connected.log				
+		fi
+		
 		val=$(cat "$TEST_CONFIG_FILE" | grep wifi_signal_check | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
 		if [ "$val" == "y" ]; then
 			WIFI_SSID=$(iw wlp1s0 link | grep SSID | cut -d':' -f2)
@@ -40,8 +46,8 @@ else
 				IP_ADDR=$(cat "$TEST_CONFIG_FILE" | grep wifi_test_ip_addr | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
 				WIFI_SIG=$(iw wlp1s0 link | grep signal | cut -d':' -f2 | tr -d ' ' | tr -d 'dBm')
 				logger -p local0.info [CHK][$tag:$LINENO] WIFI SSID : $WIFI_SSID
-				logger -p local0.info [CHK][$tag:$LINENO] WIFI IP ADDR : $IP_ADDR
-				logger -p local0.info [CHK][$tag:$LINENO] WIFI Signal : $WIFI_SIG dBm
+				logger -p local0.info [CHK][$tag:$LINENO] WIFI Signal : $WIFI_SIG dBm	
+				logger -p local0.info [CHK][$tag:$LINENO] SERVER IP ADDR : $IP_ADDR
 				WIFI_PING=$(ping $IP_ADDR -c 3 -W 3 -s 1000)	
 				if [[ $WIFI_PING != *"$_success_value"* ]]; then
 					logger -p local0.error [CHK][$tag:$LINENO] WIFI PING ERR

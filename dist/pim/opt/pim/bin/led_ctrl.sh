@@ -204,6 +204,13 @@ function LED_CTRL(){
 		BG_CHK_LED_init
     fi
 	
+	if [ -e ${FLAG_PATH}/wifi_connected.log ]; then
+		BLUE_LED_Blinking()
+	else 
+		echo none > /sys/devices/platform/leds/leds/gpio3_led/trigger
+		echo 0 > /sys/devices/platform/leds/leds/gpio3_led/brightness
+	fi
+	
 	
     #normal process
     if [ $TEST_RESULT -eq 0 ]; then

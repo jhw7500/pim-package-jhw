@@ -5,6 +5,7 @@ tag=$(basename "$0")
 function CLEAR_CHK_LOG() {
 	touch $FLAG_PATH/bg_chk_flag.bin
 	rm ${FLAG_PATH}/err_* 2>/dev/null
+	rm ${FLAG_PATH}/wifi_connected.log 2>/dev/null
 }
 
 function MAKE_RESULT_FLAG() {
