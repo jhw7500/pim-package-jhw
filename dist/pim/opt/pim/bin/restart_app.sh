@@ -7,6 +7,7 @@ KEY=RST
 list="vsd ord vcm"
 
 while [ 1 ]; do
+    sleep 1
     pid=$(ps -ef |grep streamApp |grep -v grep |awk '{print $2}')
     if [ -z "$pid" ]; then
         logger -p local0.notice "[$KEY][$tag:$LINENO] streamApp killed"
@@ -23,7 +24,7 @@ while [ 1 ]; do
             fi
         else
             logger -p local0.notice  "[$KEY][$tag:$LINENO] PIMCAM($pid) kill not yet"
-            killall -s KILL PIMCAM
+            #killall -s KILL PIMCAM
         fi
     fi
 
@@ -42,7 +43,7 @@ while [ 1 ]; do
         fi
     done
 
-	sleep 3
+	sleep 2
 done
 
 exit 0

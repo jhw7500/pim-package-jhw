@@ -16,7 +16,9 @@ FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} |grep -v '/$' |
 timer=0
 mnt_folder="/mnt/sd_cam"
 start_f=0
-
+rst_time=25
+csi1_en=0
+csi2_en=0
 GetConfig() {
     rec_time=$(cat $FILE_JSON | grep recording_time | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
     cam_ch0_en=$(cat $FILE_JSON | grep cam_ch0 | grep -v rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
@@ -29,7 +31,21 @@ GetConfig() {
     rec_time=$((rec_time*60))
     #rst_time=$((rec_time+90))
     #rst_time=20
-    rst_time=25
+    if [[ "$cam_ch0_en" == *"$ENABLE_VAL"* ]] || [[ "$cam_ch1_en" == *"$ENABLE_VAL"* ]]; then
+        #logger -p local0.notice "[$key][$tag:$LINENO] csi1 enable"
+        csi1_en=1
+    fi
+
+    if [[ "$cam_ch2_en" == *"$ENABLE_VAL"* ]] || [[ "$cam_ch3_en" == *"$ENABLE_VAL"* ]]; then
+        #logger -p local0.notice "[$key][$tag:$LINENO] csi2 enable"
+        csi2_en=1
+    fi
+    
+    if [[ "$csi1_en" -eq 1 ]] && [[ "$csi2_en" -eq 1 ]]; then
+        rst_time=25
+    else
+        rst_time=15
+    fi
 }
 
 GetConfig
@@ -37,7 +53,6 @@ GetConfig
 #rec_time=$((rec_time+90))
 #echo rec_time:$rec_time
 #rec_time=$((rec_time+10))
-
 logger -p local0.notice "[$KEY][$tag:$LINENO] ch0:$cam_ch0_en, ch1:$cam_ch1_en, ch2:$cam_ch2_en, ch3:$cam_ch3_en, srt:$srt_en, time_rec_en:$time_rec_en"
 logger -p local0.notice "[$KEY][$tag:$LINENO] vhl_name:$vhl_name, rec_time:$rec_time, rst_time:$rst_time"
 
@@ -240,7 +255,7 @@ END
 
 	sleep 3
     ((timer+=3))
-    GetConfig
+    #GetConfig
     #logger -p local0.notice "[$KEY][$tag:$LINENO] timer:$timer"
 done
 

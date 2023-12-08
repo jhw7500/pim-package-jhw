@@ -8,7 +8,8 @@ logger -p local0.notice "[$KEY][$tag:$LINENO] rc.local start : Booting"
 modprobe imx8-media-dev
 export GST_DEBUG_DUMP_DOT_DIR=/tmp/
 #PIMCAM -m 0 -c 3 &
-PIMCAM -d 20 -m 0 &
+#PIMCAM -d 25 -m 0 &
+/opt/pim/bin/init_start_cam.sh
 /opt/pim/bin/restart_app.sh &
 touch /var/run/vsd.pipe
 #booting LED control
@@ -59,7 +60,7 @@ echo 1 > /sys/devices/platform/leds/leds/gpio2_led/brightness
 #/opt/pim/bin/BG_Check_for_pim.sh & 2>/dev/null
 
 #/opt/pim/bin/log_to_gz.sh /var/log/cantops 30 &> /dev/null
-#/opt/pim/bin/chk_cpu_clock.sh &
+/opt/pim/bin/chk_cpu_clock.sh &
 /opt/pim/bin/chk_mem.sh &
 /opt/pim/bin/chk_temp.sh &
 #mount /dev/mmcblk2p1 /root/boot
