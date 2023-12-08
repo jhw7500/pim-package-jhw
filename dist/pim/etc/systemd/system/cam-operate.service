@@ -1,6 +1,7 @@
 [Unit]
 Description=PIM CAM Operate Check Service
-After=syslog.service
+#After=syslog.service
+After=rc-local.service
 
 [Service]
 User=root

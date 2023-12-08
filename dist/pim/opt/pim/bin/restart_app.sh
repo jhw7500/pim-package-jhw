@@ -13,7 +13,9 @@ while [ 1 ]; do
         pid=$(ps -ef |grep PIMCAM |grep -v grep |awk '{print $2}')
         if [ -z "$pid" ]; then
             logger -p local0.emerg "[$KEY][$tag:$LINENO] PIMCAM streamApp start"
-	        /usr/bin/PIMCAM -m 3 &
+            #export GST_DEBUG_DUMP_DOT_DIR=/tmp/
+	        #/usr/bin/PIMCAM -d 8 -m 0 &
+            /usr/bin/PIMCAM -d 3 -m 0 &
             pid=$(ps -ef |grep BG_Check_for_pim.sh |grep -v grep |awk '{print $2}')
             if [ -z "$pid" ]; then
                 logger -p local0.emerg "[$KEY][$tag:$LINENO] BG_Check_for_pim.sh start"
@@ -34,13 +36,13 @@ while [ 1 ]; do
             else
                 echo "no" >/dev/null
                 sleep 0.5
-                logger -p local0.emerg "[$KEY][$tag:$LINENO] $service start $status"
+                logger -p local0.emerg "[$KEY][$tag:$LINENO] $service start"
                 /opt/pim/bin/$service &
             fi
         fi
     done
 
-	sleep 1
+	sleep 3
 done
 
 exit 0

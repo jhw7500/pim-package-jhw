@@ -83,6 +83,11 @@ END
     mkdir /root/boot
   fi
 
+  mount /dev/mmcblk2p1 /root/boot
+  cp /opt/pim/boot/imx8mp*.dtb /root/boot/
+  sync
+  umount /root/boot
+  
   (echo root; echo root;) | passwd root
   (echo user; echo user;) | smbpasswd -as user
   useradd -m semes && (echo semes; echo semes;) | passwd semes
@@ -110,6 +115,7 @@ END
   systemctl daemon-reload
   
   logger -p local0.notice "[$KEY][$tag:$LINENO] install pim.deb"
+  sync
   ;;
 
 upgrade)
