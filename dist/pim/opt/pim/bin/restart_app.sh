@@ -16,7 +16,8 @@ while [ 1 ]; do
             logger -p local0.emerg "[$KEY][$tag:$LINENO] PIMCAM streamApp start"
             #export GST_DEBUG_DUMP_DOT_DIR=/tmp/
 	        #/usr/bin/PIMCAM -d 8 -m 0 &
-            /usr/bin/PIMCAM -d 3 -m 0 &
+            #/usr/bin/PIMCAM -d 3 -m 0 &
+            /opt/pim/bin/init_start_cam.sh 1
             pid=$(ps -ef |grep BG_Check_for_pim.sh |grep -v grep |awk '{print $2}')
             if [ -z "$pid" ]; then
                 logger -p local0.emerg "[$KEY][$tag:$LINENO] BG_Check_for_pim.sh start"
@@ -24,7 +25,7 @@ while [ 1 ]; do
             fi
         else
             logger -p local0.notice  "[$KEY][$tag:$LINENO] PIMCAM($pid) kill not yet"
-            #killall -s KILL PIMCAM
+            killall -s KILL PIMCAM
         fi
     fi
 

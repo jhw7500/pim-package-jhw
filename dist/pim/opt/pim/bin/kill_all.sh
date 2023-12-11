@@ -52,4 +52,4 @@ fi
 done
 logger -p local0.notice [CHK][$tag:$LINENO] kill_all end
 
-exit $status
+exit 0
