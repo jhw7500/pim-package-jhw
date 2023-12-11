@@ -2,6 +2,8 @@
 tag=$(basename "$0")
 KEY=RST
 logger -p local0.notice "[$KEY][$tag:$LINENO] rc.local start : Booting"
+#sd mount
+/opt/pim/bin/automnt_sd_for_emmc_boot.sh &
 #/opt/pim/bin/eth_name_exchange.sh &
 #export GST_DEBUG=3
 #export PointImageApp_DEBUG=main:*,libfilewriter:*,writer:1,
@@ -22,10 +24,11 @@ echo none > /sys/devices/platform/leds/leds/gpio3_led/trigger
 echo 0 > /sys/devices/platform/leds/leds/gpio3_led/brightness
 #booting LED status : Green LED & Red LED on 
 echo 1 > /sys/devices/platform/leds/leds/gpio1_led/brightness
-echo 1 > /sys/devices/platform/leds/leds/gpio2_led/brightness   
+echo 1 > /sys/devices/platform/leds/leds/gpio2_led/brightness
 
-#sd mount 
-/opt/pim/bin/automnt_sd_for_emmc_boot.sh &
+/opt/pim/bin/chk_cpu_clock.sh &
+/opt/pim/bin/chk_mem.sh &
+/opt/pim/bin/chk_temp.sh &
 
 #wpa_cli -p /run/wpa_supplicant -i wlp1s0 set_network 0 bgscan  '"simple:3:-70:300"'
 #wpa_cli -p /run/wpa_supplicant -i wlp1s0 autoscan "periodic:30"
@@ -60,9 +63,6 @@ echo 1 > /sys/devices/platform/leds/leds/gpio2_led/brightness
 #/opt/pim/bin/BG_Check_for_pim.sh & 2>/dev/null
 
 #/opt/pim/bin/log_to_gz.sh /var/log/cantops 30 &> /dev/null
-/opt/pim/bin/chk_cpu_clock.sh &
-/opt/pim/bin/chk_mem.sh &
-/opt/pim/bin/chk_temp.sh &
 #mount /dev/mmcblk2p1 /root/boot
 
 exit 0

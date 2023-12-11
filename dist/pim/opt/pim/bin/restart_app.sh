@@ -6,8 +6,9 @@ KEY=RST
 #list="BG_Check_for_pim.sh restart_app.sh vcm ord vsd"
 list="vsd ord vcm"
 
+sleep 2
 while [ 1 ]; do
-    sleep 1
+    #sleep 2
     pid=$(ps -ef |grep streamApp |grep -v grep |awk '{print $2}')
     if [ -z "$pid" ]; then
         logger -p local0.notice "[$KEY][$tag:$LINENO] streamApp killed"
@@ -32,6 +33,7 @@ while [ 1 ]; do
     for service in $list; do
         if [ ! -z "$service" ]; then
             #pgrep $service >/dev/null; status=$?
+            sleep 1
             pid=$(ps -ef |grep $service |grep -v grep |awk '{print $2}')
             if [ -n "$pid" ]; then
                 echo "ok" >/dev/null
@@ -44,7 +46,7 @@ while [ 1 ]; do
         fi
     done
 
-	sleep 2
+	#sleep 1
 done
 
 exit 0

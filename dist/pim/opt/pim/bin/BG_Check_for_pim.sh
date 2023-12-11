@@ -51,7 +51,8 @@ CLEAR_CHK_LOG
 sleep 30
 logger -p local0.notice [CHK][$tag:$LINENO] check loop start
 while true; do
-    sleep 0.5
+    sleep 1
+    #sleep 0.5
     #echo "START!! BG_CHK"
     CLEAR_CHK_LOG
     #wifi check
