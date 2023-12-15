@@ -7,6 +7,7 @@ ENABLE_VAL=true
 DISABLE_VAL=false
 retry=0
 retry_boot=0
+retry_total=0
 #touch $FILE_
 KEY=RST
 logger -p local0.notice "[$KEY][$tag:$LINENO] cam-operate daemon start"
@@ -42,9 +43,9 @@ GetConfig() {
     fi
     
     if [[ "$csi1_en" -eq 1 ]] && [[ "$csi2_en" -eq 1 ]]; then
-        rst_time=25
+        rst_time=30
     else
-        rst_time=15
+        rst_time=18
     fi
 }
 
@@ -94,8 +95,9 @@ do
 		curTimeEpoch=$(date "+%s")
 		startTimeEpoch=$(date -d "$startTime" "+%s")
 		diffEpoch=$(echo "$curTimeEpoch - $startTimeEpoch" |bc)
-        logger -p local0.info "[$KEY][$tag:$LINENO] start_video_time_:$startTime, cur_time:$(date '+%Y%m%d %H:%M:%S'), diff:$diffEpoch"
-		if [ "$diffEpoch" -ge 5 ]; then
+        #logger -p local0.info "[$KEY][$tag:$LINENO] start_video_time_:$startTime, cur_time:$(date '+%Y%m%d %H:%M:%S'), diff:$diffEpoch"
+		if [ "$diffEpoch" -ge 4 ]; then
+            logger -p local0.info "[$KEY][$tag:$LINENO] start_video_time_:$startTime, cur_time:$(date '+%Y%m%d %H:%M:%S'), diff:$diffEpoch"
             timer=0
 			cat /dev/null > $FILE_
             #logger -p local0.info "[$KEY][$tag:$LINENO] startTime : $startTime"
@@ -201,26 +203,28 @@ END
 			if [ "$check_num" -ne "$file_cnt" ]; then
                 start_f=0
 				((retry++))
+                retry_total=$(($retry+$retry_boot))
 				logger -p local0.error "[$KEY][$tag:$LINENO] $check_num != $file_cnt file cnt check fail"
-				if [ "$retry" -le 1 ]; then
-                    logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/kill_test.sh (retry:$retry)"
+				if [ "$retry_total" -le 1 ]; then
+                    logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/kill_test.sh ($retry/$retry_boot/$retry_total)"
                     #rm ${mnt_folder}/${vhl_name}_${mp4date2}*
 					/opt/pim/bin/kill_test.sh
-				elif [ "$retry" -le 3 ]; then
-                    logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh (retry:$retry)"
+				elif [ "$retry_total" -le 3 ]; then
+                    logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh ($retry/$retry_boot/$retry_total)"
                     #rm ${mnt_folder}/${vhl_name}_${mp4date2}*
 					/opt/pim/bin/init_cam.sh
 				else
                     logger -p local0.error "[$KEY][$tag:$LINENO] retry:$retry over"
-					logger -p local0.emerg "[$KEY][$tag:$LINENO] Rebooting...(retry:$retry)"
+					logger -p local0.emerg "[$KEY][$tag:$LINENO] Rebooting...($retry/$retry_boot/$retry_total)"
                     sleep 1
 					creboot
                     logger -p local0.emerg "[$KEY][$tag:$LINENO] creboot end"
 				fi
 			else
-				logger -p local0.notice "[$KEY][$tag:$LINENO] mp4,srt file cnt check ok (retry:$retry)"
+				logger -p local0.notice "[$KEY][$tag:$LINENO] mp4,srt file cnt check ok ($retry/$retry_boot/$retry_total)"
 				retry=0
                 retry_boot=0
+                retry_total=0
 			fi
 :<<'END'
             if [ "$file_time_err" -ne 0 ]; then
@@ -233,17 +237,18 @@ END
     fi
 
     if [ "$start_f" -eq 0 ]; then
-        if [ "$timer" -gt "$rst_time" ]; then 
+        if [ "$timer" -ge "$rst_time" ]; then 
             logger -p local0.error "[$KEY][$tag:$LINENO] streamApp all file not create"
             ((retry_boot++))
+            retry_total=$(($retry+$retry_boot))
             #if [ "$retry_boot" -le 1 ]; then
-            #    logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/kill_test.sh (retry:$retry)"
+            #    logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/kill_test.sh ($retry/$retry_boot/$retry_total)"
             #    /opt/pim/bin/kill_test.sh
-            if [ "$retry_boot" -le 3 ]; then
-                logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh (retry_boot:$retry_boot)"
+            if [ "$retry_total" -le 3 ]; then
+                logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh ($retry/$retry_boot/$retry_total)"
                 /opt/pim/bin/init_cam.sh
             else
-                logger -p local0.emerg "[$KEY][$tag:$LINENO] Rebooting...($retry_boot)"
+                logger -p local0.emerg "[$KEY][$tag:$LINENO] Rebooting...($retry/$retry_boot/$retry_total)"
                 sleep 1
                 creboot
                 logger -p local0.emerg "[$KEY][$tag:$LINENO] creboot end"
@@ -253,8 +258,8 @@ END
 	    fi
     fi
 
-	sleep 3
-    ((timer+=3))
+	sleep 2
+    ((timer+=2))
     #GetConfig
     #logger -p local0.notice "[$KEY][$tag:$LINENO] timer:$timer"
 done

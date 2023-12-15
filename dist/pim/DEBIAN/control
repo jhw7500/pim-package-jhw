@@ -1,5 +1,5 @@
 Package: pim-mp
-Version: 0.3.4
+Version: 0.3.5
 Section: devel
 Priority: optional
 Architecture: arm64 
@@ -42,3 +42,4 @@ Description: PIM application
 0.3.2 : timezone KST, streamApp(1.4), restartApp
 0.3.3 : max9296(1.2), ch0 check err fix, log
 0.3.4 : max9296(1.3), PIMCAM(1.3), streamApp(1.6),ord(3.2), vcm(3.1), vsd(1.5), etc
+0.3.5 : PIMCAM(1.4), streamApp(1.7), ord(3.2), vcm(3.2), etc..

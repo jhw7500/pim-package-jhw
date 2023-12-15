@@ -31,7 +31,7 @@ else
 	else
 		WIFI_IP=$(ifconfig wlp1s0 | awk '/inet / {print $2}')
 		if [ -z "$WIFI_IP" ] ; then
-			logger -p local0.info [CHK][$tag:$LINENO] WIFI IP ADDR : $WIFI_IP
+			#logger -p local0.debug [CHK][$tag:$LINENO] WIFI IP ADDR : $WIFI_IP
 			echo "${timestamp} WIFI ERR" >> ${FLAG_PATH}/wifi_connected.log				
 		fi
 		

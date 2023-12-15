@@ -21,7 +21,7 @@ function err_count_check(){
 
 if [[ $ETH1_PING != *"$_success_value"* ]]; then
 	#ping fail
-	logger -p local0.info [CHK][$tag:$LINENO] ETH1 199.10.100.20 PING ERR	
+	#logger -p local0.debug [CHK][$tag:$LINENO] ETH1 199.10.100.20 PING ERR	
 	err_count_check
 	err_count=$(cat ${FLAG_PATH}/$ERR_CNT)	
 	if [[ $(echo "$err_count > $MAX_CNT" | bc) -eq 1 ]]; then

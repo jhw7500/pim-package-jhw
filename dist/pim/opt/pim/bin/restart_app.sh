@@ -4,9 +4,9 @@ tag=$(basename "$0")
 KEY=RST
 
 #list="BG_Check_for_pim.sh restart_app.sh vcm ord vsd"
-list="vsd ord vcm"
+list="BG_Check_for_pim.sh vsd ord vcm"
 
-sleep 2
+sleep 1
 while [ 1 ]; do
     #sleep 2
     pid=$(ps -ef |grep streamApp |grep -v grep |awk '{print $2}')
@@ -33,20 +33,20 @@ while [ 1 ]; do
     for service in $list; do
         if [ ! -z "$service" ]; then
             #pgrep $service >/dev/null; status=$?
-            sleep 1
+            #sleep 1
             pid=$(ps -ef |grep $service |grep -v grep |awk '{print $2}')
             if [ -n "$pid" ]; then
                 echo "ok" >/dev/null
             else
                 echo "no" >/dev/null
-                sleep 0.5
+                #sleep 0.5
                 logger -p local0.emerg "[$KEY][$tag:$LINENO] $service start"
                 /opt/pim/bin/$service &
             fi
         fi
     done
 
-	#sleep 1
+	sleep 2
 done
 
 exit 0

@@ -1,15 +1,16 @@
 #!/bin/bash
 tag=$(basename "$0")
 key=RST
-iomode=0
+iomode=3
 opt=0
+export GST_DEBUG_DUMP_DOT_DIR=/var/log/cantops/dot/
 if [[ -n "$1" ]]; then
     opt=$1
 fi
 logger -p local0.notice "[$key][$tag:$LINENO] init_start_cam start opt:$opt"
 if [[ "$opt" == 1 ]]; then
     #logger -p local0.notice "[$key][$tag:$LINENO] PIMCAM -d 5 -m $iomode &"
-    PIMCAM -d 5 -m $iomode &
+    PIMCAM -d 3 -m $iomode &
     exit 0
 fi
 
@@ -36,6 +37,7 @@ fi
 
 if [[ "$csi1_en" -eq 1 ]] && [[ "$csi2_en" -eq 1 ]]; then
     PIMCAM -d 25 -m $iomode &
+    #PIMCAM -d 15 -m $iomode -c 3 &
 else
     PIMCAM -d 15 -m $iomode &
 fi

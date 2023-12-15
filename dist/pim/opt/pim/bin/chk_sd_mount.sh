@@ -29,7 +29,7 @@ CHECK_MOUNT_WELL() {
 		rm $folder/$file > /dev/null 2>&1
 		if [ $? -eq 0 ]; then
 			#echo "rm ok"
-			logger -p local0.info "[CHK][$tag:$LINENO] sd mount & write ok"
+			#logger -p local0.debug "[CHK][$tag:$LINENO] sd mount & write ok"
 			exit 0
 		else
 			#echo "rm error"

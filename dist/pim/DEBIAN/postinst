@@ -36,6 +36,10 @@ configure)
 	mkdir /var/log/cantops
   fi
 
+  if [ ! -d  /var/log/cantops/dot ]; then
+    mkdir /var/log/cantops/dot
+  fi
+
   if [ ! -d  /share ]; then
 	mkdir /share
   fi

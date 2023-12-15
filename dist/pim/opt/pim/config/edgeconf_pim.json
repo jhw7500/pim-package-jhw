@@ -46,6 +46,8 @@
       "fps" : 15,
       "line" : "NONAME",
       "recording_time" : 1,
+      "log_level" : 5,
+      "debug_level" : 0,
       "vhl_name" : "VD3001"
    }
 }
