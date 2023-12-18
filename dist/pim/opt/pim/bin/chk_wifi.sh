@@ -30,10 +30,11 @@ else
 		echo "${timestamp} WIFI ERR" >> ${FLAG_PATH}/err_wifi.log
 	else
 		WIFI_IP=$(ifconfig wlp1s0 | awk '/inet / {print $2}')
-		if [ -z "$WIFI_IP" ] ; then
+		if [ "$WIFI_IP" ] ; then
 			#logger -p local0.debug [CHK][$tag:$LINENO] WIFI IP ADDR : $WIFI_IP
-			echo "${timestamp} WIFI ERR" >> ${FLAG_PATH}/wifi_connected.log				
+			echo "${timestamp} $WIFI_IP" >> ${FLAG_PATH}/wifi_connected.log	
 		fi
+			
 		
 		val=$(cat "$TEST_CONFIG_FILE" | grep wifi_signal_check | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
 		if [ "$val" == "y" ]; then
