@@ -205,7 +205,7 @@ function LED_CTRL(){
     fi
 	
 	if [ -e ${FLAG_PATH}/wifi_connected.log ]; then
-		BLUE_LED_Blinking()
+		BLUE_LED_Blinking
 	else 
 		echo none > /sys/devices/platform/leds/leds/gpio3_led/trigger
 		echo 0 > /sys/devices/platform/leds/leds/gpio3_led/brightness
