@@ -1,6 +1,7 @@
 #!/bin/bash
 FLAG_PATH="/tmp"
 tag=$(basename "$0")
+result=0
 
 function CLEAR_CHK_LOG() {
 	touch $FLAG_PATH/bg_chk_flag.bin

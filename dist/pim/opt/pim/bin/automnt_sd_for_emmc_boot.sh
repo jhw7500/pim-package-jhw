@@ -6,6 +6,7 @@ KEY=MNT
 mnt_state_=0
 mnt_cnt_=0
 mnt_folder=$1
+mount_dev=0
 
 while true; do
     case $mnt_state_ in
@@ -22,12 +23,12 @@ while true; do
                     if [ ! -d $mnt_folder ]; then
                         mkdir -p $mnt_foler
                     fi
-
+                    logger -p local0.notice "[$KEY][$TAG:$LINENO] mount /dev/mmcblk1p1 $mnt_folder"
                     mount /dev/mmcblk1p1 /mnt/sd_cam
                 elif [ $mout_dev != "/dev/mmcblk1p1" ]; then
                     umount $mnt_folder
                     mount /dev/mmcblk1p1 $mnt_folder
-                    logger -p local0.notice "[$KEY][$TAG:$LINENO] mount /dev/mmcblk1p1 /mnt/sd_cam"
+                    logger -p local0.notice "[$KEY][$TAG:$LINENO] remount /dev/mmcblk1p1 $mnt_folder"
                 fi
                 mnt_state_=1
                 mnt_cnt_=0
@@ -47,10 +48,10 @@ while true; do
                 mout_dev=`df | grep '/mnt/sd_cam' | awk '{print $1}'`
                 if [ -z $mout_dev ]; then
                     logger -p local0.error "[$KEY][$TAG:$LINENO] not mounted $mnt_folder"
-                    mnt_state_ = 0
+                    mnt_state_=0
                 fi
             fi
         ;;
     esac
-    sleep 1
+    sleep 5
 done

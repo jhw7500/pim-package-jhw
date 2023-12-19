@@ -7,7 +7,9 @@ KEY=RST
 logger -p local0.notice [$KEY][$tag:$LINENO] kill_test.sh start
 #list="BG_Check_for_pim.sh vcm streamApp PIMCAM"
 list="BG_Check_for_pim.sh vcm streamApp PIMCAM"
-
+pid=0
+cnt=0
+service=0
 touch /tmp/kill_flag
 
 :<<'END'

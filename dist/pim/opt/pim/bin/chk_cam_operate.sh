@@ -20,6 +20,14 @@ start_f=0
 rst_time=25
 csi1_en=0
 csi2_en=0
+curTimeEpoch=0
+startTimeEpoch=0
+diffEpoch=0
+check_num=0
+file_cnt=0
+mp4date=0
+mp4date2=0
+
 GetConfig() {
     rec_time=$(cat $FILE_JSON | grep recording_time | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
     cam_ch0_en=$(cat $FILE_JSON | grep cam_ch0 | grep -v rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
@@ -59,10 +67,8 @@ logger -p local0.notice "[$KEY][$tag:$LINENO] vhl_name:$vhl_name, rec_time:$rec_
 
 service=restart_app.sh
 pid=$(ps -ef |grep $service |grep -v grep |awk '{print $2}')
-if [ -n "$pid" ]; then
-    echo "ok" >/dev/null
-else
-    echo "no" >/dev/null
+if [ ! -n "$pid" ]; then
+    #echo "no" >/dev/null
     logger -p local0.notice "[$KEY][$tag:$LINENO] $service start"
     /opt/pim/bin/$service &
 fi

@@ -30,7 +30,8 @@ configure)
   systemctl disable nfs-client.target
 #  systemctl stop connman.service
 #  systemctl disable connman.service
-  
+  systemctl disable docker
+  systemctl disable docker.socket
 
   if [ ! -d  /var/log/cantops ]; then
 	mkdir /var/log/cantops

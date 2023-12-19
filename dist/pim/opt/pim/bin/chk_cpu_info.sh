@@ -2,20 +2,32 @@
 
 #service=$1
 #logger -s -t 'sh   ' streamApp PIMCAM vcm 
-group="streamApp ord vcm vsd"
-status=0
+group="streamApp ord vcm vsd cam_operate BG_Check docker"
 tag=$(basename "$0")
-KEY=cpu
+KEY=CPU
+
 delay=60
 if [[ -n "$1" ]]; then
     delay=$1
 fi
-
 logger -p local0.notice "[$KEY][$tag:$LINENO] cpu info check delay : $delay"
+
 CPU_TEMP_MAX0=0
 CPU_TEMP_MIN0=100
 CPU_TEMP_MAX1=0
 CPU_TEMP_MIN1=100
+CPU_TMP_VAL0=0
+CPU_TMP_VAL1=0
+CPU_TEMP0=0
+CPU_TEMP1=0
+cpu=0
+mem=0
+pid=0
+clk0=0
+clk1=0
+clk2=0
+clk3=0
+service=""
 
 while :
 do
@@ -27,12 +39,12 @@ do
 :<<'END'
     for service in $group; do
         if [ ! -z "$service" ]; then
-	        pgrep "$service" >/dev/null; status=$?
-	        if [ "$status" -eq 0 ]; then
-		        pid=$(ps -C $service |grep $service |awk '{print $1}')		
-		        #echo $service" pid:":${pid}
+	        #pgrep "$service" >/dev/null; status=$?
+            pid=$(pgrep "$service")
+            if [ ! -z "$pid" ]; then
+		        #pid=$(ps -C $service |grep $service |awk '{print $1}')		
 		        mem=$(pmap -x $pid |tail -1 |awk '{print "Kbytes:"$3" RSS:"$4" Dirty:"$5}')
-		        logger -p local0.info "[$KEY][$tag:$LINENO] $service : ${mem}"
+		        logger -p local0.notice "[$KEY][$tag:$LINENO] $service : ${mem}"
 	        fi
         fi
     done

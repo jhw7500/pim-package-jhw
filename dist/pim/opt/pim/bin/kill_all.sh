@@ -5,6 +5,10 @@ list="BG_Check_for_pim.sh restart_app.sh vcm streamApp PIMCAM"
 #list="chk_mem.sh"
 limitcnt=20
 KEY=RST
+pid=0
+cnt=0
+defunct=0
+service=0
 
 logger -p local0.notice [CHK][$tag:$LINENO] kill_all start
 touch /tmp/kill_flag

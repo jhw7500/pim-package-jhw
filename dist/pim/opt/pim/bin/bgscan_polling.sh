@@ -6,6 +6,9 @@ success_val="simple:3:-70:300"
 ENABLE_VAL="true"
 DISABLE_VAL="false"
 tag=$(basename "$0")
+chmaske_en=0
+IW_DEV_RESULT=0
+BGSCAN_CHK=0
 
 if [[ ! -s "$TEST_CONFIG_FILE" ]]; then 
 	logger -p local0.error [BGS][$tag:$LINENO] Not Found $TEST_CONFIG_FILE

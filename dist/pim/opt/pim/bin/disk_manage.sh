@@ -7,6 +7,9 @@ mount /dev/mmcblk1p1 $1
 #mnt=$(df -h |grep $1 |awk '{print $5}'|sed 's/[^0-9]//g')
 #mnt_s=$(df -h |grep /mnt |awk '{print $5}'|sed -r 's/^0+/g')
 #int=$((mnt))
+mnt=0
+use=0
+cnt=0
 
 while :
 do
