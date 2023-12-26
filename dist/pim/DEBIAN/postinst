@@ -11,28 +11,115 @@ KEY=PACKAGE
 case "$1" in
 configure)
   echo "postinst configure"
-  /opt/pim/bin/auto_fs_sizeup.sh 2 2
-  timedatectl set-timezone Asia/Seoul
-  #timedatectl set-timezone Etc/UTC
-  timedatectl set-ntp false
-#  systemctl set-default multi-user.target
-  systemctl set-default graphical.target
-#  systemctl stop imx8-isp
-  systemctl disable imx8-isp
   systemctl restart rsyslog
-  systemctl restart cron
-#  systemctl stop connman-wait-online.service
-#  systemctl disable connman-wait-online.service
-#  systemctl stop systemd-network-wait-online.service
-  systemctl disable systemd-network-wait-online.service
-  systemctl mask systemd-networkd-wait-online.service
-#  systemctl stop nfs-client.target
-  systemctl disable nfs-client.target
+
+  status=$(df |grep /dev/root |awk '{print $2}')
+  if [ "$status" -ge 30000000 ]; then
+    echo "disk size : $status over 30000000 byte"
+  else
+    echo "emmc auto size up"
+    /opt/pim/bin/auto_fs_sizeup.sh 2 2
+  fi
+
+
+  status=$(timedatectl |grep NTP|awk '{print $3}')
+  if [ "$status" == "inactive" ]; then
+    echo "ntp is $status"
+  else
+    echo "set-ntp false"
+    timedatectl set-ntp false
+  fi
+
+  status=$(timedatectl |grep Time|awk '{print $3}')
+  if [ "$status" == "Asia/Seoul" ]; then
+    echo "timezone is $status"
+  else
+    echo "set-timezone Asis/Seoul"
+    timedatectl set-timezone Asia/Seoul
+  fi
+
+  #timedatectl set-timezone Etc/UTC
+
+  status=$(systemctl get-default 2>/dev/null)
+  if [ "$status" == "graphical.target" ]; then
+    echo "defaultmode is $status"
+  else
+    echo "set-defualt graphical.target"
+    systemctl set-default graphical.target
+  fi
+
+#  systemctl set-default multi-user.target
+
+  daemon_name=imx8-isp
+  status=$(systemctl is-enabled $daemon_name 2>/dev/null)
+  if [ "$status" == "disabled" ]; then
+    echo "$daemon_name is $status"
+  else
+    echo "disable imx8-isp"
+    systemctl disable imx8-isp
+  fi
+
+#  systemctl restart cron
+
+  daemon_name=NetworkManager
+  status=$(systemctl is-enabled $daemon_name 2>/dev/null)
+  if [ "$status" == "disabled" ]; then
+    echo "$daemon_name is $status"
+  else
+    echo "disable network manager"
+    systemctl disable NetworkManager
+  fi
+
+  daemon_name=systemd-network-wait-online
+  status=$(systemctl is-enabled $daemon_name 2>/dev/null)
+  if [ -z "$status" ]; then
+    echo "systemd-network-wait-online is mask"
+  else
+    echo "mask network-wait"
+    systemctl mask systemd-networkd-wait-online.service
+  fi
+
+  daemon_name=nfs-client.target
+  status=$(systemctl is-enabled $daemon_name 2>/dev/null)
+  if [ "$status" == "disabled" ]; then
+    echo "$daemon_name is $status"
+  else
+    echo "disable nfs"
+    systemctl disable nfs-client.target
+  fi
+
 #  systemctl stop connman.service
 #  systemctl disable connman.service
-  systemctl disable docker
-  systemctl disable docker.socket
 
+  daemon_name=docker
+  status=$(systemctl is-enabled $daemon_name 2>/dev/null)
+  if [ "$status" == "disabled" ]; then
+    echo "$daemon_name is $status"
+  else
+    echo "disable docker"
+    systemctl disable docker
+  fi
+
+  daemon_name=docker.socket
+  status=$(systemctl is-enabled $daemon_name 2>/dev/null)
+  if [ "$status" == "disabled" ]; then
+    echo "$daemon_name is $status"
+  else
+    echo "disable docker.socket"
+    systemctl disable docker.socket
+  fi
+
+  daemon_name=cam-operate
+  status=$(systemctl is-enabled $daemon_name 2>/dev/null)
+  if [ "$status" == "enabled" ]; then
+    echo "$daemon_name is $status"
+  else
+    echo "disable docker.socket"
+    systemctl enable cam-operate
+  fi
+
+
+  echo "check directory"
   if [ ! -d  /var/log/cantops ]; then
 	mkdir /var/log/cantops
   fi
@@ -45,6 +132,10 @@ configure)
 	mkdir /share
   fi
 
+  if [ ! -d  /root/boot ]; then
+    mkdir /root/boot
+  fi
+
 #  if [ ! -d /mnt/sd_cam ]; then
 #    mkdir /mnt/sd_cam
 #  fi
@@ -53,6 +144,7 @@ configure)
 #    rm -r /mnt/event
 #  fi
 
+  echo "check edge config"
   if [ ! -f  /root/shared_v/edgeconf*.json ]; then
     logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp edgeconf_pim.json"
 	cp /opt/pim/config/edgeconf_pim.json /root/shared_v/
@@ -62,10 +154,6 @@ configure)
     logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp edgeconf_pim_default.json"
     cp /opt/pim/config/edgeconf_pim.json /opt/pim/config/edgeconf_pim_default.json
   fi
-
-
-  systemctl stop NetworkManager
-  systemctl disable NetworkManager
 
 :<<'END'
   if [ ! -f  /etc/netplan/eth0.yaml ]; then
@@ -85,48 +173,45 @@ configure)
 END
 
 
-  if [ ! -d  /root/boot ]; then
-    mkdir /root/boot
-  fi
-
+  echo "update dtb"
   mount /dev/mmcblk2p1 /root/boot
   cp /opt/pim/boot/imx8mp*.dtb /root/boot/
-  sync
   umount /root/boot
-  
+
+  echo "set id, passwd"
   (echo root; echo root;) | passwd root
   (echo user; echo user;) | smbpasswd -as user
   useradd -m semes && (echo semes; echo semes;) | passwd semes
 
-  chmod -R 777 /mnt/sd_cam
-  chmod 777 /share
-
+#  chmod -R 777 /mnt/sd_cam
+#  chmod 777 /share
+  echo "set sshd"
   sed 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' -i /etc/ssh/sshd_config
-  systemctl restart sshd
 
+  echo "set hostname"
 #  sed 's/imx8mpevk/$hostname/' -i /etc/hostname
   echo $hostname > /etc/hostname
   #sed 's/127.0.0.1/"127.0.0.1 "$hostname/g' -i /etc/hosts
   sed -i "2s/.*/127.0.1.1 $hostname/g" -i /etc/hosts
+#  sed -i 's/#kernel.printk = 3 4 1 3/kernel.printk = 2 4 1 3/g' -i /etc/sysctl.conf
 
   #/root/SOMBASE_TEST/mfg60n-aarch64-9.32.0.6.sh install
   #lmu -reg FCC
   #iw reg set US
+  echo "update_network_pim.py"
   python /opt/pim/bin/update_network_pim.py
   source /root/.bashrc
   source /root/.bash_aliases
   #netplan apply
   #systemctl restart connman
-  systemctl enable cam-operate
-  systemctl daemon-reload
-  
+#  systemctl daemon-reload
+
   logger -p local0.notice "[$KEY][$tag:$LINENO] install pim.deb"
   sync
   ;;
 
 upgrade)
   echo "postinst upgrade"
-  # 업그레이드시 파일 설치 전 수행 되어야 할 내용을 bash 스크립트로 기술
   ;;
 
 *)

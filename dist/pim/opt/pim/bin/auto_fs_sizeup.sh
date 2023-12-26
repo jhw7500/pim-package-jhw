@@ -1,6 +1,7 @@
 #!/bin/bash
 tag=$(basename "$0")
 key=DSK
+
 start=$(fdisk -l /dev/mmcblk$1 |grep mmcblk$1p$2|awk '{print $2}')
 if [ "$start" == "*" ]; then
     echo start sector fail

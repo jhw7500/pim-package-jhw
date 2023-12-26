@@ -10,7 +10,7 @@ fi
 logger -p local0.notice "[$key][$tag:$LINENO] init_start_cam start opt:$opt"
 if [[ "$opt" == 1 ]]; then
     #logger -p local0.notice "[$key][$tag:$LINENO] PIMCAM -d 5 -m $iomode &"
-    PIMCAM -d 3 -m $iomode &
+    PIMCAM -d 5 -m $iomode &
     exit 0
 fi
 
