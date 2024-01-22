@@ -1,0 +1,2243 @@
+[33mcommit 1caca1d9b0426ed5275eebe1f728b6dddebd6e59[m[33m ([m[1;36mHEAD -> [m[1;32mmp[m[33m, [m[1;31morigin/mp[m[33m)[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Jan 22 14:13:45 2024 +0900
+
+    streamApp, PIMCAM
+    add input, paused option
+    
+    ord,vcm
+    fix file close bug
+    
+    etc
+    add gstreamer log(/var/log/cantop/gst)
+    gst log level(start_cam.sh)
+    log_manage.sh(dot,gst)
+
+[33mcommit a0113358a77910cb43db216916cbe4452bd86531[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed Jan 3 15:15:49 2024 +0900
+
+    network wait, ord make dir
+
+[33mcommit 039c3cd80af7af097d4860872818075fc1981f42[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Dec 26 10:20:07 2023 +0900
+
+    postinst optimize
+    del sysctl(printk level), limits.conf(file open limit)
+    kill_test.sh(defunct kill logic)
+    init_start_cam.sh(restart delay 3->5)
+    streamApp(start_video_time for srt sync)
+    chk_cam_operate.sh(diffepoch 4->5)
+
+[33mcommit e4c188b8f0513ee630195dc5c72a62e49d92b25e[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Dec 19 13:01:35 2023 +0900
+
+    ord event auto remove
+    vcm filename log
+    fix automnt
+    shell script memory leakage
+    disable docker
+
+[33mcommit bcd126d681d8a9ee2dc0e531ddc962a4b7799a7d[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Dec 18 16:00:17 2023 +0900
+
+    Blue Led bug fix
+
+[33mcommit d924a62636157fceb02844fcdcfcbeb334b04462[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Dec 18 13:49:03 2023 +0900
+
+    led_ctrl bug fix
+
+[33mcommit 4685b3586e172673fc491ce28dae805075f7594b[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Dec 15 16:37:33 2023 +0900
+
+            pim-package(0.3.5)
+            add dot management
+            cpu/mem usage, clock, temp check sync
+            iomode userptr for cpu uasge(4channel FHD 45?, HD 60?)
+            default kill signal change to termination for protecting last file
+            add BG_Check_for_pim to restart_app
+            add log/debug level to edgeconf_pim.json
+            add mount check to automnt_sd_for_emmc_boot.sh
+            script log reduced for jounal system
+    
+            streamApp(1.7)
+            add log/debug cmd arg
+            format location thread optimize
+            mp4 file create log async with format location thread
+            pipeline change and pixel format for HD using GPU/iomode
+            mp4 all file name 0 sec(include first file)
+            split time margin sec (HD:3sec, FHD:1sec)
+    
+            PIMCAM(1.4)
+            add log/debug level json value
+    
+            vcm(3.2)
+            first srt file name 0 sec
+            when new srt start, cat /dev/null because duplication
+    
+            ord(3.2)
+            add rtc_reset json value for test
+            if target file not exist when copy event is received, tail copying begins
+
+[33mcommit 08f438987a3818231689b2c5cfc54308733baa28[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Dec 11 14:46:58 2023 +0900
+
+    vsd id/passwd init value(semes->user)
+    chk loop delay
+
+[33mcommit a703ce292e90e42dc53b5c3f0448aa78bcafe8bc[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Dec 11 13:17:48 2023 +0900
+
+    ord evt disk manage(delay, name ptr)
+    vsd 1.5
+    ord_vcm_conf_json(disk period)
+    add fixed freq dtb for test
+
+[33mcommit a0db6292024aefbbaaf970a9ca17c7f3326ad5a3[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Dec 8 16:26:32 2023 +0900
+
+    dynamic rst_time in chk_cam_operate
+    cpu clock logging
+
+[33mcommit cf0de848b9112caf1d07c4d6874318ccf73e829d[m
+Merge: 66dc01b 50dbb1e
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Dec 8 13:49:45 2023 +0900
+
+    Merge branch 'mp' of http://192.168.10.2:31406/jkpark/pim-package into mp
+
+[33mcommit 66dc01b42fadf631199107ef6a6e56787c318ee6[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Dec 8 13:47:25 2023 +0900
+
+    version 0.3.4.
+    add dtb
+    chk_cam_operate no file check time
+    max9296 dev_info
+    kernel syslog level(info->notice)
+    ord,vcm,vsd(1.5) loop delay 1ms->10ms
+
+[33mcommit 50dbb1e00486c5cadc55865162e827ed938930c0[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed Dec 6 19:11:25 2023 +0900
+
+    wifi ip flag bug fix
+
+[33mcommit cc7bacd685828b320b6489c3f2806bad9828249c[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed Dec 6 19:09:45 2023 +0900
+
+    wifi ip flag fix
+
+[33mcommit e177c054815c5d69fd62a901c06b85372e170af0[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed Dec 6 19:03:31 2023 +0900
+
+    wifi led feature add
+
+[33mcommit 66ceba17c0d119a55c7c45a163a0effea52c853a[m
+Merge: f5253a5 e8c1777
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Dec 4 16:38:47 2023 +0900
+
+    Merge branch 'mp' of http://192.168.10.2:31406/jkpark/pim-package into mp
+
+[33mcommit f5253a5a25a90b8b02f28de639304f20fc15f627[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Dec 4 16:37:13 2023 +0900
+
+    version 0.3.4
+    max9296(1.3:default FHD,lsc,log)
+    PIMCAM(1.3:id,passwd,option)
+    streamApp(1.6:writer,g2d,rate,option)
+    ord(3.2:disk manager,evt res bug,time sort,json para)
+    vcm(3.1:srt sync)
+    chk_cam_operate(file check)
+    restartApp&rc.local&init_cam(PIMCAM option)
+    edgeconf_pim.json(rtsp id,passwd)
+    ord_vcm_conf.json(disk manage)
+
+[33mcommit e8c1777f2f0b6093a0b68b2177e4c25aab2c4430[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed Aug 30 16:25:52 2023 +0900
+
+    serial test
+
+[33mcommit 2036e700ad83dcf15195b7d75088989b8a1487dc[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Thu Aug 24 11:16:26 2023 +0900
+
+    Image sensor manual setting add
+
+[33mcommit 88cb60bb66c4bfd026cd9e58e85f2aa580848a81[m
+Merge: 10c214c 137b2e9
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Jul 24 13:57:59 2023 +0900
+
+    Merge branch 'mp' of http://192.168.10.2:31406/jkpark/pim-package into mp
+
+[33mcommit 10c214ce91fb3f106cf0407ab982448e10a199ce[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Jul 24 13:56:30 2023 +0900
+
+    PIMCAM 1.2
+    add id,passwd to json
+
+[33mcommit 137b2e9d5fcce062525a7241f3ce51cab2308f9f[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Jul 21 13:07:21 2023 +0900
+
+    load_print.sh chmod
+
+[33mcommit c844a400ced2f2b999a35220094195732bdc06db[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Jul 21 12:46:47 2023 +0900
+
+    sdcard b format feature add
+
+[33mcommit a501ead339b0bb356a54e0aa83d11f3824f5c702[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Jul 21 11:01:41 2023 +0900
+
+    SOMBASE Test sdcard test fix
+
+[33mcommit c2ce0a498a018086016f2f2ee09580c3439c62ee[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Jul 21 09:52:05 2023 +0900
+
+    vsd update
+
+[33mcommit 9ad2f64b1b277a6b13b29cb344962ca0a444a824[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Jul 21 09:21:59 2023 +0900
+
+    vsd update
+
+[33mcommit ad2386be2c09329210423218c33f982d4bbed7f4[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Jun 30 13:44:28 2023 +0900
+
+    ord file extention & time sort
+
+[33mcommit d89b91e343ec51bfb9bc7064983577942e64a5ae[m
+Merge: 7e4bf20 ee625a2
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Jun 19 09:33:18 2023 +0900
+
+    Merge branch 'mp' of http://192.168.10.2:31406/jkpark/pim-package into mp
+
+[33mcommit 7e4bf207dd463decabd3837363f19262978ee11e[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Jun 19 09:32:46 2023 +0900
+
+    clean
+
+[33mcommit ee625a22dc0ba87989d0c2724f1a90ee1446fd39[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Jun 12 13:11:41 2023 +0900
+
+    facory_init.sh json name change
+
+[33mcommit b3db8d9e22454b646ef0c397606d2e1d4d3e85e7[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Jun 12 11:13:49 2023 +0900
+
+        max9296 power sequence
+        cron for rtc sync
+        check streamApp in restart_app.sh
+        chk_cam_operate time diff 5
+        ord, vcm, vsd for localtime_r
+
+[33mcommit 94dcb83f1b0be74ffc3b3acb33cf399aadb92749[m
+Merge: 78bcd85 5d03e66
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Jun 2 17:05:38 2023 +0900
+
+    qMerge branch 'mp' of http://192.168.10.2:31406/jkpark/pim-package into mp
+
+[33mcommit 78bcd857550822724ce27ba2141eb1f80529bdc8[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Jun 2 17:02:09 2023 +0900
+
+    sdcard test file remove
+
+[33mcommit 5d03e6688eb297b7083b0c603454f061c08c0b4b[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Jun 2 14:25:49 2023 +0900
+
+    del RANDOM bin
+
+[33mcommit b90e13b442875e5bf22f1e7126e71d300b7bdeb8[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Jun 2 13:52:27 2023 +0900
+
+    vcm version 3.0
+    etc log
+
+[33mcommit 6610f0bd26b3759a73e340ae842f5be55dc86f12[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Jun 2 10:49:28 2023 +0900
+
+    default event strg size change
+
+[33mcommit 878bbe7fba51bdc5164f9df546bc55fab06673fd[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Jun 2 10:47:43 2023 +0900
+
+    edgeconf init change
+
+[33mcommit 98a1bfba61f9cef18697a468953062ade1a309dd[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Jun 1 19:05:57 2023 +0900
+
+    streamApp log, kill_all
+
+[33mcommit fcd5a81a6954b729cec315ae29766289bedd6fe4[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Jun 1 17:31:51 2023 +0900
+
+    version 0.3.3
+    streamApp 1.5
+    PIMCAM 1.1
+    ord 3.1
+    vcm 2.9
+    vsd 1.3
+    for mnt path(/mnt/sd_cam), edgeconf prefix(edgeconf_), suffix(.json)
+
+[33mcommit 6ab2c10d8deaff519f38ed2a0c469375b5ce1fde[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed May 31 16:14:14 2023 +0900
+
+    syslog, file_time_err
+
+[33mcommit 9b1e552f653342f90b99c405e463b262acb054a0[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed May 31 15:24:32 2023 +0900
+
+    trash
+
+[33mcommit 70aebf3eeeccb8ae7f482ffe0b9fa8c5d8cdeec0[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed May 31 15:19:12 2023 +0900
+
+        version 0.3.3
+        max9296 for timesync
+        chk_cam_operate for reset
+        log, rotate, cron..
+
+[33mcommit 92e7d129aa573327b08250ace2b237c3a550251b[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed May 31 12:17:30 2023 +0900
+
+    add kill_flag
+
+[33mcommit 7546ac2f640bb03b5ab83648169a32b81305a5ac[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed May 31 12:00:06 2023 +0900
+
+    max9296 version 1.2
+    reset for timesync
+
+[33mcommit ae38a1f7fd600c3b5b4ef3c7fdc9ac4b83ce30dc[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue May 30 14:39:20 2023 +0900
+
+    cron
+
+[33mcommit 1347405adede8dfea93fe35dfc5b470e587ff435[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue May 30 13:57:37 2023 +0900
+
+    log
+
+[33mcommit 4fe888c42d4a292059fd34b87160b013b28e21ab[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue May 30 13:07:02 2023 +0900
+
+    log
+
+[33mcommit 38c35473db7cd827ed4160ef917af17e04458b16[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue May 30 13:00:40 2023 +0900
+
+    chk cam mem temp
+
+[33mcommit 9ee93a98175ebedc310680d4d8a01b8622c2cc31[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri May 26 09:46:28 2023 +0900
+
+    version 0.3.2
+
+[33mcommit 47b2b615d6ef88af9fd3ba2cee29864ceaca7796[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed May 24 11:15:09 2023 +0000
+
+    test init process add
+
+[33mcommit 28b78584f3fe3c883efcdec6a7bdee72e602343a[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed May 24 10:21:20 2023 +0900
+
+    factory init log add
+
+[33mcommit cd06938b40b52cca5387a8c74016104c82b4eaed[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed May 24 09:45:13 2023 +0000
+
+    version 0.3.1
+
+[33mcommit 921310f28d42f2ff2692e637ea9f4fbb159cb716[m
+Merge: 6259425 ae41aa4
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue May 23 12:51:00 2023 +0900
+
+    Merge branch 'mp' of http://192.168.10.2:31406/jkpark/pim-package into mp
+
+[33mcommit ae41aa40fac0625596c6d267c0fd52b12a7300bf[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue May 23 12:54:14 2023 +0900
+
+    sdcard format cam-operate stop
+
+[33mcommit 625942542fe1f1f857b31c65f5c9612b8f1aa59e[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue May 23 12:50:29 2023 +0900
+
+    add default ord_vcm_conf, cpu temp log, chk cam log
+
+[33mcommit 1f6d388e1d5124a232083d9d11e5e5ccbb659baf[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue May 23 12:47:48 2023 +0900
+
+    factory path err fix
+
+[33mcommit f24608dee42f09822faea6a34dafdd1d0b268066[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue May 23 12:34:28 2023 +0900
+
+    factory init add
+
+[33mcommit 03d24a69a5753a781a7e6f4fa9a00e693bd75256[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue May 23 11:17:46 2023 +0900
+
+    edgeconf_pim.json set fix
+
+[33mcommit b64e38cee47420992d4b86d10f2eabba717ac622[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue May 23 11:04:04 2023 +0900
+
+    sdcard format bug fix
+
+[33mcommit f2e60b6a68c5c2e1f6e0e4b7a91d10147f8790f0[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri May 19 13:34:47 2023 +0900
+
+    streamApp log, restart app
+
+[33mcommit 77d44a9bb3fa280009d6a6fd710da5afc5ed7619[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri May 19 11:39:28 2023 +0900
+
+    log
+
+[33mcommit 78b0b4def6a18e401d9f23fe8e3a2a005f65cc50[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri May 19 11:33:58 2023 +0900
+
+    ord update
+
+[33mcommit 93c738e10e5a7a33bcd4415d34a94bcecec536ab[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri May 19 10:01:55 2023 +0900
+
+    log
+
+[33mcommit a2cb932a75778ade5e00be350f6868851a743fb5[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu May 18 17:46:53 2023 +0900
+
+    eth1, eth0 test err fix
+
+[33mcommit 952a074db197a5e680d98108c8f2cfe99821bcaf[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu May 18 14:06:45 2023 +0900
+
+    version 0.3.0
+
+[33mcommit e400ca696c000613ae7321166998c213889fa940[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed May 17 18:01:59 2023 +0900
+
+    empty reset for time change
+
+[33mcommit 58196e21777be049e2242966ee92b2a9f87216cf[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue May 16 19:20:34 2023 +0900
+
+    version 0.2.9
+    ord 2.9
+
+[33mcommit 4c8fbacde1f08dc7297a71b5946dceb3598ef2b2[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue May 16 12:58:25 2023 +0900
+
+    add disk_manage.sh
+
+[33mcommit 0ca2683954bc6322978f226d3abf28881a28be08[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue May 16 02:57:23 2023 +0000
+
+    version 0.2.8
+
+[33mcommit 7d0cfec382ad4984d655c0866d258243bf8d79bd[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri May 12 16:32:25 2023 +0900
+
+    streamApp log
+
+[33mcommit ccec0ff531dc510aba4db1f431944e8dffdca332[m
+Merge: 92236d4 9f36cec
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri May 12 16:20:53 2023 +0900
+
+    Merge branch 'test' of http://192.168.10.2:31406/jkpark/pim-package into test
+
+[33mcommit 92236d47c92d0741d71aa4b1f3e1b49beb2886a9[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri May 12 16:17:48 2023 +0900
+
+    version 0.2.7
+    max9296 1.1
+    PIMCAM 1.0
+    streamApp 1.2
+    ord 2.7
+    vcm 2.7
+
+[33mcommit 9f36cecb888f0ce7b153bee4ab91c83aa1103c49[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri May 12 14:05:48 2023 +0900
+
+    update_eap_id.py add
+
+[33mcommit ff1f6931ed70f1fdbfdab64fb0e137fea6b51371[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri May 12 13:03:35 2023 +0900
+
+    BG_chk eth0->eth1 change
+
+[33mcommit fe2ba0cebe730e45d792a07791600d6278291e6d[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu May 11 18:43:12 2023 +0900
+
+    SOMBASE test eth0 eth1 name change
+
+[33mcommit c8b15734c3e4a934132c59ff2daaa9ef81f93b99[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu May 11 14:08:30 2023 +0900
+
+    streamApp(v1.2), ord(2.6), vcm(2.6)
+
+[33mcommit d09f19945a29efdd87f2d0d7649e891aac50184d[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed May 10 16:19:49 2023 +0900
+
+    streamApp version 1.1(log)
+
+[33mcommit 9f989f4eda9713dcf482bb5f0a673a526595d7eb[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed May 10 14:33:48 2023 +0900
+
+    ord, vcm ,log
+
+[33mcommit 44a4204aba3082b972135029c4a9f7a7bad7d740[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue May 9 13:00:05 2023 +0900
+
+    streamApp rtsp log
+
+[33mcommit 8c2b5ee6fe2404cb493074fcb6e990350f43e610[m
+Merge: d274971 e59dbef
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue May 9 12:53:39 2023 +0900
+
+    Merge branch 'test' of http://192.168.10.2:31406/jkpark/pim-package into test
+
+[33mcommit d274971e258e3cfa3ad4e68a55b6ad4bc1494216[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue May 9 12:53:01 2023 +0900
+
+    log/chk_mmc bug fix
+
+[33mcommit e59dbefa9a67d59ae85249bb28f4748fd7263b16[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 25 15:02:38 2023 +0900
+
+    streamApp lib add
+
+[33mcommit 0d3996666cdb92ec7fcbbb055752ced5c782d7af[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 25 14:41:52 2023 +0900
+
+    streamApp log print add
+
+[33mcommit b4c48d7e251d5491769f977f76804137fbd5fa66[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Apr 21 18:26:29 2023 +0900
+
+    ord
+
+[33mcommit d4b730c3f824e088642c24bde41bf5f9f9ebecb7[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Apr 21 17:04:43 2023 +0900
+
+    reboot, alias, srt delay
+
+[33mcommit 5e601ae4f252bdc4562e6b681ded5b3566da1c6c[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Apr 21 16:17:03 2023 +0900
+
+    log
+
+[33mcommit 6613e5b819e92ebfdeb2ccd43c59e71427646289[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Apr 21 15:56:25 2023 +0900
+
+    preinst
+
+[33mcommit ddb24e90a8d7dc02d5459352d9b861f51d009000[m
+Merge: 72ca0bb f07b4ce
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Apr 21 15:50:38 2023 +0900
+
+    Merge branch 'test' of http://192.168.10.2:31406/jkpark/pim-package into test
+
+[33mcommit 72ca0bbfc9ece76dc322f29cd97d9d12b08bf0c9[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Apr 21 15:49:26 2023 +0900
+
+    wpa_supplicant.conf add
+
+[33mcommit f07b4ce3d92a5fd3fe660e3636ee60088b0b2a57[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Apr 21 15:33:54 2023 +0900
+
+    wpa tag add, key RST about cam reset
+
+[33mcommit cb928140b743e8a028c4cbd0197a1be755c7c3b0[m
+Merge: feeaaf7 5e501f1
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Apr 21 15:19:35 2023 +0900
+
+    Merge branch 'test' of http://192.168.10.2:31406/jkpark/pim-package into test
+
+[33mcommit feeaaf703723cb826d9b5dc3fcab142fb1e6161d[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Apr 21 15:18:07 2023 +0900
+
+    module fw i2c log del, cam reset without vcm, auto sizeup when install
+
+[33mcommit 5e501f1a20ab5545150b4d9ee2c2c7f1c1d91984[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Fri Apr 21 15:07:13 2023 +0900
+
+    set wpa supplicant log add
+
+[33mcommit 6a40687cd290a6168e5ae53ae476425cf280be57[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Fri Apr 21 14:05:27 2023 +0900
+
+    change wpa supplicant flag add
+
+[33mcommit 46f72cd2009c9f686c66101d2bf9dda3e05ee8b6[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Fri Apr 21 13:46:28 2023 +0900
+
+    chmask feature fix
+
+[33mcommit 36ffc64cb1b749fe2bac44f617aec9f8c4c279ac[m
+Merge: 9a99e49 69f7f9a
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Apr 21 13:11:33 2023 +0900
+
+    Merge branch 'test' of http://192.168.10.2:31406/jkpark/pim-package into test
+
+[33mcommit 9a99e4968a8c8df461ce43d8577d89456dee6359[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Apr 21 13:10:51 2023 +0900
+
+    recovery
+
+[33mcommit 69f7f9a32e5782df6ef1917de8b2977ac2cc18b7[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Apr 21 12:49:28 2023 +0900
+
+    ord disk bug fix
+
+[33mcommit de4f811b4d4577bf83c832cf6210795a32d1d03a[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Apr 21 12:41:14 2023 +0900
+
+    json log level
+
+[33mcommit f242aa97a7076905c01026f6d4db67d35f615388[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Apr 21 12:14:26 2023 +0900
+
+    version 0.2.5
+     add option for runtime check, module log, mmc, eth name exchange, journal, sd write check dir, reboot for zombie
+
+[33mcommit 6e803c02086622e0a024e3b8d16d323cc21a14b8[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Apr 21 11:08:01 2023 +0900
+
+    change sd write dir, mmc log
+
+[33mcommit 3142474a86719f0bae51227f60be182a392931c9[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Apr 21 10:42:47 2023 +0900
+
+    rm .fw write i2c data log, journal
+
+[33mcommit ed67c830e60513c31eae0cb9293f8ecc1a1b59d6[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Apr 21 09:16:34 2023 +0900
+
+    chk_cam_operate
+
+[33mcommit bef4a11640f6f2f1b323022ddede5919ed4f0df2[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Apr 20 17:49:33 2023 +0900
+
+    ord
+
+[33mcommit 185ab502b759ca5aa093eb0700c01eec92ce8d2a[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Apr 20 16:09:26 2023 +0900
+
+    add file_time_recording
+
+[33mcommit b1ef2ab749c496305da2b8573d9ca600b0bb87ac[m
+Merge: 5764a6b 1ebfed2
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Apr 20 09:39:24 2023 +0900
+
+    Merge branch 'test' of http://192.168.10.2:31406/jkpark/pim-package into test
+
+[33mcommit 5764a6b5bf42129f928e250b2b2598376b348005[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Apr 20 09:38:58 2023 +0900
+
+    chk mmc
+
+[33mcommit 1ebfed2abee13f7fc4f714b59a12f1155f7fc024[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed Apr 19 08:05:05 2023 +0000
+
+    journald
+
+[33mcommit bf8dfe0b8da7c71246dc3f054316d21c59a21ff2[m
+Merge: 7130f4b 562bab7
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed Apr 19 07:32:56 2023 +0000
+
+    Merge branch 'test' of http://192.168.10.2:31406/jkpark/pim-package into test
+
+[33mcommit 7130f4b9e7fedf91692cc99aa23ed79a5deef99e[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed Apr 19 07:32:36 2023 +0000
+
+    auto_fs_sizeup
+
+[33mcommit 562bab70cd121f6031926bbee20147cbca98a679[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed Apr 19 16:28:59 2023 +0900
+
+    wifi region check fix
+
+[33mcommit 4350b78911c0f6dbc51fa95a50286bbfe045a51d[m
+Merge: ed73d3f 82bfe55
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed Apr 19 16:25:01 2023 +0900
+
+    Merge branch 'test' of http://192.168.10.2:31406/jkpark/pim-package into test
+
+[33mcommit ed73d3fa19643ec46aede7683608a562876fd338[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed Apr 19 16:24:36 2023 +0900
+
+    wifi region check fix
+
+[33mcommit 82bfe55e84567f75b67e106fac9a25d003cde99b[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed Apr 19 14:30:02 2023 +0900
+
+    journald.conf
+
+[33mcommit d6239f6a45e293e85b2cd334d797937f2fff47e1[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed Apr 19 09:21:36 2023 +0900
+
+    logrotate compress
+
+[33mcommit 2f26d89e5b58592b2a3ab506d4c960e4517282eb[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 18 18:50:08 2023 +0900
+
+    module log
+
+[33mcommit 8a51ea3a6522974e640b8c6d4cc717e955b01cb9[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 18 18:49:55 2023 +0900
+
+    log
+
+[33mcommit bf355f3a22efb0c707c80391b0de90760a38ef46[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 18 18:13:32 2023 +0900
+
+    eth exchange
+
+[33mcommit 71be2551531b91a6fbb0e61b13d46c4e42fc3cfe[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 18 17:30:33 2023 +0900
+
+    nano conf
+
+[33mcommit af29c7431b8e03aee7e8be868fe47b318056a0f6[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 18 17:29:59 2023 +0900
+
+    inst,rm,eth exchange
+
+[33mcommit b96535007198fa7d1ca2c951766fd99b4c68d2e3[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 18 13:36:23 2023 +0900
+
+    inst
+
+[33mcommit 99d969470d634c0a07f4362ccf1a6a557a677e12[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 18 13:34:12 2023 +0900
+
+    build version
+
+[33mcommit d98bf50944613b59e891470e83b2144a9f2425f8[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 18 13:21:10 2023 +0900
+
+    log
+
+[33mcommit ac9ebbefbe6b41685a3304d59db4761beafbe3f4[m
+Merge: b6f3364 32f835b
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 18 13:02:08 2023 +0900
+
+    Merge branch 'test' of http://192.168.10.2:31406/jkpark/pim-package into test
+
+[33mcommit b6f3364ae6124e5b9caf0c0d7e4c5b07c4b58569[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 18 13:01:44 2023 +0900
+
+    purge
+
+[33mcommit 32f835b1d97cefc48f4c104a1d631d04e52d9ed7[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 18 13:00:08 2023 +0900
+
+    sdcard test err fix
+
+[33mcommit 12f234e81bc9ebc6a031be04ee1ce58d708169af[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 18 12:57:09 2023 +0900
+
+    wifi test iperf test remove
+
+[33mcommit b04f09f144826940acc3496e489312765bac6d31[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 18 12:14:32 2023 +0900
+
+    alias
+
+[33mcommit 63e71f961d3447df3bf73d14dcf6d00f4229ddaf[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 18 12:05:35 2023 +0900
+
+    etc
+
+[33mcommit a58d5d63de0aa2ec219479d8bd58fbeba3c6c0d6[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 18 11:01:59 2023 +0900
+
+    log
+
+[33mcommit 799284bb5fdafd841d9f5ead77893281d5a37372[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 18 09:52:45 2023 +0900
+
+    cron
+
+[33mcommit b7b07b2e9acf5de6ae065c5f05cbae5537985905[m
+Merge: 97a291c e3946f1
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 18 00:43:35 2023 +0000
+
+    Merge branch 'test' of http://192.168.10.2:31406/jkpark/pim-package into test
+
+[33mcommit 97a291c0e4c0db0d7c2a7b6316d8966a20cffae1[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 18 00:43:09 2023 +0000
+
+    preint
+
+[33mcommit e3946f111e980e69e0ce2d75db5bb25c74cd22f7[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 18 09:40:42 2023 +0900
+
+    wifitest ip addr change
+
+[33mcommit c367e196275942f889b47f647a2e8e65549be006[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Apr 17 18:58:52 2023 +0900
+
+    cmp file add
+
+[33mcommit 74e94c5187c537da8d077212be0c3bc911cbc1b0[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Apr 17 18:56:27 2023 +0900
+
+    count folder add
+
+[33mcommit 91533e006b3223dccfe0933d5df80c79953d92cb[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Apr 17 18:54:35 2023 +0900
+
+    sdcard test fix
+
+[33mcommit f6ebffafe9ed5ca547cbd9cb1b28c264c3377f2d[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Apr 17 17:33:56 2023 +0900
+
+    max9296 log, syslog, ord, vcm..
+
+[33mcommit 465a6ae008622d614548c19c229744f370c38636[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Apr 17 10:49:00 2023 +0900
+
+    ord hwclock
+
+[33mcommit 6df8831729213e212dcc05a295694faf6ef0be4e[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Apr 17 10:28:41 2023 +0900
+
+    !debug
+
+[33mcommit 70ae9d3df6dcb3106bd14f9c311e5c0a129cd99c[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Apr 17 09:57:14 2023 +0900
+
+    stderr, vcm,ord
+
+[33mcommit 59f15589815c7a8a9f78d58fa51a75affc5e6dc7[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Apr 17 09:11:43 2023 +0900
+
+    inst, cron
+
+[33mcommit 8189d1cc0ece8ed33db70d5f43c26081f5c82ce7[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Apr 14 18:00:23 2023 +0900
+
+    inst,rm,alias
+
+[33mcommit 561a571e54daa7fc5bbe228fc3742fccf1cf45f6[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Apr 14 17:00:46 2023 +0900
+
+    log format
+
+[33mcommit 7a1d0162a2ae20ce7268f45b3f95f8fba950e612[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Apr 14 14:54:03 2023 +0900
+
+    BG app
+
+[33mcommit fe9cab58b43df9a97bf257ac1adc7fcfa1e68446[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Apr 14 14:38:30 2023 +0900
+
+    BG_check
+
+[33mcommit 4d25e5e7f8eb499aa7dab7f46cf82d2480eb5004[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Apr 14 14:14:14 2023 +0900
+
+    soft file limit
+
+[33mcommit 93f5c4f1365b5c7de39c08778666e96e4349f58e[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Apr 14 14:07:11 2023 +0900
+
+    ord bug fix
+
+[33mcommit 5a8b6bbd00eb730c3aa13330a61bdd0f6b564a3b[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Apr 14 12:35:28 2023 +0900
+
+    vcm srt, log
+
+[33mcommit 15032f155f3287f5a068976eb72cdd919980599a[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Apr 14 10:37:43 2023 +0900
+
+    inst, BG stderr
+
+[33mcommit 5b2b19f17e3df08b337444df969e85ab473d7823[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Apr 14 10:06:09 2023 +0900
+
+    PIMCAM rtsp passwd, logrotate
+
+[33mcommit 18ec11a663879896195625980be5f17fee08f6e8[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Apr 14 09:33:07 2023 +0900
+
+    chk eth0 err fix
+
+[33mcommit dcd8da94e4545015593c3529c2360518eee58d3d[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Thu Apr 13 19:23:22 2023 +0900
+
+    eth0 max cnt add
+
+[33mcommit de243e767ed9228fedc5cc3fe43c94f59379ae2a[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Thu Apr 13 19:02:31 2023 +0900
+
+    eth0 chk typo fix
+
+[33mcommit ea77209fda6870968d46a1fa388b11f5ba9e2b79[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Apr 13 18:52:43 2023 +0900
+
+    chk_eth0 fix
+
+[33mcommit 96fbad42709f721bee2fad8db0d8ee1d8580fef1[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Apr 13 18:41:41 2023 +0900
+
+    led ctrl infinity loop remove
+
+[33mcommit 8c23c1f43eaa8ed7156deeb97f4b1fb129faf039[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Apr 13 18:09:34 2023 +0900
+
+    nfs daemon disable
+    PIMCAM logging
+    alias
+
+[33mcommit 2840bae16ebc560785a35f4d465366123cb260c7[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Apr 13 17:34:05 2023 +0900
+
+    logrotate
+
+[33mcommit c30dd3e6a9988efb02716e88499452a873a8df13[m
+Merge: 9a7aff7 491e573
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Apr 13 17:29:57 2023 +0900
+
+    Merge branch 'test' of http://192.168.10.2:31406/jkpark/pim-package into test
+
+[33mcommit 9a7aff77b4faa407d75279c10c94dc045b65deb9[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Apr 13 17:29:16 2023 +0900
+
+    kernel print log level, logrotate
+
+[33mcommit 491e57359207383e7bbda707de94addf5f5ce68a[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Thu Apr 13 17:27:32 2023 +0900
+
+    cam 01 err flag typo fix
+
+[33mcommit 5b3e7298b56c3f9786c32d7b4a4002f428ca69a3[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Apr 13 16:34:52 2023 +0900
+
+    version 0.2.3
+
+[33mcommit ea8769b15399148e9bf27485c73019b1cdca915d[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Apr 13 16:20:42 2023 +0900
+
+    max9296
+    PIMCAM
+    streamApp
+    BG_Check_for_pim
+    restart_app
+    ord,vcm
+
+[33mcommit be26a6d5c3c910e5eb4e0874a946769107167b61[m
+Author: jhw7500 <them7500@daum.net>
+Date:   Thu Apr 13 13:03:16 2023 +0900
+
+    inst
+
+[33mcommit 41f583dbe6a9c81266f65ef058476bf2f07d5dcb[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Apr 13 12:36:29 2023 +0900
+
+    app
+
+[33mcommit eb93b43b22ff0384834d56320a5ce684008686a8[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Apr 13 11:26:36 2023 +0900
+
+    bitrate typo fix
+
+[33mcommit a81594f9b0706e4405adb6fb4a999c3c60afb59b[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Apr 13 10:33:13 2023 +0900
+
+    bitrate 1024
+
+[33mcommit 0d671b1216fe468d1daf9b4466648898197b53d7[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Apr 13 10:27:10 2023 +0900
+
+    BG_Check sleep,PIMCAM/streamApp version
+
+[33mcommit 06500a82554ee826490609ab2da2f18cfe73a4b0[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed Apr 12 16:58:56 2023 +0900
+
+    alias
+
+[33mcommit 4e315204e167463332e0220fe2ad92c75a3f40a8[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed Apr 12 16:11:37 2023 +0900
+
+    ver 0.2.2
+
+[33mcommit 726e467fed5548ceacc3d09e982498e23fe93af9[m
+Merge: 762d4a7 8b13ab5
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed Apr 12 15:38:41 2023 +0900
+
+    Merge branch 'test' of http://192.168.10.2:31406/jkpark/pim-package into test
+
+[33mcommit 762d4a71b88ed20f8662e3e681f9f1cca70d1950[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed Apr 12 15:36:04 2023 +0900
+
+    ord,vcm,cam reset,etc
+
+[33mcommit 8b13ab548ac2f3e7351baea75fb9e581f30b5ecf[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 11 19:29:30 2023 +0900
+
+    led control sceanario change
+
+[33mcommit 6d526293cfc32954dd835fcb11121e29ec03e4ba[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 11 17:23:11 2023 +0900
+
+    cam-operate daemon
+
+[33mcommit fae945aa37b93f60af0b98963ca437ce2a479236[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 11 16:50:28 2023 +0900
+
+    chk wifi log level fix
+
+[33mcommit 9cb34cf9a410edbf5e7b57391af837718ad5f974[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 11 16:39:57 2023 +0900
+
+    flag save folder modify
+
+[33mcommit 08461c67159aa5415a77a885b592671b71c2332f[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 11 16:13:47 2023 +0900
+
+    chk_eth0 3time check fix
+
+[33mcommit 09b6103a70b9dad76de62900d2b48aa359e8a0b4[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 11 14:34:38 2023 +0900
+
+    recover
+
+[33mcommit 955a6a6eed2f071036dc6fbea22848316c058bd1[m
+Merge: ea22e56 079d06b
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 11 14:32:12 2023 +0900
+
+    Merge branch 'test' of http://192.168.10.2:31406/jkpark/pim-package into test
+
+[33mcommit ea22e560d07f649af1f1aeb4e97f0198abcd12e1[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 11 14:29:44 2023 +0900
+
+    stderr,sd write err
+
+[33mcommit 079d06ba344d525f16d389ef6d682d0de1eda4e5[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 11 14:21:46 2023 +0900
+
+    typo fix:
+
+[33mcommit cdd1c6712035d0bb8b90f0827827ce13bcebe031[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 11 13:34:47 2023 +0900
+
+    wpa_supplicant kill add
+
+[33mcommit 29a7d65bd9ec738c13106f26e4b5ed29825c6e5a[m
+Merge: f95d838 781aa22
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 11 13:32:20 2023 +0900
+
+    Merge branch 'test' of http://192.168.10.2:31406/jkpark/pim-package into test
+
+[33mcommit f95d8389ec4df1e3822c966537530dec0578048e[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 11 13:31:11 2023 +0900
+
+    start,kill
+
+[33mcommit 781aa22348cc50fa2f4cc359d82f17b5d84ee4cc[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 11 12:52:22 2023 +0900
+
+    wpa_supplicant process fix
+
+[33mcommit 4de9aed88bea847f9d4c5c7c115828e8bdd98f76[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 11 11:13:19 2023 +0900
+
+    wpa_supplicant typo fix
+
+[33mcommit ee3033f06f29e73ebc021ddc597929f6e6e2b29b[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 11 10:37:31 2023 +0900
+
+    typo fix
+
+[33mcommit 5fe56be3dc72ab83bc37cf860ada81f781cbf724[m
+Merge: b7bbbcc 3acfd93
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 11 10:30:17 2023 +0900
+
+    typo fix
+
+[33mcommit b7bbbcc4c4a11d2a4243ebd1f39ccbe44ce8125d[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 11 09:40:54 2023 +0900
+
+    update network typo fix
+
+[33mcommit 3acfd93b8e7c0a78825a13d00c8ab8d91a4c1f77[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 11 09:39:51 2023 +0900
+
+    git config
+
+[33mcommit c2540cd5635dbbf68592e7bfb8eebc28db039d24[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 11 09:10:07 2023 +0900
+
+    update network but fix
+
+[33mcommit d62c78b53b3fc358d9326a8ead4f54d10b9219e3[m
+Merge: 0a19c9b e9fc1ff
+Author: mhkim <mhkim@cantops.biz>
+Date:   Mon Apr 10 20:06:38 2023 +0900
+
+    Merge branch 'test' of http://192.168.10.2:31406/jkpark/pim-package into test
+
+[33mcommit 0a19c9b5069ecd098b07fcf1c2e5fa5f6e414f2c[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Mon Apr 10 20:05:53 2023 +0900
+
+    update_network_pim.py wpa_supplicant set add
+
+[33mcommit e9fc1ff9ccd0bc587b2a143cd5761ce53573161a[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Apr 10 19:17:33 2023 +0900
+
+    LED control fix
+
+[33mcommit 8d3d0586ee1874ae54e71004c66c4a9b55aaaad8[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Apr 10 19:14:53 2023 +0900
+
+    chmask process add
+
+[33mcommit e5d24bc3126fc418fb98ea1e87c0b99898d9ce56[m
+Merge: 6928d78 12e587f
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Apr 10 18:48:28 2023 +0900
+
+    Merge branch 'test' of http://192.168.10.2:31406/jkpark/pim-package into test
+
+[33mcommit 12e587fa234f209f4eae6bf7d5f7f1d735fdec6e[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Mon Apr 10 18:46:40 2023 +0900
+
+    bg chk ok log level change
+
+[33mcommit 6928d7885fc101108386bd95915942fc156db683[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Apr 10 18:46:02 2023 +0900
+
+    bg chk log level modify
+
+[33mcommit 88a824aa8fc0fcca09c4a1706a2a24fc0aacc844[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Apr 10 17:43:47 2023 +0900
+
+    log save folder change
+
+[33mcommit 4f9d24f5513fb166b76aef2c78a47a1608594dd2[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Apr 10 16:13:52 2023 +0900
+
+    bg chk cmd change
+
+[33mcommit 924023f8dfa8682e9d0b3b065258f3d40a55537c[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Mon Apr 10 14:47:59 2023 +0900
+
+    Log priority error fix
+
+[33mcommit 3e26192a1be3b82d6ab57f2765d0e90434bca845[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Apr 10 14:27:18 2023 +0900
+
+    bg chk log format change
+
+[33mcommit 13222d19cc44500fa9276e718dfde1b3e588cf6a[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Apr 10 13:24:19 2023 +0900
+
+    rsyslog
+
+[33mcommit c92f61fc269d80ceed671494ada0deb7b062475e[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Apr 10 13:19:25 2023 +0900
+
+    logger
+
+[33mcommit bd664446001cb099e88a743b7effb85142d03cef[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Apr 10 12:47:48 2023 +0900
+
+    sd mount
+
+[33mcommit c841e2162ad729ce35e1fa66b61e0b76fc7031d7[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Apr 10 11:18:08 2023 +0900
+
+    lmu,iw
+
+[33mcommit 1760e52ed1497b6de64330bfd00b9d0ddd9b8eea[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Apr 10 09:56:24 2023 +0900
+
+    ver 2.1
+    single mipi freq 400M
+
+[33mcommit 3bf53afb2e13bdb5b496aa267d5e0e60a27ef1d4[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Apr 7 18:23:11 2023 +0900
+
+    network
+
+[33mcommit 42d8abb35232dc7a137035f71f03b83a302daf77[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Apr 7 14:23:22 2023 +0900
+
+    chk_mem
+
+[33mcommit bf908c131d5231cd9d9508979deda95b76d72245[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Apr 7 13:21:09 2023 +0900
+
+    watchdog enable
+
+[33mcommit 3bc1a0a8d80cb3f78b9cd1520a1599c88ca58a2b[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Apr 7 12:49:06 2023 +0900
+
+    ftp, log_to_gz
+
+[33mcommit ee7b5906951a0c5c6c1ea388e62f8e8f59584e81[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Apr 6 17:57:48 2023 +0900
+
+    hostname
+
+[33mcommit 0ca132f63d6cd034244efc38513ab2d865e69176[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Apr 6 16:59:52 2023 +0900
+
+    deb
+
+[33mcommit 570813cce5d71b7e9370f061f81929152ebdf93b[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Apr 6 16:59:19 2023 +0900
+
+    netplan,sd
+
+[33mcommit 7f4f043faff7effb102fab3cc8a59a04faa5ba79[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Apr 6 16:55:40 2023 +0900
+
+    inst
+
+[33mcommit e7c8f06bcf723241003edb6aa77dc737a5683757[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Apr 6 15:06:48 2023 +0900
+
+    module
+
+[33mcommit 3b59cb797fe852f0a7b60305eaab976b5d8575a8[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Apr 6 15:02:20 2023 +0900
+
+    //FCC UC
+
+[33mcommit d5279df0705230e16ecbd2e6c7494f1cafb0712f[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Apr 6 10:35:57 2023 +0900
+
+    vcm
+
+[33mcommit a031c1d8867d9bc18773b0a09b2b2856fae86b73[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Apr 6 10:34:42 2023 +0900
+
+    test
+
+[33mcommit eabd8e2eb27e442385a8b8b0aa18e531790d30a8[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed Apr 5 16:38:17 2023 +0900
+
+    etc
+
+[33mcommit 395fa3fb925a379cc8c9248c53fd7698234c3b2b[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed Apr 5 16:11:35 2023 +0900
+
+    auto script test
+
+[33mcommit 1cf7cb8f4ea5b71586c8e0fb60c35cca00640703[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed Apr 5 13:31:12 2023 +0900
+
+    ver 0.2.0
+
+[33mcommit 2c43d24c18a656bc39a312ce4a8475d4a847f916[m
+Merge: 83e842b 28767d1
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 4 14:27:51 2023 +0900
+
+    Merge branch 'master' of http://192.168.10.2:31406/jkpark/pim-package
+
+[33mcommit 83e842beb12a679bf6ef9149e900c4303aefe0b6[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Apr 4 14:27:27 2023 +0900
+
+    chk_mem
+
+[33mcommit 28767d16df92362819545e4bc035a5323c6a9070[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Tue Apr 4 11:14:21 2023 +0900
+
+    edgeconf_pim cam_width, cam_height add
+
+[33mcommit db9869b359e5e6a3f84813582ba6e4348134a24b[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Tue Apr 4 11:08:27 2023 +0900
+
+    CPU usage bug fix
+
+[33mcommit 8edb7a10fb1f85d85edce6f2faeb263095d6d2fb[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Tue Apr 4 10:03:08 2023 +0900
+
+    cpu, ram usage print add
+
+[33mcommit 5f3cbf742192db5e274b43fef86991095bdff669[m
+Merge: 39cae8c 9451778
+Author: mhkim <mhkim@cantops.biz>
+Date:   Tue Apr 4 10:01:50 2023 +0900
+
+    Merge branch 'master' of http://192.168.10.2:31406/jkpark/pim-package
+
+[33mcommit 39cae8c4ec0ed84aa675b3c74ccf4d0481fdfbfc[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Tue Apr 4 10:01:18 2023 +0900
+
+    cam connect check fix
+
+[33mcommit 945177813bd19d6e189e154ec79011509f5ef938[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Apr 3 16:56:43 2023 +0900
+
+    0.1.9
+
+[33mcommit ed8052078cf0fbcf0369fda21b4ff097416a7aff[m
+Merge: 10ce89d f6e1847
+Author: mhkim <mhkim@cantops.biz>
+Date:   Fri Mar 31 17:30:05 2023 +0900
+
+    Merge branch 'master' of http://192.168.10.2:31406/jkpark/pim-package
+
+[33mcommit 10ce89d98fd653000e5cc0dbcfa424ed215d8003[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Fri Mar 31 17:29:25 2023 +0900
+
+    cam chk Delay add
+
+[33mcommit f6e184743057ac6b69785116b09fcc2e17fc41cf[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Mar 31 17:14:56 2023 +0900
+
+    cam2 typo fix
+
+[33mcommit 0329b96792029436bdd8b002777ecf7018698dfc[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Fri Mar 31 16:56:14 2023 +0900
+
+    err value fix
+
+[33mcommit 61b65511970738c0b5a3324058708284a39be50a[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Mar 31 16:53:56 2023 +0900
+
+    chk_cam_connect fix
+
+[33mcommit 89696a6c2b7d42e8f279eeb26f96d9354b2bd67a[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Mar 31 13:03:24 2023 +0900
+
+    deb
+
+[33mcommit d8319af9da3f29e0f40c86ba36d0751901cb2908[m
+Merge: 364f50d aa78204
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Mar 31 12:38:47 2023 +0900
+
+    Merge branch 'master' of http://192.168.10.2:31406/jkpark/pim-package
+
+[33mcommit 364f50db5c1124af122993988e780ec071497279[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Mar 31 12:37:36 2023 +0900
+
+    log,kill,inst,rm
+
+[33mcommit aa78204e68ffe5699140856f4c4fdf32b39b503c[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Wed Mar 29 10:12:26 2023 +0900
+
+    wifi chmask, bgscan default value add
+
+[33mcommit 370e2dd3b69184ad52d0a87a945081aa7c5cde1b[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Wed Mar 29 10:06:38 2023 +0900
+
+    wifi channel mask, bgscan option add
+
+[33mcommit 175318fa9885f95e372cb3672b6eef0b94744b72[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Wed Mar 29 09:57:11 2023 +0900
+
+    cam connect check temporary file add
+
+[33mcommit e970b44542261872855b9800e36b9ba8b7c00210[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Mar 28 14:03:58 2023 +0900
+
+    killall
+
+[33mcommit 1433ae702ef7a7f0b95ff715370e23eb45c66858[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Mar 27 14:29:27 2023 +0900
+
+    kill_all.sh
+
+[33mcommit da851c3b2fce95e0b23c18cbb3cc0e47661ab80a[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Mar 27 14:20:56 2023 +0900
+
+    etc
+
+[33mcommit e7e7e0f3f73e0c6b1cb5f5d9445422b77091faeb[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Mar 27 13:32:59 2023 +0900
+
+    netplan
+
+[33mcommit e4c4a1bac9fa707c9837cf9e9d43c17142385a5a[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Mar 27 13:01:18 2023 +0900
+
+    rc.local
+
+[33mcommit 9917ba70f11d421f80c0dc876a2ee2015876caed[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Mar 27 12:59:08 2023 +0900
+
+    deb
+
+[33mcommit 7c43ab309e958bce3d1d71072ac0daf57e75d6bb[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Mar 27 12:58:45 2023 +0900
+
+    rc.local
+
+[33mcommit 27336b8e5f8ff0fc30aa8615d997fedad6d47b1e[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Mar 27 11:22:33 2023 +0900
+
+    add kill.sh
+
+[33mcommit cb6ca4f3e4423a76288882073506bee4bc2fba40[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Mar 27 11:21:31 2023 +0900
+
+    0.1.8
+
+[33mcommit 4711725b5d6de4aa99e7ce573225fad947a3767c[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Mar 24 06:24:07 2023 +0000
+
+    1.7 merge
+
+[33mcommit 98ea52a0a5bf4bce481933437eae50019943fd60[m
+Merge: d677c95 0bea0da
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Mar 24 06:18:39 2023 +0000
+
+    Merge remote-tracking branch 'origin/module'
+
+[33mcommit 0bea0dab1b235c5154fdaa6c2d96c63f444ec161[m[33m ([m[1;31morigin/module[m[33m)[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Mar 24 12:52:58 2023 +0900
+
+    deb
+
+[33mcommit 856b566dd294545647ceeaede50d7fe24ee9f74c[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Mar 23 12:43:08 2023 +0900
+
+    add crontab
+
+[33mcommit e5120609647fe91549c6a40c36678351d96cbe6d[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Mar 23 10:20:38 2023 +0900
+
+    ver 1.7
+
+[33mcommit f99ff34c5dd50dbf9a140ebcebbb6dd72870bf62[m
+Author: 조현우 <hwjo@cantops.biz>
+Date:   Thu Mar 23 00:52:51 2023 +0000
+
+    Update .gitmodules
+
+[33mcommit d677c95cfe8fcfe350726bd3472367728a98d6f3[m
+Author: 조현우 <hwjo@cantops.biz>
+Date:   Thu Mar 23 00:52:13 2023 +0000
+
+    Update .gitmodules
+
+[33mcommit 64b09d1d34041e404409dfd849edaf8de5ff1f1c[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed Mar 15 13:24:58 2023 +0900
+
+    vcm
+
+[33mcommit 8ea2b05eaadd23dd38e5fcd6881163d44347618b[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed Mar 15 13:20:45 2023 +0900
+
+    boot mount
+
+[33mcommit f6535c847eb7e46093524a6eda9b769ef4689795[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed Mar 15 13:05:28 2023 +0900
+
+    lib, config
+
+[33mcommit 822af39f45c0d03550bd20fd832e37caf31e6b8f[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed Mar 15 10:50:45 2023 +0900
+
+    etc
+
+[33mcommit 3211e3addd6a8506e785b6129a0412a81adfe843[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Mar 14 17:12:40 2023 +0900
+
+    ver 0.1.6
+
+[33mcommit 01a42e076d1b44568973ae1f9437594d16de19b8[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Mar 14 16:08:29 2023 +0900
+
+    etc
+
+[33mcommit 810815a07e14b276ad694abb27fff0500b181673[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Mar 13 17:26:40 2023 +0900
+
+    deb
+
+[33mcommit 994fee3d343de545c1c5cf8b541b05e35da0a91a[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Mar 13 17:25:40 2023 +0900
+
+    ord
+
+[33mcommit e26c7600e00bed9c54fe1913536096dde3a2c2ea[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Mar 13 17:24:02 2023 +0900
+
+    module
+
+[33mcommit 36260846ece198005c7c1c6a421b8e9862f4d83c[m
+Author: jhw7500 <them7500@daum.net>
+Date:   Mon Mar 13 16:39:58 2023 +0900
+
+    vcm sleep
+
+[33mcommit 034259302c850f3138da75b9f0bb28b1604fa66d[m
+Author: jhw7500 <them7500@daum.net>
+Date:   Mon Mar 13 16:38:24 2023 +0900
+
+    rc.local
+
+[33mcommit 4e73247dbe986abe52b24556ed6e0dbbccfd2a88[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Mar 13 13:20:22 2023 +0900
+
+    new file
+
+[33mcommit 9aec82b09d1c559780f1a4705294da3749249794[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Mar 13 13:09:12 2023 +0900
+
+    module version
+
+[33mcommit 62cab870158ccefffb21865fafc992f82bace6da[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Mar 13 12:50:20 2023 +0900
+
+    etc
+
+[33mcommit 84e9b92dc10bd62901bffe4321ee2463f6c0fe7f[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Mar 10 11:48:58 2023 +0900
+
+    pim.deb
+
+[33mcommit cc39a7d48d454ba37cb622d066c03de52a36e1b6[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Mar 10 11:47:01 2023 +0900
+
+    run level, networkmanager, timezone, srt
+
+[33mcommit 28de91b894efb7cfe051fd3f006120bfb875966d[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Mar 9 10:10:23 2023 +0000
+
+    rc.local
+
+[33mcommit 9005494c8c5320abfa4b18ae0427da77b993ed9a[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Mar 9 17:41:05 2023 +0900
+
+    del ord/json
+
+[33mcommit b742c5d0d6b119ea176114f9b6ccabe8534ff779[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Mar 9 16:09:59 2023 +0900
+
+    0.1.5 deb
+
+[33mcommit 0c8bf6a45e2b3e0922c3d6f7b27bff002daa0ec0[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Mar 9 16:08:40 2023 +0900
+
+    version 0.1.5
+    vsd cpu, srt sync, evt copy, json, log manage, etc..
+
+[33mcommit c3505f1f4b1870a8b5f4941b6ec67aa2cac0fbf0[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Mon Mar 6 15:50:31 2023 +0900
+
+    pim.deb 1.4 add
+
+[33mcommit 784a1dccd7cab7f78b91bd75ea8d757d9d4aa7b1[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Mon Mar 6 15:29:05 2023 +0900
+
+    bg check, LED Ctrl add version up(1.4)
+
+[33mcommit 74e59b062bfbd34a57b2f8f256eca5a4b232fd0b[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Mar 6 12:49:54 2023 +0900
+
+    upload deb
+
+[33mcommit be66c2382ffb21f6b13210d8e2162760df6576b5[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Mar 6 12:49:32 2023 +0900
+
+    ignore
+
+[33mcommit ec39820269cc128b6371179d29b41026b97dbe29[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Mar 6 12:46:45 2023 +0900
+
+    ignore
+
+[33mcommit aedd29300c4841360ba5ff62ab47e23c94b11567[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Mar 6 12:43:09 2023 +0900
+
+    ignore
+
+[33mcommit e56377299cd6c4ac07ba59456e30d484153082d9[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Mar 6 12:37:20 2023 +0900
+
+    add pim.deb
+
+[33mcommit f8b87643212704d026af2d6e720c4bee04a078ae[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Fri Mar 3 16:45:08 2023 +0900
+
+    typo fix
+
+[33mcommit 4017b08c31c5429a46adca3f361ef0a89f573378[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Fri Mar 3 16:40:31 2023 +0900
+
+    typo fix
+
+[33mcommit b9fb0155d771493b834addd6cb610a6f6a02009f[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Fri Mar 3 16:36:07 2023 +0900
+
+    led ctrl add
+
+[33mcommit 3425d77a12d92f7a813c6e9781d843bf023d6db8[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Fri Mar 3 16:31:10 2023 +0900
+
+    flag save modify
+
+[33mcommit f57e4905a374d8dc58ff282634362429c62e5b16[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Fri Mar 3 16:21:46 2023 +0900
+
+    typo fix
+
+[33mcommit 80019fe00b0d54eb6b887e3b842874075aa3c325[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Fri Mar 3 16:10:46 2023 +0900
+
+    bg check flag file modify
+
+[33mcommit e7fdf807503aa159e0f50d59e998a3a733583bd1[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Fri Mar 3 15:24:42 2023 +0900
+
+    temp file add
+
+[33mcommit 3d81eca5b4af4968c5bc6c7393d7a84a2643384f[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Fri Mar 3 15:07:28 2023 +0900
+
+    BG check & LED control modify
+
+[33mcommit cf9992b22b6173b691b99329b313f4b36b7f5e29[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Fri Mar 3 09:25:40 2023 +0900
+
+    0.1.3
+
+[33mcommit aada42f41fd8ab08c07dc9046a47c9aa917b3d1e[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Fri Feb 24 17:53:13 2023 +0900
+
+    Background check add
+
+[33mcommit 0fa5c6d3110c149c4eb58e0f2297b9ae44e3d444[m
+Merge: 9d87053 8cc69a4
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Feb 9 14:58:35 2023 +0900
+
+    Merge branch 'master' of http://cantops.iptime.org:31406/jkpark/pim-package
+
+[33mcommit 9d870534f784e2c3b74bf7904073dee80d7b7f6f[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Feb 9 14:57:51 2023 +0900
+
+    ver 1.2
+    reduce cpu usage
+
+[33mcommit 8cc69a41115ffddcb29c4077dc5bbe4627401b65[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Thu Feb 9 14:40:49 2023 +0900
+
+    SOMBASE_TEST add
+
+[33mcommit 58a21b446691fb2e7c220cd234ed8e598ce37d6b[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Thu Feb 9 14:03:01 2023 +0900
+
+    camera fw add
+
+[33mcommit 44d848b9ac433632c27e31a88cb6ee0fd98296e6[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Thu Feb 9 04:51:17 2023 +0000
+
+    ver 0.1.2
+    ord/vcm ver 1.8 : overlay,log..
+    add lib
+    add bin
+    add log_to_gz.sh
+
+[33mcommit 7c4ea4bed1934e52cbebeb05801167a5e09cf5cb[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Wed Feb 1 17:34:45 2023 +0900
+
+    set wpa_supplicant add
+
+[33mcommit 69d9024000bc5cc2cb20eac1d56d3f6370cf7118[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Tue Jan 31 12:59:58 2023 +0900
+
+    0.1.1
+
+[33mcommit d2ce0d507dec4a080d992c8b7437df3f57395c1f[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Fri Jan 27 13:22:14 2023 +0900
+
+    set_wpa_suppl.sh add
+
+[33mcommit 69882c233df099d109698b3bcd632248563831de[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Fri Jan 27 13:18:43 2023 +0900
+
+    led_ctrl.sh, set_wpa_suppl.sh add
+
+[33mcommit 9b012e63f41a1b2bccd718d76751444a01b2d2aa[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Jan 13 16:16:07 2023 +0900
+
+    version 0.1.0
+
+[33mcommit ede8685b45b6c29735809849385a922f78378529[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Fri Jan 13 16:15:08 2023 +0900
+
+    add vhl name for search
+
+[33mcommit 03f85d6c1f5151016febe5efd806a7fbf4356dda[m
+Author: root <mhkim@cantops.biz>
+Date:   Wed Jan 11 16:47:35 2023 +0900
+
+    json
+
+[33mcommit ef17e482844ad1e275dc31cd53211005d7f870c3[m
+Merge: 4e2689c d6851c8
+Author: root <mhkim@cantops.biz>
+Date:   Wed Jan 11 12:25:58 2023 +0900
+
+    Merge branch 'master' of http://cantops.iptime.org:31406/jkpark/pim-package
+
+[33mcommit 4e2689c40bc6965c942be5083c5e940c26d29b0d[m
+Author: root <mhkim@cantops.biz>
+Date:   Wed Jan 11 12:25:21 2023 +0900
+
+    etc
+
+[33mcommit d6851c864fa62e588c302ff264c4b8b501534968[m
+Author: root <mhkim@cantops.biz>
+Date:   Wed Jan 11 09:23:53 2023 +0900
+
+    AE on setting
+
+[33mcommit 795034bc4632cded35dda4d1f2026ad9b1128331[m
+Author: root <mhkim@cantops.biz>
+Date:   Tue Jan 10 17:20:18 2023 +0900
+
+    0.0.9
+
+[33mcommit f5295baa0074a1dbd88f5e003fbaf1843dfac07d[m
+Author: root <mhkim@cantops.biz>
+Date:   Tue Jan 10 17:17:58 2023 +0900
+
+    ver 0.0.9
+
+[33mcommit 52888517b8e64a5d0021ba23a1c2417daba433fd[m
+Author: root <mhkim@cantops.biz>
+Date:   Thu Jan 5 16:55:47 2023 +0900
+
+    0.0.8
+
+[33mcommit 1d41d5072c910ebcc8d602d88aa51f14de246e81[m
+Author: root <mhkim@cantops.biz>
+Date:   Wed Jan 4 09:35:50 2023 +0900
+
+    vsd version err fix
+
+[33mcommit 58cbc5f73d8f8df022f73824bac8a2698d57b562[m
+Author: root <mhkim@cantops.biz>
+Date:   Tue Jan 3 16:11:39 2023 +0900
+
+    vsd msg fix
+
+[33mcommit b962cc77828010b1238b2907666568234631ad98[m
+Author: root <mhkim@cantops.biz>
+Date:   Tue Jan 3 16:06:53 2023 +0900
+
+    vsd backup remove
+
+[33mcommit e5d8cc2640c6a9e67e5a0cb92f509387cdc58481[m
+Author: root <mhkim@cantops.biz>
+Date:   Tue Jan 3 16:04:57 2023 +0900
+
+    vsd update
+
+[33mcommit 58a7d34095eb6bcd2568a034bfa5e139d9a4cc51[m
+Author: root <mhkim@cantops.biz>
+Date:   Tue Jan 3 14:10:57 2023 +0900
+
+    vsd err msg fix
+
+[33mcommit d4ee24d85e48376ac0cc65d588d6717818282b2e[m
+Author: root <mhkim@cantops.biz>
+Date:   Tue Jan 3 13:44:50 2023 +0900
+
+    vsd version print add
+
+[33mcommit 53ccddbf085cfaeb57c3d92216ed427d25f6b770[m
+Author: root <mhkim@cantops.biz>
+Date:   Tue Jan 3 13:22:27 2023 +0900
+
+    vsd update
+
+[33mcommit f98b383e09acda623ff9bfe34eef8a66f5e1f894[m
+Author: root <mhkim@cantops.biz>
+Date:   Tue Jan 3 12:11:20 2023 +0900
+
+    pim_update.sh example fix
+
+[33mcommit c332d3682ff9e7f7fa40d29c081297ca8b80dc7c[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Jan 2 17:13:27 2023 +0900
+
+    ignore
+
+[33mcommit ba386177b18a7f1906b6bff0ca206674a0f4dc17[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Mon Jan 2 17:05:08 2023 +0900
+
+    0.0.6
+
+[33mcommit 22758e2104a8b2f51e91374c8b5609afb68bd2f2[m
+Author: root <mhkim@cantops.biz>
+Date:   Thu Dec 29 15:58:42 2022 +0900
+
+    version up
+
+[33mcommit d0b985f2beb25bbf4f40f6b2d7529aea15c31b45[m
+Author: root <mhkim@cantops.biz>
+Date:   Thu Dec 29 13:20:31 2022 +0900
+
+    ord1.2 vcm1.2
+
+[33mcommit 460d30b564bb2566e171cd1810dfd571757fa836[m
+Merge: 09d721a 5d857cf
+Author: root <mhkim@cantops.biz>
+Date:   Wed Dec 28 19:03:27 2022 +0900
+
+    Merge branch 'master' of http://cantops.iptime.org:31406/jkpark/pim-package
+
+[33mcommit 09d721ad433644b0394296c852120da5b7e84bf9[m
+Author: root <mhkim@cantops.biz>
+Date:   Wed Dec 28 19:02:32 2022 +0900
+
+    pim_update example add
+
+[33mcommit 5d857cf97af5b905845f828e4d36de7fd5293e4c[m
+Author: root <mhkim@cantops.biz>
+Date:   Mon Dec 26 13:53:44 2022 +0900
+
+    package ver upgrade
+
+[33mcommit d9db107d497ed74836635d0bebb8b53329fb0065[m
+Author: root <mhkim@cantops.biz>
+Date:   Fri Dec 23 13:07:53 2022 +0900
+
+    rm test branch
+
+[33mcommit 6b4d3bba85516fc508901dc82c4f4a4ff1196878[m
+Author: root <mhkim@cantops.biz>
+Date:   Fri Dec 23 13:06:58 2022 +0900
+
+    ord 1.1 vcm 1.1
+
+[33mcommit e08e8b1b0dce108d2850a92d573ac6ba3bdbe64f[m
+Author: root <mhkim@cantops.biz>
+Date:   Tue Dec 20 19:42:04 2022 +0900
+
+    version update
+
+[33mcommit 5099a21151bfa0be9695a56ee2657aff478ef7e3[m
+Author: root <mhkim@cantops.biz>
+Date:   Tue Dec 20 19:38:15 2022 +0900
+
+    vcm update
+
+[33mcommit 2afdda13c2025e0b08170a1467c4e08f4b318721[m
+Author: root <mhkim@cantops.biz>
+Date:   Tue Dec 20 19:36:49 2022 +0900
+
+    ord update
+
+[33mcommit d6b1a9bff55b1d22db802d895d7bd2a5f14f8c56[m
+Author: 조현우 <hwjo@cantops.biz>
+Date:   Tue Dec 20 09:12:48 2022 +0000
+
+    Update .gitmodules(branch)
+
+[33mcommit 36d9f2f219aeb57b7439579ce99d44c04619be92[m
+Author: root <mhkim@cantops.biz>
+Date:   Thu Dec 15 19:42:25 2022 +0900
+
+    ord update
+
+[33mcommit 1d5e917cc97eca2da31ee3e683b6673b784710e4[m
+Author: root <mhkim@cantops.biz>
+Date:   Thu Dec 15 18:41:02 2022 +0900
+
+    vsd update
+
+[33mcommit 576d990c81fab022c1f718dba3f78590915b81c6[m
+Author: root <mhkim@cantops.biz>
+Date:   Thu Dec 15 18:31:29 2022 +0900
+
+    vcm update
+
+[33mcommit 2024ac339c0084f20b8db3ec34e8b3f52d639540[m
+Author: root <mhkim@cantops.biz>
+Date:   Thu Dec 15 16:27:48 2022 +0900
+
+    submodule name fix
+
+[33mcommit 4137cf0ba46e1ebe4a2329ce9de0ee26372ff772[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Wed Dec 14 16:48:05 2022 +0900
+
+    rc.local vcm add
+
+[33mcommit 7ecb6ce8909ee788f12eacf139070f080df645f9[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Wed Dec 14 16:45:14 2022 +0900
+
+    vcm build.sh fix
+
+[33mcommit a272a34d1abc14a231f087339477b6cec00e8458[m
+Author: hwjo <hwjo@cantops.biz>
+Date:   Wed Dec 14 15:34:56 2022 +0900
+
+    vcm
+
+[33mcommit 0c60662e972e3443cde09bf93d2c780031115911[m
+Author: 조현우 <hwjo@cantops.biz>
+Date:   Wed Dec 14 06:12:51 2022 +0000
+
+    Update .gitmodules
+
+[33mcommit fed5121445827e3919b1dd13cab0e59d58422633[m
+Author: 조현우 <hwjo@cantops.biz>
+Date:   Wed Dec 14 06:12:20 2022 +0000
+
+    Update .gitmodules
+
+[33mcommit e9dd687dd5615e542bee6d67d6a30f9c0a5a2c8c[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Wed Dec 14 13:09:05 2022 +0900
+
+    pim_update.sh add
+
+[33mcommit f6d5c4864d668bf1159ee984c122c9e0a54b864d[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Tue Dec 13 03:25:04 2022 +0000
+
+    Update control
+
+[33mcommit edfa4224c6f9012969771482f453f617c1314eed[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Tue Dec 13 11:02:43 2022 +0900
+
+    sdcard foramt shell script add
+
+[33mcommit b7077124430c77ebc74b90426a10525eb9a75f31[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Tue Dec 13 09:55:04 2022 +0900
+
+    cam ch rotation name fix
+
+[33mcommit a4a3e7e39e4358c8e246c0fe94c1cf3e16ac8b20[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Mon Dec 12 17:37:55 2022 +0900
+
+    Cam rotate msg fix
+
+[33mcommit caf51ee4ccc3948965d2cf20e68a6e4ae2eb7d36[m
+Author: mhkim <mhkim@cantops.biz>
+Date:   Mon Dec 12 17:17:04 2022 +0900
+
+    update_network_pim.py add
+
+[33mcommit 2e7e46464de81e3ed283e226f441f61ea808c2aa[m
+Author: root <mhkim@cantops.biz>
+Date:   Thu Dec 8 13:33:52 2022 +0900
+
+    rc.local ord add
+
+[33mcommit 11128d328d7d30a482cfb3fe46b606b258a8120f[m
+Author: jkpark <jkpark@cantops.biz>
+Date:   Wed Dec 7 09:31:05 2022 +0900
+
+    update, ord
+
+[33mcommit e8929bf92db66b3b0bf881efdbecb533f08801eb[m
+Author: jkpark <jkpark@cantops.biz>
+Date:   Tue Dec 6 19:16:42 2022 +0900
+
+    update,vsd
+
+[33mcommit 9850b0933740be15dfa0802fa719b90b73b55f5a[m
+Author: jkpark <jkpark@cantops.biz>
+Date:   Tue Dec 6 19:13:27 2022 +0900
+
+    first commit

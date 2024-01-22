@@ -2,7 +2,7 @@
 
 #service=$1
 #logger -s -t 'sh   ' streamApp PIMCAM vcm 
-group="streamApp ord vcm vsd cam_operate BG_Check docker"
+group="streamApp ord vcm vsd cam_operate BG_Check"
 tag=$(basename "$0")
 KEY=CPU
 
@@ -44,7 +44,7 @@ do
             if [ ! -z "$pid" ]; then
 		        #pid=$(ps -C $service |grep $service |awk '{print $1}')		
 		        mem=$(pmap -x $pid |tail -1 |awk '{print "Kbytes:"$3" RSS:"$4" Dirty:"$5}')
-		        logger -p local0.notice "[$KEY][$tag:$LINENO] $service : ${mem}"
+		        logger -p local0.notice "[$KEY][$tag:$LINENO] $service: ${mem}"
 	        fi
         fi
     done

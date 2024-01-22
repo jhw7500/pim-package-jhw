@@ -66,7 +66,7 @@ for service in $list; do
                     if [ "$cnt" -ge "$rebootcnt" ]; then
                         logger -p local0.emerg "[$KEY][$tag:$LINENO] reboot because doesn't kill"
                         sleep 1
-                        reboot
+                        creboot
                     fi
                     #((cnt++))
                     #break

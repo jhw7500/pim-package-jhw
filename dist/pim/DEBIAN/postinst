@@ -130,6 +130,10 @@ configure)
     mkdir /var/log/cantops/dot
   fi
 
+  if [ ! -d  /var/log/cantops/gst ]; then
+    mkdir /var/log/cantops/gst
+  fi
+
   if [ ! -d  /share ]; then
 	mkdir /share
   fi

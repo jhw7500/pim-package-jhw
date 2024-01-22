@@ -3,11 +3,19 @@ tag=$(basename "$0")
 key=RST
 iomode=3
 opt=0
+GST_LOG_FILE="/var/log/cantops/gst/gst_$(date +'%Y%m%d_%H%M%S').log"
+export GST_DEBUG_NO_COLOR=1
+export GST_DEBUG=3,v4l2src:1
+export GST_DEBUG_FILE="$GST_LOG_FILE"
 export GST_DEBUG_DUMP_DOT_DIR=/var/log/cantops/dot/
+
+logger -p local0.notice "[$key][$tag:$LINENO] kill vcm because srt sync"
+pkill vcm
+
 if [[ -n "$1" ]]; then
     opt=$1
 fi
-logger -p local0.notice "[$key][$tag:$LINENO] init_start_cam start opt:$opt"
+logger -p local0.notice "[$key][$tag:$LINENO] start opt:$opt"
 if [[ "$opt" == 1 ]]; then
     #logger -p local0.notice "[$key][$tag:$LINENO] PIMCAM -d 5 -m $iomode &"
     PIMCAM -d 5 -m $iomode &
@@ -42,3 +50,4 @@ else
     PIMCAM -d 15 -m $iomode &
 fi
 
+exit 0

@@ -21,7 +21,7 @@ while [ 1 ]; do
             #export GST_DEBUG_DUMP_DOT_DIR=/tmp/
 	        #/usr/bin/PIMCAM -d 8 -m 0 &
             #/usr/bin/PIMCAM -d 3 -m 0 &
-            /opt/pim/bin/init_start_cam.sh 1
+            /opt/pim/bin/start_cam.sh 1
             pid=$(ps -ef |grep BG_Check_for_pim.sh |grep -v grep |awk '{print $2}')
             if [ -z "$pid" ]; then
                 logger -p local0.emerg "[$KEY][$tag:$LINENO] BG_Check_for_pim.sh start"

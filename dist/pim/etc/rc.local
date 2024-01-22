@@ -10,7 +10,7 @@ logger -p local0.notice "[$KEY][$tag:$LINENO] rc.local start : Booting"
 modprobe imx8-media-dev
 #PIMCAM -m 0 -c 3 &
 #PIMCAM -d 25 -m 0 &
-/opt/pim/bin/init_start_cam.sh
+/opt/pim/bin/start_cam.sh
 /opt/pim/bin/restart_app.sh &
 /opt/pim/bin/chk_cpu_info.sh 60 &
 #/opt/pim/bin/dot_manage.sh /var/log/cantops/dot 100 &
