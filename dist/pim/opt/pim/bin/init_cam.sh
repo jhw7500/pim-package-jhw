@@ -5,7 +5,7 @@ logger -p local0.notice [RST][$tag:$LINENO] module reset..
 #killall -s KILL restart_app.sh
 #/opt/pim/bin/kill_test.sh
 #systemctl restart cam-operate
-/opt/pim/bin/kill_all.sh
+/opt/pim/bin/kill_test.sh 1
 
 #sleep 3
 rmmod imx8-media-dev

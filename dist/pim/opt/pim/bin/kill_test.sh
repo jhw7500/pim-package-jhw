@@ -5,14 +5,26 @@
 tag=$(basename "$0")
 KEY=RST
 logger -p local0.notice "[$KEY][$tag:$LINENO] kill_test.sh start"
-list="BG_Check_for_pim.sh vcm streamApp PIMCAM"
 pid=0
 cnt=0
 service=0
 touch /tmp/kill_flag
 limitcnt=5
 rebootcnt=10
+defunct=0
 
+list="BG_Check_for_pim.sh vcm streamApp PIMCAM"
+if [[ -n "$1" ]]; then
+    opt=$1
+else
+    opt=0
+fi
+
+if [[ "$opt" == 1 ]]; then
+    list="BG_Check_for_pim.sh restart_app.sh vcm streamApp PIMCAM"
+fi
+
+logger -p local0.notice "[$KEY][$tag:$LINENO] service : $list"
 :<<'END'
 for service in $list; do
 #logger -p local0.notice [$KEY][$tag:$LINENO] $service 
@@ -45,26 +57,32 @@ for service in $list; do
                     #defunct=$(ps -ef |grep defunct | grep -v grep)
                     #logger -p local0.notice [$KEY][$tag:$LINENO] $defunct
                     #umount /mnt/sd_cam
-                    defunct=$(ps -ef | grep defunct | grep -v grep | awk '{print $3}' | xargs -t -I % sh -c '{ cat /proc/%/status |grep Name; }')
+                    #defunct=$(ps -ef | grep defunct | grep -v grep | awk '{print $3}' | xargs -t -I % sh -c '{ cat /proc/%/status |grep Name; }')
+                    defunct=$(ps -ef | grep $service | grep defunct | awk '{print $8}')
                     logger -p local0.err "[$KEY][$tag:$LINENO] defunct : $defunct"
                     if [ -z "$defunct" ]; then
                         #logger -p local0.err "[$KEY][$tag:$LINENO] no defunct"
                         #sleep 1
                         #reboot
-                        logger -p local0.err "[$KEY][$tag:$LINENO] killall -s KILL $service"
-                        sudo killall -s KILL $service
-                    else
-                        #logger -p local0.emerg "[$KEY][$tag:$LINENO] killall -s KILL $service because zombie"
-                        #sleep 1
-                        #reboot -f
-                        logger -p local0.emerg "[$KEY][$tag:$LINENO] kill -9 defunct"
-                        ps -ef | grep defunct | grep -v grep | awk '{print $3}' | xargs kill -9
                         logger -p local0.err "[$KEY][$tag:$LINENO] killall $service"
-                        sudo killall $service
+                        killall -s KILL $service
+                    else
+                        logger -p local0.emerg "[$KEY][$tag:$LINENO] kill -9 $pid($service)"
+                        kill -9 $pid
+                    fi
+
+                    #defunct=$(ps -ef | grep defunct | grep -v grep | awk '{print $3}' | xargs -t -I % sh -c '{ cat /proc/%/status |grep Name |awk '{print $2}'; }')
+                    pid=$(ps -ef | grep defunct | grep -v grep | awk '{print $3}')
+                    defunct=$(cat /proc/$pid/status |grep Name |awk '{print $2}')
+                    logger -p local0.err "[$KEY][$tag:$LINENO] defunct : $defunct"
+                    if [ -n "$defunct" ]; then
+                        logger -p local0.emerg "[$KEY][$tag:$LINENO] kill -9 $pid($defunct)"
+                        kill -9 $pid 
+                        #ps -ef | grep defunct | grep -v grep | awk '{print $3}' | xargs kill -9
                     fi
 
                     if [ "$cnt" -ge "$rebootcnt" ]; then
-                        logger -p local0.emerg "[$KEY][$tag:$LINENO] reboot because doesn't kill"
+                        logger -p local0.emerg "[$KEY][$tag:$LINENO] creboot because doesn't kill"
                         sleep 1
                         creboot
                     fi
