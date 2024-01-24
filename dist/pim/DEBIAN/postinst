@@ -161,6 +161,16 @@ configure)
     cp /opt/pim/config/edgeconf_pim.json /opt/pim/config/edgeconf_pim_default.json
   fi
 
+  if [ ! -f  /etc/sysctl.conf ]; then
+    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/sysctl.conf"
+    cp /opt/pim/config/sysctl.conf /etc/
+  fi
+
+  if [ ! -f  /etc/security/limits.conf ]; then
+    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/security/limits.conf"
+    cp /opt/pim/config/limits.conf /etc/security/
+  fi
+
 :<<'END'
   if [ ! -f  /etc/netplan/eth0.yaml ]; then
         logger -s -p local0.notice "[$KEY][$tag:$LINENO] apply default netplan eth0"
