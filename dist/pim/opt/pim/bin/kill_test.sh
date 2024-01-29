@@ -20,8 +20,11 @@ else
     opt=0
 fi
 
-if [[ "$opt" == 1 ]]; then
-    list="BG_Check_for_pim.sh restart_app.sh vcm streamApp PIMCAM"
+if [[ "$opt" -ge 1 ]]; then
+    list="BG_Check_for_pim.sh restart_app.sh ord vcm streamApp PIMCAM"
+    if [[ "$opt" -ge 2 ]]; then
+        systemctl restart cam-operate
+    fi
 fi
 
 logger -p local0.notice "[$KEY][$tag:$LINENO] service : $list"

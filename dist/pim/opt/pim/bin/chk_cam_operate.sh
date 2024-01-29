@@ -2,6 +2,7 @@
 FILE_=/tmp/start_video_time_
 #FILE_JSON=/root/shared_v/edgeconf_pim.json
 FILE_JSON_=/root/shared_v/ord_vcm_conf.json
+FILE_CHECK=/tmp/file_check
 tag=$(basename "$0")
 ENABLE_VAL=true
 DISABLE_VAL=false
@@ -211,6 +212,7 @@ END
 				((retry++))
                 retry_total=$(($retry+$retry_boot))
 				logger -p local0.error "[$KEY][$tag:$LINENO] $check_num != $file_cnt file cnt check fail"
+                echo "NG" > $FILE_CHECK
 				if [ "$retry_total" -le 1 ]; then
                     logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/kill_test.sh ($retry/$retry_boot/$retry_total)"
                     #rm ${mnt_folder}/${vhl_name}_${mp4date2}*
@@ -224,13 +226,13 @@ END
 					logger -p local0.emerg "[$KEY][$tag:$LINENO] Rebooting...($retry/$retry_boot/$retry_total)"
                     sleep 1
 					creboot
-                    logger -p local0.emerg "[$KEY][$tag:$LINENO] creboot end"
 				fi
 			else
 				logger -p local0.notice "[$KEY][$tag:$LINENO] mp4,srt file cnt check ok ($retry/$retry_boot/$retry_total)"
 				retry=0
                 retry_boot=0
                 retry_total=0
+                echo "OK" > $FILE_CHECK
 			fi
 :<<'END'
             if [ "$file_time_err" -ne 0 ]; then

@@ -16,19 +16,14 @@ if [[ "$1" == "--help" || "$1" == "-h" || -z "$1" ]]; then
     exit 0
 fi
 
+ad_len=$(expr length "$3")
 ad0=$(($3>>8&0xff))
 ad1=$(($3&0xff))
 ad0=$(printf "0x%02x\n" $ad0)
 ad1=$(printf "0x%02x\n" $ad1)
-#address0=$(printf "%x\n" $2>>8&0xff)
-#address1=$(printf "%x\n" $2&0xff)
-#echo $2
-#echo 0x$ad0
-#echo 0x$ad1
-#echo $4
-if [[ $4 == 1 ]]; then
-    i2ctransfer -f -y -a $1 w2@$2 $ad0 $ad1 r1
-elif [[ $4 == 2 ]]; then
-    i2ctransfer -f -y -a $1 w2@$2 $ad0 $ad1 r2
-fi
 
+if [[ $ad_len == 4 ]]; then
+    i2ctransfer -f -y -a $1 w1@$2 $ad1 r$4
+elif [[ $ad_len == 6 ]]; then
+    i2ctransfer -f -y -a $1 w2@$2 $ad0 $ad1 r$4
+fi
