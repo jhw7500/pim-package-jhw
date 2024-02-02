@@ -1,7 +1,7 @@
 #!/bin/bash
 JSON_PREFIX=edgeconf_
 JOSN_SUFFIX=.json
-TEST_CONFIG_FILE=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} |grep -v '/$' | tail -1 |tr -d '\r\n')
+FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} |grep -v '/$' | tail -1 |tr -d '\r\n')
 FLAG_PATH="/tmp"
 tag=$(basename "$0")
 
@@ -37,17 +37,17 @@ cam01_res=$(i2ctransfer -f -y -a 2 w2@0x48 0x00 0x13 r1)
 #ch2/3 Des check
 cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
 
-if [[ ! -s "$TEST_CONFIG_FILE" ]]; then 
-	logger -p local0.error "[CHK][$tag:$LINENO] Not Found $TEST_CONFIG_FILE"
+if [[ ! -s "$FILE_JSON" ]]; then 
+	logger -p local0.error "[CHK][$tag:$LINENO] Not Found $FILE_JSON"
 	result=1 ; 
 else
-	cam_ch0_en=$(cat $TEST_CONFIG_FILE | grep cam_ch0 | grep -v rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')	
-	cam_ch1_en=$(cat $TEST_CONFIG_FILE | grep cam_ch1 | grep -v rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')	
-	cam_ch2_en=$(cat $TEST_CONFIG_FILE | grep cam_ch2 | grep -v rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')	
-	cam_ch3_en=$(cat $TEST_CONFIG_FILE | grep cam_ch3 | grep -v rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')	
-	
+    cam_ch0=$(jq '.VHL_CAM.cam_ch0' "$FILE_JSON")
+    cam_ch1=$(jq '.VHL_CAM.cam_ch1' "$FILE_JSON")
+    cam_ch2=$(jq '.VHL_CAM.cam_ch2' "$FILE_JSON")
+    cam_ch3=$(jq '.VHL_CAM.cam_ch3' "$FILE_JSON")
+
 	#CAM0, CAM1 ENABLE
-	if [[ "$cam_ch0_en" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch1_en" == *"$ENABLE_VAL"* ]]; then
+	if [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]; then
 		if [[ "$cam01_res" == *"$SUCCESS_VAL"*  ]]; then
 			logger -p local0.info "[CHK][$tag:$LINENO] CAM0 CAM1 OK"
 		else
@@ -83,7 +83,7 @@ else
 			done
 		fi
 	#CAM0 ENABLE ONLY
-	elif [[ "$cam_ch0_en" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch1_en" == *"$DISABLE_VAL"* ]]; then
+	elif [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch1" == *"$DISABLE_VAL"* ]]; then
 		if [[ "$cam01_res" == *"$CH0_EN_OK"*  ]]; then
             logger -p local0.info "[CHK][$tag:$LINENO] CAM0 OK"
         elif [[ "$cam01_res" == *"$CH1_EN_OK"*  ]]; then
@@ -94,7 +94,7 @@ else
 			echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log	
 		fi
     #CAM1 ENABLE ONLY
-    elif [[ "$cam_ch0_en" == *"$DISABLE_VAL"* ]] && [[ "$cam_ch1_en" == *"$ENABLE_VAL"* ]]; then
+    elif [[ "$cam_ch0" == *"$DISABLE_VAL"* ]] && [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]; then
         if [[ "$cam01_res" == *"$CH1_EN_OK"*  ]]; then
             logger -p local0.info "[CHK][$tag:$LINENO] CAM1 OK"
         elif [[ "$cam01_res" == *"$CH0_EN_OK"*  ]]; then
@@ -109,7 +109,7 @@ else
 	fi
 	
 	#CAM2,CAM3 ENABLE
-	if [[ "$cam_ch2_en" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch3_en" == *"$ENABLE_VAL"* ]]; then
+	if [[ "$cam_ch2" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch3" == *"$ENABLE_VAL"* ]]; then
 		if [[ "$cam23_res" == *"$SUCCESS_VAL"*  ]]; then
 			logger -p local0.info "[CHK][$tag:$LINENO] CAM2 CAM3 OK"
 		else
@@ -142,7 +142,7 @@ else
 			done
 		fi
 	#CAM2 ENABLE ONLY
-	elif [[ "$cam_ch2_en" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch3_en" == *"$DISABLE_VAL"* ]]; then
+	elif [[ "$cam_ch2" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch3" == *"$DISABLE_VAL"* ]]; then
 		if [[ "$cam23_res" == *"$CH2_EN_OK"*  ]]; then
             logger -p local0.info "[CHK][$tag:$LINENO] CAM2 OK"
         elif [[ "$cam23_res" == *"$CH3_EN_OK"*  ]]; then
@@ -153,7 +153,7 @@ else
 			echo "${timestamp} CAM2 ERR" >> ${FLAG_PATH}/err_cam2.log
 		fi
     #CAM3 ENABLE ONLY
-    elif [[ "$cam_ch2_en" == *"$DISABLE_VAL"* ]] && [[ "$cam_ch3_en" == *"$ENABLE_VAL"* ]]; then
+    elif [[ "$cam_ch2" == *"$DISABLE_VAL"* ]] && [[ "$cam_ch3" == *"$ENABLE_VAL"* ]]; then
         if [[ "$cam23_res" == *"$CH3_EN_OK"*  ]]; then
             logger -p local0.info "[CHK][$tag:$LINENO] CAM3 OK"
         elif [[ "$cam23_res" == *"$CH2_EN_OK"*  ]]; then

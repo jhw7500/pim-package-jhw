@@ -4,33 +4,32 @@ tag=$(basename "$0")
 KEY=RST
 
 #list="BG_Check_for_pim.sh restart_app.sh vcm ord vsd"
-list="BG_Check_for_pim.sh vsd ord vcm"
+list="ord vcm vsd"
 pid=0
 service=0
-
+#app=streamApp
+#app=gstApp
 sleep 1
+
+JSON_PREFIX=edgeconf_
+JOSN_SUFFIX=.json
+FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} |grep -v '/$' | tail -1 |tr -d '\r\n')
+app=$(jq -r '.VHL_CAM.app' "$FILE_JSON")
+if [ "$app" != "streamApp" ] && [ "$app" != "gstApp" ]; then
+    logger -p local0.crit "[$KEY][$tag:$LINENO] app : $app"
+    exit 0
+fi
+
 
 while [ 1 ]; do
     #sleep 2
-    pid=$(ps -ef |grep streamApp |grep -v grep |awk '{print $2}')
+    pid=$(ps -ef |grep $app |grep -v grep |awk '{print $2}')
     if [ -z "$pid" ]; then
-        logger -p local0.notice "[$KEY][$tag:$LINENO] streamApp killed"
-        pid=$(ps -ef |grep PIMCAM |grep -v grep |awk '{print $2}')
-        if [ -z "$pid" ]; then
-            logger -p local0.emerg "[$KEY][$tag:$LINENO] PIMCAM streamApp start"
-            #export GST_DEBUG_DUMP_DOT_DIR=/tmp/
-	        #/usr/bin/PIMCAM -d 8 -m 0 &
-            #/usr/bin/PIMCAM -d 3 -m 0 &
-            /opt/pim/bin/start_cam.sh 1
-            pid=$(ps -ef |grep BG_Check_for_pim.sh |grep -v grep |awk '{print $2}')
-            if [ -z "$pid" ]; then
-                logger -p local0.emerg "[$KEY][$tag:$LINENO] BG_Check_for_pim.sh start"
-                /opt/pim/bin/BG_Check_for_pim.sh & 2>/dev/null
-            fi
-        else
-            logger -p local0.notice  "[$KEY][$tag:$LINENO] PIMCAM($pid) kill not yet"
-            killall -s KILL PIMCAM
-        fi
+        logger -p local0.notice "[$KEY][$tag:$LINENO] $app killed"
+        killall -s KILL PIMCAM
+        killall -s KILL BG_Check_for_pim.sh
+        logger -p local0.emerg "[$KEY][$tag:$LINENO] $app start"
+        /opt/pim/bin/start_cam.sh 1
     fi
 
     for service in $list; do

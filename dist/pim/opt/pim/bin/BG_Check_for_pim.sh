@@ -2,6 +2,11 @@
 FLAG_PATH="/tmp"
 tag=$(basename "$0")
 result=0
+delay=25
+
+if [[ -n "$1" ]]; then
+    delay=$1
+fi
 
 function CLEAR_CHK_LOG() {
 	touch $FLAG_PATH/bg_chk_flag.bin
@@ -49,7 +54,7 @@ function MAKE_RESULT_FLAG() {
 }
 
 CLEAR_CHK_LOG
-sleep 30
+sleep $delay
 logger -p local0.notice [CHK][$tag:$LINENO] check loop start
 while true; do
     sleep 1

@@ -7,14 +7,12 @@ logger -p local0.notice "[$KEY][$tag:$LINENO] rc.local start : Booting"
 #/opt/pim/bin/eth_name_exchange.sh &
 #export GST_DEBUG=3
 #export PointImageApp_DEBUG=main:*,libfilewriter:*,writer:1,
-
 modprobe imx8-media-dev
+#/home/user/pim-package/test/ncsftp.sh &
 /opt/pim/bin/start_cam.sh
-/opt/pim/bin/restart_app.sh &
 /opt/pim/bin/chk_cpu_info.sh 60 &
 #/opt/pim/bin/dot_manage.sh /var/log/cantops/dot 100 &
 touch /var/run/vsd.pipe
-
 #booting LED control
 #ALL LED OFF
 echo none > /sys/devices/platform/leds/leds/gpio1_led/trigger

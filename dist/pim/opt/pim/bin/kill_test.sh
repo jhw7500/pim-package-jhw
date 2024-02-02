@@ -13,7 +13,23 @@ limitcnt=5
 rebootcnt=10
 defunct=0
 
-list="BG_Check_for_pim.sh vcm streamApp PIMCAM"
+#list="BG_Check_for_pim.sh vcm streamApp PIMCAM"
+#list="BG_Check_for_pim.sh vcm gstApp"
+list="BG_Check_for_pim.sh vcm "
+
+JSON_PREFIX=edgeconf_
+JOSN_SUFFIX=.json
+FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} |grep -v '/$' | tail -1 |tr -d '\r\n')
+app=$(jq -r '.VHL_CAM.app' "$FILE_JSON")
+if [ "$app" == "streamApp" ]; then
+    list+="streamApp PIMCAM"
+elif [ "$app" == "gstApp" ]; then
+    list+="gstApp"
+else
+    logger -p local0.crit "[$KEY][$tag:$LINENO] app : $app"
+    exit 0
+fi
+
 if [[ -n "$1" ]]; then
     opt=$1
 else
@@ -21,7 +37,7 @@ else
 fi
 
 if [[ "$opt" -ge 1 ]]; then
-    list="BG_Check_for_pim.sh restart_app.sh ord vcm streamApp PIMCAM"
+    #list="BG_Check_for_pim.sh restart_app.sh ord vcm gstApp"
     if [[ "$opt" -ge 2 ]]; then
         systemctl restart cam-operate
     fi

@@ -28,25 +28,24 @@ check_num=0
 file_cnt=0
 mp4date=0
 mp4date2=0
-
 GetConfig() {
-    rec_time=$(cat $FILE_JSON | grep recording_time | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
-    cam_ch0_en=$(cat $FILE_JSON | grep cam_ch0 | grep -v rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
-    cam_ch1_en=$(cat $FILE_JSON | grep cam_ch1 | grep -v rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
-    cam_ch2_en=$(cat $FILE_JSON | grep cam_ch2 | grep -v rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
-    cam_ch3_en=$(cat $FILE_JSON | grep cam_ch3 | grep -v rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
-    srt_en=$(cat $FILE_JSON_ | grep srt_enable | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
-    time_rec_en=$(cat $FILE_JSON_ |grep file_time_recording | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
-    vhl_name=$(cat $FILE_JSON | grep vhl_name | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n' | tr -d ' ' )
+    cam_ch0=$(jq '.VHL_CAM.cam_ch0' "$FILE_JSON")
+    cam_ch1=$(jq '.VHL_CAM.cam_ch1' "$FILE_JSON")
+    cam_ch2=$(jq '.VHL_CAM.cam_ch2' "$FILE_JSON")
+    cam_ch3=$(jq '.VHL_CAM.cam_ch3' "$FILE_JSON")
+    srt_en=$(jq '.VCM.srt_enable' "$FILE_JSON_")
+    time_rec_en=$(jq '.VCM.file_time_recording' "$FILE_JSON_")
+    vhl_name=$(jq -r '.VHL_CAM.vhl_name' "$FILE_JSON")
+    rec_time=$(jq '.VHL_CAM.recording_time' "$FILE_JSON")
     rec_time=$((rec_time*60))
     #rst_time=$((rec_time+90))
     #rst_time=20
-    if [[ "$cam_ch0_en" == *"$ENABLE_VAL"* ]] || [[ "$cam_ch1_en" == *"$ENABLE_VAL"* ]]; then
+    if [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] || [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]; then
         #logger -p local0.notice "[$key][$tag:$LINENO] csi1 enable"
         csi1_en=1
     fi
 
-    if [[ "$cam_ch2_en" == *"$ENABLE_VAL"* ]] || [[ "$cam_ch3_en" == *"$ENABLE_VAL"* ]]; then
+    if [[ "$cam_ch2" == *"$ENABLE_VAL"* ]] || [[ "$cam_ch3" == *"$ENABLE_VAL"* ]]; then
         #logger -p local0.notice "[$key][$tag:$LINENO] csi2 enable"
         csi2_en=1
     fi
@@ -59,11 +58,7 @@ GetConfig() {
 }
 
 GetConfig
-#rst_time=40
-#rec_time=$((rec_time+90))
-#echo rec_time:$rec_time
-#rec_time=$((rec_time+10))
-logger -p local0.notice "[$KEY][$tag:$LINENO] ch0:$cam_ch0_en, ch1:$cam_ch1_en, ch2:$cam_ch2_en, ch3:$cam_ch3_en, srt:$srt_en, time_rec_en:$time_rec_en"
+logger -p local0.notice "[$KEY][$tag:$LINENO] ch0:$cam_ch0, ch1:$cam_ch1, ch2:$cam_ch2, ch3:$cam_ch3, srt:$srt_en, time_rec_en:$time_rec_en"
 logger -p local0.notice "[$KEY][$tag:$LINENO] vhl_name:$vhl_name, rec_time:$rec_time, rst_time:$rst_time"
 
 service=restart_app.sh
@@ -120,7 +115,7 @@ do
             echo "$startTime" > $FILE_
             logger -p local0.info "[$KEY][$tag:$LINENO] next startTime : $startTime"
 END
-			if [[ "$cam_ch0_en" == *"$ENABLE_VAL"* ]]; then
+			if [[ "$cam_ch0" == *"$ENABLE_VAL"* ]]; then
                 ((check_num++))
                 if [ -f "${mnt_folder}/${vhl_name}_${mp4date}"-ch0.mp4 ]; then
 			        logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch0.mp4 exist"
@@ -145,7 +140,7 @@ END
 			fi
 
 
-            if [[ "$cam_ch1_en" == *"$ENABLE_VAL"* ]]; then
+            if [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]; then
                 ((check_num++))
                 if [ -f "${mnt_folder}/${vhl_name}_${mp4date}"-ch1.mp4 ]; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch1.mp4 exist"
@@ -160,7 +155,7 @@ END
                 fi
             fi
 
-            if [[ "$cam_ch2_en" == *"$ENABLE_VAL"* ]]; then
+            if [[ "$cam_ch2" == *"$ENABLE_VAL"* ]]; then
                 ((check_num++))
                 if [ -f "${mnt_folder}/${vhl_name}_${mp4date}"-ch2.mp4 ]; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch2.mp4 exist"
@@ -175,7 +170,7 @@ END
                 fi
             fi
 
-            if [[ "$cam_ch3_en" == *"$ENABLE_VAL"* ]]; then
+            if [[ "$cam_ch3" == *"$ENABLE_VAL"* ]]; then
                 ((check_num++))
                 if [ -f "${mnt_folder}/${vhl_name}_${mp4date}"-ch3.mp4 ]; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch3.mp4 exist"
