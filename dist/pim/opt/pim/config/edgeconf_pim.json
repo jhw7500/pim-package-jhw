@@ -28,6 +28,7 @@
       "used" : "WLAN0"
    },
    "VHL_CAM" : {
+      "app" : "streamApp",
       "id" : "user",
       "bitrate" : 1024,
       "cam_ch0" : true,
