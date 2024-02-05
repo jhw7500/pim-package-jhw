@@ -14,6 +14,9 @@ echo "$UPDATE_JSON" > "$FILE_JSON"
 UPDATE_JSON=$(jq 'if .VHL_CAM.debug_level == null then .VHL_CAM.debug_level = 0 else . end' "$FILE_JSON")
 echo "$UPDATE_JSON" > "$FILE_JSON"
 
+UPDATE_JSON=$(jq 'if .VHL_CAM.app == null then .VHL_CAM.app = "streamApp" else . end' "$FILE_JSON")
+echo "$UPDATE_JSON" > "$FILE_JSON"
+
 key_name=0
 for num in {0..3}
 do
