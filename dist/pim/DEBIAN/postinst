@@ -224,9 +224,10 @@ END
   #netplan apply
   #systemctl restart connman
   #systemctl daemon-reload
-  dpkg -i /opt/pim/package/jq/*
+  #dpkg -i /opt/pim/package/jq/*.deb
 
   logger -p local0.notice "[$KEY][$tag:$LINENO] install pim.deb"
+  /opt/pim/bin/install_deb.sh &
   sync
   ;;
 

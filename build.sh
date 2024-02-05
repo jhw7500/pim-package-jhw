@@ -18,7 +18,7 @@ if [ ! -d ${BASEDIR}/vsd/build ]; then
     mkdir ${BASEDIR}/vsd/build
 fi
 cd ${BASEDIR}/vsd/build
-cp ${BASEDIR}/libpi* /usr/lib/ -a
+cp ${BASEDIR}/vsd/libpi* /usr/lib/ -a
 cmake ..
 make
 if [ $? != 0 ]; then
