@@ -223,7 +223,8 @@ END
   source /root/.bash_aliases
   #netplan apply
   #systemctl restart connman
-#  systemctl daemon-reload
+  #systemctl daemon-reload
+  dpkg -i /opt/pim/package/jq/*
 
   logger -p local0.notice "[$KEY][$tag:$LINENO] install pim.deb"
   sync

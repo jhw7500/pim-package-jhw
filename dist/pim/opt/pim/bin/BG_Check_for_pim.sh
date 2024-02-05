@@ -4,6 +4,35 @@ tag=$(basename "$0")
 result=0
 delay=25
 
+JSON_PREFIX=edgeconf_
+JOSN_SUFFIX=.json
+FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} |grep -v '/$' | tail -1 |tr -d '\r\n')
+cam_ch0=$(jq '.VHL_CAM.cam_ch0' "$FILE_JSON")
+cam_ch1=$(jq '.VHL_CAM.cam_ch1' "$FILE_JSON")
+cam_ch2=$(jq '.VHL_CAM.cam_ch2' "$FILE_JSON")
+cam_ch3=$(jq '.VHL_CAM.cam_ch3' "$FILE_JSON")
+if [[ $cam_ch0 == "true" ]]; then
+    cam_ch0=1
+else
+    cam_ch0=0
+fi
+if [[ $cam_ch1 == "true" ]]; then
+    cam_ch1=1
+else
+    cam_ch1=0
+fi
+if [[ $cam_ch2 == "true" ]]; then
+    cam_ch2=1
+else
+    cam_ch2=0
+fi
+if [[ $cam_ch3 == "true" ]]; then
+    cam_ch3=1
+else
+    cam_ch3=0
+fi
+cam_ch_bit=$((cam_ch3<<3|cam_ch2<<2|cam_ch1<<1|cam_ch0))
+
 if [[ -n "$1" ]]; then
     delay=$1
 fi
@@ -78,7 +107,7 @@ while true; do
     /opt/pim/bin/chk_voltage.sh 2>/dev/null
     #cam connect check
     #echo "cam"
-    /opt/pim/bin/chk_cam_connect.sh 2>/dev/null
+    /opt/pim/bin/chk_cam_connect.sh $cam_ch_bit 2>/dev/null
     #make result cmd
     #echo "make flag"
     MAKE_RESULT_FLAG

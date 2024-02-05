@@ -1,7 +1,7 @@
 #!/bin/bash
-JSON_PREFIX=edgeconf_
-JOSN_SUFFIX=.json
-FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} |grep -v '/$' | tail -1 |tr -d '\r\n')
+#JSON_PREFIX=edgeconf_
+#JOSN_SUFFIX=.json
+#FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} |grep -v '/$' | tail -1 |tr -d '\r\n')
 FLAG_PATH="/tmp"
 tag=$(basename "$0")
 
@@ -32,6 +32,28 @@ CH1_EN_FAIL="0x16"
 CH2_EN_FAIL="0x26"
 CH3_EN_FAIL="0x16"
 
+cam_ch_en=$1
+if [[ $((cam_ch_en&0x01)) == 1 ]]; then
+    cam_ch0="true"
+else
+    cam_ch0="false"
+fi
+if [[ $((cam_ch_en>>1&0x01)) == 1 ]]; then
+    cam_ch1="true"
+else
+    cam_ch1="false"
+fi
+if [[ $((cam_ch_en>>2&0x01)) == 1 ]]; then
+    cam_ch2="true"
+else
+    cam_ch2="false"
+fi
+if [[ $((cam_ch_en>>3&0x01)) == 1 ]]; then
+    cam_ch3="true"
+else
+    cam_ch3="false"
+fi
+
 #ch0/1 Des check
 cam01_res=$(i2ctransfer -f -y -a 2 w2@0x48 0x00 0x13 r1)
 #ch2/3 Des check
@@ -41,10 +63,10 @@ if [[ ! -s "$FILE_JSON" ]]; then
 	logger -p local0.error "[CHK][$tag:$LINENO] Not Found $FILE_JSON"
 	result=1 ; 
 else
-    cam_ch0=$(jq '.VHL_CAM.cam_ch0' "$FILE_JSON")
-    cam_ch1=$(jq '.VHL_CAM.cam_ch1' "$FILE_JSON")
-    cam_ch2=$(jq '.VHL_CAM.cam_ch2' "$FILE_JSON")
-    cam_ch3=$(jq '.VHL_CAM.cam_ch3' "$FILE_JSON")
+    #cam_ch0=$(jq '.VHL_CAM.cam_ch0' "$FILE_JSON")
+    #cam_ch1=$(jq '.VHL_CAM.cam_ch1' "$FILE_JSON")
+    #cam_ch2=$(jq '.VHL_CAM.cam_ch2' "$FILE_JSON")
+    #cam_ch3=$(jq '.VHL_CAM.cam_ch3' "$FILE_JSON")
 
 	#CAM0, CAM1 ENABLE
 	if [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]; then
