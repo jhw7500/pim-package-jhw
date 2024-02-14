@@ -26,8 +26,10 @@ if [ "$app" == "streamApp" ]; then
 elif [ "$app" == "gstApp" ]; then
     list+="gstApp"
 else
-    logger -p local0.crit "[$KEY][$tag:$LINENO] app : $app"
-    exit 0
+    logger -p local0.err "[$KEY][$tag:$LINENO] app : $app"
+    logger -p local0.err "[$KEY][$tag:$LINENO] please update json"
+    list+="streamApp PIMCAM"
+    #exit 0
 fi
 
 if [[ -n "$1" ]]; then

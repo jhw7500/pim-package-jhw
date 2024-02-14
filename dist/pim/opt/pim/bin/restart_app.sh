@@ -16,8 +16,10 @@ JOSN_SUFFIX=.json
 FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} |grep -v '/$' | tail -1 |tr -d '\r\n')
 app=$(jq -r '.VHL_CAM.app' "$FILE_JSON")
 if [ "$app" != "streamApp" ] && [ "$app" != "gstApp" ]; then
-    logger -p local0.crit "[$KEY][$tag:$LINENO] app : $app"
-    exit 0
+    logger -p local0.err "[$KEY][$tag:$LINENO] app : $app"
+    logger -p local0.err "[$KEY][$tag:$LINENO] please update json"
+    app="streamApp"
+    #exit 0
 fi
 
 

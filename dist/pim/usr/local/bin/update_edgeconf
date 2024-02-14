@@ -8,6 +8,10 @@ cp $FILE_JSON $FILE_JSON.backup
 #updated_json=$(jq '(.VHL_CAM.vertical // 0) as $v | if $v == 0 then .VHL_CAM.vertical = 0 else . end' "$FILE_JSON")
 #UPDATE_JSON=$(jq '(.VHL_CAM.vertical_flip // 0) as $v | (.VHL_CAM.horizontal_flip // 0) as $h | .VHL_CAM.vertical_flip = $v | .VHL_CAM.horizontal_flip = $h' "$FILE_JSON")
 
+echo "update start $FILE_JSON"
+
+echo "update log, debug, app"
+
 UPDATE_JSON=$(jq 'if .VHL_CAM.log_level == null then .VHL_CAM.log_level = 5 else . end' "$FILE_JSON")
 echo "$UPDATE_JSON" > "$FILE_JSON"
 
@@ -20,6 +24,8 @@ echo "$UPDATE_JSON" > "$FILE_JSON"
 key_name=0
 for num in {0..3}
 do
+    echo "update ch${num} vflip, hflip"
+
     key_name="cam_ch${num}_rotate"
     UPDATE_JSON=$(jq --arg key "$key_name" 'del(.VHL_CAM[$key])' "$FILE_JSON")
     echo "$UPDATE_JSON" > "$FILE_JSON"
@@ -35,6 +41,8 @@ done
 
 #streamApp
 if [[ $1 == 1 ]]; then
+    echo "update for streamApp"
+
     UPDATE_JSON=$(jq 'del(.VHL_CAM.rec_fps)' "$FILE_JSON")
     echo "$UPDATE_JSON" > "$FILE_JSON"
 
@@ -55,9 +63,10 @@ if [[ $1 == 1 ]]; then
 
     UPDATE_JSON=$(jq '.VHL_CAM.app = "streamApp"' "$FILE_JSON")
     echo "$UPDATE_JSON" > "$FILE_JSON"
-
 #gstApp
 elif [[ $1 == 2 ]]; then
+    echo "update for gstApp"
+
     UPDATE_JSON=$(jq 'del(.VHL_CAM.fps)' "$FILE_JSON")
     echo "$UPDATE_JSON" > "$FILE_JSON"
 
@@ -78,5 +87,8 @@ elif [[ $1 == 2 ]]; then
 
     UPDATE_JSON=$(jq '.VHL_CAM.app = "gstApp"' "$FILE_JSON")
     echo "$UPDATE_JSON" > "$FILE_JSON"
-
 fi
+
+sync
+echo "update complete"
+#echo -e "\e[33mif you want the streamApp, run '/opt/pim/bin/update_json 1' but you want the gstApp, run 'opt/pim/bin/update_json 2'\e[0m"

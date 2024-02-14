@@ -4,14 +4,27 @@ KEY=RST
 logger -p local0.notice "[$KEY][$tag:$LINENO] rc.local start : Booting"
 #sd mount
 /opt/pim/bin/automnt_sd_for_emmc_boot.sh /mnt/sd_cam &
+
+#module
+modprobe imx8-media-dev
+
+#eth name exchange
 #/opt/pim/bin/eth_name_exchange.sh &
+
+#debug
 #export GST_DEBUG=3
 #export PointImageApp_DEBUG=main:*,libfilewriter:*,writer:1,
-modprobe imx8-media-dev
+
+#ftp trans
 #/home/user/pim-package/test/ncsftp.sh &
+
+#cam
 /opt/pim/bin/start_cam.sh
+
+#background
 /opt/pim/bin/chk_cpu_info.sh 60 &
 #/opt/pim/bin/dot_manage.sh /var/log/cantops/dot 100 &
+
 touch /var/run/vsd.pipe
 #booting LED control
 #ALL LED OFF
@@ -25,15 +38,9 @@ echo 0 > /sys/devices/platform/leds/leds/gpio3_led/brightness
 echo 1 > /sys/devices/platform/leds/leds/gpio1_led/brightness
 echo 1 > /sys/devices/platform/leds/leds/gpio2_led/brightness
 
-#/opt/pim/bin/chk_cpu_clock.sh &
-#/opt/pim/bin/chk_mem.sh &
-#/opt/pim/bin/chk_temp.sh &
-
 #wpa_cli -p /run/wpa_supplicant -i wlp1s0 set_network 0 bgscan  '"simple:3:-70:300"'
 #wpa_cli -p /run/wpa_supplicant -i wlp1s0 autoscan "periodic:30"
 
-#streamApp -c 0x5 -w 2560 -h 720 -W 2560 -H 720 &
-#/opt/pim/bin/df_check.sh &
 #sleep 15
 #AE Off
 #i2ctransfer -f -y -a 1 w4@0x3c 0x50 0x02 0x02 0x90
@@ -60,8 +67,5 @@ echo 1 > /sys/devices/platform/leds/leds/gpio2_led/brightness
 
 #bg check
 #/opt/pim/bin/BG_Check_for_pim.sh & 2>/dev/null
-
-#/opt/pim/bin/log_to_gz.sh /var/log/cantops 30 &> /dev/null
-#mount /dev/mmcblk2p1 /root/boot
 
 exit 0

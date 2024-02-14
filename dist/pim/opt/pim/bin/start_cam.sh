@@ -29,8 +29,10 @@ elif [ "$app" = "gstApp" ]; then
     app="gstApp"
     GST_LOG_FILE="/var/log/cantops/gst/gstApp_$(date +'%Y%m%d_%H%M%S').log"
 else
-    logger -p local0.crit "[$key][$tag:$LINENO] app : $app"
-    exit 0
+    logger -p local0.err "[$key][$tag:$LINENO] app : $app"
+    logger -p local0.err "[$key][$tag:$LINENO] please update json"
+    app="PIMCAM"
+    #exit 0
 fi
 
 export GST_DEBUG_NO_COLOR=1

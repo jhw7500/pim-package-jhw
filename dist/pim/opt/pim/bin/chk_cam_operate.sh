@@ -1,4 +1,42 @@
 #!/bin/bash
+GetConfig() {
+    cam_ch0=$(jq '.VHL_CAM.cam_ch0' "$FILE_JSON")
+    cam_ch1=$(jq '.VHL_CAM.cam_ch1' "$FILE_JSON")
+    cam_ch2=$(jq '.VHL_CAM.cam_ch2' "$FILE_JSON")
+    cam_ch3=$(jq '.VHL_CAM.cam_ch3' "$FILE_JSON")
+    srt_en=$(jq '.VCM.srt_enable' "$FILE_JSON_")
+    time_rec_en=$(jq '.VCM.file_time_recording' "$FILE_JSON_")
+    vhl_name=$(jq -r '.VHL_CAM.vhl_name' "$FILE_JSON")
+    rec_time=$(jq '.VHL_CAM.recording_time' "$FILE_JSON")
+    rec_time=$((rec_time*60))
+    #rst_time=$((rec_time+90))
+    #rst_time=20
+    if [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] || [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]; then
+        #logger -p local0.notice "[$key][$tag:$LINENO] csi1 enable"
+        csi1_en=1
+    fi
+
+    if [[ "$cam_ch2" == *"$ENABLE_VAL"* ]] || [[ "$cam_ch3" == *"$ENABLE_VAL"* ]]; then
+        #logger -p local0.notice "[$key][$tag:$LINENO] csi2 enable"
+        csi2_en=1
+    fi
+
+    if [[ "$csi1_en" -eq 1 ]] && [[ "$csi2_en" -eq 1 ]]; then
+        rst_time=30
+    else
+        rst_time=18
+    fi
+}
+
+StartApp() {
+pid=$(ps -ef |grep $1 |grep -v grep |awk '{print $2}')
+if [ ! -n "$pid" ]; then
+    #echo "no" >/dev/null
+    logger -p local0.notice "[$KEY][$tag:$LINENO] $service start"
+    /opt/pim/bin/$1 &
+fi
+}
+
 FILE_=/tmp/start_video_time_
 #FILE_JSON=/root/shared_v/edgeconf_pim.json
 FILE_JSON_=/root/shared_v/ord_vcm_conf.json
@@ -28,46 +66,13 @@ check_num=0
 file_cnt=0
 mp4date=0
 mp4date2=0
-GetConfig() {
-    cam_ch0=$(jq '.VHL_CAM.cam_ch0' "$FILE_JSON")
-    cam_ch1=$(jq '.VHL_CAM.cam_ch1' "$FILE_JSON")
-    cam_ch2=$(jq '.VHL_CAM.cam_ch2' "$FILE_JSON")
-    cam_ch3=$(jq '.VHL_CAM.cam_ch3' "$FILE_JSON")
-    srt_en=$(jq '.VCM.srt_enable' "$FILE_JSON_")
-    time_rec_en=$(jq '.VCM.file_time_recording' "$FILE_JSON_")
-    vhl_name=$(jq -r '.VHL_CAM.vhl_name' "$FILE_JSON")
-    rec_time=$(jq '.VHL_CAM.recording_time' "$FILE_JSON")
-    rec_time=$((rec_time*60))
-    #rst_time=$((rec_time+90))
-    #rst_time=20
-    if [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] || [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]; then
-        #logger -p local0.notice "[$key][$tag:$LINENO] csi1 enable"
-        csi1_en=1
-    fi
-
-    if [[ "$cam_ch2" == *"$ENABLE_VAL"* ]] || [[ "$cam_ch3" == *"$ENABLE_VAL"* ]]; then
-        #logger -p local0.notice "[$key][$tag:$LINENO] csi2 enable"
-        csi2_en=1
-    fi
-    
-    if [[ "$csi1_en" -eq 1 ]] && [[ "$csi2_en" -eq 1 ]]; then
-        rst_time=30
-    else
-        rst_time=18
-    fi
-}
 
 GetConfig
+#StartApp start_cam.sh
+StartApp restart_app.sh
+
 logger -p local0.notice "[$KEY][$tag:$LINENO] ch0:$cam_ch0, ch1:$cam_ch1, ch2:$cam_ch2, ch3:$cam_ch3, srt:$srt_en, time_rec_en:$time_rec_en"
 logger -p local0.notice "[$KEY][$tag:$LINENO] vhl_name:$vhl_name, rec_time:$rec_time, rst_time:$rst_time"
-
-service=restart_app.sh
-pid=$(ps -ef |grep $service |grep -v grep |awk '{print $2}')
-if [ ! -n "$pid" ]; then
-    #echo "no" >/dev/null
-    logger -p local0.notice "[$KEY][$tag:$LINENO] $service start"
-    /opt/pim/bin/$service &
-fi
 
 while :
 do
@@ -229,13 +234,7 @@ END
                 retry_total=0
                 echo "OK" > $FILE_CHECK
 			fi
-:<<'END'
-            if [ "$file_time_err" -ne 0 ]; then
-                logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/kill_test.sh (file_time_err:$file_time_err)"
-                rm ${mnt_folder}/${vhl_name}_${mp4date2}*
-                /opt/pim/bin/kill_test.sh
-            fi
-END
+            sync
 		fi
     fi
 

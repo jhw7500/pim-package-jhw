@@ -218,17 +218,19 @@ END
   #lmu -reg FCC
   #iw reg set US
   echo "update_network_pim.py"
-  python /opt/pim/bin/update_network_pim.py
+  python /opt/pim/bin/update_network_pim.py &
   source /root/.bashrc
   source /root/.bash_aliases
   #netplan apply
   #systemctl restart connman
   #systemctl daemon-reload
   #dpkg -i /opt/pim/package/jq/*.deb
-  /opt/pim/bin/update_json.sh
+  #/opt/pim/bin/update_json.sh &
 
   logger -p local0.notice "[$KEY][$tag:$LINENO] install pim.deb"
   /opt/pim/bin/install_deb.sh &
+  #sleep 5
+  echo -e "\e[33mplease wait until deb package installation is finished\e[0m"
   sync
   ;;
 
