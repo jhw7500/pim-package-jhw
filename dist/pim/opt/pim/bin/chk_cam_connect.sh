@@ -59,10 +59,10 @@ cam01_res=$(i2ctransfer -f -y -a 2 w2@0x48 0x00 0x13 r1)
 #ch2/3 Des check
 cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
 
-if [[ ! -s "$FILE_JSON" ]]; then 
-	logger -p local0.error "[CHK][$tag:$LINENO] Not Found $FILE_JSON"
-	result=1 ; 
-else
+#if [[ ! -s "$FILE_JSON" ]]; then 
+#	logger -p local0.error "[CHK][$tag:$LINENO] Not Found $FILE_JSON"
+#	result=1 ; 
+#else
     #cam_ch0=$(jq '.VHL_CAM.cam_ch0' "$FILE_JSON")
     #cam_ch1=$(jq '.VHL_CAM.cam_ch1' "$FILE_JSON")
     #cam_ch2=$(jq '.VHL_CAM.cam_ch2' "$FILE_JSON")
@@ -186,4 +186,4 @@ else
             echo "${timestamp} CAM3 ERR" >> ${FLAG_PATH}/err_cam3.log
         fi
 	fi
-fi
+#fi
