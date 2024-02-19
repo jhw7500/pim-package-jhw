@@ -25,12 +25,12 @@ fi
 
 while [ 1 ]; do
     #sleep 2
-    pid=$(ps -ef |grep $app |grep -v grep |awk '{print $2}')
+    pid=$(ps -ef |grep "$app" |grep -v grep |awk '{print $2}')
     if [ -z "$pid" ]; then
         logger -p local0.notice "[$KEY][$tag:$LINENO] $app killed"
         killall -s KILL PIMCAM
-        killall -s KILL BG_Check_for_pim.sh
-        logger -p local0.emerg "[$KEY][$tag:$LINENO] $app start"
+        #killall -s KILL BG_Check_for_pim.sh
+        logger -p local0.emerg "[$KEY][$tag:$LINENO] start_cam.sh 1"
         /opt/pim/bin/start_cam.sh 1
     fi
 
@@ -38,17 +38,17 @@ while [ 1 ]; do
         if [ ! -z "$service" ]; then
             #pgrep $service >/dev/null; status=$?
             #sleep 1
-            pid=$(ps -ef |grep $service |grep -v grep |awk '{print $2}')
+            pid=$(ps -ef |grep "$service" |grep -v grep |awk '{print $2}')
             if [ ! -n "$pid" ]; then
                 #echo "no" >/dev/null
                 #sleep 0.5
                 logger -p local0.emerg "[$KEY][$tag:$LINENO] $service start"
-                /opt/pim/bin/$service &
+                $service &
             fi
         fi
     done
 
-	sleep 2
+	sleep 3
 done
 
 exit 0

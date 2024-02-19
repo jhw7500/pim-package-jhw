@@ -1,16 +1,34 @@
 #!/bin/bash
 tag=$(basename "$0")
 key=RST
+
+CheckApp() {
+local pid=$(ps -ef |grep $1 |grep -v grep |awk '{print $2}')
+if [ -z "$pid" ]; then
+    return 1
+else
+    return 0
+fi
+}
+
+StartCam() {
+    logger -p local0.notice "[$key][$tag:$LINENO] $1 -d $2 -m $3 &"
+    $1 -d $2 -m $3 &
+    if ! CheckApp "BG_Check_for_pim.sh"; then
+        logger -p local0.emerg "[$key][$tag:$LINENO] BG_Check_for_pim.sh start"
+         /opt/pim/bin/BG_Check_for_pim.sh $2 & 2>/dev/null
+    fi
+
+    if ! CheckApp "vcm"; then
+        logger -p local0.emerg "[$key][$tag:$LINENO] vcm start"
+        vcm &
+    fi
+}
+
 iomode=3
 opt=0
 #app=PIMCAM
 #app=gstApp
-pid=$(ps -ef |grep vcm |grep -v grep |awk '{print $2}')
-if [ ! -n "$pid" ]; then
-    logger -p local0.notice "[$key][$tag:$LINENO] kill vcm because srt sync"
-    pkill vcm
-fi
-
 if [[ -n "$1" ]]; then
     opt=$1
 fi
@@ -41,14 +59,25 @@ export GST_DEBUG_FILE="$GST_LOG_FILE"
 export GST_DEBUG_DUMP_DOT_DIR=/var/log/cantops/dot/
 
 logger -p local0.notice "[$key][$tag:$LINENO] start app:$app opt:$opt"
-pid=$(ps -ef |grep BG_Check_for_pim.sh |grep -v grep |awk '{print $2}')
+if CheckApp "$app"; then
+    logger -p local0.err "[$key][$tag:$LINENO] $app already existed"
+    exit 0
+fi
+
+if CheckApp "vcm"; then
+    logger -p local0.notice "[$key][$tag:$LINENO] kill vcm because srt sync"
+    pkill vcm
+fi
+
+if CheckApp "BG_Check_for_pim.sh"; then
+    logger -p local0.notice "[$key][$tag:$LINENO] killall -s KILL BG_Check_for_pim.sh"
+    #pkill BG_Check_for_pim.sh
+    killall BG_Check_for_pim.sh
+fi
+
 if [[ "$opt" == 1 ]]; then
     #logger -p local0.notice "[$key][$tag:$LINENO] $app -d 5 -m $iomode &"
-    $app -d 5 -m $iomode &
-    if [ ! -n "$pid" ]; then
-        logger -p local0.emerg "[$KEY][$tag:$LINENO] BG_Check_for_pim.sh start"
-         /opt/pim/bin/BG_Check_for_pim.sh 5 & 2>/dev/null
-    fi
+    StartCam $app 5 $iomode
     exit 0
 fi
 
@@ -69,20 +98,9 @@ if [[ "$cam_ch2" == *"$ENABLE_VAL"* ]] || [[ "$cam_ch3" == *"$ENABLE_VAL"* ]]; t
 fi
 
 if [[ "$csi1_en" -eq 1 ]] && [[ "$csi2_en" -eq 1 ]]; then
-    logger -p local0.notice "[$key][$tag:$LINENO] $app -d 25 -m $iomode &"
-    $app -d 25 -m $iomode &
-    #PIMCAM -d 15 -m $iomode -c 3 &
-    if [ ! -n "$pid" ]; then
-        logger -p local0.emerg "[$key][$tag:$LINENO] BG_Check_for_pim.sh start"
-        /opt/pim/bin/BG_Check_for_pim.sh 25 & 2>/dev/null
-    fi
+    StartCam $app 25 $iomode
 elif [[ "$csi1_en" -eq 1 ]] || [[ "$csi2_en" -eq 1 ]]; then
-    logger -p local0.notice "[$key][$tag:$LINENO] $app -d 25 -m $iomode &"
-    $app -d 15 -m $iomode &
-    if [ ! -n "$pid" ]; then
-        logger -p local0.emerg "[$key][$tag:$LINENO] BG_Check_for_pim.sh start"
-        /opt/pim/bin/BG_Check_for_pim.sh 15 & 2>/dev/null
-    fi
+    StartCam $app 15 $iomode
 else
     logger -p local0.crit "[$key][$tag:$LINENO] no channels are enabled"
 fi

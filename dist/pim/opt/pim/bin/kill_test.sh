@@ -82,12 +82,13 @@ for service in $list; do
                     defunct=$(ps -ef | grep $service | grep defunct | awk '{print $8}')
                     logger -p local0.err "[$KEY][$tag:$LINENO] defunct : $defunct"
                     if [ -z "$defunct" ]; then
-                        #logger -p local0.err "[$KEY][$tag:$LINENO] no defunct"
+                        logger -p local0.notice "[$KEY][$tag:$LINENO] no defunct"
                         #sleep 1
                         #reboot
-                        logger -p local0.err "[$KEY][$tag:$LINENO] killall $service"
-                        killall -s KILL $service
+                        #logger -p local0.err "[$KEY][$tag:$LINENO] killall $service"
+                        #killall -s KILL $service
                     else
+                        logger -p local0.err "[$KEY][$tag:$LINENO] defunct : $defunct"
                         logger -p local0.emerg "[$KEY][$tag:$LINENO] kill -9 $pid($service)"
                         kill -9 $pid
                     fi

@@ -28,7 +28,7 @@ GetConfig() {
     fi
 }
 
-StartApp() {
+StartScript() {
 pid=$(ps -ef |grep $1 |grep -v grep |awk '{print $2}')
 if [ ! -n "$pid" ]; then
     #echo "no" >/dev/null
@@ -69,7 +69,7 @@ mp4date2=0
 
 GetConfig
 #StartApp start_cam.sh
-StartApp restart_app.sh
+StartScript restart_app.sh
 
 logger -p local0.notice "[$KEY][$tag:$LINENO] ch0:$cam_ch0, ch1:$cam_ch1, ch2:$cam_ch2, ch3:$cam_ch3, srt:$srt_en, time_rec_en:$time_rec_en"
 logger -p local0.notice "[$KEY][$tag:$LINENO] vhl_name:$vhl_name, rec_time:$rec_time, rst_time:$rst_time"
