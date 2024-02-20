@@ -73,14 +73,18 @@ for service in $list; do
             #sudo killall $service
             pid=$(ps -ef |grep $service |grep -v grep |awk '{print $2}')
             if [ -n "$pid" ]; then
-                if [ "$cnt" -ge "$limitcnt" ]; then
+                if [ "$cnt" -ge "$rebootcnt" ]; then
+                    logger -p local0.emerg "[$KEY][$tag:$LINENO] creboot because doesn't kill"
+                    sleep 1
+                    creboot
+                elif [ "$cnt" -ge "$limitcnt" ]; then
                     logger -p local0.notice "[$KEY][$tag:$LINENO] $limitcnt sec($cnt) over!"
                     #defunct=$(ps -ef |grep defunct | grep -v grep)
                     #logger -p local0.notice [$KEY][$tag:$LINENO] $defunct
                     #umount /mnt/sd_cam
                     #defunct=$(ps -ef | grep defunct | grep -v grep | awk '{print $3}' | xargs -t -I % sh -c '{ cat /proc/%/status |grep Name; }')
                     defunct=$(ps -ef | grep $service | grep defunct | awk '{print $8}')
-                    logger -p local0.err "[$KEY][$tag:$LINENO] defunct : $defunct"
+                    #logger -p local0.err "[$KEY][$tag:$LINENO] defunct : $defunct"
                     if [ -z "$defunct" ]; then
                         logger -p local0.notice "[$KEY][$tag:$LINENO] no defunct"
                         #sleep 1
@@ -102,18 +106,11 @@ for service in $list; do
                         kill -9 $pid 
                         #ps -ef | grep defunct | grep -v grep | awk '{print $3}' | xargs kill -9
                     fi
-
-                    if [ "$cnt" -ge "$rebootcnt" ]; then
-                        logger -p local0.emerg "[$KEY][$tag:$LINENO] creboot because doesn't kill"
-                        sleep 1
-                        creboot
-                    fi
-                    #((cnt++))
-                    #break
                 fi
 
                 sleep 1
                 ((cnt++))
+
                 #pid=$(ps -C $service |grep $service |awk '{print $1}')
                 #echo $service" pid:":${pid}
                 logger -s -p local0.notice "[$KEY][$tag:$LINENO] $cnt wait for killing $service..."
