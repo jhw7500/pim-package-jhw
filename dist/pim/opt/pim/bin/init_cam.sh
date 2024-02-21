@@ -21,6 +21,6 @@ modprobe imx8-media-dev
 sleep 2
 #PIMCAM -m 0 -c 3 &
 /opt/pim/bin/start_cam.sh
-/opt/pim/bin/restart_app.sh &
+#/opt/pim/bin/restart_app.sh &
 #/opt/pim/bin/kill_test.sh
 #/opt/pim/bin/kill_pid.sh

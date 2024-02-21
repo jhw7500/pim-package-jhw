@@ -4,7 +4,10 @@
 #logger -s -t 'sh   ' streamApp PIMCAM vcm 
 tag=$(basename "$0")
 KEY=RST
+
 logger -p local0.notice "[$KEY][$tag:$LINENO] kill_test.sh start"
+echo 1 > /tmp/restart_flag
+
 pid=0
 cnt=0
 service=0
@@ -64,10 +67,15 @@ done
 END
 
 for service in $list; do
-    if [ ! -z "$service" ]; then
-    logger -p local0.notice "[$KEY][$tag:$LINENO] killall $service"
-    sudo killall $service
     cnt=0
+    if [ ! -z "$service" ]; then
+        logger -p local0.notice "[$KEY][$tag:$LINENO] killall $service"
+        pid=$(ps -ef |grep $service |grep -v grep |awk '{print $2}')
+        #sudo pkill $service
+        if [ -n "$pid" ]; then
+            kill $pid
+        fi
+            continue
         while :
         do
             #sudo killall $service
@@ -110,7 +118,6 @@ for service in $list; do
 
                 sleep 1
                 ((cnt++))
-
                 #pid=$(ps -C $service |grep $service |awk '{print $1}')
                 #echo $service" pid:":${pid}
                 logger -s -p local0.notice "[$KEY][$tag:$LINENO] $cnt wait for killing $service..."
@@ -125,6 +132,7 @@ for service in $list; do
     fi
 done
 
+cat /dev/null > /tmp/restart_flag
 logger -p local0.notice "[$KEY][$tag:$LINENO] kill_test.sh end"
 #/opt/pim/bin/vcm &
 exit 0

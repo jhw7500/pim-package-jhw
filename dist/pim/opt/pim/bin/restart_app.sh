@@ -3,6 +3,8 @@
 tag=$(basename "$0")
 KEY=RST
 
+logger -p local0.notice "[$KEY][$tag:$LINENO] restart_app.sh start"
+
 #list="BG_Check_for_pim.sh restart_app.sh vcm ord vsd"
 list="ord vcm vsd"
 pid=0
@@ -24,7 +26,14 @@ fi
 
 
 while [ 1 ]; do
-    #sleep 2
+    rst_f=$(cat /tmp/restart_flag 2>/dev/null| tr -d '\n')
+    if [ -n "$rst_f"  ]; then
+        #logger -p local0.notice "[$KEY][$tag:$LINENO] rst_f set"
+        #cat /dev/null > /tmp/restart_flag
+        sleep 3
+        continue
+    fi
+
     pid=$(ps -ef |grep "$app" |grep -v grep |awk '{print $2}')
     if [ -z "$pid" ]; then
         logger -p local0.notice "[$KEY][$tag:$LINENO] $app killed"
@@ -50,6 +59,7 @@ while [ 1 ]; do
 
 	sleep 3
 done
+logger -p local0.notice "[$KEY][$tag:$LINENO] restart_app.sh end"
 
 exit 0
 
