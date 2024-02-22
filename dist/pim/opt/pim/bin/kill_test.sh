@@ -130,6 +130,10 @@ END
 done
 
 cat /dev/null > /tmp/restart_flag
+vhl_name=$(jq -r '.VHL_CAM.vhl_name' "$FILE_JSON")
+file_date=$(date "+%Y%m%d_%H%M00")
+echo "rm /mnt/sd_cam/${vhl_name}_${file_date}*"
+rm /mnt/sd_cam/${vhl_name}_${file_date}*
 logger -p local0.notice "[$KEY][$tag:$LINENO] kill_test.sh end"
 #/opt/pim/bin/vcm &
 exit 0

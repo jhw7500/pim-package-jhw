@@ -5,7 +5,6 @@ KEY=RST
 
 logger -p local0.notice "[$KEY][$tag:$LINENO] restart_app.sh start"
 
-#list="BG_Check_for_pim.sh restart_app.sh vcm ord vsd"
 list="ord vcm vsd"
 pid=0
 service=0

@@ -69,7 +69,7 @@ mp4date2=0
 
 GetConfig
 #StartApp start_cam.sh
-StartScript restart_app.sh
+#StartScript restart_app.sh
 
 logger -p local0.notice "[$KEY][$tag:$LINENO] ch0:$cam_ch0, ch1:$cam_ch1, ch2:$cam_ch2, ch3:$cam_ch3, srt:$srt_en, time_rec_en:$time_rec_en"
 logger -p local0.notice "[$KEY][$tag:$LINENO] vhl_name:$vhl_name, rec_time:$rec_time, rst_time:$rst_time"
@@ -129,7 +129,7 @@ END
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-ch0.mp4 exist"
                     ((file_cnt++))
 	    		else
-		    		logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch0.mp4 not exist"
+		    		logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-ch0.mp4 not exist"
                     #((file_cnt--))
                     #((file_time_err++))
                 fi
@@ -154,7 +154,7 @@ END
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-ch1.mp4 exist"
                     ((file_cnt++))
                 else
-                    logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch1.mp4 not exist"
+                    logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-ch1.mp4 not exist"
                     #((file_cnt--))
                     #((file_time_err++))
                 fi
@@ -169,7 +169,7 @@ END
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-ch2.mp4 exist"
                     ((file_cnt++))
                 else
-                    logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch2.mp4 not exist"
+                    logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-ch2.mp4 not exist"
                     #((file_cnt--))
                     #((file_time_err++))
                 fi
@@ -184,7 +184,7 @@ END
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-ch3.mp4 exist"
                     ((file_cnt++))
                 else
-                    logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch3.mp4 not exist"
+                    logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-ch3.mp4 not exist"
                     #((file_cnt--))
                     #((file_time_err++))
                 fi
@@ -199,7 +199,7 @@ END
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-data.srt exist"
                     ((file_cnt++))
                 else
-                    logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-data.srt not exist"
+                    logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-data.srt not exist"
                     #((file_cnt--))
                     #((file_time_err++))
                 fi

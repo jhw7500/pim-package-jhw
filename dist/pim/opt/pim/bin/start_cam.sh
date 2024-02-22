@@ -21,9 +21,9 @@ StartCam() {
          /opt/pim/bin/BG_Check_for_pim.sh $2 & 2>/dev/null
     fi
 
-    if ! CheckApp "vcm"; then
-        logger -p local0.emerg "[$key][$tag:$LINENO] vcm start"
-        vcm &
+    if ! CheckApp "restart_app.sh"; then
+        logger -p local0.emerg "[$key][$tag:$LINENO] restart_app start"
+        /opt/pim/bin/restart_app.sh &
     fi
 }
 
