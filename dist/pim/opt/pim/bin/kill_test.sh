@@ -18,16 +18,22 @@ defunct=0
 
 #list="BG_Check_for_pim.sh vcm streamApp PIMCAM"
 #list="BG_Check_for_pim.sh vcm gstApp"
-list="BG_Check_for_pim.sh vcm "
+#list="BG_Check_for_pim.sh vcm"
+
+if [[ "$1" -eq 1 ]]; then
+    list="restart_app.sh BG_Check_for_pim.sh vcm"
+else
+    list="BG_Check_for_pim.sh vcm"
+fi
 
 JSON_PREFIX=edgeconf_
 JOSN_SUFFIX=.json
 FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} |grep -v '/$' | tail -1 |tr -d '\r\n')
 app=$(jq -r '.VHL_CAM.app' "$FILE_JSON")
 if [ "$app" == "streamApp" ]; then
-    list+="streamApp PIMCAM"
+    list+=" streamApp PIMCAM"
 elif [ "$app" == "gstApp" ]; then
-    list+="gstApp"
+    list+=" gstApp"
 else
     logger -p local0.err "[$KEY][$tag:$LINENO] app : $app"
     logger -p local0.err "[$KEY][$tag:$LINENO] please update json"
@@ -56,13 +62,15 @@ END
 for service in $list; do
     cnt=0
     if [ ! -z "$service" ]; then
-        logger -p local0.notice "[$KEY][$tag:$LINENO] killall $service"
+        logger -p local0.notice "[$KEY][$tag:$LINENO] kill $service"
         pid=$(ps -ef |grep $service |grep -v grep |awk '{print $2}')
         #sudo pkill $service
         if [ -n "$pid" ]; then
             kill $pid
-        fi
+        else
             continue
+        fi
+
         while :
         do
             #sudo killall $service
@@ -92,6 +100,7 @@ for service in $list; do
                         kill -9 $pid
                     fi
 
+:<<'END'
                     #defunct=$(ps -ef | grep defunct | grep -v grep | awk '{print $3}' | xargs -t -I % sh -c '{ cat /proc/%/status |grep Name |awk '{print $2}'; }')
                     pid=$(ps -ef | grep defunct | grep -v grep | awk '{print $3}')
                     defunct=$(cat /proc/$pid/status |grep Name |awk '{print $2}')
@@ -101,6 +110,7 @@ for service in $list; do
                         kill -9 $pid 
                         #ps -ef | grep defunct | grep -v grep | awk '{print $3}' | xargs kill -9
                     fi
+END
                 fi
 
                 sleep 1

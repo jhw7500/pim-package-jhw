@@ -12,6 +12,8 @@ fi
 }
 
 StartCam() {
+    logger -p local0.notice "[$key][$tag:$LINENO] touch /tmp/kill_flag"
+    touch /tmp/kill_flag
     logger -p local0.notice "[$key][$tag:$LINENO] $1 -d $2 -m $3 &"
     $1 -d $2 -m $3 &
     if ! CheckApp "BG_Check_for_pim.sh"; then

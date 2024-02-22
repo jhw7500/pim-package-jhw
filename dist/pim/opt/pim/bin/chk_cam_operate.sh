@@ -49,7 +49,7 @@ retry_boot=0
 retry_total=0
 #touch $FILE_
 KEY=RST
-logger -p local0.notice "[$KEY][$tag:$LINENO] cam-operate daemon start"
+logger -p local0.emerg "[$KEY][$tag:$LINENO] cam-operate daemon start"
 JSON_PREFIX=edgeconf_
 JOSN_SUFFIX=.json
 FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} |grep -v '/$' | tail -1 |tr -d '\r\n')
