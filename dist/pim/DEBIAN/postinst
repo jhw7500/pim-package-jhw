@@ -230,6 +230,7 @@ END
 
   logger -p local0.notice "[$KEY][$tag:$LINENO] install pim.deb"
   echo -e "\e[33mplease wait until deb package installation is finished\e[0m"
+  #update_json 2 &
   /opt/pim/bin/install_deb.sh &
   #sync
   ;;
