@@ -6,11 +6,67 @@
 
 hostname=pim-camera-v016
 tag=$(basename "$0")
-KEY=PACKAGE
+KEY=PKG
 
 case "$1" in
 configure)
   echo "postinst configure"
+
+  if [ ! -f  /etc/rsyslog.conf ]; then
+    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/rsyslog.conf"
+    cp /opt/pim/etc/rsyslog.conf /etc/
+  fi
+
+  if [ ! -f  /etc/sysctl.conf ]; then
+    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/sysctl.conf"
+    cp /opt/pim/etc/sysctl.conf /etc/
+  fi
+
+  if [ ! -f  /etc/modules ]; then
+    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/modules"
+    cp /opt/pim/etc/modules /etc/
+  fi
+
+  if [ ! -f  /etc/crontab ]; then
+    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/crontab"
+    cp /opt/pim/etc/crontab /etc/
+  fi
+
+  if [ ! -f  /etc/nanorc ]; then
+    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/nanorc"
+    cp /opt/pim/etc/nanorc /etc/
+  fi
+
+  if [ ! -f  /etc/vsftpd.conf ]; then
+    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/vsftpd.conf"
+    cp /opt/pim/etc/vsftpd.conf /etc/
+  fi
+
+  if [ ! -f  /etc/watchdog.conf ]; then
+    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/watchdog.conf"
+    cp /opt/pim/etc/watchdog.conf /etc/
+  fi
+
+  if [ ! -f  /etc/cron.daily/logrotate ]; then
+    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/cron.daily/logrotate"
+    cp /opt/pim/etc/cron.daily/logrotate /etc/cron.daily
+  fi
+
+  if [ ! -f  /etc/modprobe.d/blacklist.conf ]; then
+    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/modprobe.d/blacklist.conf"
+    cp /opt/pim/etc/modprobe.d/blacklist.conf /etc/modprobe.d/
+  fi
+
+  if [ ! -f  /etc/systemd/journald.conf ]; then
+    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/systemd/journald.conf"
+    cp /opt/pim/etc/systemd/journald.conf /etc/systemd/
+  fi
+
+  if [ ! -f  /etc/security/limits.conf ]; then
+    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/security/limits.conf"
+    cp /opt/pim/etc/security/limits.conf /etc/security/
+  fi
+
 
   systemctl restart rsyslog
 
@@ -164,12 +220,57 @@ configure)
 
   if [ ! -f  /etc/sysctl.conf ]; then
     logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/sysctl.conf"
-    cp /opt/pim/config/sysctl.conf /etc/
+    cp /opt/pim/etc/sysctl.conf /etc/
+  fi
+
+  if [ ! -f  /etc/modules ]; then
+    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/modules"
+    cp /opt/pim/etc/modules /etc/
+  fi
+
+  if [ ! -f  /etc/crontab ]; then
+    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/crontab"
+    cp /opt/pim/etc/crontab /etc/
+  fi
+
+  if [ ! -f  /etc/nanorc ]; then
+    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/nanorc"
+    cp /opt/pim/etc/nanorc /etc/
+  fi
+
+  if [ ! -f  /etc/rsyslog.conf ]; then
+    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/rsyslog.conf"
+    cp /opt/pim/etc/rsyslog.conf /etc/
+  fi
+
+  if [ ! -f  /etc/vsftpd.conf ]; then
+    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/vsftpd.conf"
+    cp /opt/pim/etc/vsftpd.conf /etc/
+  fi
+
+  if [ ! -f  /etc/watchdog.conf ]; then
+    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/watchdog.conf"
+    cp /opt/pim/etc/watchdog.conf /etc/
+  fi
+
+  if [ ! -f  /etc/cron.daily/logrotate ]; then
+    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/cron.daily/logrotate"
+    cp /opt/pim/etc/cron.daily/logrotate /etc/cron.daily
+  fi
+
+  if [ ! -f  /etc/modprobe.d/blacklist.conf ]; then
+    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/modprobe.d/blacklist.conf"
+    cp /opt/pim/etc/modprobe.d/blacklist.conf /etc/modprobe.d/
+  fi
+
+  if [ ! -f  /etc/systemd/journald.conf ]; then
+    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/systemd/journald.conf"
+    cp /opt/pim/etc/systemd/journald.conf /etc/systemd/
   fi
 
   if [ ! -f  /etc/security/limits.conf ]; then
     logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/security/limits.conf"
-    cp /opt/pim/config/limits.conf /etc/security/
+    cp /opt/pim/etc/security/limits.conf /etc/security/
   fi
 
 :<<'END'
@@ -208,11 +309,9 @@ END
   echo "set printk"
   sed '/kernel.printk/ c\kernel.printk = 2 4 1 3' -i /etc/sysctl.conf
 
-  echo "set hostname"
-#  sed 's/imx8mpevk/$hostname/' -i /etc/hostname
-  echo $hostname > /etc/hostname
-  #sed 's/127.0.0.1/"127.0.0.1 "$hostname/g' -i /etc/hosts
-  sed -i "2s/.*/127.0.1.1 $hostname/g" -i /etc/hosts
+#  echo "set hostname"
+#  echo $hostname > /etc/hostname
+#  sed -i "2s/.*/127.0.1.1 $hostname/g" -i /etc/hosts
 #  sed -i 's/#kernel.printk = 3 4 1 3/kernel.printk = 2 4 1 3/g' -i /etc/sysctl.conf
 
   #/root/SOMBASE_TEST/mfg60n-aarch64-9.32.0.6.sh install
@@ -227,8 +326,37 @@ END
   #systemctl daemon-reload
   #dpkg -i /opt/pim/package/jq/*.deb
   #update_edgeconf &
+  /opt/pim/bin/add_line.sh "root        soft    nofile      65536" /etc/security/limits.conf
+  #/opt/pim/bin/add_line.sh "00 00   1 * *   root    logrotate /etc/logrotate.d/rsyslog" /etc/crontab
+  #/opt/pim/bin/add_line.sh "00 00   * * *   root    /opt/pim/bin/chk_mmc.sh" /etc/crontab
+  #/opt/pim/bin/add_line.sh "00  *   * * *   root    hwclock --systohc" /etc/crontab
+  #/opt/pim/bin/add_line.sh "00  *   * * *   root    /opt/pim/bin/log_manage.sh /var/log/cantops 100" /etc/crontab
+  #/opt/pim/bin/add_line.sh "write_enable=YES" /etc/vsftpd.conf
+  #/opt/pim/bin/add_line.sh "local_umask=022" /etc/vsftpd.conf
+  #/opt/pim/bin/comment_line.sh "$Umask 0022" /etc/rsyslog.conf
+  /opt/pim/bin/change_line.sh "max9296" "max9296" /etc/modules
+  /opt/pim/bin/change_line.sh "rts_ds1307" "rts_ds1307" /etc/modules
+  /opt/pim/bin/change_line.sh "blacklist imx8-media-dev" "imx8-media-dev" /etc/modprobe.d/blacklist.conf
+  /opt/pim/bin/change_line.sh "set tabsize 4" "set tabsize" /etc/nanorc
+  /opt/pim/bin/change_line.sh "set tabstospaces" "set tabstospaces" /etc/nanorc
+  /opt/pim/bin/change_line.sh "00 00   1 * *   root    logrotate /etc/logrotate.d/rsyslog" "logrotate /etc/logrotate.d/rsyslog" /etc/crontab
+  /opt/pim/bin/change_line.sh "00 00   * * *   root    /opt/pim/bin/chk_mmc.sh" "/opt/pim/bin/chk_mmc.sh" /etc/crontab
+  /opt/pim/bin/change_line.sh "00  *   * * *   root    hwclock --systohc" "hwclock --systohc" /etc/crontab
+  /opt/pim/bin/change_line.sh "00  *   * * *   root    /opt/pim/bin/log_manage.sh /var/log/cantops 100" "/opt/pim/bin/log_manage.sh /var/log/cantops" /etc/crontab
+  /opt/pim/bin/change_line.sh "write_enable=YES" "write_enable=" /etc/vsftpd.conf
+  /opt/pim/bin/change_line.sh "local_umask=022" "local_umask=" /etc/vsftpd.conf
+  /opt/pim/bin/change_line.sh "idle_session_timeout=0" "idle_session_timeout=" /etc/vsftpd.conf
+  /opt/pim/bin/change_line.sh "chroot_local_user=YES" "chroot_local_user=" /etc/vsftpd.conf
+  /opt/pim/bin/change_line.sh "local_root=/mnt/sd_cam" "local_root=" /etc/vsftpd.conf
+  /opt/pim/bin/change_line.sh "allow_writeable_chroot=YES" "allow_writeable_chroot=" /etc/vsftpd.conf
+  /opt/pim/bin/change_line.sh "#\$PrivDropToUser syslog" "\$PrivDropToUser" /etc/rsyslog.conf
+  /opt/pim/bin/change_line.sh "#\$PrivDropToGroup syslog" "\$PrivDropToGroup" /etc/rsyslog.conf
+  /opt/pim/bin/change_line.sh "watchdog-timeout = 30" "watchdog-timeout" /etc/watchdog.conf
+  /opt/pim/bin/change_line.sh "kernel.printk = 2 4 1 3" "kernel.printk" /etc/sysctl.conf
+  /opt/pim/bin/change_line.sh "SystemMaxUse=10000M" "SystemMaxUse=" /etc/systemd/journald.conf
+  /opt/pim/bin/change_line.sh "SystemKeepFree=5000M" "SystemKeepFree=" /etc/systemd/journald.conf
 
-  logger -p local0.notice "[$KEY][$tag:$LINENO] install pim.deb"
+  logger -p local0.notice "[$KEY][$tag:$LINENO] installation is finished"
   echo -e "\e[33mplease wait until deb package installation is finished\e[0m"
   #update_json 2 &
   /opt/pim/bin/install_deb.sh &

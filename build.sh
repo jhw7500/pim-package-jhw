@@ -40,10 +40,10 @@ fi
 
 cd ${BASEDIR}
 rm -rf ${BASEDIR}/release
+cp ${BASEDIR}/ord/build/ord ${BASEDIR}/dist/pim/usr/local/bin/
+cp ${BASEDIR}/vsd/build/vsd ${BASEDIR}/dist/pim/usr/local/bin/
+cp ${BASEDIR}/vcm/build/vcm ${BASEDIR}/dist/pim/usr/local/bin/
 cp -R ${BASEDIR}/dist ${BASEDIR}/release
-cp ${BASEDIR}/ord/build/ord ${BASEDIR}/release/pim/usr/local/bin/
-cp ${BASEDIR}/vsd/build/vsd ${BASEDIR}/release/pim/usr/local/bin/
-cp ${BASEDIR}/vcm/build/vcm ${BASEDIR}/release/pim/usr/local/bin/
 cd ${BASEDIR}/release
 version=$(cat ../dist/pim/DEBIAN/control| grep Version |grep -v ^$#| cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n' | tr -d ' ')
 package=$(cat ../dist/pim/DEBIAN/control| grep Package |grep -v ^$#| cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n' | tr -d ' ')

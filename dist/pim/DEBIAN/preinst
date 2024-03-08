@@ -3,7 +3,12 @@
 ############################################################
 # preinst script main
 ############################################################
+PACKAGE_NAME="$DPKG_MAINTSCRIPT_PACKAGE"
+tag=$(basename "$0")
+KEY=PKG
 
+#echo "install $PACKAGE_NAME-$(dpkg-query -W -f='${Version}' $PACKAGE_NAME)"
+logger -p local0.notice "[$KEY][$tag:$LINENO] install $PACKAGE_NAME-$(dpkg-query -W -f='${Version}' $PACKAGE_NAME)"
 case "$1" in
 install)
   echo "preinst install"
