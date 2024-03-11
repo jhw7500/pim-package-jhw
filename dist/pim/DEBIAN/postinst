@@ -98,11 +98,13 @@ configure)
   #timedatectl set-timezone Etc/UTC
 
   status=$(systemctl get-default 2>/dev/null)
-  if [ "$status" == "graphical.target" ]; then
+  #default_mode="graphical.target"
+  default_mode="multi-user.target"
+  if [ "$status" == "$default_mode" ]; then
     echo "defaultmode is $status"
   else
-    echo "set-defualt graphical.target"
-    systemctl set-default graphical.target
+    echo "set-defualt $default_mode"
+    systemctl set-default "$default_mode"
   fi
 
 #  systemctl set-default multi-user.target
@@ -117,6 +119,27 @@ configure)
   fi
 
 #  systemctl restart cron
+
+:<<'END'
+  daemon_name=connman
+  status=$(systemctl is-enabled $daemon_name 2>/dev/null)
+  if [ "$status" == "disabled" ]; then
+    echo "$daemon_name is $status"
+  else
+    echo "disable $daemon_name"
+    systemctl disable $daemon_name
+  fi
+END
+
+  daemon_name=connman-wait-online
+  status=$(systemctl is-enabled $daemon_name 2>/dev/null)
+  if [ "$status" == "disabled" ]; then
+    echo "$daemon_name is $status"
+  else
+    echo "disable $daemon_name"
+    systemctl disable $daemon_name
+  fi
+
 
   daemon_name=NetworkManager
   status=$(systemctl is-enabled $daemon_name 2>/dev/null)
@@ -199,13 +222,21 @@ configure)
     mkdir /root/boot
   fi
 
-#  if [ ! -d /mnt/sd_cam ]; then
-#    mkdir /mnt/sd_cam
-#  fi
+  if [ ! -d /mnt/sd_cam ]; then
+    mkdir /mnt/sd_cam
+  fi
 
-#  if [ -d /mnt/event ]; then
-#    rm -r /mnt/event
-#  fi
+  if [ -d /mnt/sd_cam/event ]; then
+    rm -r /mnt/sd_cam/event
+  fi
+
+  if [ -d /mnt/sd_cam/recycle ]; then
+    rm -r /mnt/sd_cam/recycle
+  fi
+
+  if [ -d /mnt/sd_cam/capture ]; then
+    rm -r /mnt/sd_cam/capture
+  fi
 
   echo "check edge config"
   if [ ! -f  /root/shared_v/edgeconf*.json ]; then
@@ -318,7 +349,8 @@ END
   #lmu -reg FCC
   #iw reg set US
   echo "update_network_pim.py"
-  python /opt/pim/bin/update_network_pim.py &
+  python /opt/pim/bin/update_network_pim.py
+  udhcpc -i wlp1s0
   source /root/.bashrc
   source /root/.bash_aliases
   #netplan apply
@@ -352,6 +384,7 @@ END
   /opt/pim/bin/change_line.sh "#\$PrivDropToUser syslog" "\$PrivDropToUser" /etc/rsyslog.conf
   /opt/pim/bin/change_line.sh "#\$PrivDropToGroup syslog" "\$PrivDropToGroup" /etc/rsyslog.conf
   /opt/pim/bin/change_line.sh "watchdog-timeout = 30" "watchdog-timeout" /etc/watchdog.conf
+  /opt/pim/bin/change_line.sh "watchdog-device = /dev/watchdog" "watchdog-device" /etc/watchdog.conf
   /opt/pim/bin/change_line.sh "kernel.printk = 2 4 1 3" "kernel.printk" /etc/sysctl.conf
   /opt/pim/bin/change_line.sh "SystemMaxUse=10000M" "SystemMaxUse=" /etc/systemd/journald.conf
   /opt/pim/bin/change_line.sh "SystemKeepFree=5000M" "SystemKeepFree=" /etc/systemd/journald.conf

@@ -27,7 +27,7 @@ StartCam() {
     fi
 }
 
-iomode=3
+iomode=0
 opt=0
 #app=PIMCAM
 #app=gstApp
