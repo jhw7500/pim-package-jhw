@@ -1,11 +1,11 @@
 Package: pim-mp
 Version: 0.3.7
-Section: devel
+Section: test
 Priority: optional
 Architecture: arm64 
 Depends: 
 Recommends: 
-Maintainer: user <hwjo@cantops.biz> 
+Maintainer: jhw <hwjo@cantops.biz> 
 Homepage: 
 Description: PIM application 
 0.0.1 : First version

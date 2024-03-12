@@ -1,6 +1,10 @@
 #!/bin/bash
 tag=$(basename "$0")
 key=RST
+iomode=0
+opt=0
+#app=PIMCAM
+#app=gstApp
 
 CheckApp() {
 local pid=$(ps -ef |grep $1 |grep -v grep |awk '{print $2}')
@@ -27,10 +31,6 @@ StartCam() {
     fi
 }
 
-iomode=0
-opt=0
-#app=PIMCAM
-#app=gstApp
 if [[ -n "$1" ]]; then
     opt=$1
 fi
@@ -84,10 +84,10 @@ if [[ "$opt" == 1 ]]; then
 fi
 
 ENABLE_VAL=true
-cam_ch0=$(jq '.VHL_CAM.cam_ch0' "$FILE_JSON")
-cam_ch1=$(jq '.VHL_CAM.cam_ch1' "$FILE_JSON")
-cam_ch2=$(jq '.VHL_CAM.cam_ch2' "$FILE_JSON")
-cam_ch3=$(jq '.VHL_CAM.cam_ch3' "$FILE_JSON")
+cam_ch0=$(jq '.VHL_CAM.ch0.enable' "$FILE_JSON")
+cam_ch1=$(jq '.VHL_CAM.ch1.enable' "$FILE_JSON")
+cam_ch2=$(jq '.VHL_CAM.ch2.enable' "$FILE_JSON")
+cam_ch3=$(jq '.VHL_CAM.ch3.enable' "$FILE_JSON")
 
 if [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] || [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]; then
     #logger -p local0.notice "[$key][$tag:$LINENO] csi1 enable"

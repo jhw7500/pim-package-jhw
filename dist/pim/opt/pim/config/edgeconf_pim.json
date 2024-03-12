@@ -1,54 +1,69 @@
 {
-   "NETWORK" : {
-      "ETH0" : {
-         "address" : "100.100.100.101",
-         "gateway" : "",
-         "method" : "static",
-         "netmask" : "255.255.255.0"
-      },
-      "ETH1" : {
-         "address" : "199.10.100.21",
-         "gateway" : "",
-         "method" : "static",
-         "netmask" : "255.255.255.0"
-      },
-      "WLAN0" : {
-         "address" : "100.100.100.102",
-         "gateway" : "",
-         "identity" : "c0ee40661d24@u.things",
-         "method" : "DHCP",
-         "netmask" : "255.255.255.0",
-         "passwd" : "qwe124@@",
-         "security" : "EAP",
-         "ssid" : "ureadythings",
-		 "chmask" : true,
-		 "mask_freq" : [ 5745, 5765 ], 
-		 "bgscan" : "simple:3:-65:30"
-      },
-      "used" : "WLAN0"
-   },
-   "VHL_CAM" : {
-      "app" : "streamApp",
-      "id" : "user",
-      "bitrate" : 1024,
-      "cam_ch0" : true,
-      "cam_ch0_rotate" : false,
-      "cam_ch1" : true,
-      "cam_ch1_rotate" : false,
-      "cam_ch2" : true,
-      "cam_ch2_rotate" : false,
-      "cam_ch3" : true,
-      "cam_ch3_rotate" : false,
-      "cam_width" : 1280,
-      "cam_height" : 720,
-      "event_auto_remove" : true,
-      "event_storage_size" : 5,
-      "floor" : "NONAME",
-      "fps" : 15,
-      "line" : "NONAME",
-      "recording_time" : 1,
-      "log_level" : 5,
-      "debug_level" : 0,
-      "vhl_name" : "VD3001"
-   }
+  "NETWORK": {
+    "ETH0": {
+      "address": "100.100.100.101",
+      "gateway": "",
+      "method": "static",
+      "netmask": "255.255.255.0"
+    },
+    "ETH1": {
+      "address": "199.10.100.21",
+      "gateway": "",
+      "method": "static",
+      "netmask": "255.255.255.0"
+    },
+    "WLAN0": {
+      "address": "100.100.100.102",
+      "gateway": "",
+      "identity": "c0ee40661d24@u.things",
+      "method": "DHCP",
+      "netmask": "255.255.255.0",
+      "passwd": "qwe124@@",
+      "security": "EAP",
+      "ssid": "ureadythings",
+      "chmask": true,
+      "mask_freq": [
+        5745,
+        5765
+      ],
+      "bgscan": "simple:3:-65:30"
+    },
+    "used": "WLAN0"
+  },
+  "VHL_CAM": {
+    "app": "streamApp",
+    "id": "user",
+    "cam_width": 1280,
+    "cam_height": 720,
+    "event_auto_remove": true,
+    "event_storage_size": 5,
+    "floor": "NONAME",
+    "line": "NONAME",
+    "recording_time": 1,
+    "log_level": 5,
+    "debug_level": 0,
+    "vhl_name": "VD3001",
+    "fps": 15,
+    "ch0": {
+      "enable": true,
+      "vflip": false,
+      "hflip": false
+    },
+    "ch1": {
+      "enable": true,
+      "vflip": false,
+      "hflip": false
+    },
+    "ch2": {
+      "enable": true,
+      "vflip": false,
+      "hflip": false
+    },
+    "ch3": {
+      "enable": true,
+      "vflip": false,
+      "hflip": false
+    },
+    "bitrate": 1024
+  }
 }

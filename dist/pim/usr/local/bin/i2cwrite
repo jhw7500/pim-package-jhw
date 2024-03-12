@@ -25,26 +25,33 @@ ad1=$(printf "0x%02x\n" $ad1)
 
 val_len=$(expr length "$4")
 #echo $val_len
-val0=$(($4>>8&0xff))
-val1=$(($4&0xff))
+val0=$(($4>>24&0xff))
+val1=$(($4>>16&0xff))
+val2=$(($4>>8&0xff))
+val3=$(($4&0xff))
 val0=$(printf "0x%02x\n" $val0)
 val1=$(printf "0x%02x\n" $val1)
+val2=$(printf "0x%02x\n" $val2)
+val3=$(printf "0x%02x\n" $val3)
 
 if [[ $ad_len == 4 ]]; then
     if [[ $val_len == 4 ]]; then
-        echo "i2ctransfer -f -y -a $1 w2@$2 $ad1 $val1"
-        i2ctransfer -f -y -a $1 w2@$2 $ad1 $val1
+        echo "i2ctransfer -f -y -a $1 w2@$2 $ad1 $val3"
+        i2ctransfer -f -y -a $1 w2@$2 $ad1 $val3
     elif [[ $val_len == 6 ]]; then
-        echo "i2ctransfer -f -y -a $1 w3@$2 $ad1 $val0 $val1"
-        i2ctransfer -f -y -a $1 w3@$2 $ad1 $val0 $val1
+        echo "i2ctransfer -f -y -a $1 w3@$2 $ad1 $val2 $val3"
+        i2ctransfer -f -y -a $1 w3@$2 $ad1 $val2 $val3
     fi
 elif [[ $ad_len == 6 ]]; then
     if [[ $val_len == 4 ]]; then
-        echo "i2ctransfer -f -y -a $1 w3@$2 $ad0 $ad1 $val1"
-        i2ctransfer -f -y -a $1 w3@$2 $ad0 $ad1 $val1
+        echo "i2ctransfer -f -y -a $1 w3@$2 $ad0 $ad1 $val3"
+        i2ctransfer -f -y -a $1 w3@$2 $ad0 $ad1 $val3
     elif [[ $val_len == 6 ]]; then
-        echo "i2ctransfer -f -y -a $1 w4@$2 $ad0 $ad1 $val0 $val1"
-        i2ctransfer -f -y -a $1 w4@$2 $ad0 $ad1 $val0 $val1
+        echo "i2ctransfer -f -y -a $1 w4@$2 $ad0 $ad1 $val2 $val3"
+        i2ctransfer -f -y -a $1 w4@$2 $ad0 $ad1 $val2 $val3
+    elif [[ $val_len == 10 ]]; then
+        echo "i2ctransfer -f -y -a $1 w6@$2 $ad0 $ad1 $val0 $val1 $val2 $val3"
+        i2ctransfer -f -y -a $1 w6@$2 $ad0 $ad1 $val0 $val1 $val2 $val3
     fi
 fi
 

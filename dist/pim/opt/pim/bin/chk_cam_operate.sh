@@ -1,9 +1,9 @@
 #!/bin/bash
 GetConfig() {
-    cam_ch0=$(jq '.VHL_CAM.cam_ch0' "$FILE_JSON")
-    cam_ch1=$(jq '.VHL_CAM.cam_ch1' "$FILE_JSON")
-    cam_ch2=$(jq '.VHL_CAM.cam_ch2' "$FILE_JSON")
-    cam_ch3=$(jq '.VHL_CAM.cam_ch3' "$FILE_JSON")
+    cam_ch0=$(jq '.VHL_CAM.ch0.enable' "$FILE_JSON")
+    cam_ch1=$(jq '.VHL_CAM.ch1.enable' "$FILE_JSON")
+    cam_ch2=$(jq '.VHL_CAM.ch2.enable' "$FILE_JSON")
+    cam_ch3=$(jq '.VHL_CAM.ch3.enable' "$FILE_JSON")
     srt_en=$(jq '.VCM.srt_enable' "$FILE_JSON_")
     time_rec_en=$(jq '.VCM.file_time_recording' "$FILE_JSON_")
     vhl_name=$(jq -r '.VHL_CAM.vhl_name' "$FILE_JSON")

@@ -7,10 +7,10 @@ delay=25
 JSON_PREFIX=edgeconf_
 JOSN_SUFFIX=.json
 FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} |grep -v '/$' | tail -1 |tr -d '\r\n')
-cam_ch0=$(jq '.VHL_CAM.cam_ch0' "$FILE_JSON")
-cam_ch1=$(jq '.VHL_CAM.cam_ch1' "$FILE_JSON")
-cam_ch2=$(jq '.VHL_CAM.cam_ch2' "$FILE_JSON")
-cam_ch3=$(jq '.VHL_CAM.cam_ch3' "$FILE_JSON")
+cam_ch0=$(jq '.VHL_CAM.ch0.enable' "$FILE_JSON")
+cam_ch1=$(jq '.VHL_CAM.ch1.enable' "$FILE_JSON")
+cam_ch2=$(jq '.VHL_CAM.ch2.enable' "$FILE_JSON")
+cam_ch3=$(jq '.VHL_CAM.ch3.enable' "$FILE_JSON")
 if [[ $cam_ch0 == "true" ]]; then
     cam_ch0=1
 else
@@ -86,7 +86,6 @@ CLEAR_CHK_LOG
 sleep $delay
 logger -p local0.notice [CHK][$tag:$LINENO] check loop start
 while true; do
-    sleep 1
     #sleep 0.5
     #echo "START!! BG_CHK"
     CLEAR_CHK_LOG
@@ -113,4 +112,5 @@ while true; do
     MAKE_RESULT_FLAG
     #echo "led"
     /opt/pim/bin/led_ctrl.sh 2>/dev/null
+    sleep 1
 done

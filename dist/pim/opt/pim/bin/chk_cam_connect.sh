@@ -75,10 +75,10 @@ cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
 		else
 			for i in {1..5}; do
 				i2ctransfer -f -y -a 2 w3@0x48 0x00 0x10 0x31
-				sleep 3
+				#sleep 3
 
 				i2ctransfer -f -y -a 2 w3@0x40 0x00 0x10 0x21
-				sleep 3
+				sleep 1
 
 				cam01_res=$(i2ctransfer -f -y -a 2 w2@0x48 0x00 0x13 r1)
 				
@@ -137,9 +137,9 @@ cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
 		else
 			for i in {1..5}; do	
 				i2ctransfer -f -y -a 1 w3@0x48 0x00 0x10 0x31
-				sleep 3
+				#sleep 3
 				i2ctransfer -f -y -a 1 w3@0x40 0x00 0x10 0x21
-				sleep 3
+				sleep 1
 				cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
 				if [[ "$cam23_res" == *"$CAM3_ERR"* ]]; then
 					logger -p local0.error "[CHK][$tag:$LINENO] CAM3_ERR : $cam23_res $i"

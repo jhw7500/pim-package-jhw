@@ -10,86 +10,120 @@ cp $FILE_JSON $FILE_JSON.backup
 
 echo "update start $FILE_JSON"
 
-echo "update log, debug, app"
+echo "check log, debug, app, id, fps"
 
-jq '.VHL_CAM.log_level |= if . == null then 5 else . end | .VHL_CAM.debug_level |= if . == null then 0 else . end | .VHL_CAM.app |= if . == null then "streamApp" else . end' "$FILE_JSON" > tmp.$$ && mv tmp.$$ "$FILE_JSON"
+jq '.VHL_CAM.log_level |= if . == null then 5 else . end | 
+.VHL_CAM.debug_level |= if . == null then 0 else . end | 
+.VHL_CAM.app |= if . == null then "streamApp" else . end |
+.VHL_CAM.id |= if . == null then "user" else . end |
+.VHL_CAM.fps |= if . == null then 15 else . end' "$FILE_JSON" > tmp.$$ && mv tmp.$$ "$FILE_JSON"
 
 key_name=0
 for num in {0..3}
 do
-    echo "update ch$num vflip, hflip"
-    jq --arg key1 "cam_ch${num}_rotate" --arg key2 "ch${num}_vflip" --arg key3 "ch${num}_hflip" \
-    'del(.VHL_CAM[$key1]) | .VHL_CAM[$key2] |= if . == null then false else . end | .VHL_CAM[$key3] |= if . == null then false else . end' \
+    echo "check ch$num, rotate, vflip, hflip"
+    jq --arg key1 "cam_ch${num}_rotate" --arg key2 "ch${num}_vflip" --arg key3 "ch${num}_hflip" --arg key4 "cam_ch${num}" \
+    'del(.VHL_CAM[$key1], .VHL_CAM[$key2], .VHL_CAM[$key3], .VHL_CAM[$key4])' \
     "$FILE_JSON" > tmp.$$ && mv tmp.$$ "$FILE_JSON"
 done
+
+#UPDATE_JSON=$(jq 'if .VHL_CAM.fps == null then .VHL_CAM.fps = 15 else . end' "$FILE_JSON")
+#echo "$UPDATE_JSON" > "$FILE_JSON"
+
+#UPDATE_JSON=$(jq '.VHL_CAM.bitrate |= if type == "array" then . else [4096, 1024, 4096, 1024, 4096, 1024, 4096, 1024] end' "$FILE_JSON")
+#echo "$UPDATE_JSON" > "$FILE_JSON"
+
+#UPDATE_JSON=$(jq '.VHL_CAM.cam_en |= if type == "array" then . else [true, true, true, true] end' "$FILE_JSON")
+#echo "$UPDATE_JSON" > "$FILE_JSON"
+
+#UPDATE_JSON=$(jq '.VHL_CAM.vflip |= if type == "array" then . else [false, false, false, false] end' "$FILE_JSON")
+#echo "$UPDATE_JSON" > "$FILE_JSON"
+
+#UPDATE_JSON=$(jq '.VHL_CAM.hflip |= if type == "array" then . else [false, false, false, false] end' "$FILE_JSON")
+#echo "$UPDATE_JSON" > "$FILE_JSON"
+
+#UPDATE_JSON=$(jq 'del(.VHL_CAM.rec_fps, .VHL_CAM.rtsp_fps, .VHL_CAM.rec_bps, .VHL_CAM.rtsp_bps)' "$FILE_JSON")
+#echo "$UPDATE_JSON" > "$FILE_JSON"
+
+echo "update cam_en, vflip, hflip"
+jq 'del(.VHL_CAM.rec_fps, .VHL_CAM.rtsp_fps, .VHL_CAM.rec_bps, .VHL_CAM.rtsp_bps, .VHL_CAM.vflip, .VHL_CAM.hflip)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+
+jq '.VHL_CAM.ch0 |= (if .enable == null then .enable = true else . end)
+| .VHL_CAM.ch0 |= (if .vflip == null then .vflip = false else . end)
+| .VHL_CAM.ch0 |= (if .hflip == null then .hflip = false else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+
+jq '.VHL_CAM.ch1 |= (if .enable == null then .enable = true else . end)
+| .VHL_CAM.ch1 |= (if .vflip == null then .vflip = false else . end)
+| .VHL_CAM.ch1 |= (if .hflip == null then .hflip = false else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+
+jq '.VHL_CAM.ch2 |= (if .enable == null then .enable = true else . end)
+| .VHL_CAM.ch2 |= (if .vflip == null then .vflip = false else . end)
+| .VHL_CAM.ch2 |= (if .hflip == null then .hflip = false else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+
+jq '.VHL_CAM.ch3 |= (if .enable == null then .enable = true else . end)
+| .VHL_CAM.ch3 |= (if .vflip == null then .vflip = false else . end)
+| .VHL_CAM.ch3 |= (if .hflip == null then .hflip = false else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+
+#jq 'del(.VHL_CAM.ch0.bps)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+
 #streamApp
 if [[ $1 == 1 ]]; then
     echo "update for streamApp"
 
-:<<'END'
-    jq 'del(.VHL_CAM.rec_fps),
-        del(.VHL_CAM.rtsp_fps),
-        del(.VHL_CAM.rec_bps),
-        del(.VHL_CAM.rtsp_bps),
-        .VHL_CAM.fps |= if . == null then 15 else . end,
-        .VHL_CAM.bitrate |= if . == null then 1024 else . end,
-        .VHL_CAM.app = "streamApp"' "$FILE_JSON" > tmp.$$ && mv tmp.$$ "$FILE_JSON"
-END
+jq 'del(.VHL_CAM.ch0.ae_on, .VHL_CAM.ch0.ae_gain, .VHL_CAM.ch0.exp_time,
+        .VHL_CAM.ch1.ae_on, .VHL_CAM.ch1.ae_gain, .VHL_CAM.ch1.exp_time,
+        .VHL_CAM.ch2.ae_on, .VHL_CAM.ch2.ae_gain, .VHL_CAM.ch2.exp_time,
+        .VHL_CAM.ch3.ae_on, .VHL_CAM.ch3.ae_gain, .VHL_CAM.ch3.exp_time)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
-    UPDATE_JSON=$(jq 'del(.VHL_CAM.rec_fps)' "$FILE_JSON")
-    echo "$UPDATE_JSON" > "$FILE_JSON"
+jq 'del(.VHL_CAM.ch0.bps, .VHL_CAM.ch1.bps, .VHL_CAM.ch2.bps, .VHL_CAM.ch3.bps) |
+        .VHL_CAM.app = "streamApp"' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
-    UPDATE_JSON=$(jq 'del(.VHL_CAM.rtsp_fps)' "$FILE_JSON")
-    echo "$UPDATE_JSON" > "$FILE_JSON"
+jq 'if .VHL_CAM.bitrate == null then .VHL_CAM.fps = 1024 else . end' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
-    UPDATE_JSON=$(jq 'del(.VHL_CAM.rec_bps)' "$FILE_JSON")
-    echo "$UPDATE_JSON" > "$FILE_JSON"
-
-    UPDATE_JSON=$(jq 'del(.VHL_CAM.rtsp_bps)' "$FILE_JSON")
-    echo "$UPDATE_JSON" > "$FILE_JSON"
-
-    UPDATE_JSON=$(jq 'if .VHL_CAM.fps == null then .VHL_CAM.fps = 15 else . end' "$FILE_JSON")
-    echo "$UPDATE_JSON" > "$FILE_JSON"
-
-    UPDATE_JSON=$(jq 'if .VHL_CAM.bitrate == null then .VHL_CAM.bitrate = 1024 else . end' "$FILE_JSON")
-    echo "$UPDATE_JSON" > "$FILE_JSON"
-
-    UPDATE_JSON=$(jq '.VHL_CAM.app = "streamApp"' "$FILE_JSON")
-    echo "$UPDATE_JSON" > "$FILE_JSON"
+    #UPDATE_JSON=$(jq '.VHL_CAM.app = "streamApp"' "$FILE_JSON")
+    #echo "$UPDATE_JSON" > "$FILE_JSON"
 #gstApp
 elif [[ $1 == 2 ]]; then
     echo "update for gstApp"
 
-:<<'END'
-    jq 'del(.VHL_CAM.fps),
-        del(.VHL_CAM.bitrate),
-        .VHL_CAM.rec_fps |= if . == null then 15 else . end,
-        .VHL_CAM.rtsp_fps |= if . == null then 15 else . end,
-        .VHL_CAM.rec_bps |= if . == null then 4096 else . end,
-        .VHL_CAM.rtsp_bps |= if . == null then 1024 else . end,
-        .VHL_CAM.app = "gstApp"' "$FILE_JSON" > tmp.$$ && mv tmp.$$ "$FILE_JSON"
-END
+    jq 'del(.VHL_CAM.bitrate) | .VHL_CAM.app = "gstApp"' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
-    UPDATE_JSON=$(jq 'del(.VHL_CAM.fps)' "$FILE_JSON")
-    echo "$UPDATE_JSON" > "$FILE_JSON"
+jq '.VHL_CAM.ch0 |= (if .ae_on == null then .ae_on = true else . end)
+| .VHL_CAM.ch0 |= (if .ae_gain == null then .ae_gain = 256 else . end)
+#| .VHL_CAM.ch0 |= (if .awb == null then .awb = "auto" else . end)
+#| .VHL_CAM.ch0 |= (if .iso == null then .iso = 100 else . end)
+| .VHL_CAM.ch0 |= (if .exp_time == null then .exp_time = 10000 else . end)
+#| .VHL_CAM.ch0 |= (if .lsc == null then .lsc = 16383 else . end)
+#| .VHL_CAM.ch0 |= (if .gop == null then .gop = [15, 15] else . end)
+| .VHL_CAM.ch0 |= (if .bps == null then .bps = [4096,1024] else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
-    UPDATE_JSON=$(jq 'del(.VHL_CAM.bitrate)' "$FILE_JSON")
-    echo "$UPDATE_JSON" > "$FILE_JSON"
+jq '.VHL_CAM.ch1 |= (if .ae_on == null then .ae_on = true else . end)
+| .VHL_CAM.ch1 |= (if .ae_gain == null then .ae_gain = 256 else . end)
+#| .VHL_CAM.ch1 |= (if .awb == null then .awb = "auto" else . end)
+#| .VHL_CAM.ch1 |= (if .iso == null then .iso = 100 else . end)
+| .VHL_CAM.ch1 |= (if .exp_time == null then .exp_time = 10000 else . end)
+#| .VHL_CAM.ch1 |= (if .lsc == null then .lsc = 16383 else . end)
+#| .VHL_CAM.ch1 |= (if .gop == null then .gop = [15, 15] else . end) 
+| .VHL_CAM.ch1 |= (if .bps == null then .bps = [4096,1024] else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
-    UPDATE_JSON=$(jq 'if .VHL_CAM.rec_fps == null then .VHL_CAM.rec_fps = 15 else . end' "$FILE_JSON")
-    echo "$UPDATE_JSON" > "$FILE_JSON"
+jq '.VHL_CAM.ch2 |= (if .ae_on == null then .ae_on = true else . end)
+| .VHL_CAM.ch2 |= (if .ae_gain == null then .ae_gain = 256 else . end)
+#| .VHL_CAM.ch2 |= (if .awb == null then .awb = "auto" else . end)
+#| .VHL_CAM.ch2 |= (if .iso == null then .iso = 100 else . end)
+| .VHL_CAM.ch2 |= (if .exp_time == null then .exp_time = 10000 else . end)
+#| .VHL_CAM.ch2 |= (if .lsc == null then .lsc = 16383 else . end)
+#| .VHL_CAM.ch2 |= (if .gop == null then .gop = [15, 15] else . end)
+| .VHL_CAM.ch2 |= (if .bps == null then .bps = [4096,1024] else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
-    UPDATE_JSON=$(jq 'if .VHL_CAM.rtsp_fps == null then .VHL_CAM.rtsp_fps = 15 else . end' "$FILE_JSON")
-    echo "$UPDATE_JSON" > "$FILE_JSON"
+jq '.VHL_CAM.ch3 |= (if .ae_on == null then .ae_on = true else . end)
+| .VHL_CAM.ch3 |= (if .ae_gain == null then .ae_gain = 256 else . end)
+#| .VHL_CAM.ch3 |= (if .awb == null then .awb = "auto" else . end)
+#| .VHL_CAM.ch3 |= (if .iso == null then .iso = 100 else . end)
+| .VHL_CAM.ch3 |= (if .exp_time == null then .exp_time = 10000 else . end)
+#| .VHL_CAM.ch3 |= (if .lsc == null then .lsc = 16383 else . end)
+#| .VHL_CAM.ch3 |= (if .gop == null then .gop = [15, 15] else . end)
+| .VHL_CAM.ch3 |= (if .bps == null then .bps = [4096,1024] else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
-    UPDATE_JSON=$(jq 'if .VHL_CAM.rec_bps == null then .VHL_CAM.rec_bps = 4096 else . end' "$FILE_JSON")
-    echo "$UPDATE_JSON" > "$FILE_JSON"
-
-    UPDATE_JSON=$(jq 'if .VHL_CAM.rtsp_bps == null then .VHL_CAM.rtsp_bps = 1024 else . end' "$FILE_JSON")
-    echo "$UPDATE_JSON" > "$FILE_JSON"
-
-    UPDATE_JSON=$(jq '.VHL_CAM.app = "gstApp"' "$FILE_JSON")
-    echo "$UPDATE_JSON" > "$FILE_JSON"
 fi
 
 sync
