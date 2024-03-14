@@ -350,7 +350,8 @@ END
   #iw reg set US
   echo "update_network_pim.py"
   python /opt/pim/bin/update_network_pim.py
-  udhcpc -i wlp1s0
+  #udhcpc -i wlp1s0
+  /opt/pim/bin/bgscan_polling.sh
   source /root/.bashrc
   source /root/.bash_aliases
   #netplan apply
@@ -395,10 +396,12 @@ END
   /opt/pim/bin/change_line.sh "DefaultTimeoutStopSec=30s" "DefaultTimeoutStopSec=" /etc/systemd/system.conf
   /opt/pim/bin/change_line.sh "DefaultTimeoutAbortSec=30s" "DefaultTimeoutAbortSec=" /etc/systemd/system.conf
 
-  logger -p local0.notice "[$KEY][$tag:$LINENO] installation is finished"
-  echo -e "\e[33mplease wait until deb package installation is finished\e[0m"
   #update_json 2 &
   /opt/pim/bin/install_deb.sh &
+  update_edgeconf
+  sync
+  logger -p local0.notice "[$KEY][$tag:$LINENO] installation is finished"
+  echo -e "\e[33mplease wait until deb package installation is finished\e[0m"
   #sync
   ;;
 
