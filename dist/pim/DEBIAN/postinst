@@ -202,6 +202,22 @@ END
 
 
   echo "check directory"
+makeDirectory() {
+if [ ! -d "$1" ]; then
+    echo "Creating $1 directory..."
+    mkdir -p "$1"
+    if [ $? -eq 0 ]; then
+        echo "Directory $EVENT_DIR created successfully."
+    else
+        echo "Failed to create $EVENT_DIR directory."
+        exit 1
+    fi
+else
+    echo "$1 directory already exists."
+fi
+}
+
+:<<'END'
   if [ ! -d  /var/log/cantops ]; then
 	mkdir /var/log/cantops
   fi
@@ -221,22 +237,36 @@ END
   if [ ! -d  /root/boot ]; then
     mkdir /root/boot
   fi
+END
 
-  if [ ! -d /mnt/sd_cam ]; then
-    mkdir /mnt/sd_cam
-  fi
+makeDirectory /var/log/cantops
+makeDirectory /var/log/cantops/dot
+makeDirectory /var/log/cantops/gst
+makeDirectory /share
+makeDirectory /root/boot
 
-  if [ -d /mnt/sd_cam/event ]; then
-    rm -r /mnt/sd_cam/event
-  fi
+MOUNT_POINT="/mnt/sd_cam"
+DEVICE="/dev/mmcblk1p1"
+TARGET_DIR="$MOUNT_POINT/event"
 
-  if [ -d /mnt/sd_cam/recycle ]; then
-    rm -r /mnt/sd_cam/recycle
-  fi
+makeDirectory /mnt/sd_cam
 
-  if [ -d /mnt/sd_cam/capture ]; then
-    rm -r /mnt/sd_cam/capture
-  fi
+if mount | grep -q "$DEVICE on $MOUNT_POINT"; then
+    echo "$DEVICE is already mounted on $MOUNT_POINT."
+    makeDirectory /mnt/sd_cam/event
+    makeDirectory /mnt/sd_cam/recycle
+    makeDirectory /mnt/sd_cam/capture
+else
+    echo "Trying to mount $DEVICE on $MOUNT_POINT..."
+    mount $DEVICE $MOUNT_POINT
+    if [ $? -eq 0 ]; then
+        echo "Mounted $DEVICE on $MOUNT_POINT successfully."
+    else
+        echo "Failed to mount $DEVICE on $MOUNT_POINT."
+    fi
+
+    
+fi
 
   echo "check edge config"
   if [ ! -f  /root/shared_v/edgeconf*.json ]; then
