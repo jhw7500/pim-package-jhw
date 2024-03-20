@@ -360,7 +360,7 @@ END
   echo "update_network_pim.py"
   python /opt/pim/bin/update_network_pim.py
   #udhcpc -i wlp1s0
-  /opt/pim/bin/bgscan_polling.sh
+  /opt/pim/bin/bgscan_polling.sh &
   source /root/.bashrc
   source /root/.bash_aliases
   #netplan apply
