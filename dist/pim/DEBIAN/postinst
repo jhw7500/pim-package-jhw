@@ -217,39 +217,17 @@ else
 fi
 }
 
-:<<'END'
-  if [ ! -d  /var/log/cantops ]; then
-	mkdir /var/log/cantops
-  fi
+MOUNT_POINT="/mnt/sd_cam"
+DEVICE="/dev/mmcblk1p1"
+TARGET_DIR="$MOUNT_POINT/event"
 
-  if [ ! -d  /var/log/cantops/dot ]; then
-    mkdir /var/log/cantops/dot
-  fi
-
-  if [ ! -d  /var/log/cantops/gst ]; then
-    mkdir /var/log/cantops/gst
-  fi
-
-  if [ ! -d  /share ]; then
-	mkdir /share
-  fi
-
-  if [ ! -d  /root/boot ]; then
-    mkdir /root/boot
-  fi
-END
-
+makeDirectory /mnt/sd_cam
 makeDirectory /var/log/cantops
 makeDirectory /var/log/cantops/dot
 makeDirectory /var/log/cantops/gst
 makeDirectory /share
 makeDirectory /root/boot
 
-MOUNT_POINT="/mnt/sd_cam"
-DEVICE="/dev/mmcblk1p1"
-TARGET_DIR="$MOUNT_POINT/event"
-
-makeDirectory /mnt/sd_cam
 
 if mount | grep -q "$DEVICE on $MOUNT_POINT"; then
     echo "$DEVICE is already mounted on $MOUNT_POINT."
@@ -261,11 +239,12 @@ else
     mount $DEVICE $MOUNT_POINT
     if [ $? -eq 0 ]; then
         echo "Mounted $DEVICE on $MOUNT_POINT successfully."
+        makeDirectory /mnt/sd_cam/event
+        makeDirectory /mnt/sd_cam/recycle
+        makeDirectory /mnt/sd_cam/capture
     else
         echo "Failed to mount $DEVICE on $MOUNT_POINT."
     fi
-
-    
 fi
 
   echo "check edge config"

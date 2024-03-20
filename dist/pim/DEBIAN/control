@@ -1,5 +1,5 @@
 Package: pim-mp
-Version: 0.3.7
+Version: 0.3.8
 Section: test
 Priority: optional
 Architecture: arm64 
@@ -45,3 +45,4 @@ Description: PIM application
 0.3.5 : PIMCAM(1.4), streamApp(1.7), ord(3.2), vcm(3.2), etc..
 0.3.6 : max9296(1.4), PIMCAM(1.5), streamApp(1.8), ord(3.3), vcm(3.3), gstApp(0.1), etc..
 0.3.7 : gstApp(0.2), install/kill/init_cam/reset logic, update_edgeconf, etc.. 
+0.3.8 : dhcp bug fix, remove cleaning mount dir 
