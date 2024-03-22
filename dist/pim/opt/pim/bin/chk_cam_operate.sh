@@ -25,7 +25,7 @@ GetConfig() {
     if [[ "$csi1_en" -eq 1 ]] && [[ "$csi2_en" -eq 1 ]]; then
         rst_time=30
     else
-        rst_time=18
+        rst_time=20
     fi
 }
 
@@ -57,7 +57,7 @@ FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} |grep -v '/$' |
 timer=0
 mnt_folder="/mnt/sd_cam"
 start_f=0
-rst_time=25
+rst_time=0
 csi1_en=0
 csi2_en=0
 curTimeEpoch=0
@@ -71,6 +71,7 @@ app=0
 csi1_en=0
 csi2_en=0
 GetConfig
+#rst_time=60
 #StartApp start_cam.sh
 #StartScript restart_app.sh
 

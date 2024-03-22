@@ -13,7 +13,7 @@ cnt=0
 service=0
 touch /tmp/kill_flag
 limitcnt=5
-rebootcnt=10
+rebootcnt=30
 defunct=0
 
 #list="BG_Check_for_pim.sh vcm streamApp PIMCAM"
@@ -29,6 +29,8 @@ fi
 JSON_PREFIX=edgeconf_
 JOSN_SUFFIX=.json
 FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} |grep -v '/$' | tail -1 |tr -d '\r\n')
+list+=" gstApp streamApp PIMCAM"
+:<<'END'
 app=$(jq -r '.VHL_CAM.app' "$FILE_JSON")
 if [ "$app" == "streamApp" ]; then
     list+=" streamApp PIMCAM"
@@ -40,6 +42,7 @@ else
     list+="streamApp PIMCAM"
     #exit 0
 fi
+END
 
 logger -p local0.notice "[$KEY][$tag:$LINENO] service : $list"
 :<<'END'
