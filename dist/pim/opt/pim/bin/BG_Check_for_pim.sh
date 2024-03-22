@@ -7,10 +7,10 @@ delay=25
 JSON_PREFIX=edgeconf_
 JOSN_SUFFIX=.json
 FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} |grep -v '/$' | tail -1 |tr -d '\r\n')
-cam_ch0=$(jq '.VHL_CAM.ch0.enable' "$FILE_JSON")
-cam_ch1=$(jq '.VHL_CAM.ch1.enable' "$FILE_JSON")
-cam_ch2=$(jq '.VHL_CAM.ch2.enable' "$FILE_JSON")
-cam_ch3=$(jq '.VHL_CAM.ch3.enable' "$FILE_JSON")
+cam_ch0=$(jq '.VHL_CAM.i2c2.ch0.enable' "$FILE_JSON")
+cam_ch1=$(jq '.VHL_CAM.i2c2.ch1.enable' "$FILE_JSON")
+cam_ch2=$(jq '.VHL_CAM.i2c1.ch2.enable' "$FILE_JSON")
+cam_ch3=$(jq '.VHL_CAM.i2c1.ch3.enable' "$FILE_JSON")
 if [[ $cam_ch0 == "true" ]]; then
     cam_ch0=1
 else

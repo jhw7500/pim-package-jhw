@@ -31,39 +31,68 @@
     "used": "WLAN0"
   },
   "VHL_CAM": {
-    "app": "streamApp",
-    "id": "user",
     "cam_width": 1280,
     "cam_height": 720,
     "event_auto_remove": true,
     "event_storage_size": 5,
     "floor": "NONAME",
+    "fps": 15,
     "line": "NONAME",
     "recording_time": 1,
+    "vhl_name": "VD3001",
     "log_level": 5,
     "debug_level": 0,
-    "vhl_name": "VD3001",
-    "fps": 15,
-    "ch0": {
-      "enable": true,
-      "vflip": false,
-      "hflip": false
+    "app": "streamApp",
+    "id": "user",
+    "i2c2": {
+      "exp_time": 10000,
+      "ch0": {
+        "enable": true,
+        "vflip": false,
+        "hflip": false,
+        "ae_on": true,
+        "ae_gain": 256,
+        "bps": [
+          1024,
+          1024
+        ]
+      },
+      "ch1": {
+        "enable": true,
+        "vflip": false,
+        "hflip": false,
+        "ae_on": true,
+        "ae_gain": 256,
+        "bps": [
+          1024,
+          1024
+        ]
+      }
     },
-    "ch1": {
-      "enable": true,
-      "vflip": false,
-      "hflip": false
-    },
-    "ch2": {
-      "enable": true,
-      "vflip": false,
-      "hflip": false
-    },
-    "ch3": {
-      "enable": true,
-      "vflip": false,
-      "hflip": false
-    },
-    "bitrate": 1024
+    "i2c1": {
+      "exp_time": 10000,
+      "ch2": {
+        "enable": true,
+        "vflip": false,
+        "hflip": false,
+        "ae_on": true,
+        "ae_gain": 256,
+        "bps": [
+          1024,
+          1024
+        ]
+      },
+      "ch3": {
+        "enable": true,
+        "vflip": false,
+        "hflip": false,
+        "ae_on": true,
+        "ae_gain": 256,
+        "bps": [
+          1024,
+          1024
+        ]
+      }
+    }
   }
 }

@@ -1,9 +1,10 @@
 #!/bin/bash
 GetConfig() {
-    cam_ch0=$(jq '.VHL_CAM.ch0.enable' "$FILE_JSON")
-    cam_ch1=$(jq '.VHL_CAM.ch1.enable' "$FILE_JSON")
-    cam_ch2=$(jq '.VHL_CAM.ch2.enable' "$FILE_JSON")
-    cam_ch3=$(jq '.VHL_CAM.ch3.enable' "$FILE_JSON")
+    app=$(jq '.VHL_CAM.app' "$FILE_JSON")
+    cam_ch0=$(jq '.VHL_CAM.i2c2.ch0.enable' "$FILE_JSON")
+    cam_ch1=$(jq '.VHL_CAM.i2c2.ch1.enable' "$FILE_JSON")
+    cam_ch2=$(jq '.VHL_CAM.i2c1.ch2.enable' "$FILE_JSON")
+    cam_ch3=$(jq '.VHL_CAM.i2c1.ch3.enable' "$FILE_JSON")
     srt_en=$(jq '.VCM.srt_enable' "$FILE_JSON_")
     time_rec_en=$(jq '.VCM.file_time_recording' "$FILE_JSON_")
     vhl_name=$(jq -r '.VHL_CAM.vhl_name' "$FILE_JSON")
@@ -66,7 +67,9 @@ check_num=0
 file_cnt=0
 mp4date=0
 mp4date2=0
-
+app=0
+csi1_en=0
+csi2_en=0
 GetConfig
 #StartApp start_cam.sh
 #StartScript restart_app.sh
@@ -240,7 +243,12 @@ END
 
     if [ "$start_f" -eq 0 ]; then
         if [ "$timer" -ge "$rst_time" ]; then 
-            logger -p local0.error "[$KEY][$tag:$LINENO] streamApp all file not create"
+            logger -p local0.error "[$KEY][$tag:$LINENO] $app all file not create"
+            timer=0
+            if [ "$csi1_en" -eq 0 ] && [ "$csi2_en" -eq 0 ]; then
+                logger -p local0.error "[$KEY][$tag:$LINENO] all channel disabled at $FILE_JSON"
+                continue;
+            fi
             ((retry_boot++))
             retry_total=$(($retry+$retry_boot))
             #if [ "$retry_boot" -le 1 ]; then
@@ -256,7 +264,6 @@ END
                 logger -p local0.emerg "[$KEY][$tag:$LINENO] creboot end"
             fi
             start_f=0
-            timer=0
 	    fi
     fi
 
