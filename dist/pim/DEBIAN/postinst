@@ -393,10 +393,10 @@ END
   /opt/pim/bin/change_line.sh "blacklist imx8-media-dev" "imx8-media-dev" /etc/modprobe.d/blacklist.conf
   /opt/pim/bin/change_line.sh "set tabsize 4" "set tabsize" /etc/nanorc
   /opt/pim/bin/change_line.sh "set tabstospaces" "set tabstospaces" /etc/nanorc
-  /opt/pim/bin/change_line.sh "00 00   1 * *   root    logrotate /etc/logrotate.d/rsyslog" "logrotate /etc/logrotate.d/rsyslog" /etc/crontab
-  /opt/pim/bin/change_line.sh "00 00   * * *   root    /opt/pim/bin/chk_mmc.sh" "/opt/pim/bin/chk_mmc.sh" /etc/crontab
-  /opt/pim/bin/change_line.sh "00  *   * * *   root    hwclock --systohc" "hwclock --systohc" /etc/crontab
-  /opt/pim/bin/change_line.sh "00  *   * * *   root    /opt/pim/bin/log_manage.sh /var/log/cantops 100" "/opt/pim/bin/log_manage.sh /var/log/cantops" /etc/crontab
+  /opt/pim/bin/change_line.sh "00 00   * * 1   root    logrotate /etc/logrotate.d/rsyslog" "logrotate /etc/logrotate.d/rsyslog" /etc/crontab
+  /opt/pim/bin/change_line.sh "00 12   * * *   root    /opt/pim/bin/chk_mmc.sh" "/opt/pim/bin/chk_mmc.sh" /etc/crontab
+  /opt/pim/bin/change_line.sh "00 12   * * *   root    hwclock --systohc" "hwclock --systohc" /etc/crontab
+  /opt/pim/bin/change_line.sh "00 12   * * *   root    /opt/pim/bin/log_manage.sh /var/log/cantops 100" "/opt/pim/bin/log_manage.sh /var/log/cantops" /etc/crontab
   /opt/pim/bin/change_line.sh "write_enable=YES" "write_enable=" /etc/vsftpd.conf
   /opt/pim/bin/change_line.sh "local_umask=022" "local_umask=" /etc/vsftpd.conf
   /opt/pim/bin/change_line.sh "idle_session_timeout=0" "idle_session_timeout=" /etc/vsftpd.conf
@@ -420,15 +420,17 @@ END
   #update_json 2 &
   echo "update_network_pim.py"
   python /opt/pim/bin/update_network_pim.py
+  #/opt/pim/bin/bgscan_polling.sh
   if dpkg -l | grep -q "jq "; then
     update_edgeconf.sh
   else
-    echo -e "\e[33mplease wait until dependent package installation is finished\e[0m"
+    #echo -e "\e[33mplease wait until dependent package installation is finished\e[0m"
+    #logger -s -p local0.notice "$(printf '\033[33m')[$KEY][$tag:$LINENO] please wait until dependent package installation is finished$(printf '\033[0m')"
     /opt/pim/bin/install_deb.sh &
   fi
 
   logger -p local0.notice "[$KEY][$tag:$LINENO] $PACKAGE_NAME is finished"
-  systemctl start cam-operate
+  #systemctl start cam-operate
   sync
   ;;
 
