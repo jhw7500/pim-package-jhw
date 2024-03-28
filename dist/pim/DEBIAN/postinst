@@ -7,6 +7,8 @@
 hostname=pim-camera-v016
 tag=$(basename "$0")
 KEY=PKG
+PACKAGE_NAME="$DPKG_MAINTSCRIPT_PACKAGE"
+KERNEL_VERSION=$(uname -r)
 
 case "$1" in
 configure)
@@ -67,8 +69,19 @@ configure)
     cp /opt/pim/etc/security/limits.conf /etc/security/
   fi
 
+  if [ ! -f  /root/.bashrc ]; then
+    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /root/.bashrc"
+    cp /opt/pim/root/.bashrc /root/
+  fi
 
   systemctl restart rsyslog
+  cp /opt/pim/driver/max9296.ko /lib/modules/$KERNEL_VERSION/kernel/drivers/media/i2c/
+  rm /usr/lib/libpiencypt*
+  rm /usr/lib/libpifilewriter*
+  rm /usr/lib/libpirtspstream*
+  rm /usr/lib/libpirtspstreamserver*
+  rm /usr/lib/libpiutils*
+  rm /usr/lib/libpiwriter*
 
   status=$(df |grep /dev/root |awk '{print $2}')
   if [ "$status" -ge 30000000 ]; then
@@ -327,7 +340,7 @@ fi
   if [ ! -f /etc/netplan/wlp1s0.yaml ]; then 
         logger -s -p local0.notice "[$KEY][$tag:$LINENO] apply default netplan wlp1s0"
         cp /opt/pim/config/wlp1s0.yaml /etc/netplan/
-  fi
+ fi
 END
 
 
@@ -357,18 +370,17 @@ END
   #/root/SOMBASE_TEST/mfg60n-aarch64-9.32.0.6.sh install
   #lmu -reg FCC
   #iw reg set US
-  echo "update_network_pim.py"
-  python /opt/pim/bin/update_network_pim.py
   #udhcpc -i wlp1s0
-  /opt/pim/bin/bgscan_polling.sh &
-  source /root/.bashrc
-  source /root/.bash_aliases
+  #/opt/pim/bin/bgscan_polling.sh &
+  #source /root/.bashrc
+  #source /root/.bash_aliases
   #netplan apply
   #systemctl restart connman
   #systemctl daemon-reload
   #dpkg -i /opt/pim/package/jq/*.deb
   #update_edgeconf &
   /opt/pim/bin/add_line.sh "root        soft    nofile      65536" /etc/security/limits.conf
+  /opt/pim/bin/add_line.sh ". ~/.bash_cantops" /root/.bashrc
   #/opt/pim/bin/add_line.sh "00 00   1 * *   root    logrotate /etc/logrotate.d/rsyslog" /etc/crontab
   #/opt/pim/bin/add_line.sh "00 00   * * *   root    /opt/pim/bin/chk_mmc.sh" /etc/crontab
   #/opt/pim/bin/add_line.sh "00  *   * * *   root    hwclock --systohc" /etc/crontab
@@ -406,12 +418,18 @@ END
   /opt/pim/bin/change_line.sh "DefaultTimeoutAbortSec=30s" "DefaultTimeoutAbortSec=" /etc/systemd/system.conf
 
   #update_json 2 &
-  /opt/pim/bin/install_deb.sh &
-  update_edgeconf
+  echo "update_network_pim.py"
+  python /opt/pim/bin/update_network_pim.py
+  if dpkg -l | grep -q "jq "; then
+    update_edgeconf.sh
+  else
+    echo -e "\e[33mplease wait until dependent package installation is finished\e[0m"
+    /opt/pim/bin/install_deb.sh &
+  fi
+
+  logger -p local0.notice "[$KEY][$tag:$LINENO] $PACKAGE_NAME is finished"
+  systemctl start cam-operate
   sync
-  logger -p local0.notice "[$KEY][$tag:$LINENO] installation is finished"
-  echo -e "\e[33mplease wait until deb package installation is finished\e[0m"
-  #sync
   ;;
 
 upgrade)

@@ -57,9 +57,6 @@ FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} |grep -v '/$' |
 timer=0
 mnt_folder="/mnt/sd_cam"
 start_f=0
-rst_time=0
-csi1_en=0
-csi2_en=0
 curTimeEpoch=0
 startTimeEpoch=0
 diffEpoch=0
@@ -67,9 +64,8 @@ check_num=0
 file_cnt=0
 mp4date=0
 mp4date2=0
-app=0
-csi1_en=0
-csi2_en=0
+check_time=10
+
 GetConfig
 #rst_time=60
 #StartApp start_cam.sh
@@ -107,7 +103,7 @@ do
 		startTimeEpoch=$(date -d "$startTime" "+%s")
 		diffEpoch=$(echo "$curTimeEpoch - $startTimeEpoch" |bc)
         #logger -p local0.info "[$KEY][$tag:$LINENO] start_video_time_:$startTime, cur_time:$(date '+%Y%m%d %H:%M:%S'), diff:$diffEpoch"
-		if [ "$diffEpoch" -ge 7 ]; then
+		if [ "$diffEpoch" -ge "$check_time" ]; then
             logger -p local0.info "[$KEY][$tag:$LINENO] start_video_time_:$startTime, cur_time:$(date '+%Y%m%d %H:%M:%S'), diff:$diffEpoch"
             timer=0
 			cat /dev/null > $FILE_
@@ -240,6 +236,11 @@ END
 			fi
             sync
 		fi
+    else
+        if [ "$timer" -ge "$rec_time"+"$check_time" ]; then
+            logger -p local0.error "[$KEY][$tag:$LINENO start_f init beacause file not create"
+            start_f=0
+        fi
     fi
 
     if [ "$start_f" -eq 0 ]; then

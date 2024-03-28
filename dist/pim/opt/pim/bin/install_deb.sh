@@ -1,4 +1,7 @@
 #!/bin/bash
+tag=$(basename "$0")
+KEY=RST
+
 while :
 do
     pid=$(ps -ef |grep dpkg |grep -v grep |awk '{print $8}')
@@ -9,7 +12,9 @@ do
     sleep 1
 done
 
-#update_edgeconf
+update_edgeconf.sh
+
+logger -p local0.notice "[$KEY][$tag:$LINENO] complete install_deb.sh"
 echo -e "\e[33mcomplete install_deb.sh\e[0m"
 echo -e "\e[33mif you want the streamApp, run 'update_edgeconf 1', but want the gstApp, run 'update_edgeconf 2'\e[0m"
 
