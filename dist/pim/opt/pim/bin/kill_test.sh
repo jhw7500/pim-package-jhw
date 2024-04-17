@@ -6,25 +6,18 @@ tag=$(basename "$0")
 KEY=RST
 
 logger -p local0.notice "[$KEY][$tag:$LINENO] kill_test.sh start"
-echo 1 > /tmp/restart_flag
-
+touch /tmp/restart_flag
+touch /tmp/kill_flag
 pid=0
 cnt=0
 service=0
-touch /tmp/kill_flag
 limitcnt=5
 rebootcnt=30
 defunct=0
 
 #list="BG_Check_for_pim.sh vcm streamApp PIMCAM"
 #list="BG_Check_for_pim.sh vcm gstApp"
-#list="BG_Check_for_pim.sh vcm"
-
-if [[ "$1" -eq 1 ]]; then
-    list="restart_app.sh BG_Check_for_pim.sh vcm"
-else
-    list="BG_Check_for_pim.sh vcm"
-fi
+list="BG_Check_for_pim.sh vcm"
 
 JSON_PREFIX=edgeconf_
 JOSN_SUFFIX=.json
@@ -97,23 +90,15 @@ for service in $list; do
                         #reboot
                         #logger -p local0.err "[$KEY][$tag:$LINENO] killall $service"
                         #killall -s KILL $service
+                        if [ "$cnt" -ge 15 ]; then
+                            logger -p local0.emerg "[$KEY][$tag:$LINENO] kill -9 $pid($service)"
+                            kill -9 $pid
+                        fi
                     else
                         logger -p local0.err "[$KEY][$tag:$LINENO] defunct : $defunct"
                         logger -p local0.emerg "[$KEY][$tag:$LINENO] kill -9 $pid($service)"
                         kill -9 $pid
                     fi
-
-:<<'END'
-                    #defunct=$(ps -ef | grep defunct | grep -v grep | awk '{print $3}' | xargs -t -I % sh -c '{ cat /proc/%/status |grep Name |awk '{print $2}'; }')
-                    pid=$(ps -ef | grep defunct | grep -v grep | awk '{print $3}')
-                    defunct=$(cat /proc/$pid/status |grep Name |awk '{print $2}')
-                    logger -p local0.err "[$KEY][$tag:$LINENO] defunct : $defunct"
-                    if [ -n "$defunct" ]; then
-                        logger -p local0.emerg "[$KEY][$tag:$LINENO] kill -9 $pid($defunct)"
-                        kill -9 $pid 
-                        #ps -ef | grep defunct | grep -v grep | awk '{print $3}' | xargs kill -9
-                    fi
-END
                 fi
 
                 sleep 1
@@ -132,11 +117,11 @@ END
     fi
 done
 
-cat /dev/null > /tmp/restart_flag
 vhl_name=$(jq -r '.VHL_CAM.vhl_name' "$FILE_JSON")
 file_date=$(date "+%Y%m%d_%H%M00")
 logger -p local0.notice "[$KEY][$tag:$LINENO] rm /mnt/sd_cam/${vhl_name}_${file_date}*"
 rm /mnt/sd_cam/${vhl_name}_${file_date}*
+rm /tmp/restart_flag
 logger -p local0.notice "[$KEY][$tag:$LINENO] kill_test.sh end"
 #/opt/pim/bin/vcm &
 exit 0

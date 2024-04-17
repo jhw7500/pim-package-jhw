@@ -20,6 +20,7 @@ StartCam() {
     touch /tmp/kill_flag
     logger -p local0.notice "[$key][$tag:$LINENO] $1 -d $2 -m $3 &"
     $1 -d $2 -m $3 &
+    #cgexec -g memory:myappgroup $1 -d $2 -m $3 &
     if ! CheckApp "BG_Check_for_pim.sh"; then
         logger -p local0.emerg "[$key][$tag:$LINENO] BG_Check_for_pim.sh start"
          /opt/pim/bin/BG_Check_for_pim.sh $2 & 2>/dev/null
@@ -56,7 +57,8 @@ else
 fi
 
 export GST_DEBUG_NO_COLOR=1
-export GST_DEBUG=2,v4l2src:1
+export GST_DEBUG=2,v4l2src:2
+#export GST_DEBUG=2,*:5
 export GST_DEBUG_FILE="$GST_LOG_FILE"
 export GST_DEBUG_DUMP_DOT_DIR=/var/log/cantops/dot/
 

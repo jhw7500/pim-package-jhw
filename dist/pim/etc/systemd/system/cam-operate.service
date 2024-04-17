@@ -7,6 +7,7 @@ After=rc-local.service
 User=root
 WorkingDirectory=/root
 ExecStart=/opt/pim/bin/chk_cam_operate.sh
+ExecStop=/opt/pim/bin/kill_all.sh
 
 [Install]
 WantedBy=multi-user.target

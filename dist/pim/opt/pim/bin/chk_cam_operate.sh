@@ -66,6 +66,8 @@ mp4date=0
 mp4date2=0
 check_time=10
 
+/opt/pim/bin/start_cam.sh
+
 GetConfig
 #rst_time=60
 #StartApp start_cam.sh
@@ -237,7 +239,7 @@ END
             sync
 		fi
     else
-        if [ "$timer" -ge "$rec_time"+"$check_time" ]; then
+        if [ "$timer" -ge $((rec_time+check_time)) ]; then
             logger -p local0.error "[$KEY][$tag:$LINENO start_f init beacause file not create"
             start_f=0
         fi
