@@ -49,4 +49,5 @@ version=$(cat ../dist/pim/DEBIAN/control| grep Version |grep -v ^$#| cut -d':' -
 package=$(cat ../dist/pim/DEBIAN/control| grep Package |grep -v ^$#| cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n' | tr -d ' ')
 echo version:$version
 dpkg -b pim
+#dpkg-deb --build pim
 cp pim.deb $package-$version.deb

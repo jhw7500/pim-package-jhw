@@ -11,6 +11,7 @@ upgrade)
 
 remove)
   echo "prerm remove"
+  cp /opt/pim/etc/rsyslog.d/50-default.conf /etc/rsyslog.d/
   ;;
 
 *)
