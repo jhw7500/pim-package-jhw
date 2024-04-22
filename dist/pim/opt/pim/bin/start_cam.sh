@@ -2,7 +2,7 @@
 tag=$(basename "$0")
 key=RST
 iomode=0
-opt=0
+delay=5
 #app=PIMCAM
 #app=gstApp
 
@@ -33,7 +33,7 @@ StartCam() {
 }
 
 if [[ -n "$1" ]]; then
-    opt=$1
+    delay=$1
 fi
 
 JSON_PREFIX=edgeconf_
@@ -62,7 +62,7 @@ export GST_DEBUG=2,v4l2src:2
 export GST_DEBUG_FILE="$GST_LOG_FILE"
 export GST_DEBUG_DUMP_DOT_DIR=/var/log/cantops/dot/
 
-logger -p local0.notice "[$key][$tag:$LINENO] start app:$app opt:$opt"
+logger -p local0.notice "[$key][$tag:$LINENO] start app:$app delay:$delay"
 if CheckApp "$app"; then
     logger -p local0.err "[$key][$tag:$LINENO] $app already existed"
     exit 0
@@ -79,34 +79,7 @@ if CheckApp "BG_Check_for_pim.sh"; then
     killall BG_Check_for_pim.sh
 fi
 
-if [[ "$opt" == 1 ]]; then
-    #logger -p local0.notice "[$key][$tag:$LINENO] $app -d 5 -m $iomode &"
-    StartCam $app 5 $iomode
-    exit 0
-fi
-
-ENABLE_VAL=true
-cam_ch0=$(jq '.VHL_CAM.i2c2.ch0.enable' "$FILE_JSON")
-cam_ch1=$(jq '.VHL_CAM.i2c2.ch1.enable' "$FILE_JSON")
-cam_ch2=$(jq '.VHL_CAM.i2c1.ch2.enable' "$FILE_JSON")
-cam_ch3=$(jq '.VHL_CAM.i2c1.ch3.enable' "$FILE_JSON")
-
-if [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] || [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]; then
-    #logger -p local0.notice "[$key][$tag:$LINENO] csi1 enable"
-    csi1_en=1
-fi
-
-if [[ "$cam_ch2" == *"$ENABLE_VAL"* ]] || [[ "$cam_ch3" == *"$ENABLE_VAL"* ]]; then
-    #logger -p local0.notice "[$key][$tag:$LINENO] csi2 enable"
-    csi2_en=1
-fi
-
-if [[ "$csi1_en" -eq 1 ]] && [[ "$csi2_en" -eq 1 ]]; then
-    StartCam $app 25 $iomode
-elif [[ "$csi1_en" -eq 1 ]] || [[ "$csi2_en" -eq 1 ]]; then
-    StartCam $app 15 $iomode
-else
-    logger -p local0.crit "[$key][$tag:$LINENO] no channels are enabled"
-fi
-
+logger -p local0.notice "[$key][$tag:$LINENO] $app -d $delay -m $iomode &"
+StartCam $app $delay $iomode
 exit 0
+
