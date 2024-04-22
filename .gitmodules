@@ -9,3 +9,15 @@
 	path = vcm
 	url = http://192.168.10.2:31406/hwjo/_vcm.git
 	ignore = dirty
+[submodule "adab"]
+	path = adab
+	url = http://192.168.10.2:31406/cantops-iot-solution/adab.git
+[submodule "stm32update"]
+	path = stm32update
+	url = http://192.168.10.2:31406/cantops-iot-solution/stm32update.git
+[submodule "cism"]
+	path = cism
+	url = http://192.168.10.2:31406/cantops-iot-solution/cism
+[submodule "adab_ecat"]
+	path = adab_ecat
+	url = http://192.168.10.2:31406/cantops-iot-solution/adab_ecat.git

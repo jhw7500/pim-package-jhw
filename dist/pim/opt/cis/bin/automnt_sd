@@ -1,0 +1,56 @@
+#!/bin/bash
+
+
+_root_path="/var/log/cantops"
+
+fn_LogWrite() {
+    logger -p local1.info "AUTOMNT|$1"
+}
+
+_dev_sd=$(python3 /opt/cis/bin/getconfval.py dev_sd | tr -d '\r\n')
+if [ ${_dev_sd} == "mmcblk0" ]; then
+    _mmcblk_bus='/sys/bus/mmc/devices/mmc0:*/block/mmcblk0/mmcblk0p1'
+    _mmcblk_dev='/dev/mmcblk0p1'
+else
+    _mmcblk_bus='/sys/bus/mmc/devices/mmc1:*/block/mmcblk1/mmcblk1p1'
+    _mmcblk_dev='/dev/mmcblk1p1'
+fi
+
+mnt_state_=0
+mnt_cnt_=0
+
+while true; do
+    case $mnt_state_ in
+        0)
+            if [ -d ${_mmcblk_bus} ]; then
+                mout_dev=`df | grep '/mnt/sd\b' | awk '{print $1}'`
+                if [ -z $mout_dev ]; then
+                    if [ ! -d /mnt/sd ]; then
+                        mkdir -p /mnt/sd
+                    fi
+                    mount ${_mmcblk_dev} /mnt/sd
+                    fn_LogWrite "mount /mnt/sd"
+                elif [ $mout_dev != ${_mmcblk_dev} ]; then
+                    umount /mnt/sd
+                    mount ${_mmcblk_dev} /mnt/sd
+                    fn_LogWrite "remount /mnt/sd"
+                fi
+                mnt_state_=1
+                mnt_cnt_=0
+            fi
+        ;;
+        1)
+            if [ ! -d ${_mmcblk_bus} ]; then
+                mnt_cnt_=`expr $mnt_cnt_ + 1`
+                if [ $mnt_cnt_ -ge 4 ]; then
+                    umount /mnt/sd
+                    mnt_state_=0
+                    fn_LogWrite "umount /mnt/sd"
+                fi
+            else
+                mnt_cnt_=0
+            fi
+        ;;
+    esac
+    sleep 0.5
+done

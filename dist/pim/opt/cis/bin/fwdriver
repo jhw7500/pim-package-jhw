@@ -1,0 +1,176 @@
+#!/bin/bash
+
+start() {
+    python3 /opt/cis/bin/auto_fwupgrade.py > /dev/null 2> /dev/null
+    
+    python3 /opt/cis/bin/init.py > /dev/null 2> /dev/null
+    python3 /opt/cis/bin/update_network.py > /dev/null 2> /dev/null
+    adab start > /dev/null 2> /dev/null
+}
+
+stop() {
+    adab stop > /dev/null 2> /dev/null
+}
+
+log() {
+    adab log
+}
+
+logclear() {
+    adab logclear
+}
+
+upgrade() {
+    if [ -d $1 ]
+    then
+        # folder
+        $1/setup.sh
+    elif [ -f $1 ]
+    then
+        name=`basename $1`
+        file_extension="${name##*.}"
+        if [ $file_extension == "zip" ]
+        then
+            python3 /opt/cis/bin/auto_fwupgrade.py $1
+        else
+            echo "ERROR:bad zip file"
+        fi
+    else
+        echo "ERROR:file not found"
+    fi
+}
+
+set_antenna() {
+	if [ ! -z $1 ]; then
+		if [ $1 == "0" ]; then
+			echo options lrdmwl SISO_mode=1 > /etc/modprobe.d/lrdmwl.conf
+		elif [ $1 == "1" ]; then
+			echo options lrdmwl SISO_mode=2 > /etc/modprobe.d/lrdmwl.conf
+		elif [ $1 == "2" ]; then
+			echo options lrdmwl SISO_mode=0 > /etc/modprobe.d/lrdmwl.conf
+		fi
+	else
+		echo "not value"
+	fi
+}
+
+status() {
+    local cisver=""
+    local mcuver=""
+    local osver=""
+    local board=""
+    local mode=""
+    local cism=""
+    local gyro=""
+    local ant=""
+    local etc_sen=""
+
+    local mainboard_type=$(python3 /opt/cis/bin/getconfval.py mainboard_type | tr -d '\r\n')
+    
+    if [ "${mainboard_type}" == "plus" ]; then
+        cisver=`dpkg -l pim-mp | grep 'pim-mp' | awk '{print $3}'`
+    else
+        cisver=`dpkg -l cis | grep 'cis' | awk '{print $3}'`
+    fi
+
+    mcuver=`cat /tmp/dbver 2> /dev/null`
+    osver=`cat /etc/issue | awk '{print $1, $2, $3}' | sed 's/[[:blank:]]*$//'`
+    board="analog"
+    #mode
+    if [ -f '/tmp/edgeconf.lock' ]
+    then
+        mode="setting"
+    else
+        pid=`ps -ef | grep 'adab' | grep -v 'grep' | grep -v '/usr/local/bin/adab' | awk '{print $2}'`
+        if [ -z $pid ]
+        then
+            local error=`cat /tmp/adab_status 2> /dev/null | grep ERROR | cut -d':' -f2 | tr -d '\r\n'`
+            if [ -z "$error" -o "$error" == " " -o "$error" == "" -o "$error" == "0" ]; then
+	            mode="stop"
+            else
+	            mode="error"
+            fi
+        else
+            mode="run"
+        fi
+    fi
+
+    #cism
+    pid=`ps -ef | grep 'cism' | grep -v 'grep' | grep -v '/usr/local/bin/cism' | awk '{print $2}'`
+    if [ -z $pid ]
+    then
+        cism="stop"
+    else
+        cism="run"
+    fi
+
+    #gyro
+    if [ -f '/tmp/gyro' ]; then
+        gyro=`cat /tmp/gyro`
+    else
+        gyro='    "x":"0",
+    "y":"0",
+    "x":"0",'
+    fi
+    
+    #ant
+    local antval=`cat /sys/module/lrdmwl/parameters/SISO_mode 2> /dev/null`
+    if [ -z "$antval" -o "$antval" == " " -o "$antval" == "" ]; then
+        ant="2"
+    else
+		if [ $antval == "0" ]; then
+			ant="2"
+		elif [ $antval == "1" ]; then
+            ant="0"
+		elif [ $antval == "2" ]; then
+            ant="1"
+        fi
+    fi
+    #etc_sen
+    if [ -f '/tmp/etc_sen' ]; then
+        etc_sen=`cat /tmp/etc_sen`
+    else
+        etc_sen='    "power_voltage":0,
+    "power_current":0,
+    "temperature_sensor":0,
+    "humidity_sensor":0'
+    fi
+
+    local str=""
+    read -r -d '' str << EOF
+{
+    "version":"$cisver",
+    "dbver":"$mcuver",
+    "OS":"$osver",
+    "board":"$board",
+    "mode":"$mode",
+    "cism":"$cism",
+$gyro
+    "antenna_use": $ant,
+$etc_sen
+}
+EOF
+    echo "$str"
+}
+
+fn_help() {
+    echo "usage: fwdriver start                start firmware operation"
+    echo "   or: fwdriver stop                 stop firmware operation"
+    echo "   or: fwdriver restart              restart firmware operation"
+    echo "   or: fwdriver status               show firmware status"
+    echo "   or: fwdriver log                  show firmware log"
+    echo "   or: fwdriver logclear             clear firmware log"
+    echo "   or: fwdriver upgrade <file_path>  upgrade firmware"
+    echo "       ex) fwdriver upgrade CIS_release_xxx.zip"
+    echo "   or: fwdriver set_antenna <value>  set wifi antenna (0:ANT1, 1:ANT2, 2:BOTH)"
+    echo "       ex) fwdriver set_antenna 2"
+}
+
+case $1 in
+    start|stop|status|log|logclear) $1;;
+    upgrade) upgrade $2;;
+    set_antenna) set_antenna $2;;
+    restart) stop; start;;
+    "--help"|"-h") fn_help;;
+    *) echo "Run as $0 "; exit 1;;
+esac
