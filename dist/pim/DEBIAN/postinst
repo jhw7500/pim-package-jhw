@@ -372,6 +372,20 @@ END
   /opt/pim/bin/change_line.sh "DefaultTimeoutAbortSec=30s" "DefaultTimeoutAbortSec=" /etc/systemd/system.conf
   /opt/pim/bin/change_line.sh "APT::Periodic::Unattended-Upgrade \"0\";" "APT::Periodic::Unattended-Upgrade" /etc/apt/apt.conf.d/20auto-upgrades
 
+    package=cis
+    if [ -n "$(dpkg -s $package)" ]; then
+        echo "$package is installed"
+        /opt/pim/bin/change_line.sh "    #/opt/pim/bin/chk_voltage.sh" "/opt/pim/bin/chk_voltage.sh" /opt/pim/bin/BG_Check_for_pim.sh
+        /opt/pim/bin/change_line.sh "    #/opt/pim/bin/led_ctrl.sh 2>/dev/null" "/opt/pim/bin/led_ctrl.sh 2>/dev/null" /opt/pim/bin/BG_Check_for_pim.sh
+        #/opt/pim/bin/comment_line.sh "/opt/pim/bin/chk_voltage.sh" /opt/pim/bin/BG_Check_for_pim.sh
+        #/opt/pim/bin/comment_line.sh "/opt/pim/bin/led_ctrl.sh 2>/dev/null" /opt/pim/bin/BG_Check_for_pim.sh
+    else
+        echo "$package is not installed"
+        /opt/pim/bin/change_line.sh "    /opt/pim/bin/chk_voltage.sh" "/opt/pim/bin/chk_voltage.sh" /opt/pim/bin/BG_Check_for_pim.sh
+        /opt/pim/bin/change_line.sh "    /opt/pim/bin/led_ctrl.sh 2>/dev/null" "/opt/pim/bin/led_ctrl.sh 2>/dev/null" /opt/pim/bin/BG_Check_for_pim.sh
+    fi
+
+
   #update_json 2 &
   echo "update_network_pim.py"
   python /opt/pim/bin/update_network_pim.py
