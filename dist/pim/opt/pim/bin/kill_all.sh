@@ -10,7 +10,8 @@ cnt=0
 defunct=0
 service=0
 
-logger -p local0.notice [CHK][$tag:$LINENO] kill_all start
+logger -p local0.notice "[CHK][$tag:$LINENO] kill_all start"
+touch /tmp/restart_flag
 touch /tmp/kill_flag
 
 for service in $list; do
@@ -75,6 +76,11 @@ for service in $list; do
         done
     fi
 done
+vhl_name=$(jq -r '.VHL_CAM.vhl_name' "$FILE_JSON")
+file_date=$(date "+%Y%m%d_%H%M00")
+logger -p local0.notice "[$KEY][$tag:$LINENO] rm /mnt/sd_cam/${vhl_name}_${file_date}*"
+rm /mnt/sd_cam/${vhl_name}_${file_date}*
+rm /tmp/restart_flag
 
-logger -p local0.notice [CHK][$tag:$LINENO] kill_all end
+logger -p local0.notice "[CHK][$tag:$LINENO] kill_all end"
 exit 0
