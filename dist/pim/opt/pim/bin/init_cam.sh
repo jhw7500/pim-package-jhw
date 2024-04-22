@@ -26,6 +26,8 @@ sleep 2
 #PIMCAM -m 0 -c 3 &
 rm /tmp/init_cam_flag
 
+FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} |grep -v '/$' | tail -1 |tr -d '\r\n')
+
 cam_ch0=$(jq '.VHL_CAM.i2c2.ch0.enable' "$FILE_JSON")
 cam_ch1=$(jq '.VHL_CAM.i2c2.ch1.enable' "$FILE_JSON")
 cam_ch2=$(jq '.VHL_CAM.i2c1.ch2.enable' "$FILE_JSON")
