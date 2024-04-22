@@ -66,9 +66,10 @@ mp4date=0
 mp4date2=0
 check_time=10
 
-/opt/pim/bin/start_cam.sh
-
 GetConfig
+
+logger -p local0.notice "[$KEY][$tag:$LINENO] /opt/pim/bin/start_cam.sh $((rst_time-5))"
+/opt/pim/bin/start_cam.sh $((rst_time-5))
 #rst_time=60
 #StartApp start_cam.sh
 #StartScript restart_app.sh

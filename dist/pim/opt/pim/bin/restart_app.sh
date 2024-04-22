@@ -35,8 +35,8 @@ while [ 1 ]; do
         logger -p local0.notice "[$KEY][$tag:$LINENO] $app killed"
         killall -s KILL PIMCAM
         #killall -s KILL BG_Check_for_pim.sh
-        logger -p local0.emerg "[$KEY][$tag:$LINENO] start_cam.sh 1"
-        /opt/pim/bin/start_cam.sh 1
+        logger -p local0.emerg "[$KEY][$tag:$LINENO] start_cam.sh"
+        /opt/pim/bin/start_cam.sh
     fi
 
     for service in $list; do

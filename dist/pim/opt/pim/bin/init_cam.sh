@@ -25,8 +25,29 @@ modprobe imx8-media-dev
 sleep 2
 #PIMCAM -m 0 -c 3 &
 rm /tmp/init_cam_flag
+
+cam_ch0=$(jq '.VHL_CAM.i2c2.ch0.enable' "$FILE_JSON")
+cam_ch1=$(jq '.VHL_CAM.i2c2.ch1.enable' "$FILE_JSON")
+cam_ch2=$(jq '.VHL_CAM.i2c1.ch2.enable' "$FILE_JSON")
+cam_ch3=$(jq '.VHL_CAM.i2c1.ch3.enable' "$FILE_JSON")
+
+if [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] || [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]; then
+    csi1_en=1
+fi
+
+if [[ "$cam_ch2" == *"$ENABLE_VAL"* ]] || [[ "$cam_ch3" == *"$ENABLE_VAL"* ]]; then
+    csi2_en=1
+fi
+
+if [[ "$csi1_en" -eq 1 ]] && [[ "$csi2_en" -eq 1 ]]; then
+    rst_time=25
+else
+    rst_time=15
+fi
+
 logger -p local0.notice "[RST][$tag:$LINENO] module reset end"
-/opt/pim/bin/start_cam.sh
+/opt/pim/bin/start_cam.sh $rst_time
+
 #/opt/pim/bin/restart_app.sh &
 #systemctl start cam-operate
 #/opt/pim/bin/restart_app.sh &
