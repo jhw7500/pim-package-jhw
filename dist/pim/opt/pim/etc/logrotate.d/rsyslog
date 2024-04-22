@@ -1,11 +1,14 @@
-/var/log/syslog
+/var/log/cantops/kern.log
+/var/log/cantops/local0.log
+/var/log/cantops/syslog
 {
-	rotate 7
-	daily
+	rotate 24
+	weekly
 	missingok
 	notifempty
 	delaycompress
 	compress
+    dateext
 	postrotate
 		/usr/lib/rsyslog/rsyslog-rotate
 	endscript
@@ -15,8 +18,8 @@
 /var/log/mail.warn
 /var/log/mail.err
 /var/log/mail.log
-/var/log/daemon.log
 /var/log/kern.log
+/var/log/daemon.log
 /var/log/auth.log
 /var/log/user.log
 /var/log/lpr.log
@@ -24,12 +27,13 @@
 /var/log/debug
 /var/log/messages
 {
-	rotate 4
-	weekly
+	rotate 6
+	monthly
 	missingok
 	notifempty
-	compress
 	delaycompress
+    compress
+    dateext
 	sharedscripts
 	postrotate
 		/usr/lib/rsyslog/rsyslog-rotate

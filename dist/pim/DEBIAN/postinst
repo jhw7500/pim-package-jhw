@@ -14,10 +14,14 @@ case "$1" in
 configure)
   echo "postinst configure"
 
+  cp /opt/pim/etc/rsyslog.d/50-default.conf /etc/rsyslog.d/
+
   if [ ! -f  /etc/rsyslog.conf ]; then
     logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/rsyslog.conf"
     cp /opt/pim/etc/rsyslog.conf /etc/
   fi
+
+  systemctl restart rsyslog
 
   if [ ! -f  /etc/sysctl.conf ]; then
     logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/sysctl.conf"
@@ -74,7 +78,9 @@ configure)
     cp /opt/pim/root/.bashrc /root/
   fi
 
-  systemctl restart rsyslog
+  cp /opt/pim/etc/rsyslog.d/50-default.conf /etc/rsyslog.d/
+  cp /opt/pim/etc/logrotate.d/rsyslog /etc/logrotate.d/
+  cp /opt/pim/etc/samba/smb.conf /etc/samba/
   cp /opt/pim/driver/max9296.ko /lib/modules/$KERNEL_VERSION/kernel/drivers/media/i2c/
   rm /usr/lib/libpiencypt*
   rm /usr/lib/libpifilewriter*
@@ -271,60 +277,7 @@ fi
     cp /opt/pim/config/edgeconf_pim.json /opt/pim/config/edgeconf_pim_default.json
   fi
 
-  if [ ! -f  /etc/sysctl.conf ]; then
-    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/sysctl.conf"
-    cp /opt/pim/etc/sysctl.conf /etc/
-  fi
-
-  if [ ! -f  /etc/modules ]; then
-    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/modules"
-    cp /opt/pim/etc/modules /etc/
-  fi
-
-  if [ ! -f  /etc/crontab ]; then
-    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/crontab"
-    cp /opt/pim/etc/crontab /etc/
-  fi
-
-  if [ ! -f  /etc/nanorc ]; then
-    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/nanorc"
-    cp /opt/pim/etc/nanorc /etc/
-  fi
-
-  if [ ! -f  /etc/rsyslog.conf ]; then
-    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/rsyslog.conf"
-    cp /opt/pim/etc/rsyslog.conf /etc/
-  fi
-
-  if [ ! -f  /etc/vsftpd.conf ]; then
-    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/vsftpd.conf"
-    cp /opt/pim/etc/vsftpd.conf /etc/
-  fi
-
-  if [ ! -f  /etc/watchdog.conf ]; then
-    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/watchdog.conf"
-    cp /opt/pim/etc/watchdog.conf /etc/
-  fi
-
-  if [ ! -f  /etc/cron.daily/logrotate ]; then
-    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/cron.daily/logrotate"
-    cp /opt/pim/etc/cron.daily/logrotate /etc/cron.daily
-  fi
-
-  if [ ! -f  /etc/modprobe.d/blacklist.conf ]; then
-    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/modprobe.d/blacklist.conf"
-    cp /opt/pim/etc/modprobe.d/blacklist.conf /etc/modprobe.d/
-  fi
-
-  if [ ! -f  /etc/systemd/journald.conf ]; then
-    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/systemd/journald.conf"
-    cp /opt/pim/etc/systemd/journald.conf /etc/systemd/
-  fi
-
-  if [ ! -f  /etc/security/limits.conf ]; then
-    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/security/limits.conf"
-    cp /opt/pim/etc/security/limits.conf /etc/security/
-  fi
+  cp /opt/pim/etc/rsyslog.d/50-default.conf /etc/rsyslog.d/
 
 :<<'END'
   if [ ! -f  /etc/netplan/eth0.yaml ]; then
@@ -401,7 +354,7 @@ END
   /opt/pim/bin/change_line.sh "local_umask=022" "local_umask=" /etc/vsftpd.conf
   /opt/pim/bin/change_line.sh "idle_session_timeout=0" "idle_session_timeout=" /etc/vsftpd.conf
   /opt/pim/bin/change_line.sh "chroot_local_user=YES" "chroot_local_user=" /etc/vsftpd.conf
-  /opt/pim/bin/change_line.sh "local_root=/mnt/sd_cam" "local_root=" /etc/vsftpd.conf
+  /opt/pim/bin/change_line.sh "local_root=/mnt" "local_root=" /etc/vsftpd.conf
   /opt/pim/bin/change_line.sh "allow_writeable_chroot=YES" "allow_writeable_chroot=" /etc/vsftpd.conf
   /opt/pim/bin/change_line.sh "#\$PrivDropToUser syslog" "\$PrivDropToUser" /etc/rsyslog.conf
   /opt/pim/bin/change_line.sh "#\$PrivDropToGroup syslog" "\$PrivDropToGroup" /etc/rsyslog.conf
@@ -410,25 +363,30 @@ END
   /opt/pim/bin/change_line.sh "kernel.printk = 2 4 1 3" "kernel.printk" /etc/sysctl.conf
   /opt/pim/bin/change_line.sh "SystemMaxUse=10000M" "SystemMaxUse=" /etc/systemd/journald.conf
   /opt/pim/bin/change_line.sh "SystemKeepFree=5000M" "SystemKeepFree=" /etc/systemd/journald.conf
+  /opt/pim/bin/change_line.sh "ForwardToWall=no" "ForwardToWall=" /etc/systemd/journald.conf
   /opt/pim/bin/change_line.sh "RuntimeWatchdogSec=1min" "RuntimeWatchdogSec=" /etc/systemd/system.conf
   /opt/pim/bin/change_line.sh "RebootWatchdogSec=1min" "RebootWatchdogSec=" /etc/systemd/system.conf
   /opt/pim/bin/change_line.sh "ShutdownWatchdogSec=1min" "ShutdownWatchdogSec=" /etc/systemd/system.conf
   /opt/pim/bin/change_line.sh "DefaultTimeoutStartSec=30s" "DefaultTimeoutStartSec=" /etc/systemd/system.conf
   /opt/pim/bin/change_line.sh "DefaultTimeoutStopSec=30s" "DefaultTimeoutStopSec=" /etc/systemd/system.conf
   /opt/pim/bin/change_line.sh "DefaultTimeoutAbortSec=30s" "DefaultTimeoutAbortSec=" /etc/systemd/system.conf
+  /opt/pim/bin/change_line.sh "APT::Periodic::Unattended-Upgrade \"0\";" "APT::Periodic::Unattended-Upgrade" /etc/apt/apt.conf.d/20auto-upgrades
 
   #update_json 2 &
   echo "update_network_pim.py"
   python /opt/pim/bin/update_network_pim.py
   #/opt/pim/bin/bgscan_polling.sh
+  ln -s /opt/pim/bin/update_edgeconf.sh /usr/local/bin/update_edgeconf
+
   if dpkg -l | grep -q "jq "; then
-    update_edgeconf.sh
+    /opt/pim/bin/update_edgeconf.sh
   else
     #echo -e "\e[33mplease wait until dependent package installation is finished\e[0m"
     #logger -s -p local0.notice "$(printf '\033[33m')[$KEY][$tag:$LINENO] please wait until dependent package installation is finished$(printf '\033[0m')"
     /opt/pim/bin/install_deb.sh &
   fi
 
+  #apt install jq
   logger -p local0.notice "[$KEY][$tag:$LINENO] $PACKAGE_NAME is finished"
   #systemctl start cam-operate
   sync

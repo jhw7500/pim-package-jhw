@@ -7,7 +7,7 @@
 case "$1" in
 purge)
   echo "purge purge"
-  rm -r /opt/pim
+  #rm -r /opt/pim
   rm -r /root/SOMBASE_TEST
   rm -r /root/shared_v
   cat /dev/null > /etc/rc.local

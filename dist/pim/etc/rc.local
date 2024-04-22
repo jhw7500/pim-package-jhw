@@ -18,8 +18,11 @@ modprobe imx8-media-dev
 #ftp trans
 #/home/user/pim-package/test/ncsftp.sh &
 
+#sudo cgcreate -g memory:/myappgroup
+#echo $((1000 * 1024 * 1024)) | sudo tee /sys/fs/cgroup/memory/myappgroup/memory.limit_in_bytes
+
 #cam
-/opt/pim/bin/start_cam.sh
+#/opt/pim/bin/start_cam.sh
 
 #background
 /opt/pim/bin/chk_cpu_info.sh 60 &

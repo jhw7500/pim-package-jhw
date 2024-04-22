@@ -14,7 +14,7 @@ do
 done
 
 logger -s -p local0.notice "$(printf '\033[33m')[$KEY][$tag:$LINENO] complete dependent package installation$(printf '\033[0m')"
-update_edgeconf.sh
+/opt/pim/bin/update_edgeconf.sh
 
 #echo -e "\e[33mcomplete install_deb.sh\e[0m"
 echo -e "\e[33mif you want the streamApp, run 'update_edgeconf 1', but want the gstApp, run 'update_edgeconf 2'\e[0m"

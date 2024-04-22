@@ -66,13 +66,14 @@ mp4date=0
 mp4date2=0
 check_time=10
 
+/opt/pim/bin/start_cam.sh
+
 GetConfig
 #rst_time=60
 #StartApp start_cam.sh
 #StartScript restart_app.sh
 
-logger -p local0.notice "[$KEY][$tag:$LINENO] ch0:$cam_ch0, ch1:$cam_ch1, ch2:$cam_ch2, ch3:$cam_ch3, srt:$srt_en, time_rec_en:$time_rec_en"
-logger -p local0.notice "[$KEY][$tag:$LINENO] vhl_name:$vhl_name, rec_time:$rec_time, rst_time:$rst_time"
+logger -p local0.notice "[$KEY][$tag:$LINENO] ch0:$cam_ch0, ch1:$cam_ch1, ch2:$cam_ch2, ch3:$cam_ch3, srt:$srt_en, time_rec_en:$time_rec_en, vhl_name:$vhl_name, rec_time:$rec_time, rst_time:$rst_time"
 
 while :
 do
@@ -237,7 +238,7 @@ END
             sync
 		fi
     else
-        if [ "$timer" -ge "$rec_time"+"$check_time" ]; then
+        if [ "$timer" -ge $((rec_time+check_time)) ]; then
             logger -p local0.error "[$KEY][$tag:$LINENO start_f init beacause file not create"
             start_f=0
         fi

@@ -2,26 +2,17 @@
 #
 #			For more information see rsyslog.conf(5) and /etc/rsyslog.conf
 
-#$template SysLocal,"/var/log/%fromhost%-%$YEAR%-%$MONTH%-%$DAY%.log"
-#$template SysLocal,"/var/log/cantops/%$YEAR%%$MONTH%%$DAY%.log"
-$template myformat,"%TIMESTAMP:1:10:date-rfc3339% %TIMESTAMP:19:12:date-rfc3339% %syslogtag%%msg%\n"
-$template myformat2, "%timegenerated:1:10:date-rfc3339% %timegenerated:12:23:date-rfc3339% %programname%[%syslogpriority-text%]%msg%\n"
-$ActionFileDefaultTemplate myformat2
 #
 # First some standard log files.  Log by facility.
 #
-auth,authpriv.*		/var/log/auth.log
-*.*;auth,authpriv,local0,kern.none;		/var/log/cantops/syslog
+auth,authpriv.*			/var/log/auth.log
+*.*;auth,authpriv.none		-/var/log/syslog
 #cron.*				/var/log/cron.log
 #daemon.*			-/var/log/daemon.log
-#kern.*				-/var/log/kern.log
+kern.*				-/var/log/kern.log
 #lpr.*				-/var/log/lpr.log
 mail.*				-/var/log/mail.log
 #user.*				-/var/log/user.log
-#local0.notice			?SysLocal
-local0.notice		/var/log/cantops/local0.log
-kern.notice			/var/log/cantops/kern.log
-#local0.alert        /dev/console
 
 #
 # Logging for the mail system.  Split it up so that
@@ -46,7 +37,6 @@ mail.err			/var/log/mail.err
 # Emergencies are sent to everybody logged in.
 #
 *.emerg				:omusrmsg:*
-#local0.crit         :omusrmsg:*
 
 #
 # I like to have messages displayed on the console, but only on a virtual

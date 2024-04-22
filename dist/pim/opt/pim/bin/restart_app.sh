@@ -25,10 +25,7 @@ fi
 
 
 while [ 1 ]; do
-    rst_f=$(cat /tmp/restart_flag 2>/dev/null| tr -d '\n')
-    if [ -n "$rst_f"  ]; then
-        #logger -p local0.notice "[$KEY][$tag:$LINENO] rst_f set"
-        #cat /dev/null > /tmp/restart_flag
+    if [ -f /tmp/init_cam_flag ] || [ -f /tmp/restart_flag ]; then
         sleep 3
         continue
     fi
