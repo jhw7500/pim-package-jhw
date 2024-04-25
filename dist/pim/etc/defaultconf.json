@@ -1,0 +1,273 @@
+{
+    "config_version": "1.1.1",
+    "manufacturer": "cantops",
+    "daughter_board_type": "analog",
+    "mainboard_version": "1.0.0",
+    "fw_version": "4.0.6.20060216",
+    "device_id": "702c1f8596a9",
+    "testmode": false,
+    "NETWORK": {
+        "used": "WLAN0",
+        "WLAN0": {
+            "security": "EAP",
+            "ssid": "ureadythings",
+            "identity": "702c1f8596a9@u.things",
+            "passwd": "qwe124@@",
+            "method": "DHCP",
+            "address": "100.100.100.102",
+            "netmask": "255.255.255.0",
+			"gateway":	""
+        },
+        "ETH0": {
+            "method": "static",
+            "address": "100.100.100.101",
+            "netmask": "255.255.255.0",
+			"gateway":	""
+        },
+        "ETH1": {
+            "method": "static",
+            "address": "199.10.100.21",
+            "netmask": "255.255.255.0",
+			"gateway":	""
+        }
+    },
+    "SENSORS": {
+        "ACC": {
+            "use": true,
+            "samplerate": 1000,
+            "scale": 1000,
+            "targetX": "x",
+            "targetY": "y",
+            "targetZ": "z",
+            "offset": [
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0
+            ],
+            "use_filter": false,
+            "ntaps": 101,
+            "cutoff": 499,
+            "decimation": 1,
+            "dataframe":	"ACC"
+        },
+        "ADC": {
+            "use": true,
+            "version": null,
+            "fpga_version":	"1.0.0",
+            "deviceid": [
+                0,
+                0
+            ],
+            "samplerate": 20000,
+            "cnv_unit": [
+                -1000,
+                -100,
+                1000,
+                100,
+                1000,
+                100,
+                1000,
+                100,
+                1000,
+                100,
+                1000,
+                100,
+                1000,
+                100,
+                1000,
+                100
+            ],
+            "use_filter": false,
+            "ntaps": 51,
+            "cutoff": 499,
+            "decimation": 20,
+            "dataframe":	"ADC"
+        },
+        
+      "ETHERCAT": {
+        "use": false,
+        "samplerate": 1000,
+        "version": "V1.00",
+        "deviceid": [
+           "RX",
+           "TX"
+        ],
+        "direction": "RX",
+        "PDO_len": 312,
+        "#motx_type": [
+           "datatype",
+           "startidx",
+           "endidx",
+           "gain"
+        ],
+        "mot1_sp": [
+           "<i",
+           220,
+           224,
+           1
+        ],
+        "mot1_tq": [
+           "<h",
+           218,
+           220,
+           1
+        ],
+        "mot2_sp": [
+           "<i",
+           244,
+           248,
+           1
+        ],
+        "mot2_tq": [
+           "<h",
+           242,
+           244,
+           1
+        ],
+        "mot3_sp": [
+           "<i",
+           268,
+           272,
+           1
+        ],
+        "mot3_tq": [
+           "<h",
+           266,
+           268,
+           1
+        ],
+        "mot4_sp": [
+           "<i",
+           292,
+           296,
+           1
+        ],
+        "mot4_tq": [
+           "<h",
+           290,
+           292,
+           1
+        ],
+        "use_filter": false,
+        "ntaps": 101,
+        "cutoff": 499,
+        "decimation": 1,
+        "dataframe": "ETHERCAT_CLS40C"
+     }
+    },
+    "factory": "UNKNOWN",
+    "target": "OHT",
+    "maker": "semes",
+    "TARGET_OHT": {
+        "ip": "100.100.100.100",
+        "port": 7007,
+        "id": "VD9999",
+        "comm_period_ms": 500,
+        "acc_warn_enable": false,
+        "acc_warnlevel_mg": 800,
+        "angle_warnlevel_deg": 6,
+        "angle_warnlevel_duration": 3
+    },   
+    "TARGET_STK": {
+        "id"                : "",
+        "ip": "100.100.100.15",
+        "port"           : 9001,
+        "mode"              : 1,
+        "main"              : true,
+        "heartBeatPort"     : 9002,
+        "heartBeatTimeoutMs": 60000,
+        "hSizeLimitMB"      : 100,
+        "nSizeLimitMB"      : 70
+    },
+    "SERVER_JINDAN": {
+        "interface": "WLAN0",
+        "ip": "10.221.10.62",
+        "port": 9661,
+        "id": "999"
+    },
+	"CRON_PROPERTIES":	{
+		"JOBS":	{
+			"GENERATE_DATA":	{
+				"use":	true,
+				"period":	5,
+				"SUBJOBS":	{
+					"ANALYZER_ZONE":	{
+						"use":	true,
+						"sp1_threshold":	1000,
+						"sp2_threshold":	1000,
+						"sp3_threshold":	30,
+						"sp4_threshold":	30,
+						"thr_elapsed":	1,
+						"min_axis2report":	2,
+						"saveAddBehind":	120,
+						"saveAddFront":	30,
+						"overwrite":	true,
+						"data":	"adc"
+					},
+					"FULLTIME_ANALYSIS":	{
+						"use":	false,
+						"FEATURES":	{
+							"guide_roller_rpm":	[600],
+							"constvel":	[2803, 0.05],
+							"boltloosestatus":	[],
+							"overSpeedRPM":	[2900]
+						}
+					},
+					"ADV_ANALYSIS":	{
+						"use":	false,
+						"saveTimeLength":	200,
+						"data":	"eadc"
+					},
+					"STK_ANALYSIS_HC":	{
+						"use":	false,
+						"saveTimeLength":	616,
+						"data":	"hadc"
+					},
+					"STK_ANALYSIS_TR":	{
+						"use":	false,
+						"saveTimeLength":	616,
+						"data":	"adc"
+					}
+				}
+			},
+			"WIFI_CHECKER":	{
+				"use":	false,
+				"period":	60
+			}
+		},
+		"tmpfs_marginsize":	15,
+		"mode":	"NA"
+	},
+    "log_level": "INFO",
+    "logfile_level": "INFO",
+    "ipc_addr": "/var/run/sea/sea_data.sock",
+    "sdcard_path": "/mnt/sd/",
+    "reset_hour": 7,
+    "limit_cpu_temp": 75,
+    "chunk_store_sec": 60,
+    "reboot_count_1day": 0,
+    "fw_updated": false,
+    "force_reboot": false,
+    "tmpfs_data": "/root/data/",
+    "tmpfs_result": "/root/result/",
+    "tmpfs_log": "/root/log/",
+    "tmpfs_socket": "/root/socket/",
+    "shared_v": "/root/shared_v/",
+    "zmq_ext_pub": "tcp://127.0.0.1:9991",
+    "zmq_ext_sub": "tcp://127.0.0.1:9992",
+    "zmq_proxy_pub": "ipc:///root/socket/main_publish.sock",
+    "zmq_proxy_sub": "ipc:///root/socket/main_subscribe.sock",
+    "zmq_log": "ipc:///root/socket/log.sock",
+    "server": "JINDAN",
+    "acc_report_min": 10,
+    "tq_report_min": 10,
+    "device_report_min": 1,
+    "SERVER_DSIOT": {
+        "pass": 0
+    }    
+}

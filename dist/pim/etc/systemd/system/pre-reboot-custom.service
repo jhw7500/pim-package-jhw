@@ -1,0 +1,12 @@
+[Unit]
+Description=pre-reboot-custom service
+DefaultDependencies=no
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/cis/bin/watchdog_timeout.sh shutdown
+TimeoutStartSec=0
+
+[Install]
+WantedBy=shutdown.target

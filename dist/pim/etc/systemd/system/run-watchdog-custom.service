@@ -1,0 +1,11 @@
+[Unit]
+Description=run-watchdog-custom service
+Before=multi-user.target
+
+[Service]
+Type=simple
+RemainAfterExit=yes
+ExecStart=/opt/cis/bin/watchdog_timeout.sh run
+
+[Install]
+WantedBy=multi-user.target
