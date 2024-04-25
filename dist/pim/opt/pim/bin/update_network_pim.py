@@ -195,7 +195,7 @@ with open("/tmp/wlp1s0.yaml", "w") as f :
             f.write("dummy_ssid: {}\n")
         else :
             f.write(edgeconf['NETWORK']['WLAN0']['ssid'])
-        f.write(": {}\n")
+            f.write(": {}\n")
     
     if edgeconf['NETWORK']['WLAN0']['method'] == 'static' :
         f.write("      addresses: [")
