@@ -52,6 +52,12 @@ def get_json_val(json_key):
     elif json_key == "dev_sd" :
         json_path = "/etc/cts/model_info.json"
         json_defval = "mmcblk1"
+    elif json_key == "model_name" :
+        json_path = "/etc/cts/model_info.json"
+        json_defval = "cis-c2"
+    elif json_key == "hostname" :
+        json_path = "/etc/cts/sysinfo.json"
+        json_defval = "noname"
     elif json_key == "iot_longrun_en" :
         json_path = "/etc/cts/model_override.json"
         json_defval = False
@@ -138,6 +144,22 @@ def get_json_val(json_key):
         try:
             if is_json_key_present(jsonconf["dev"],"sd") == True:
                 return jsonconf["dev"]["sd"]
+            else :
+                return json_defval
+        except:
+            return json_defval
+    elif json_key == "model_name" :
+        try:
+            if is_json_key_present(jsonconf,"model_name") == True:
+                return jsonconf["model_name"]
+            else :
+                return json_defval
+        except:
+            return json_defval
+    elif json_key == "hostname" :
+        try:
+            if is_json_key_present(jsonconf,"hostname") == True:
+                return jsonconf["hostname"]
             else :
                 return json_defval
         except:
