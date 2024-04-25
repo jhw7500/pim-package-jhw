@@ -3,6 +3,11 @@
 ############################################################
 # preinst script main
 ############################################################
+# Include debconf library.
+. /usr/share/debconf/confmodule
+db_get pim-mp/model
+model=$RET
+
 PACKAGE_NAME="$DPKG_MAINTSCRIPT_PACKAGE"
 tag=$(basename "$0")
 KEY=PKG
@@ -13,7 +18,7 @@ systemctl stop cam-operate
 echo "stop cam-operate daemon"
 case "$1" in
 install)
-  echo "preinst install"
+  echo "preinst install ($model)"
   killall apt apt-get
   rm /var/lib/apt/lists/lock
   rm /var/cache/apt/archives/lock
@@ -29,7 +34,7 @@ install)
   ;;
 
 upgrade)
-  echo "preinst upgrade"
+  echo "preinst upgrade ($model)"
 #  systemctl stop rsyslog
   ;;
 

@@ -3,6 +3,10 @@
 ############################################################
 # postrm script main
 ############################################################
+# Include debconf library.
+. /usr/share/debconf/confmodule
+db_get pim-mp/model
+model=$RET
 
 case "$1" in
 purge)
@@ -16,11 +20,11 @@ purge)
   ;;
 
 upgrade)
-  echo "purge upgrade"
+  echo "purge upgrade ($model)"
   ;;
 
 remove)
-  echo "postrm remove"
+  echo "postrm remove ($model)"
   ;;
 
 *)

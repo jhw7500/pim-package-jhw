@@ -3,14 +3,18 @@
 ############################################################
 # prerm script main
 ############################################################
+# Include debconf library.
+. /usr/share/debconf/confmodule
+db_get pim-mp/model
+model=$RET
 
 case "$1" in
 upgrade)
-  echo "prerm upgrade"
+  echo "prerm upgrade ($model)"
   ;;
 
 remove)
-  echo "prerm remove"
+  echo "prerm remove ($model)"
   cp /opt/pim/etc/rsyslog.d/50-default.conf /etc/rsyslog.d/
   ;;
 

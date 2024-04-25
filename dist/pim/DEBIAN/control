@@ -1,5 +1,7 @@
 Package: pim-mp
-Version: 0.4.0
+Version: 0.4.1
+Replaces: cis
+Breaks: cis
 Section: full
 Priority: optional
 Architecture: arm64 
@@ -48,3 +50,4 @@ Description: PIM application
 0.3.8 : dhcp bug fix, remove cleaning mount dir
 0.3.9 : streamApp(1.9), PIMCAM(1.7), gstApp(0.5), json format, update edgeconf, package update, etc..
 0.4.0 : streamApp(2.0), PIMCAM(1.8), startCam option
+0.4.1 : combine cis iot app
