@@ -24,8 +24,6 @@ sleep 2
 modprobe imx8-media-dev
 sleep 2
 #PIMCAM -m 0 -c 3 &
-rm /tmp/init_cam_flag
-
 FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} |grep -v '/$' | tail -1 |tr -d '\r\n')
 
 cam_ch0=$(jq '.VHL_CAM.i2c2.ch0.enable' "$FILE_JSON")
@@ -48,6 +46,7 @@ else
 fi
 
 logger -p local0.notice "[RST][$tag:$LINENO] module reset end"
+rm /tmp/init_cam_flag
 /opt/pim/bin/start_cam.sh $rst_time
 
 #/opt/pim/bin/restart_app.sh &

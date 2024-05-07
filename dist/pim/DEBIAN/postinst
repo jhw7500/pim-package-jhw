@@ -432,7 +432,7 @@ END
   /opt/pim/bin/change_line.sh "local_umask=022" "local_umask=" /etc/vsftpd.conf
   /opt/pim/bin/change_line.sh "idle_session_timeout=0" "idle_session_timeout=" /etc/vsftpd.conf
   /opt/pim/bin/change_line.sh "chroot_local_user=YES" "chroot_local_user=" /etc/vsftpd.conf
-  /opt/pim/bin/change_line.sh "local_root=/mnt" "local_root=" /etc/vsftpd.conf
+  /opt/pim/bin/change_line.sh "local_root=/mnt/sd_cam" "local_root=" /etc/vsftpd.conf
   /opt/pim/bin/change_line.sh "allow_writeable_chroot=YES" "allow_writeable_chroot=" /etc/vsftpd.conf
   /opt/pim/bin/change_line.sh "#\$PrivDropToUser syslog" "\$PrivDropToUser" /etc/rsyslog.conf
   /opt/pim/bin/change_line.sh "#\$PrivDropToGroup syslog" "\$PrivDropToGroup" /etc/rsyslog.conf
@@ -453,15 +453,15 @@ END
 
   if [ "$model" == "cis-a2" ] || [ "$model" == "cis-c2" ]; then
         echo "sea_app is installed"
-        /opt/pim/bin/change_line.sh "    #/opt/pim/bin/chk_voltage.sh" "/opt/pim/bin/chk_voltage.sh" /opt/pim/bin/BG_Check_for_pim.sh
-        /opt/pim/bin/change_line.sh "    #/opt/pim/bin/led_ctrl.sh 2>/dev/null" "/opt/pim/bin/led_ctrl.sh 2>/dev/null" /opt/pim/bin/BG_Check_for_pim.sh
+        /opt/pim/bin/change_line.sh "    #/opt/pim/bin/chk_voltage.sh 2>/dev/null" "/opt/pim/bin/chk_voltage.sh" /opt/pim/bin/BG_Check_for_pim.sh
+        /opt/pim/bin/change_line.sh "    #/opt/pim/bin/led_ctrl.sh 2>/dev/null" "/opt/pim/bin/led_ctrl.sh" /opt/pim/bin/BG_Check_for_pim.sh
         #/opt/pim/bin/comment_line.sh "/opt/pim/bin/chk_voltage.sh" /opt/pim/bin/BG_Check_for_pim.sh
         #/opt/pim/bin/comment_line.sh "/opt/pim/bin/led_ctrl.sh 2>/dev/null" /opt/pim/bin/BG_Check_for_pim.sh
-  else
+    else
         echo "sea_app is not installed"
-        /opt/pim/bin/change_line.sh "    /opt/pim/bin/chk_voltage.sh" "/opt/pim/bin/chk_voltage.sh" /opt/pim/bin/BG_Check_for_pim.sh
-        /opt/pim/bin/change_line.sh "    /opt/pim/bin/led_ctrl.sh 2>/dev/null" "/opt/pim/bin/led_ctrl.sh 2>/dev/null" /opt/pim/bin/BG_Check_for_pim.sh
-  fi
+        /opt/pim/bin/change_line.sh "    /opt/pim/bin/chk_voltage.sh 2>/dev/null" "/opt/pim/bin/chk_voltage.sh" /opt/pim/bin/BG_Check_for_pim.sh
+        /opt/pim/bin/change_line.sh "    /opt/pim/bin/led_ctrl.sh 2>/dev/null" "/opt/pim/bin/led_ctrl.sh" /opt/pim/bin/BG_Check_for_pim.sh
+    fi
 
 
   #update_json 2 &

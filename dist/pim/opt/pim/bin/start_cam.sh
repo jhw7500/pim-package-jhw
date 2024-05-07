@@ -79,7 +79,7 @@ if CheckApp "BG_Check_for_pim.sh"; then
     killall BG_Check_for_pim.sh
 fi
 
-logger -p local0.notice "[$key][$tag:$LINENO] $app -d $delay -m $iomode &"
+#logger -p local0.notice "[$key][$tag:$LINENO] $app -d $delay -m $iomode &"
 StartCam $app $delay $iomode
 exit 0
 
