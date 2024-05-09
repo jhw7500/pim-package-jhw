@@ -89,7 +89,7 @@ cp ${BASEDIR}/vsd/build/vsd ${BASEDIR}/dist/pim/usr/local/bin/
 cp ${BASEDIR}/vcm/build/vcm ${BASEDIR}/dist/pim/usr/local/bin/
 cp -R ${BASEDIR}/dist ${BASEDIR}/release
 cp ${BASEDIR}/adab/build/adab ${BASEDIR}/release/pim/opt/cis/bin/adab_adc
-cp ${BASEDIR}/adab/build/adab_ecat ${BASEDIR}/release/pim/opt/cis/bin/adab_ecat
+cp ${BASEDIR}/adab_ecat/build/adab_ecat ${BASEDIR}/release/pim/opt/cis/bin/adab_ecat
 cp ${BASEDIR}/cism/build/cism ${BASEDIR}/release/pim/opt/cis/bin/
 cp ${BASEDIR}/stm32update/build/stm32update ${BASEDIR}/release/pim/opt/cis/bin/
 cd ${BASEDIR}/release
