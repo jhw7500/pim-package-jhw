@@ -1,3 +1,5 @@
+import sys
+sys.path.append("/opt/cis/bin")
 import getconfval
 import json
 import subprocess
@@ -31,38 +33,6 @@ def calcu_set_static_ip(ip_str, sub_str):
     
     return str(ipadd)
 
-def calcu_set_gateway_ip(ip_str, sub_str):
-    try:
-        ipadd = ipaddress.ip_interface(ip_str + '/' + sub_str)
-    except ValueError:
-        firstNum = int(ip_str.split(".")[0])
-        if firstNum < 128 :
-            ipadd = ipaddress.ip_interface(ip_str + '/8')
-        elif firstNum < 192 :
-            ipadd = ipaddress.ip_interface(ip_str + '/16')
-        else : 
-            ipadd = ipaddress.ip_interface(ip_str + '/24')
-    
-    return str(ipadd.network[1])
-
-def search_conf(pattern):
-    conf_file = ""
-    conf_list = glob.glob(pattern)
-    if len(conf_list) == 1:
-        return conf_list[0]
-    else :
-        return False
-
-def get_global_conf():
-    global_conf_path = ""
-    try:
-        with open("/tmp/global_edgeconf_path", "r") as f :
-            global_conf_path = f.readline()
-            f.close()
-    except:
-        return ""
-    return global_conf_path
-
 def _run_command(command):
     result = True
     try:
@@ -92,21 +62,11 @@ def is_active_wpa_supplicant():
 
 #################################################
 
-json_path = get_global_conf()
+json_path = getconfval.get_global_conf()
 #print("json_path : "+json_path)
 
 with open(json_path, "r") as f :
     edgeconf = json.load(f)
-
-sysinfo = {
-
-}
-
-try:
-    with open("/etc/cts/sysinfo.json", "r") as sys_f :
-        sysinfo = json.load(sys_f)
-except:
-	print("/etc/cts/sysinfo.json file not found")
 
 assert edgeconf['NETWORK']
 assert edgeconf['NETWORK']['ETH0']
@@ -320,11 +280,10 @@ if os.path.isfile(file_wpa_supplicant) == False or cmp('/tmp/wpa_supplicant.conf
 
 subprocess.call(['rm','/tmp/wpa_supplicant.conf'])
 
-#wlan_dev="wlp1s0"
 if wlan_dev == "wlan0" :
-    subprocess.call(['rm','/etc/netplan/wlp1s0'])
+    subprocess.run("rm /etc/netplan/wlp1s0.yaml > /dev/null 2>&1", shell=True)
 elif wlan_dev == "wlp1s0" :
-    subprocess.call(['rm','/etc/netplan/wlan0'])
+    subprocess.run("rm /etc/netplan/wlan0.yaml > /dev/null 2>&1", shell=True)
 
 file_conn_wlan0 = '/etc/netplan/'+wlan_dev+'.yaml'
 if os.path.isfile(file_conn_wlan0) == False or cmp(temp_conn_wlan0,file_conn_wlan0) == False :
@@ -348,6 +307,7 @@ if change_netplan_flag == True :
     subprocess.call(['netplan','apply'])
     if wlan_chmask_use == True :
         set_wpa_suppl()
+    else :
+        subprocess.call(['/opt/cis/bin/update_wpaprm.sh'])
 
-subprocess.call(['/opt/cis/bin/update_wpaprm.sh'])
 subprocess.run("wpa_cli -i "+wlan_dev+" scan > /dev/null 2>&1", shell=True)

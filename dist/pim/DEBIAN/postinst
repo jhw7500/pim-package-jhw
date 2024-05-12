@@ -465,8 +465,8 @@ END
 
 
   #update_json 2 &
-  echo "update_network_pim.py"
-  python /opt/pim/bin/update_network_pim.py
+  echo "update_network.py"
+  python /opt/cis/bin/update_network.py
   #/opt/pim/bin/bgscan_polling.sh
   ln -s /opt/pim/bin/update_edgeconf.sh /usr/local/bin/update_edgeconf
 

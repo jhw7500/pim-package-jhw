@@ -2,6 +2,7 @@ import json
 import subprocess
 import os.path
 import sys
+import glob
 
 def is_json_key_present(json, key):
     try:
@@ -10,15 +11,21 @@ def is_json_key_present(json, key):
         return False
     return True
 
+def search_conf(pattern):
+    conf_file = ""
+    conf_list = glob.glob(pattern)
+    if len(conf_list) == 1:
+        return conf_list[0]
+    else :
+        return False
+
 def get_global_conf():
-    global_conf_path = ""
-    try:
-        with open("/tmp/global_edgeconf_path", "r") as f :
-            global_conf_path = f.readline()
-            f.close()
-    except:
-        return ""
-    return global_conf_path
+    json_path = search_conf(r"/root/shared_v/edgeconf_*.json")
+    if json_path == False :
+        json_path = search_conf(r"/root/shared_v/backup_edgeconf_*.json")
+        if json_path == False :
+            json_path = "/etc/defaultconf.json"
+    return json_path
 
 def get_json_val(json_key):
     json_defval = ""
@@ -28,6 +35,9 @@ def get_json_val(json_key):
     elif json_key == "NETWORK_USED" :
         json_path = get_global_conf()
         json_defval = "WLAN0"
+    elif json_key == "WIFI_CHMASK_EN" :
+        json_path = get_global_conf()
+        json_defval = False
     elif json_key == "WIFI_BGSCAN_PARAM" :
         json_path = get_global_conf()
         json_defval = "simple:3:-70:300"
@@ -36,7 +46,7 @@ def get_json_val(json_key):
         json_defval = "periodic:30"
     elif json_key == "mainboard_type" :
         json_path = "/etc/cts/model_info.json"
-        json_defval = "mini"
+        json_defval = "plus"
     elif json_key == "daughterboard_type" :
         json_path = "/etc/cts/model_info.json"
         json_defval = "none"
@@ -45,16 +55,16 @@ def get_json_val(json_key):
         json_defval = "none"
     elif json_key == "dev_uart" :
         json_path = "/etc/cts/model_info.json"
-        json_defval = "wlan0"
+        json_defval = "/dev/ttymxc3"
     elif json_key == "dev_wlan" :
         json_path = "/etc/cts/model_info.json"
-        json_defval = "/dev/ttymxc3"
+        json_defval = "wlp1s0"
     elif json_key == "dev_sd" :
         json_path = "/etc/cts/model_info.json"
-        json_defval = "mmcblk1"
+        json_defval = "mmcblk0"
     elif json_key == "model_name" :
         json_path = "/etc/cts/model_info.json"
-        json_defval = "cis-c2"
+        json_defval = "pim-x4"
     elif json_key == "hostname" :
         json_path = "/etc/cts/sysinfo.json"
         json_defval = "noname"
@@ -80,6 +90,14 @@ def get_json_val(json_key):
         try:
             if is_json_key_present(jsonconf["NETWORK"],"used") == True:
                 return jsonconf["NETWORK"]["used"]
+            else :
+                return json_defval
+        except:
+            return json_defval
+    elif json_key == "WIFI_CHMASK_EN" :
+        try:
+            if is_json_key_present(jsonconf["NETWORK"]["WLAN0"],"chmask") == True:
+                return jsonconf["NETWORK"]["WLAN0"]["chmask"]
             else :
                 return json_defval
         except:
@@ -184,5 +202,3 @@ if __name__ == "__main__":
         print(get_json_val(json_key))
     else :
         sys.exit()
-
-

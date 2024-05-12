@@ -7,5 +7,5 @@ fi
 
 _wpa_autoscan_parm=$(python3 /opt/cis/bin/getconfval.py WIFI_AUTOSCAN_PARAM | tr -d '\r\n')
 if [ ! -z "$_wpa_autoscan_parm" -o "$_wpa_autoscan_parm" == " " -o "$_wpa_autoscan_parm" == "" ]; then
-    wpa_cli -p /run/wpa_supplicant -i $_dev_wlan autoscan $_wpa_autoscan_parm > /dev/null 2> /dev/null
+    wpa_cli -p /run/wpa_supplicant -i $_dev_wlan autoscan '"'$_wpa_autoscan_parm'"' > /dev/null 2> /dev/null
 fi

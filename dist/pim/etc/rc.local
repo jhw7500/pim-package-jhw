@@ -62,7 +62,7 @@ echo 1 > /sys/devices/platform/leds/leds/gpio2_led/brightness
 #/opt/pim/bin/cam_rotate_setting.sh &
 
 #bg scan check
-/opt/pim/bin/bgscan_polling.sh & 2>/dev/null
+nohup /opt/pim/bin/bgscan_polling.sh 1>/dev/null 2>&1 &
 
 #Network Test
 #/opt/pim/bin/wifilog_for_pim.sh &
