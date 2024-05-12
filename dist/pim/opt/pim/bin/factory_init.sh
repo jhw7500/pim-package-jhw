@@ -15,7 +15,7 @@ cp /opt/pim/config/ord_vcm_conf.json /root/shared_v/
 
 #network setting
 python3 /opt/pim/bin/update_eap_id.py
-python3 python3 /opt/pim/bin/init.py
+python3 /opt/cis/bin/update_network.py
 
 #log init
 rm /var/log/cantops/*.*
