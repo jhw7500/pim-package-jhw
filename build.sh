@@ -99,3 +99,22 @@ echo version:$version
 dpkg -b pim
 #dpkg-deb --build pim
 cp pim.deb $package-$version.deb
+
+#### create_upgrade_file ######################
+if [ -d ${BASEDIR}/release/upgrade_file ]; then
+    rm -rf ${BASEDIR}/release/upgrade_file
+fi
+cp -R ${BASEDIR}/upgrade_file ${BASEDIR}/release
+cp ${BASEDIR}/release/$package-$version.deb ${BASEDIR}/release/upgrade_file/
+
+${BASEDIR}/dist/pim//opt/pim/bin/change_line.sh 'PIM_DEB_FILE="'"$package-$version.deb"'"' "PIM_DEB_FILE=" ${BASEDIR}/release/upgrade_file/setup.sh > /dev/null
+${BASEDIR}/dist/pim/opt/cis/bin/release_tool.sh create ${BASEDIR}/release/upgrade_file
+
+if [ ! -f ${BASEDIR}/release/upgrade_file.zip ]; then
+    echo "upgrade_file.zip not exist."
+    exit 1
+fi
+ugrade_zip_file=$(echo ${package} | tr [a-z] [A-Z] | tr '-' '_')"_release_"$(echo ${version} | tr '.' '_')".zip"
+mv ${BASEDIR}/release/upgrade_file.zip ${BASEDIR}/release/${ugrade_zip_file}
+
+echo "create ${ugrade_zip_file}"
