@@ -134,17 +134,17 @@ function get_pim_model() {
 }
 
 cd `dirname "$0"`
+BASEDIR=${PWD}
 echo '{"PROGRESS":1,"MSG":"Begin upgrade"}'
 
 ########################################
-## 미설치된 패키지 확인 및 설치               ##
+## Install dependency packages        ##
 ########################################
-echo '{"PROGRESS":2,"MSG":"Install dependency packages"}'
-# 구현필요~~~
 
+${BASEDIR}/install_deb.sh
 
 ########################################
-## cis패키지 설치여부 확인 및 cis패키지 삭제   ##
+## Remove old cis package             ##
 ########################################
 echo '{"PROGRESS":10,"MSG":"Check if cis package is installed"}'
 if [ -n "$(dpkg -s cis 2> /dev/null)" ]; then 
@@ -166,18 +166,11 @@ if [ -n "$(dpkg -s cis 2> /dev/null)" ]; then
 fi
 
 ########################################
-## 모델 확인                             ##
+## Check model                        ##
 ########################################
 echo '{"PROGRESS":20,"MSG":"check model"}'
 
-## Include debconf library.
-#. /usr/share/debconf/confmodule
-#
-## load debconf database
-#db_get pim-mp/model
-#model=$RET
 model=$(get_pim_model)
-
 if [ -z "$model" ] || [ "$model" == "none" ]; then
     model=$(suggest_suitable_model)
 fi
@@ -185,7 +178,7 @@ fi
 echo '{"PROGRESS":21,"MSG":"model='"$model"'"}'
 
 ########################################
-## 통합패키지 설치                        ##
+## Install PIM-MP package             ##
 ########################################
 case $model in
 cis-a2|pim-a2)
@@ -201,11 +194,11 @@ cis-a2|pim-a2)
 esac
 
 echo '{"PROGRESS":23,"MSG":"Start install pim-mp"}'
-dpkg -i pim-mp-0.4.1.deb > /dev/null 2> /dev/null
+dpkg -i $PIM_DEB_FILE > /dev/null 2> /dev/null
 echo '{"PROGRESS":24,"MSG":"End install pim-mp"}'
 
 ########################################
-## 도터보드 펌웨어 확인.                   ##
+## Upgrade daughter board firmware    ##
 ########################################
 case $model in
 cis-a2|pim-a2)
@@ -221,7 +214,7 @@ cis-a2|pim-a2)
 esac
 
 ########################################
-## 앱 실행 및 마무리                      ##
+## Excute APP                         ##
 ########################################
 case $model in
 cis-a2|pim-a2)
@@ -248,4 +241,3 @@ fi
 echo "PIM_DEB_FILE     : $PIM_DEB_FILE" > /root/fwupgrade/version.txt
 echo "DB_FIRMWARE_FILE : $DB_ANAL_FIRMWARE_FILE" >> /root/fwupgrade/version.txt
 echo '{"PROGRESS":100,"MSG":"Finished"}'
-
