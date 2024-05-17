@@ -44,7 +44,7 @@ create_sysinfo() {
     pim-a2) echo "$default_sysinfo_pim_a2" > /etc/cts/sysinfo.json;;
     pim-c2) echo "$default_sysinfo_pim_c2" > /etc/cts/sysinfo.json;;
     pim-x2) echo "$default_sysinfo_pim_x2" > /etc/cts/sysinfo.json;;
-    pim-x4) echo "$default_sysinfo_pim_x2" > /etc/cts/sysinfo.json;;
+    pim-x4) echo "$default_sysinfo_pim_x4" > /etc/cts/sysinfo.json;;
     *) echo "Unknown model $1"; exit 1;;
     esac
 }

@@ -128,7 +128,7 @@ create_model_info() {
     pim-a2) echo "$json_pim_a2" > /etc/cts/model_info.json;;
     pim-c2) echo "$json_pim_c2" > /etc/cts/model_info.json;;
     pim-x2) echo "$json_pim_x2" > /etc/cts/model_info.json;;
-    pim-x4) echo "$json_pim_x2" > /etc/cts/model_info.json;;
+    pim-x4) echo "$json_pim_x4" > /etc/cts/model_info.json;;
     *) echo "Unknown model $1"; exit 1;;
     esac
 }

@@ -324,7 +324,7 @@ makeDirectory /var/log/cantops/dot
 makeDirectory /var/log/cantops/gst
 makeDirectory /share
 makeDirectory /root/boot
-
+makeDirectory /root/fwupgrade
 
 if mount | grep -q "$DEVICE on $MOUNT_POINT"; then
     echo "$DEVICE is already mounted on $MOUNT_POINT."
@@ -468,18 +468,11 @@ END
   echo "update_network.py"
   python /opt/cis/bin/update_network.py
   #/opt/pim/bin/bgscan_polling.sh
+  rm -f /usr/local/bin/update_edgeconf
   ln -s /opt/pim/bin/update_edgeconf.sh /usr/local/bin/update_edgeconf
 
-  if dpkg -l | grep -q "jq "; then
-    /opt/pim/bin/update_edgeconf.sh
-  else
-    #echo -e "\e[33mplease wait until dependent package installation is finished\e[0m"
-    #logger -s -p local0.notice "$(printf '\033[33m')[$KEY][$tag:$LINENO] please wait until dependent package installation is finished$(printf '\033[0m')"
-    /opt/pim/bin/install_deb.sh &
-  fi
-
-  #apt install jq
-  logger -p local0.notice "[$KEY][$tag:$LINENO] $PACKAGE_NAME is finished"
+  /opt/pim/bin/update_edgeconf.sh
+  
   #systemctl start cam-operate
   sync
   ;;
