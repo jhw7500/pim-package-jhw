@@ -103,12 +103,18 @@ configure)
   cp /opt/pim/etc/logrotate.d/rsyslog /etc/logrotate.d/
   cp /opt/pim/etc/samba/smb.conf /etc/samba/
   cp /opt/pim/driver/max9296.ko /lib/modules/$KERNEL_VERSION/kernel/drivers/media/i2c/
-  rm /usr/lib/libpiencypt*
-  rm /usr/lib/libpifilewriter*
-  rm /usr/lib/libpirtspstream*
-  rm /usr/lib/libpirtspstreamserver*
-  rm /usr/lib/libpiutils*
-  rm /usr/lib/libpiwriter*
+  rm -f /usr/lib/libpiencrypt*
+  ln -s /usr/local/lib/libpiencrypt.so.0  /usr/lib/libpiencrypt.so
+  rm -f /usr/lib/libpifilewriter*
+  ln -s /usr/local/lib/libpifilewriter.so.0  /usr/lib/libpifilewriter.so
+  rm -f /usr/lib/libpirtspstream*
+  ln -s /usr/local/lib/libpirtspstream.so.0  /usr/lib/libpirtspstream.so
+  rm -f /usr/lib/libpirtspstreamserver*
+  ln -s /usr/local/lib/libpirtspstreamserver.so.0  /usr/lib/libpirtspstreamserver.so
+  rm -f /usr/lib/libpiutils*
+  ln -s /usr/local/lib/libpiutils.so.0  /usr/lib/libpiutils.so
+  rm -f /usr/lib/libpiwriter*
+  ln -s /usr/local/lib/libpiwriter.so.0  /usr/lib/libpiwriter.so
 
   ## cis
   rm -f /etc/init.d/cis.sh
