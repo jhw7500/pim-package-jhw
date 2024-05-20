@@ -172,7 +172,7 @@
         "fps": 15,
         "line": "NONAME",
         "recording_time": 1,
-        "vhl_name": "VD9999",
+        "vhl_name": "VD3001",
         "log_level": 5,
         "debug_level": 0,
         "app": "streamApp",
@@ -230,7 +230,7 @@
     },
     "factory": "UNKNOWN",
     "target": "OHT",
-    "maker": "semes",
+    "maker": "user",
     "TARGET_OHT": {
         "ip": "100.100.100.100",
         "port": 7007,

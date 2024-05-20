@@ -11,8 +11,8 @@
             "netmask": "255.255.255.0",
             "gateway": "",
             "bgscan": "simple:3:-65:30",
-            "chmask": false,
-            "mask_freq": null
+            "chmask": true,
+            "mask_freq": [ 5745, 5765 ]
         },
         "ETH0": {
             "method": "static",
@@ -165,7 +165,7 @@
         "fps": 15,
         "line": "NONAME",
         "recording_time": 1,
-        "vhl_name": "VD9999",
+        "vhl_name": "VD3001",
         "log_level": 5,
         "debug_level": 0,
         "app": "streamApp",
