@@ -8,13 +8,13 @@ logger -p local0.notice [FIN][$tag:$LINENO] FACTORY INIT START
 
 #edgeconf_pim.json init
 rm /root/shared_v/edgeconf_*.json
-cp /opt/pim/config/edgeconf_*.json /root/shared_v/
+cp /etc/defaultconf.json /root/shared_v/edgeconf_pim.json
 
 #ord_vcm_conf.json init
 cp /opt/pim/config/ord_vcm_conf.json /root/shared_v/
 
 #network setting
-python3 /opt/pim/bin/update_eap_id.py
+python3 /opt/cis/bin/init.py power_on
 python3 /opt/cis/bin/update_network.py
 
 #log init

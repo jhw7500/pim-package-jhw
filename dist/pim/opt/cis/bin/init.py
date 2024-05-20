@@ -287,6 +287,28 @@ def init_conf(conf_path):
         edgeconf["SENSORS"]["ADC"]["version"] = sysinfo["daughterboard_version"]
         edgeconf["SENSORS"]["ADC"]["fpga_version"] = fwver
 
+    cam_max_ch=getconfval.get_json_val("cam_max_channel")
+    if cam_max_ch < 4:
+        if is_json_key_present(edgeconf, "VHL_CAM") == True:
+            if is_json_key_present(edgeconf["VHL_CAM"], "i2c1") == True:
+                if is_json_key_present(edgeconf["VHL_CAM"]["i2c1"],"ch3") == True:
+                    edgeconf["VHL_CAM"]["i2c1"]["ch3"]["enable"] = False
+    if cam_max_ch < 3:
+        if is_json_key_present(edgeconf, "VHL_CAM") == True:
+            if is_json_key_present(edgeconf["VHL_CAM"], "i2c1") == True:
+                if is_json_key_present(edgeconf["VHL_CAM"]["i2c1"],"ch2") == True:
+                    edgeconf["VHL_CAM"]["i2c1"]["ch2"]["enable"] = False
+    if cam_max_ch < 2:
+        if is_json_key_present(edgeconf, "VHL_CAM") == True:
+            if is_json_key_present(edgeconf["VHL_CAM"], "i2c2") == True:
+                if is_json_key_present(edgeconf["VHL_CAM"]["i2c2"],"ch1") == True:
+                    edgeconf["VHL_CAM"]["i2c2"]["ch1"]["enable"] = False
+    if cam_max_ch < 1:
+        if is_json_key_present(edgeconf, "VHL_CAM") == True:
+            if is_json_key_present(edgeconf["VHL_CAM"], "i2c2") == True:
+                if is_json_key_present(edgeconf["VHL_CAM"]["i2c2"],"ch0") == True:
+                    edgeconf["VHL_CAM"]["i2c2"]["ch0"]["enable"] = False
+
     new_json_str = json.dumps(edgeconf, indent=3)
     if edgeconf_file_error == True or prev_json_str != new_json_str :
         print("edgeconf json data is different. save file.")

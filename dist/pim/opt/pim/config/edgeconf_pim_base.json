@@ -1,0 +1,224 @@
+{
+    "NETWORK": {
+        "used": "WLAN0",
+        "WLAN0": {
+            "security": "EAP",
+            "ssid": "ureadythings",
+            "identity": "c0ee40c518fc@u.things",
+            "passwd": "qwe124@@",
+            "method": "DHCP",
+            "address": "100.100.100.102",
+            "netmask": "255.255.255.0",
+            "gateway": "",
+            "bgscan": "simple:3:-65:30",
+            "chmask": false,
+            "mask_freq": null
+        },
+        "ETH0": {
+            "method": "static",
+            "address": "100.100.100.101",
+            "netmask": "255.255.255.0",
+            "gateway": ""
+        },
+       "ETH1": {
+          "method": "static",
+          "address": "199.10.100.21",
+          "netmask": "255.255.255.0",
+          "gateway": ""
+        }
+    },
+    "SENSORS": {
+        "ACC": {
+            "use": true,
+            "samplerate": 1000,
+            "scale": 1000,
+            "targetX": "x",
+            "targetY": "y",
+            "targetZ": "z",
+            "offset": [
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0
+            ],
+            "use_filter": false,
+            "ntaps": 101,
+            "cutoff": 499,
+            "decimation": 1,
+            "dataframe": "ACC"
+        },
+        "ADC": {
+            "use": true,
+            "version": "",
+            "fpga_version": "",
+            "deviceid": [
+                0,
+                0
+            ],
+            "samplerate": 20000,
+            "cnv_unit": [
+                -1000,
+                -100,
+                1000,
+                100,
+                1000,
+                100,
+                1000,
+                100,
+                1000,
+                100,
+                1000,
+                100,
+                1000,
+                100,
+                1000,
+                100
+            ],
+            "use_filter": false,
+            "ntaps": 51,
+            "cutoff": 499,
+            "decimation": 20,
+            "dataframe": "ADC"
+        },
+        "ETHERCAT": {
+            "use": false,
+            "samplerate": 1000,
+            "version": "",
+            "deviceid": [
+                "RX",
+                "TX"
+            ],
+            "direction": "BOTH",
+            "wcnt": 15,
+            "PDO_len": 518,
+            "#motx_type" : [
+                "datatype",
+                "startidx",
+                "endidx",
+                "gain"
+            ],
+            "mot1_sp" : [
+                "<i",
+                125,
+                129,
+                0.00732421875
+            ],
+            "mot1_tq" : [
+                "<h",
+                123,
+                125,
+                0.1
+            ],
+            "mot2_sp" : [
+                "<i",
+                106,
+                110,
+                0.00732421875
+            ],
+            "mot2_tq" : [
+                "<h",
+                104,
+                106,
+                0.1
+            ],
+            "mot3_sp" : [
+                "<i",
+                144,
+                148,
+                -0.00732421875
+            ],
+            "mot3_tq" : [
+                "<h",
+                142,
+                144,
+                -0.1
+            ],
+            "mot4_sp" : [
+                "<i",
+                163,
+                167,
+                0.00732421875
+            ],
+            "mot4_tq" : [
+                "<h",
+                161,
+                163,
+                0.1
+            ],
+            "use_filter": false,
+            "ntaps": 101,
+            "cutoff": 499,
+            "decimation": 1,
+            "dataframe": "ETHERCAT"
+        }
+    },
+    "VHL_CAM": {
+        "cam_width": 1280,
+        "cam_height": 720,
+        "event_auto_remove": true,
+        "event_storage_size": 10,
+        "floor": "NONAME",
+        "fps": 15,
+        "line": "NONAME",
+        "recording_time": 1,
+        "vhl_name": "VD9999",
+        "log_level": 5,
+        "debug_level": 0,
+        "app": "streamApp",
+        "id": "semes",
+        "i2c2": {
+            "exp_time": 10000,
+            "ch0": {
+                "enable": true,
+                "vflip": false,
+                "hflip": false,
+                "ae_on": true,
+                "ae_gain": 256,
+                "bps": [
+                    2048,
+                    2048
+                ]
+            },
+            "ch1": {
+                "enable": true,
+                "vflip": false,
+                "hflip": false,
+                "ae_on": true,
+                "ae_gain": 256,
+                "bps": [
+                    2048,
+                    2048
+                ]
+            }
+        },
+        "i2c1": {
+            "exp_time": 10000,
+            "ch2": {
+                "enable": true,
+                "vflip": false,
+                "hflip": false,
+                "ae_on": true,
+                "ae_gain": 256,
+                "bps": [
+                    2048,
+                    2048
+                ]
+            },
+            "ch3": {
+                "enable": true,
+                "vflip": false,
+                "hflip": false,
+                "ae_on": true,
+                "ae_gain": 256,
+                "bps": [
+                    2048,
+                    2048
+                ]
+            }
+        }
+    }
+}

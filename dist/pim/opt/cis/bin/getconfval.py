@@ -53,6 +53,9 @@ def get_json_val(json_key):
     elif json_key == "iot_app" :
         json_path = "/etc/cts/model_info.json"
         json_defval = "none"
+    elif json_key == "cam_max_channel" :
+        json_path = "/etc/cts/model_info.json"
+        json_defval = 0
     elif json_key == "dev_uart" :
         json_path = "/etc/cts/model_info.json"
         json_defval = "/dev/ttymxc3"
@@ -138,6 +141,14 @@ def get_json_val(json_key):
         try:
             if is_json_key_present(jsonconf,"iot_app") == True:
                 return jsonconf["iot_app"]
+            else :
+                return json_defval
+        except:
+            return json_defval
+    elif json_key == "cam_max_channel" :
+        try:
+            if is_json_key_present(jsonconf,"cam_max_channel") == True:
+                return jsonconf["cam_max_channel"]
             else :
                 return json_defval
         except:

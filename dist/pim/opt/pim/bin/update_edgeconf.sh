@@ -15,7 +15,7 @@ logger -s -p local0.notice "$(printf '\033[1;33m')[$KEY][$tag:$LINENO] please wa
 bps=$(jq -r '.VHL_CAM.bitrate' "$FILE_JSON")
 if [ -z "$bps" ] || [ "$bps" == "null" ]; then
     echo "bps is not exist"
-    bps=4096
+    bps=2048
 else
     echo "bps is exist"
 fi
@@ -131,7 +131,7 @@ jq --argjson key0 "$ch0_en" --argjson key1 "$ch0_rotate" --argjson key2 "$bps" '
 | .VHL_CAM.i2c2.ch0 |= (if .hflip == null then .hflip = $key1 else . end)
 | .VHL_CAM.i2c2.ch0 |= (if .ae_on == null then .ae_on = true else . end)
 | .VHL_CAM.i2c2.ch0 |= (if .ae_gain == null then .ae_gain = 256 else . end)
-| .VHL_CAM.i2c2.ch0 |= (if .bps == null then .bps = [$key2,1024] else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+| .VHL_CAM.i2c2.ch0 |= (if .bps == null then .bps = [$key2,2048] else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
 #echo "check ch1"
 jq --argjson key0 "$ch1_en" --argjson key1 "$ch1_rotate" --argjson key2 "$bps" '.VHL_CAM.i2c2.ch1 |= (if .enable == null then .enable = $key0 else . end)
@@ -139,7 +139,7 @@ jq --argjson key0 "$ch1_en" --argjson key1 "$ch1_rotate" --argjson key2 "$bps" '
 | .VHL_CAM.i2c2.ch1 |= (if .hflip == null then .hflip = $key1 else . end)
 | .VHL_CAM.i2c2.ch1 |= (if .ae_on == null then .ae_on = true else . end)
 | .VHL_CAM.i2c2.ch1 |= (if .ae_gain == null then .ae_gain = 256 else . end)
-| .VHL_CAM.i2c2.ch1 |= (if .bps == null then .bps = [$key2,1024] else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+| .VHL_CAM.i2c2.ch1 |= (if .bps == null then .bps = [$key2,2048] else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
 #echo "check ch2"
 jq --argjson key0 "$ch2_en" --argjson key1 "$ch2_rotate" --argjson key2 "$bps" '.VHL_CAM.i2c1.ch2 |= (if .enable == null then .enable = $key0 else . end)
@@ -147,7 +147,7 @@ jq --argjson key0 "$ch2_en" --argjson key1 "$ch2_rotate" --argjson key2 "$bps" '
 | .VHL_CAM.i2c1.ch2 |= (if .hflip == null then .hflip = $key1 else . end)
 | .VHL_CAM.i2c1.ch2 |= (if .ae_on == null then .ae_on = true else . end)
 | .VHL_CAM.i2c1.ch2 |= (if .ae_gain == null then .ae_gain = 256 else . end)
-| .VHL_CAM.i2c1.ch2 |= (if .bps == null then .bps = [$key2,1024] else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+| .VHL_CAM.i2c1.ch2 |= (if .bps == null then .bps = [$key2,2048] else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
 #echo "check ch3"
 jq --argjson key0 "$ch3_en" --argjson key1 "$ch3_rotate" --argjson key2 "$bps" '.VHL_CAM.i2c1.ch3 |= (if .enable == null then .enable = $key0 else . end)
@@ -155,7 +155,7 @@ jq --argjson key0 "$ch3_en" --argjson key1 "$ch3_rotate" --argjson key2 "$bps" '
 | .VHL_CAM.i2c1.ch3 |= (if .hflip == null then .hflip = $key1 else . end)
 | .VHL_CAM.i2c1.ch3 |= (if .ae_on == null then .ae_on = true else . end)
 | .VHL_CAM.i2c1.ch3 |= (if .ae_gain == null then .ae_gain = 256 else . end)
-| .VHL_CAM.i2c1.ch3 |= (if .bps == null then .bps = [$key2,1024] else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+| .VHL_CAM.i2c1.ch3 |= (if .bps == null then .bps = [$key2,2048] else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
 #streamApp
 if [[ $1 == 1 ]]; then

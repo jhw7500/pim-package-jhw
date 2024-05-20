@@ -350,15 +350,24 @@ else
     fi
 fi
 
-  echo "check edge config"
+  ## copy defaultconf.json
+  case "$model" in
+    "pim-"*)
+      echo "copy pim-base to defaultconf."
+      rm -f /etc/defaultconf.json
+      cp /opt/pim/config/edgeconf_pim_base.json /etc/defaultconf.json
+      ;;
+    *)
+      echo "copy cis-base to defaultconf."
+      rm -f /etc/defaultconf.json
+      cp /opt/pim/config/edgeconf_cis_base.json /etc/defaultconf.json
+      ;;
+  esac
+
+  echo "check edge config"  
   if [ ! -f  /root/shared_v/edgeconf*.json ]; then
     logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp edgeconf_pim.json"
-	cp /opt/pim/config/edgeconf_pim.json /root/shared_v/
-  fi
-
-  if [ ! -f  /opt/pim/config/edgeconf*default.json ]; then
-    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp edgeconf_pim_default.json"
-    cp /opt/pim/config/edgeconf_pim.json /opt/pim/config/edgeconf_pim_default.json
+    cp /etc/defaultconf.json /root/shared_v/edgeconf_pim.json
   fi
 
   cp /opt/pim/etc/rsyslog.d/50-default.conf /etc/rsyslog.d/
@@ -471,14 +480,15 @@ END
 
 
   #update_json 2 &
-  echo "update_network.py"
-  python /opt/cis/bin/update_network.py
   #/opt/pim/bin/bgscan_polling.sh
   rm -f /usr/local/bin/update_edgeconf
   ln -s /opt/pim/bin/update_edgeconf.sh /usr/local/bin/update_edgeconf
-
   /opt/pim/bin/update_edgeconf.sh
-  
+
+  echo "update_network.py"
+  python3 /opt/cis/bin/init.py power_on
+  python3 /opt/cis/bin/update_network.py
+
   #systemctl start cam-operate
   sync
   ;;
