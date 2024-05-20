@@ -9,7 +9,7 @@ function LogWrite() {
 
 function LogWrite_WiFiRegion() {
 	local otp_dmesg=`dmesg | grep "Firmware OTP region"`
-	local otp_code=otp_code=`echo $otp_dmesg | cut -d':' -f3 | cut -d',' -f1 | tr -d ' '`
+	local otp_code=`echo $otp_dmesg | cut -d':' -f3 | cut -d',' -f1 | tr -d ' '`
 	local otp_region=""
 	
 	case $otp_code in
