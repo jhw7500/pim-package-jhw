@@ -16,12 +16,13 @@ fn_LogWrite() {
 }
 
 start() {
-    pid=`ps -ef | grep 'automnt_sd' | grep -v 'grep' | grep -v '/usr/local/bin/automnt' | awk '{print $2}'`
+    pid=`ps -ef | grep 'automnt_sd\b' | grep -v 'grep' | grep -v '/usr/local/bin/automnt' | awk '{print $2}'`
     if [ -z $pid ]
     then
         /opt/cis/bin/automnt_sd 2> /dev/null &
+        sleep .5
         for ((i=0;i<10;i++)); do
-            if [ -z `ps -ef | grep 'automnt_sd' | grep -v 'grep' | grep -v '/usr/local/bin/automnt' | awk '{print $2}'` ]
+            if [ -z `ps -ef | grep 'automnt_sd\b' | grep -v 'grep' | grep -v '/usr/local/bin/automnt' | awk '{print $2}'` ]
             then
                 echo "RETRY"
             else
@@ -41,14 +42,14 @@ start() {
 }
 
 stop() {
-    pid=`ps -ef | grep 'automnt_sd' | grep -v 'grep' | grep -v '/usr/local/bin/automnt' | awk '{print $2}'`
+    pid=`ps -ef | grep 'automnt_sd\b' | grep -v 'grep' | grep -v '/usr/local/bin/automnt' | awk '{print $2}'`
     if [ -z $pid ]
     then
         echo "automnt is not running"
     else
         kill $pid
         for ((i=0;i<3;i++)); do
-            if [ -z `ps -ef | grep 'automnt_sd' | grep -v 'grep' | grep -v '/usr/local/bin/automnt' | awk '{print $2}'` ]
+            if [ -z `ps -ef | grep 'automnt_sd\b' | grep -v 'grep' | grep -v '/usr/local/bin/automnt' | awk '{print $2}'` ]
             then
                 break
             fi
