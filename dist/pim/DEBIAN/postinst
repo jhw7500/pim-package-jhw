@@ -421,6 +421,7 @@ END
   echo "set id, passwd"
   (echo root; echo root;) | passwd root
   (echo user; echo user;) | smbpasswd -as user
+  (echo root; echo root;) | smbpasswd -as root
   useradd -m semes && (echo semes; echo semes;) | passwd semes
 
 #  chmod -R 777 /mnt/sd_cam
