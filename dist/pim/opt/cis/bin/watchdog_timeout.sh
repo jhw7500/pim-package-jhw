@@ -2,6 +2,7 @@
 
 _root_path="/var/log/cantops"
 _mainboard_type=$(python3 /opt/cis/bin/getconfval.py mainboard_type | tr -d '\r\n')
+_daughterboard_type=$(python3 /opt/cis/bin/getconfval.py daughterboard_type | tr -d '\r\n')
 
 fn_LogWrite() {
     logger -p local1.info "$1"
@@ -43,10 +44,12 @@ shutdown() {
     fi
 
     sleep 0
-    en=$(fn_GETUARTMON)
-    if [[ $en != '1' ]]; then
-        fn_SETUARTMON 1
-        fn_LogWrite "WDT_CHECK|DB UARTMON 1"
+    if [ "${_daughterboard_type}" != "none" ]; then
+        en=$(fn_GETUARTMON)
+        if [[ $en != '1' ]]; then
+            fn_SETUARTMON 1
+            fn_LogWrite "WDT_CHECK|DB UARTMON 1"
+        fi
     fi
 
     if [ "${_mainboard_type}" == "mini" ]; then

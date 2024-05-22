@@ -75,7 +75,7 @@ status() {
 
     mcuver=`cat /tmp/dbver 2> /dev/null`
     osver=`cat /etc/issue | awk '{print $1, $2, $3}' | sed 's/[[:blank:]]*$//'`
-    board="analog"
+    board=$(python3 /opt/cis/bin/getconfval.py daughterboard_type | tr -d '\r\n')
     #mode
     if [ -f '/tmp/edgeconf.lock' ]
     then
@@ -137,6 +137,17 @@ status() {
     fi
 
     local str=""
+    case $board in
+    none)
+    read -r -d '' str << EOF
+{
+    "version":"$cisver",
+    "OS":"$osver",
+    "antenna_use": $ant
+}
+EOF
+    ;;
+    *)
     read -r -d '' str << EOF
 {
     "version":"$cisver",
@@ -150,6 +161,9 @@ $gyro
 $etc_sen
 }
 EOF
+    ;;
+    esac
+
     echo "$str"
 }
 

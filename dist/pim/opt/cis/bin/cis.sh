@@ -10,7 +10,7 @@
 ### END INIT INFO
 
 _dev_wlan=$(python3 /opt/cis/bin/getconfval.py dev_wlan | tr -d '\r\n')
-_daughterboard_type=$(python3 /opt/cis/bin/getconfval.py _daughterboard_type | tr -d '\r\n')
+_daughterboard_type=$(python3 /opt/cis/bin/getconfval.py daughterboard_type | tr -d '\r\n')
 
 start() {
     rm /etc/netplan/${_dev_wlan}.yaml > /dev/null 2>&1
