@@ -180,6 +180,15 @@ echo '{"PROGRESS":21,"MSG":"model='"$model"'"}'
 ########################################
 ## Install PIM-MP package             ##
 ########################################
+case "$model" in
+"cis-"*)
+    echo '{"PROGRESS":22,"MSG":"docker stop edge"}'
+    docker stop edge > /dev/null 2> /dev/null
+    ;;
+*)
+    ;;
+esac
+
 case $model in
 cis-a2|pim-a2)
   echo '{"PROGRESS":22,"MSG":"stop adab"}'
@@ -227,6 +236,15 @@ cis-a2|pim-a2)
   set_db_uartmon 1
   echo '{"PROGRESS":99,"MSG":"start adab"}'
   ;;
+esac
+
+case "$model" in
+"cis-"*)
+    echo '{"PROGRESS":99,"MSG":"docker start edge"}'
+    docker start edge > /dev/null 2> /dev/null
+    ;;
+*)
+    ;;
 esac
 
 service="vsd"
