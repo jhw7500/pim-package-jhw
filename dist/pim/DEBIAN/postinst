@@ -305,10 +305,27 @@ END
   if [ "$status" == "enabled" ]; then
     echo "$daemon_name is $status"
   else
-    echo "disable docker.socket"
+    echo "enable cam-operate"
     systemctl enable cam-operate
   fi
 
+  daemon_name=run-watchdog-custom
+  status=$(systemctl is-enabled $daemon_name 2>/dev/null)
+  if [ "$status" == "enabled" ]; then
+    echo "$daemon_name is $status"
+  else
+    echo "enable run-watchdog-custom"
+    systemctl enable run-watchdog-custom
+  fi
+
+  daemon_name=pre-reboot-custom
+  status=$(systemctl is-enabled $daemon_name 2>/dev/null)
+  if [ "$status" == "enabled" ]; then
+    echo "$daemon_name is $status"
+  else
+    echo "enable pre-reboot-custom"
+    systemctl enable pre-reboot-custom
+  fi
 
   echo "check directory"
 makeDirectory() {
