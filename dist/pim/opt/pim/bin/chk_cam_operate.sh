@@ -226,8 +226,9 @@ END
 				else
                     logger -p local0.error "[$KEY][$tag:$LINENO] retry:$retry over"
 					logger -p local0.emerg "[$KEY][$tag:$LINENO] Rebooting...($retry/$retry_boot/$retry_total)"
-                    sleep 1
-					creboot
+                    #sleep 1
+					#creboot
+                    reboot
 				fi
 			else
 				logger -p local0.notice "[$KEY][$tag:$LINENO] mp4,srt file cnt check ok ($retry/$retry_boot/$retry_total)"
@@ -263,9 +264,10 @@ END
                 /opt/pim/bin/init_cam.sh
             else
                 logger -p local0.emerg "[$KEY][$tag:$LINENO] Rebooting...($retry/$retry_boot/$retry_total)"
-                sleep 1
-                creboot
-                logger -p local0.emerg "[$KEY][$tag:$LINENO] creboot end"
+                #sleep 1
+                reboot
+                #creboot
+                #logger -p local0.emerg "[$KEY][$tag:$LINENO] creboot end"
             fi
             start_f=0
 	    fi

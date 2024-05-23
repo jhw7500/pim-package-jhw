@@ -34,8 +34,9 @@ for service in $list; do
             if [ -n "$pid" ]; then
                 if [ "$cnt" -ge "$rebootcnt" ]; then
                     logger -p local0.emerg "[$KEY][$tag:$LINENO] creboot because doesn't kill"
-                    sleep 1
-                    creboot
+                    #sleep 1
+                    #creboot
+                    reboot
                 elif [ "$cnt" -ge "$limitcnt" ]; then
                     logger -p local0.notice "[$KEY][$tag:$LINENO] $limitcnt sec($cnt) over!"
                     #defunct=$(ps -ef |grep defunct | grep -v grep)

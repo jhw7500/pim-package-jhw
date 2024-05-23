@@ -76,7 +76,8 @@ cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
 			for i in {1..5}; do
 				i2ctransfer -f -y -a 2 w3@0x48 0x00 0x10 0x31
 				#sleep 3
-
+                #rm ${FLAG_PATH}/err_cam0.log
+                #rm ${FLAG_PATH}/err_cam1.log
 				i2ctransfer -f -y -a 2 w3@0x40 0x00 0x10 0x21
 				sleep 1
 
@@ -101,6 +102,7 @@ cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
 					logger -p local0.error "[CHK][$tag:$LINENO] CAM1_ERR : $cam01_res $i"
 					echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log
 					echo "${timestamp} CAM1 ERR" >> ${FLAG_PATH}/err_cam1.log
+                    break
 				fi	
 			done
 		fi
@@ -160,6 +162,7 @@ cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
 					logger -p local0.error "[CHK][$tag:$LINENO] CAM2_ERR : $cam23_res $i"
 					echo "${timestamp} CAM2 ERR" >> ${FLAG_PATH}/err_cam2.log
 					echo "${timestamp} CAM3 ERR" >> ${FLAG_PATH}/err_cam3.log
+                    break
 				fi
 			done
 		fi
@@ -187,3 +190,4 @@ cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
         fi
 	fi
 #fi
+

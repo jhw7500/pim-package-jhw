@@ -85,6 +85,9 @@ function MAKE_RESULT_FLAG() {
 CLEAR_CHK_LOG
 sleep $delay
 logger -p local0.notice [CHK][$tag:$LINENO] check loop start
+
+#/opt/pim/bin/chk_cam_disconnect.sh $cam_ch_bit 3 2>/dev/null
+
 while true; do
     #sleep 0.5
     #echo "START!! BG_CHK"
@@ -113,4 +116,13 @@ while true; do
     #echo "led"
     /opt/pim/bin/led_ctrl.sh 2>/dev/null
     sleep 1
+
+    if [ -f "${FLAG_PATH}"/err_cam0.log ] || [ -f "${FLAG_PATH}"/err_cam1.log ] || [ -f "${FLAG_PATH}"/err_cam2.log ]  || [ -f "${FLAG_PATH}"/err_cam3.log ] ; then
+        #echo "cam_err"
+        #err_file=$(ls ${FLAG_PATH}/err_cam*)
+        logger -p local0.emerg "[CHK][$tag:$LINENO] cam disconnect!"
+        #creboot
+        reboot
+    fi
+
 done

@@ -475,15 +475,15 @@ END
   /opt/pim/bin/change_line.sh "allow_writeable_chroot=YES" "allow_writeable_chroot=" /etc/vsftpd.conf
   /opt/pim/bin/change_line.sh "#\$PrivDropToUser syslog" "\$PrivDropToUser" /etc/rsyslog.conf
   /opt/pim/bin/change_line.sh "#\$PrivDropToGroup syslog" "\$PrivDropToGroup" /etc/rsyslog.conf
-  /opt/pim/bin/change_line.sh "watchdog-timeout = 30" "watchdog-timeout" /etc/watchdog.conf
+  /opt/pim/bin/change_line.sh "watchdog-timeout = 15" "watchdog-timeout" /etc/watchdog.conf
   /opt/pim/bin/change_line.sh "watchdog-device = /dev/watchdog" "watchdog-device" /etc/watchdog.conf
   /opt/pim/bin/change_line.sh "kernel.printk = 2 4 1 3" "kernel.printk" /etc/sysctl.conf
   /opt/pim/bin/change_line.sh "SystemMaxUse=10000M" "SystemMaxUse=" /etc/systemd/journald.conf
   /opt/pim/bin/change_line.sh "SystemKeepFree=5000M" "SystemKeepFree=" /etc/systemd/journald.conf
   /opt/pim/bin/change_line.sh "ForwardToWall=no" "ForwardToWall=" /etc/systemd/journald.conf
-  /opt/pim/bin/change_line.sh "RuntimeWatchdogSec=1min" "RuntimeWatchdogSec=" /etc/systemd/system.conf
-  /opt/pim/bin/change_line.sh "RebootWatchdogSec=1min" "RebootWatchdogSec=" /etc/systemd/system.conf
-  /opt/pim/bin/change_line.sh "ShutdownWatchdogSec=1min" "ShutdownWatchdogSec=" /etc/systemd/system.conf
+  #/opt/pim/bin/change_line.sh "RuntimeWatchdogSec=1min" "RuntimeWatchdogSec=" /etc/systemd/system.conf
+  #/opt/pim/bin/change_line.sh "RebootWatchdogSec=1min" "RebootWatchdogSec=" /etc/systemd/system.conf
+  #/opt/pim/bin/change_line.sh "ShutdownWatchdogSec=1min" "ShutdownWatchdogSec=" /etc/systemd/system.conf
   /opt/pim/bin/change_line.sh "DefaultTimeoutStartSec=30s" "DefaultTimeoutStartSec=" /etc/systemd/system.conf
   /opt/pim/bin/change_line.sh "DefaultTimeoutStopSec=30s" "DefaultTimeoutStopSec=" /etc/systemd/system.conf
   /opt/pim/bin/change_line.sh "DefaultTimeoutAbortSec=30s" "DefaultTimeoutAbortSec=" /etc/systemd/system.conf
