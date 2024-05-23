@@ -12,6 +12,13 @@ cp $FILE_JSON /opt/pim/config/${FILE_JSON##*/}.backup
 #echo -e "\e[32mplease wait for update $FILE_JSON\e[0m"
 logger -s -p local0.notice "$(printf '\033[1;33m')[$KEY][$tag:$LINENO] please wait for update $FILE_JSON$(printf '\033[0m')"
 
+header_to_remove="ORD"
+echo "check $header_to_remove header"
+jq "if has(\"${header_to_remove}\") then del(.${header_to_remove}) else . end" "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+header_to_remove="VCM"
+echo "check $header_to_remove header"
+jq "if has(\"${header_to_remove}\") then del(.${header_to_remove}) else . end" "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+
 bps=$(jq -r '.VHL_CAM.bitrate' "$FILE_JSON")
 if [ -z "$bps" ] || [ "$bps" == "null" ]; then
     echo "bps is not exist"

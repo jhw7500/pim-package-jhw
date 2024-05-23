@@ -507,7 +507,7 @@ END
   #/opt/pim/bin/bgscan_polling.sh
   rm -f /usr/local/bin/update_edgeconf
   ln -s /opt/pim/bin/update_edgeconf.sh /usr/local/bin/update_edgeconf
-  /opt/pim/bin/update_edgeconf.sh
+  update_edgeconf
 
   echo "update_network.py"
   python3 /opt/cis/bin/init.py power_on
