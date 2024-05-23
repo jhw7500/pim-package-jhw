@@ -1,5 +1,5 @@
 Package: pim-mp
-Version: 0.4.1
+Version: 0.4.2
 Replaces: cis
 Breaks: cis
 Section: full
@@ -51,3 +51,4 @@ Description: PIM application
 0.3.9 : streamApp(1.9), PIMCAM(1.7), gstApp(0.5), json format, update edgeconf, package update, etc..
 0.4.0 : streamApp(2.0), PIMCAM(1.8), startCam option
 0.4.1 : combine cis iot app
+0.4.2 : release integrated package
