@@ -15,6 +15,7 @@ _daughterboard_type=$(python3 /opt/cis/bin/getconfval.py daughterboard_type | tr
 start() {
     rm /etc/netplan/${_dev_wlan}.yaml > /dev/null 2>&1
     /opt/cis/bin/automnt.sh start
+    /opt/cis/bin/init_daughter_gpio.sh
     for var in {1..120}; do
         WLAN0_FIND=$(iw dev | \grep -o "${_dev_wlan}")
         if [ "${WLAN0_FIND}" = "${_dev_wlan}" ]; then

@@ -211,6 +211,8 @@ echo '{"PROGRESS":24,"MSG":"End install pim-mp"}'
 ########################################
 case $model in
 cis-a2|pim-a2)
+  /opt/cis/bin/init_daughter_gpio.sh > /dev/null 2> /dev/null
+  sleep 1
   dbver=$(get_db_version)
   if [[ "$dbver" != "$DB_ANAL_FIRMWARE_VER" ]]; then
 	stm32update -b 24 -e 94 $DB_ANAL_FIRMWARE_FILE

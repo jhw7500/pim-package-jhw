@@ -56,6 +56,15 @@ def get_json_val(json_key):
     elif json_key == "cam_max_channel" :
         json_path = "/etc/cts/model_info.json"
         json_defval = 0
+    elif json_key == "dev_f_status" :
+        json_path = "/etc/cts/model_info.json"
+        json_defval = 131
+    elif json_key == "dev_f_boot0" :
+        json_path = "/etc/cts/model_info.json"
+        json_defval = 132
+    elif json_key == "dev_c2m_rst" :
+        json_path = "/etc/cts/model_info.json"
+        json_defval = 133
     elif json_key == "dev_uart" :
         json_path = "/etc/cts/model_info.json"
         json_defval = "/dev/ttymxc3"
@@ -149,6 +158,30 @@ def get_json_val(json_key):
         try:
             if is_json_key_present(jsonconf,"cam_max_channel") == True:
                 return jsonconf["cam_max_channel"]
+            else :
+                return json_defval
+        except:
+            return json_defval
+    elif json_key == "dev_f_status" :
+        try:
+            if is_json_key_present(jsonconf["dev"],"f_status") == True:
+                return jsonconf["dev"]["f_status"]
+            else :
+                return json_defval
+        except:
+            return json_defval
+    elif json_key == "dev_f_boot0" :
+        try:
+            if is_json_key_present(jsonconf["dev"],"f_boot0") == True:
+                return jsonconf["dev"]["f_boot0"]
+            else :
+                return json_defval
+        except:
+            return json_defval
+    elif json_key == "dev_c2m_rst" :
+        try:
+            if is_json_key_present(jsonconf["dev"],"c2m_rst") == True:
+                return jsonconf["dev"]["c2m_rst"]
             else :
                 return json_defval
         except:
