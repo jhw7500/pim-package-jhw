@@ -481,9 +481,9 @@ END
   /opt/pim/bin/change_line.sh "SystemMaxUse=10000M" "SystemMaxUse=" /etc/systemd/journald.conf
   /opt/pim/bin/change_line.sh "SystemKeepFree=5000M" "SystemKeepFree=" /etc/systemd/journald.conf
   /opt/pim/bin/change_line.sh "ForwardToWall=no" "ForwardToWall=" /etc/systemd/journald.conf
-  #/opt/pim/bin/change_line.sh "RuntimeWatchdogSec=1min" "RuntimeWatchdogSec=" /etc/systemd/system.conf
-  #/opt/pim/bin/change_line.sh "RebootWatchdogSec=1min" "RebootWatchdogSec=" /etc/systemd/system.conf
-  #/opt/pim/bin/change_line.sh "ShutdownWatchdogSec=1min" "ShutdownWatchdogSec=" /etc/systemd/system.conf
+  /opt/pim/bin/change_line.sh "#RuntimeWatchdogSec=1min" "RuntimeWatchdogSec=" /etc/systemd/system.conf
+  /opt/pim/bin/change_line.sh "#RebootWatchdogSec=1min" "RebootWatchdogSec=" /etc/systemd/system.conf
+  /opt/pim/bin/change_line.sh "#ShutdownWatchdogSec=1min" "ShutdownWatchdogSec=" /etc/systemd/system.conf
   /opt/pim/bin/change_line.sh "DefaultTimeoutStartSec=30s" "DefaultTimeoutStartSec=" /etc/systemd/system.conf
   /opt/pim/bin/change_line.sh "DefaultTimeoutStopSec=30s" "DefaultTimeoutStopSec=" /etc/systemd/system.conf
   /opt/pim/bin/change_line.sh "DefaultTimeoutAbortSec=30s" "DefaultTimeoutAbortSec=" /etc/systemd/system.conf
