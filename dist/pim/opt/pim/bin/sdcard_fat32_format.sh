@@ -26,6 +26,25 @@ KILL_PIM_CAMERA_APP() {
 	/opt/pim/bin/kill_test.sh
 }
 
+#umount /mnt/sd_cam
+UMOUNT_SDCARD() {
+    MOUNT_POINT="/mnt/sd_cam"
+    PROCESSES=$(lsof +D "$MOUNT_POINT" | awk 'NR>1 {print $2}' | sort -u)
+    if [ -n "$PROCESSES" ]; then
+        echo "Terminating processes using $MOUNT_POINT..."
+        for PID in $PROCESSES; do
+            echo "Killing process $PID"
+            kill -9 $PID
+        done
+    fi
+    umount -l "$MOUNT_POINT"
+    if [ $? -eq 0 ]; then
+        echo "Successfully unmounted $MOUNT_POINT"
+    else
+        echo "Failed to unmount $MOUNT_POINT"
+    fi
+}
+
 #fdisk partition process
 MAKE_PARTIOTION() {
     umount /dev/mmcblk1*
@@ -63,6 +82,7 @@ CHECK_MOUNT_WELL() {
 
 CHECK_SDCARD
 KILL_PIM_CAMERA_APP
+UMOUNT_SDCARD
 MAKE_PARTIOTION
 CHECK_MOUNT_WELL
 
