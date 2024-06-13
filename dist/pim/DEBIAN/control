@@ -1,5 +1,5 @@
 Package: pim-mp
-Version: 0.4.2
+Version: 0.4.3
 Replaces: cis
 Breaks: cis
 Section: full
@@ -52,3 +52,4 @@ Description: PIM application
 0.4.0 : streamApp(2.0), PIMCAM(1.8), startCam option
 0.4.1 : combine cis iot app
 0.4.2 : release integrated package
+0.4.3 : max9296(1.6) for using free any combination of channel, ord(0.3.8) for evt, mnt use disk size 95%->98%, rsyslog local0 level
