@@ -1,12 +1,17 @@
 #!/bin/bash
 tag=$(basename "$0")
 KEY=RST
-logger -p local0.notice "[$KEY][$tag:$LINENO] rc.local start : Booting"
+logger -p local0.emerg "[$KEY][$tag:$LINENO] rc.local start : Booting"
 #sd mount
 /opt/pim/bin/automnt_sd_for_emmc_boot.sh /mnt/sd_cam &
 
 #module
 modprobe imx8-media-dev
+
+#log manage
+#logger -p local0.notice "[$KEY][$tag:$LINENO] Boot log manage"
+logrotate /etc/logrotate.d/rsyslog
+/opt/pim/bin/log_manage.sh /var/log/cantops 100 10
 
 #eth name exchange
 #/opt/pim/bin/eth_name_exchange.sh &
@@ -70,5 +75,5 @@ nohup /opt/pim/bin/bgscan_polling.sh 1>/dev/null 2>&1 &
 
 #bg check
 #/opt/pim/bin/BG_Check_for_pim.sh & 2>/dev/null
-
+logger -p local0.notice "[$KEY][$tag:$LINENO] rc.local finish"
 exit 0
