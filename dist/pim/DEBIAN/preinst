@@ -13,9 +13,16 @@ tag=$(basename "$0")
 KEY=PKG
 
 #echo "install $PACKAGE_NAME-$(dpkg-query -W -f='${Version}' $PACKAGE_NAME)"
-logger -p local0.notice "[$KEY][$tag:$LINENO] install $PACKAGE_NAME-$(dpkg-query -W -f='${Version}' $PACKAGE_NAME)"
-systemctl stop cam-operate
+logger -s -p local0.notice "[$KEY][$tag:$LINENO] install $PACKAGE_NAME-$(dpkg-query -W -f='${Version}' $PACKAGE_NAME) start"
 echo "stop cam-operate daemon"
+systemctl stop cam-operate
+
+pid=$(ps -ef |grep "automnt_sd_for_emmc_boot" |grep -v grep |awk '{print $2}')
+if [ -n "$pid" ]; then
+    echo "auto mount process($pid) kill"
+    kill $pid
+fi
+
 case "$1" in
 install)
   echo "preinst install ($model)"

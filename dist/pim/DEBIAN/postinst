@@ -335,7 +335,8 @@ if [ ! -d "$1" ]; then
     if [ $? -eq 0 ]; then
         echo "Directory $EVENT_DIR created successfully."
     else
-        echo "Failed to create $EVENT_DIR directory."
+        #echo "Failed to create $1 directory."
+        logger -s -p local0.err "Failed to create $1 directory."
         exit 1
     fi
 else
@@ -347,7 +348,17 @@ MOUNT_POINT="/mnt/sd_cam"
 DEVICE="/dev/mmcblk1p1"
 TARGET_DIR="$MOUNT_POINT/event"
 
-makeDirectory /mnt/sd_cam
+umount $MOUNT_POINT
+mnt_status=$(df -h |grep $MOUNT_POINT)
+
+if [ -z $mnt_status ]; then
+    logger -s -p local0.notice "[$KEY][$tag:$LINENO] umount $MOUNT_POINT ok : clean dir"
+    rm -rf /mnt/*
+else
+    logger -s -p local0.err "[$KEY][$tag:$LINENO] umount $MOUNT_POINT error!"
+fi
+
+makeDirectory $MOUNT_POINT
 makeDirectory /var/log/cantops
 makeDirectory /var/log/cantops/dot
 makeDirectory /var/log/cantops/gst
@@ -356,20 +367,24 @@ makeDirectory /root/boot
 makeDirectory /root/fwupgrade
 
 if mount | grep -q "$DEVICE on $MOUNT_POINT"; then
-    echo "$DEVICE is already mounted on $MOUNT_POINT."
-    makeDirectory /mnt/sd_cam/event
-    makeDirectory /mnt/sd_cam/recycle
-    makeDirectory /mnt/sd_cam/capture
+    #echo "$DEVICE is already mounted on $MOUNT_POINT."
+    logger -s -p local0.err "[$KEY][$tag:$LINENO] $DEVICE is already mounted on $MOUNT_POINT."
+    makeDirectory $MOUNT_POINT/event
+    makeDirectory $MOUNT_POINT/recycle
+    makeDirectory $MOUNT_POINT/capture
 else
-    echo "Trying to mount $DEVICE on $MOUNT_POINT..."
+    #echo "Trying to mount $DEVICE on $MOUNT_POINT..."
+    logger -s -p local0.notice "[$KEY][$tag:$LINENO] Trying to mount $DEVICE on $MOUNT_POINT..."
     mount $DEVICE $MOUNT_POINT
     if [ $? -eq 0 ]; then
-        echo "Mounted $DEVICE on $MOUNT_POINT successfully."
-        makeDirectory /mnt/sd_cam/event
-        makeDirectory /mnt/sd_cam/recycle
-        makeDirectory /mnt/sd_cam/capture
+        #echo "Mounted $DEVICE on $MOUNT_POINT successfully."
+        logger -s -p local0.notice "[$KEY][$tag:$LINENO] Mounted $DEVICE on $MOUNT_POINT successfully."
+        makeDirectory $MOUNT_POINT/event
+        makeDirectory $MOUNT_POINT/recycle
+        makeDirectory $MOUNT_POINT/capture
     else
-        echo "Failed to mount $DEVICE on $MOUNT_POINT."
+        #echo "Failed to mount $DEVICE on $MOUNT_POINT."
+        logger -s -p local0.err "[$KEY][$tag:$LINENO] Failed to mount $DEVICE on $MOUNT_POINT"
     fi
 fi
 
@@ -515,6 +530,8 @@ END
 
   #systemctl start cam-operate
   sync
+  PACKAGE_NAME="$DPKG_MAINTSCRIPT_PACKAGE"
+  logger -s -p local0.notice "[$KEY][$tag:$LINENO] install $PACKAGE_NAME-$(dpkg-query -W -f='${Version}' $PACKAGE_NAME) finish"
   ;;
 
 upgrade)
