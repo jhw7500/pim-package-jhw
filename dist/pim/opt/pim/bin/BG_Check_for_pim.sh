@@ -3,7 +3,7 @@ FLAG_PATH="/tmp"
 tag=$(basename "$0")
 result=0
 delay=25
-
+i=0
 JSON_PREFIX=edgeconf_
 JOSN_SUFFIX=.json
 FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} |grep -v '/$' | tail -1 |tr -d '\r\n')
@@ -120,9 +120,16 @@ while true; do
     if [ -f "${FLAG_PATH}"/err_cam0.log ] || [ -f "${FLAG_PATH}"/err_cam1.log ] || [ -f "${FLAG_PATH}"/err_cam2.log ]  || [ -f "${FLAG_PATH}"/err_cam3.log ] ; then
         #echo "cam_err"
         #err_file=$(ls ${FLAG_PATH}/err_cam*)
-        logger -p local0.emerg "[CHK][$tag:$LINENO] cam disconnect!"
+        ((i++))
+        logger -p local0.emerg "[CHK][$tag:$LINENO] cam disconnect : $i"
         #creboot
-        reboot
+        if [ "$i" -gt 3 ]; then
+            logger -p local0.emerg "[CHK][$tag:$LINENO] reboot because cam disconnect"
+            sleep 1
+            reboot
+        fi
+    else
+        i=0
     fi
 
 done

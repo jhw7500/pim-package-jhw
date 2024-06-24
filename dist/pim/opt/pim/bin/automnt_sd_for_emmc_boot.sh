@@ -8,11 +8,20 @@ mnt_cnt_=0
 mnt_folder=$1
 mount_dev=0
 
+LOCKFILE="/tmp/automnt_sd_for_emmc_boot.lock"
+exec 200>$LOCKFILE
+flock -n 200 || exit 1
+
 while true; do
     case $mnt_state_ in
         0)
              logger -p local0.notice "[$KEY][$TAG:$LINENO] case 0"
             if [ -d /sys/bus/mmc/devices/mmc1:*/block/mmcblk1/mmcblk1p1 ]; then
+                logger -p local0.notice "[$KEY][$TAG:$LINENO] sd card file system check : fsck.vfat -a /dev/mmcblk1p1"
+                fsck.vfat -a /dev/mmcblk1p1 2>&1 | while IFS= read -r line; do
+                    LINENO=$(echo "$line" | awk '{print NR}')
+                    logger -p local0.notice "[$KEY][$TAG:$LINENO] $line"
+                done
                 mout_dev=`df | grep '/mnt/sd_cam' | awk '{print $1}'`
                 logger -p local0.notice "[$KEY][$TAG:$LINENO] mount_dev : $mount_dev"
                 if [ -z $mout_dev ]; then
@@ -20,11 +29,15 @@ while true; do
                         mkdir -p /mnt
                     fi
 
+                    logger -p local0.notice "[$KEY][$TAG:$LINENO] mount folder clean : rm -rf /mnt/*"
+                    rm -rf /mnt/*
+
                     if [ ! -d $mnt_folder ]; then
-                        mkdir -p $mnt_foler
+                        logger -p local0.notice "[$KEY][$TAG:$LINENO] mkdir -p $mnt_folder"
+                        mkdir -p $mnt_folder
                     fi
                     logger -p local0.notice "[$KEY][$TAG:$LINENO] mount /dev/mmcblk1p1 $mnt_folder"
-                    mount /dev/mmcblk1p1 /mnt/sd_cam
+                    mount /dev/mmcblk1p1 $mnt_folder
                 elif [ $mout_dev != "/dev/mmcblk1p1" ]; then
                     umount $mnt_folder
                     mount /dev/mmcblk1p1 $mnt_folder

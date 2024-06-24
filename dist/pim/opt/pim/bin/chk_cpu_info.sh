@@ -34,28 +34,15 @@ do
     #service=streamApp
     cpu=$(mpstat 1 1|tail -1 | awk '{print 100-$NF}')
     mem=$(sar -r 0 |tail -1 | awk '{print $5}')
-    logger -p local0.notice "[$KEY][$tag:$LINENO] total cpu :${cpu}%, memory : ${mem}%"
 
-:<<'END'
-    for service in $group; do
-        if [ ! -z "$service" ]; then
-	        #pgrep "$service" >/dev/null; status=$?
-            pid=$(pgrep "$service")
-            if [ ! -z "$pid" ]; then
-		        #pid=$(ps -C $service |grep $service |awk '{print $1}')		
-		        mem=$(pmap -x $pid |tail -1 |awk '{print "Kbytes:"$3" RSS:"$4" Dirty:"$5}')
-		        logger -p local0.notice "[$KEY][$tag:$LINENO] $service: ${mem}"
-	        fi
-        fi
-    done
-END
+    #logger -p local0.notice "[$KEY][$tag:$LINENO] total cpu :${cpu}%, memory : ${mem}%"
 
     CPU_TMP_VAL0=$(cat /sys/devices/virtual/thermal/thermal_zone0/temp)
     CPU_TMP_VAL1=$(cat /sys/devices/virtual/thermal/thermal_zone1/temp)
     CPU_TEMP0=$(echo "$CPU_TMP_VAL0/1000" | bc)
     CPU_TEMP1=$(echo "$CPU_TMP_VAL1/1000" | bc)
 
-    logger -p local0.notice "[$KEY][$tag:$LINENO] cpu0 temp : $CPU_TEMP0, cpu1 temp : $CPU_TEMP1"
+    logger -p local0.notice "[$KEY][$tag:$LINENO] total cpu usage :${cpu}%, memory : ${mem}%, cpu0 temp : $CPU_TEMP0, cpu1 temp : $CPU_TEMP1"
 
     if [ "$CPU_TEMP0" -gt "$CPU_TEMP_MAX0" ]; then
         CPU_TEMP_MAX0=$((CPU_TEMP0))

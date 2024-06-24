@@ -225,8 +225,8 @@ END
 					/opt/pim/bin/init_cam.sh
 				else
                     logger -p local0.error "[$KEY][$tag:$LINENO] retry:$retry over"
-					logger -p local0.emerg "[$KEY][$tag:$LINENO] Rebooting...($retry/$retry_boot/$retry_total)"
-                    #sleep 1
+					logger -p local0.emerg "[$KEY][$tag:$LINENO] rebooting because file check fail ($retry/$retry_boot/$retry_total)"
+                    sleep 1
 					#creboot
                     reboot
 				fi
@@ -263,8 +263,8 @@ END
                 logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh ($retry/$retry_boot/$retry_total)"
                 /opt/pim/bin/init_cam.sh
             else
-                logger -p local0.emerg "[$KEY][$tag:$LINENO] Rebooting...($retry/$retry_boot/$retry_total)"
-                #sleep 1
+                logger -p local0.emerg "[$KEY][$tag:$LINENO] reboot because all file not create ($retry/$retry_boot/$retry_total)"
+                sleep 1
                 reboot
                 #creboot
                 #logger -p local0.emerg "[$KEY][$tag:$LINENO] creboot end"

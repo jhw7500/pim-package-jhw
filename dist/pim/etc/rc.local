@@ -12,7 +12,8 @@ modprobe imx8-media-dev
 #logger -p local0.notice "[$KEY][$tag:$LINENO] Boot log manage"
 logrotate /etc/logrotate.d/rsyslog
 /opt/pim/bin/log_manage.sh /var/log/cantops 100 10
-
+/opt/pim/bin/chk_mmc.sh
+/opt/pim/bin/chk_cpu_info.sh 60 &
 #eth name exchange
 #/opt/pim/bin/eth_name_exchange.sh &
 
@@ -30,8 +31,6 @@ logrotate /etc/logrotate.d/rsyslog
 #/opt/pim/bin/start_cam.sh
 
 #background
-/opt/pim/bin/chk_cpu_info.sh 60 &
-#/opt/pim/bin/dot_manage.sh /var/log/cantops/dot 100 &
 
 touch /var/run/vsd.pipe
 #booting LED control

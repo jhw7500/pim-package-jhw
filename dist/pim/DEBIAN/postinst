@@ -479,9 +479,9 @@ END
   /opt/pim/bin/change_line.sh "set tabsize 4" "set tabsize" /etc/nanorc
   /opt/pim/bin/change_line.sh "set tabstospaces" "set tabstospaces" /etc/nanorc
   /opt/pim/bin/change_line.sh "00 *   * * *   root    logrotate /etc/logrotate.d/rsyslog" "logrotate /etc/logrotate.d/rsyslog" /etc/crontab
-  /opt/pim/bin/change_line.sh "00 12   * * *   root    /opt/pim/bin/chk_mmc.sh" "/opt/pim/bin/chk_mmc.sh" /etc/crontab
+  /opt/pim/bin/change_line.sh "30 *   * * *   root    /opt/pim/bin/chk_mmc.sh" "/opt/pim/bin/chk_mmc.sh" /etc/crontab
   /opt/pim/bin/change_line.sh "00 12   * * *   root    hwclock --systohc" "hwclock --systohc" /etc/crontab
-  /opt/pim/bin/change_line.sh "30 *   * * *   root    /opt/pim/bin/log_manage.sh /var/log/cantops 100 10" "/opt/pim/bin/log_manage.sh /var/log/cantops" /etc/crontab
+  /opt/pim/bin/change_line.sh "15 *   * * *   root    /opt/pim/bin/log_manage.sh /var/log/cantops 100 10" "/opt/pim/bin/log_manage.sh /var/log/cantops" /etc/crontab
   /opt/pim/bin/change_line.sh "write_enable=YES" "write_enable=" /etc/vsftpd.conf
   /opt/pim/bin/change_line.sh "local_umask=022" "local_umask=" /etc/vsftpd.conf
   /opt/pim/bin/change_line.sh "idle_session_timeout=0" "idle_session_timeout=" /etc/vsftpd.conf

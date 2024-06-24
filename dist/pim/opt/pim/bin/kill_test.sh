@@ -73,8 +73,8 @@ for service in $list; do
             pid=$(ps -ef |grep $service |grep -v grep |awk '{print $2}')
             if [ -n "$pid" ]; then
                 if [ "$cnt" -ge "$rebootcnt" ]; then
-                    logger -p local0.emerg "[$KEY][$tag:$LINENO] creboot because doesn't kill"
-                    #sleep 1
+                    logger -p local0.emerg "[$KEY][$tag:$LINENO] reboot because doesn't kill"
+                    sleep 1
                     #creboot
                     reboot
                 elif [ "$cnt" -ge "$limitcnt" ]; then

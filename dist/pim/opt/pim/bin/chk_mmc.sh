@@ -17,13 +17,78 @@ typebd=$((typebd*10))
 #logger -p local0.notice [$KEY][$tag:$LINENO] mmc Type A:$typead% Type B:$typebd%
 if [ $typead -ge 80 ] || [ $typebd -ge 80 ]
 then
-    logger -p local0.emerg [$KEY][$tag:$LINENO] mmc Type A:$typead% Type B:$typebd%
+    logger -p local0.emerg "[$KEY][$tag:$LINENO] mmc Type A:$typead% Type B:$typebd%"
 elif [ $typead -ge 60 ] || [ $typebd -ge 60 ]
 then
-    logger -p local0.crit [$KEY][$tag:$LINENO] mmc Type A:$typead% Type B:$typebd%
+    logger -p local0.crit "[$KEY][$tag:$LINENO] mmc Type A:$typead% Type B:$typebd%"
 elif [ $typead -ge 40 ] || [ $typebd -ge 40 ]
 then
-    logger -p local0.error [$KEY][$tag:$LINENO] mmc Type A:$typead% Type B:$typebd%
+    logger -p local0.error "[$KEY][$tag:$LINENO] mmc Type A:$typead% Type B:$typebd%"
 else
-    logger -p local0.notice [$KEY][$tag:$LINENO] mmc Type A:$typead% Type B:$typebd%
+    logger -p local0.notice "[$KEY][$tag:$LINENO] mmc Type A:$typead% Type B:$typebd%"
 fi
+
+max_per1=95
+max_per2=90
+max_per3=85
+per=$(df -h |grep /dev/root | awk '{print $5}')
+per=$(echo $per | sed 's/%//')
+#echo "per:$per, max_per:$max_per"
+if (( per > max_per1 )); then
+    #touch /tmp/emmc_warning
+    logger -p local0.emerg "[$KEY][$tag:$LINENO] emmc size $per% > $max_per3"
+    logger -p local0.emerg "[$KEY][$tag:$LINENO] rsyslog, journald stop and disable"
+    systemctl stop rsyslog
+    systemctl stop journald
+    systemctl disable rsyslog
+    systemctl disable journald
+elif (( per > max_per2 )); then
+    logger -p local0.emerg "[$KEY][$tag:$LINENO] emmc size $per% > $max_per2"
+    logger -p local0.emerg "[$KEY][$tag:$LINENO] log level change to err"
+    /opt/pim/bin/change_line.sh "local0.err;*.emerg       /var/log/cantops/local0.log" "/var/log/cantops/local0.log" /etc/rsyslog.d/50-default.conf
+    /opt/pim/bin/change_line.sh "*.err;auth,authpriv,local0,kern.none;     /var/log/cantops/syslog" "/var/log/cantops/syslog" /etc/rsyslog.d/50-default.conf
+    /opt/pim/bin/change_line.sh "kern.err         /var/log/cantops/kern.log" "/var/log/cantops/kern.log" /etc/rsyslog.d/50-default.conf
+    /opt/pim/bin/change_line.sh "local1.err                /var/log/cantops/local1.log;outfmt2" "/var/log/cantops/local1.log;outfmt2" /etc/rsyslog.d/50-default.conf
+    /opt/pim/bin/change_line.sh "MaxLevelStore=err" "MaxLevelStore" /etc/systemd/journald.conf
+    /opt/pim/bin/change_line.sh "MaxLevelSyslog=err" "MaxLevelSyslog" /etc/systemd/journald.conf
+    /opt/pim/bin/change_line.sh "MaxLevelKMsg=err" "MaxLevelKMsg" /etc/systemd/journald.conf
+    /opt/pim/bin/change_line.sh "MaxLevelConsole=err" "MaxLevelConsole" /etc/systemd/journald.conf
+    /opt/pim/bin/change_line.sh "MaxLevelWall=err" "MaxLevelWall" /etc/systemd/journald.conf
+    systemctl restart rsyslog
+    systemctl restart journald
+    systemctl enable rsyslog
+    systemctl enable journald
+elif (( per > max_per3 )); then
+    logger -p local0.emerg "[$KEY][$tag:$LINENO] emmc size $per% > $max_per1"
+    logger -p local0.emerg "[$KEY][$tag:$LINENO] log level change to notice"
+    /opt/pim/bin/change_line.sh "local0.notice;*.emerg       /var/log/cantops/local0.log" "/var/log/cantops/local0.log" /etc/rsyslog.d/50-default.conf
+    /opt/pim/bin/change_line.sh "*.notice;auth,authpriv,local0,kern.none;     /var/log/cantops/syslog" "/var/log/cantops/syslog" /etc/rsyslog.d/50-default.conf
+    /opt/pim/bin/change_line.sh "kern.notice         /var/log/cantops/kern.log" "/var/log/cantops/kern.log" /etc/rsyslog.d/50-default.conf
+    /opt/pim/bin/change_line.sh "local1.notice                /var/log/cantops/local1.log;outfmt2" "/var/log/cantops/local1.log;outfmt2" /etc/rsyslog.d/50-default.conf
+    /opt/pim/bin/change_line.sh "MaxLevelStore=notice" "MaxLevelStore" /etc/systemd/journald.conf
+    /opt/pim/bin/change_line.sh "MaxLevelSyslog=notice" "MaxLevelSyslog" /etc/systemd/journald.conf
+    /opt/pim/bin/change_line.sh "MaxLevelKMsg=notice" "MaxLevelKMsg" /etc/systemd/journald.conf
+    /opt/pim/bin/change_line.sh "MaxLevelConsole=notice" "MaxLevelConsole" /etc/systemd/journald.conf
+    /opt/pim/bin/change_line.sh "MaxLevelWall=notice" "MaxLevelWall" /etc/systemd/journald.conf
+    systemctl restart rsyslog
+    systemctl restart journald
+    systemctl enable rsyslog
+    systemctl enable journald
+else
+    logger -p local0.notice "[$KEY][$tag:$LINENO] emmc size $per% <= $max_per1%"
+    logger -p local0.notice "[$KEY][$tag:$LINENO] log level change (logcal0 : notice, local1 : all, syslog : all, kern : notice, journald : all)"
+    /opt/pim/bin/change_line.sh "local0.notice;*.emerg       /var/log/cantops/local0.log" "/var/log/cantops/local0.log" /etc/rsyslog.d/50-default.conf
+    /opt/pim/bin/change_line.sh "*.*;auth,authpriv,local0,kern.none;     /var/log/cantops/syslog" "/var/log/cantops/syslog" /etc/rsyslog.d/50-default.conf
+    /opt/pim/bin/change_line.sh "kern.notice         /var/log/cantops/kern.log" "/var/log/cantops/kern.log" /etc/rsyslog.d/50-default.conf
+    /opt/pim/bin/change_line.sh "local1.*                /var/log/cantops/local1.log;outfmt2" "/var/log/cantops/local1.log;outfmt2" /etc/rsyslog.d/50-default.conf
+    /opt/pim/bin/change_line.sh "MaxLevelStore=debug" "MaxLevelStore" /etc/systemd/journald.conf
+    /opt/pim/bin/change_line.sh "MaxLevelSyslog=debug" "MaxLevelSyslog" /etc/systemd/journald.conf
+    /opt/pim/bin/change_line.sh "MaxLevelKMsg=debug" "MaxLevelKMsg" /etc/systemd/journald.conf
+    /opt/pim/bin/change_line.sh "MaxLevelConsole=debug" "MaxLevelConsole" /etc/systemd/journald.conf
+    /opt/pim/bin/change_line.sh "MaxLevelWall=debug" "MaxLevelWall" /etc/systemd/journald.conf
+    systemctl restart rsyslog
+    systemctl restart journald
+    systemctl enable rsyslog
+    systemctl enable journald
+fi
+
