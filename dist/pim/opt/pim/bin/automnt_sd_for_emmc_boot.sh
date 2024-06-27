@@ -38,6 +38,8 @@ while true; do
                     fi
                     logger -p local0.notice "[$KEY][$TAG:$LINENO] mount /dev/mmcblk1p1 $mnt_folder"
                     mount /dev/mmcblk1p1 $mnt_folder
+                    logger -p local0.notice "[$KEY][$TAG:$LINENO] /tmp/sd_mount_flag set"
+                    echo '1' > /tmp/sd_mount_flag
                 elif [ $mout_dev != "/dev/mmcblk1p1" ]; then
                     umount $mnt_folder
                     mount /dev/mmcblk1p1 $mnt_folder
