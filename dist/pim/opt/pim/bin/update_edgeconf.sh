@@ -5,12 +5,18 @@ KEY=PKG
 JSON_PREFIX=edgeconf_
 JOSN_SUFFIX=.json
 FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} |grep -v '/$' | tail -1 |tr -d '\r\n')
-cp $FILE_JSON /opt/pim/config/${FILE_JSON##*/}.backup
+cp "$FILE_JSON" "/opt/pim/config/${FILE_JSON##*/}.backup"
 #updated_json=$(jq '(.VHL_CAM.vertical // 0) as $v | if $v == 0 then .VHL_CAM.vertical = 0 else . end' "$FILE_JSON")
 #UPDATE_JSON=$(jq '(.VHL_CAM.vertical_flip // 0) as $v | (.VHL_CAM.horizontal_flip // 0) as $h | .VHL_CAM.vertical_flip = $v | .VHL_CAM.horizontal_flip = $h' "$FILE_JSON")
 
+if ! command -v jq &> /dev/null
+then
+    logger -p local0.err "jq could not be found. Please install jq to run this script."
+    exit 1
+fi
+
 #echo -e "\e[32mplease wait for update $FILE_JSON\e[0m"
-logger -s -p local0.notice "$(printf '\033[1;33m')[$KEY][$tag:$LINENO] please wait for update $FILE_JSON$(printf '\033[0m')"
+logger -p local0.notice "$(printf '\033[1;33m')[$KEY][$tag:$LINENO] please wait for update $FILE_JSON$(printf '\033[0m')"
 
 header_to_remove="ORD"
 echo "check $header_to_remove header"
@@ -175,6 +181,6 @@ elif [[ $1 == 2 ]]; then
 fi
 
 sync
-logger -s -p local0.notice "$(printf '\033[1;33m')[$KEY][$tag:$LINENO] complete update $FILE_JSON$(printf '\033[0m')"
+logger -p local0.notice "$(printf '\033[1;33m')[$KEY][$tag:$LINENO] complete update $FILE_JSON$(printf '\033[0m')"
 #echo -e "\e[32mcomplete update $FILE_JSON\e[0m"
 #echo -e "\e[33mif you want the streamApp, run '/opt/pim/bin/update_json 1' but you want the gstApp, run 'opt/pim/bin/update_json 2'\e[0m"
