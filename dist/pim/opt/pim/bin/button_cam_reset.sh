@@ -28,7 +28,7 @@ while true; do
         echo none > /sys/devices/platform/leds/leds/gpio1_led/trigger
         echo 1 > /sys/devices/platform/leds/leds/gpio1_led/brightness
         reset_flag=1
-        echo "reset"
+        echo "------------turn on the cam-----------"
     elif [[ "$value" -eq 0 ]] && [[ "$reset_flag" -eq 1 ]]; then
         #echo "GPIO is $value, reset_flag is $reset_flag"
         #dmesg -n 3
@@ -36,6 +36,7 @@ while true; do
         echo none > /sys/devices/platform/leds/leds/gpio1_led/trigger
         echo 0 > /sys/devices/platform/leds/leds/gpio1_led/brightness
         reset_flag=0
+        echo "------------ready to turn on the cam----------"
     fi
     sleep 1  # Check every second
 done

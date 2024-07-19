@@ -15,8 +15,9 @@ rst_time=20
 #logger -p local0.notice "[RST][$tag:$LINENO] cam enabled"
 rm /tmp/init_cam_flag
 /opt/pim/bin/start_cam.sh $rst_time
+sleep 3
 pkill -f BG_Check
-sleep 20
+sleep 15
 #echo 1 > /sys/devices/platform/leds/leds/gpio1_led/brightness
 #/opt/pim/bin/restart_app.sh &
 #systemctl start cam-operate
