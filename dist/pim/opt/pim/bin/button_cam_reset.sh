@@ -13,21 +13,28 @@ fi
 
 # Set GPIO direction
 echo "in" > /sys/class/gpio/gpio${GPIO_PIN}/direction
-
+echo 0 > /sys/devices/platform/leds/leds/gpio1_led/brightness
+echo none > /sys/devices/platform/leds/leds/gpio1_led/trigger
 # Loop to check GPIO value and execute the script
 while true; do
     value=$(cat /sys/class/gpio/gpio${GPIO_PIN}/value)
     if [[ "$value" -eq 1 ]] && [[ "$reset_flag" -eq 0 ]]; then
         echo "GPIO is #value, reset_flag is $reset_flag, executing script..."
-        dmesg -n 3
+        #dmesg -n 3
         #$SCRIPT
-        /opt/pim/bin/cam_enable.sh 
+        echo 0 > /sys/devices/platform/leds/leds/gpio1_led/brightness
+        echo heartbeat > /sys/devices/platform/leds/leds/gpio1_led/trigger
+        /opt/pim/bin/cam_enable.sh
+        echo none > /sys/devices/platform/leds/leds/gpio1_led/trigger
+        echo 1 > /sys/devices/platform/leds/leds/gpio1_led/brightness
         reset_flag=1
         echo "reset"
     elif [[ "$value" -eq 0 ]] && [[ "$reset_flag" -eq 1 ]]; then
         #echo "GPIO is $value, reset_flag is $reset_flag"
-        dmesg -n 3
+        #dmesg -n 3
         /opt/pim/bin/cam_disable.sh
+        echo none > /sys/devices/platform/leds/leds/gpio1_led/trigger
+        echo 0 > /sys/devices/platform/leds/leds/gpio1_led/brightness
         reset_flag=0
     fi
     sleep 1  # Check every second
