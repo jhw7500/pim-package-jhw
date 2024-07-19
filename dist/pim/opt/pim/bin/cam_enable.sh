@@ -1,9 +1,9 @@
 #!/bin/bash
 
 tag=$(basename "$0")
-logger -p local0.notice "[RST][$tag:$LINENO] cam enable"
+logger -s -p local0.notice "[RST][$tag:$LINENO] cam enable"
 #logger -p local0.notice "[RST][$tag:$LINENO] modprobe imx8-media-dev, max9296"
-dmesg -n 4
+dmesg -n 3
 #modprobe max9296
 #sleep 1
 #modprobe imx8-media-dev

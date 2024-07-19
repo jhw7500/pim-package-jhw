@@ -1,7 +1,7 @@
 #!/bin/bash
 
 tag=$(basename "$0")
-logger -p local0.notice "[RST][$tag:$LINENO] module reset start"
+logger -s -p local0.notice "[RST][$tag:$LINENO] module reset start"
 #killall -s KILL restart_app.sh
 #/opt/pim/bin/kill_test.sh
 #systemctl stop cam-operate

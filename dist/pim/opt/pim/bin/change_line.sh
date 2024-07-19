@@ -12,7 +12,7 @@ if [ ! -f "$file_path" ]; then
 fi
 
 if grep -q "$pattern" "$file_path"; then
-   echo "Replaced line matching pattern '$pattern' with '$new_line' in the file: $file_path"
+    echo "Replaced line matching pattern '$pattern' with '$new_line' in the file: $file_path"
     sed -i "s?.*$pattern.*?$new_line?" "$file_path"
 else
     echo "Pattern '$pattern' not found in the file: $file_path"
