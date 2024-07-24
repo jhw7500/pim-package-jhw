@@ -3,7 +3,7 @@
 tag=$(basename "$0")
 logger -s -p local0.notice "[RST][$tag:$LINENO] cam enable"
 #logger -p local0.notice "[RST][$tag:$LINENO] modprobe imx8-media-dev, max9296"
-dmesg -n 3
+dmesg -n 4
 #modprobe max9296
 #sleep 1
 #modprobe imx8-media-dev
@@ -15,9 +15,9 @@ rst_time=20
 #logger -p local0.notice "[RST][$tag:$LINENO] cam enabled"
 rm /tmp/init_cam_flag
 /opt/pim/bin/start_cam.sh $rst_time
-sleep 3
+sleep 1
 pkill -f BG_Check
-sleep 15
+sleep $rst_time
 #echo 1 > /sys/devices/platform/leds/leds/gpio1_led/brightness
 #/opt/pim/bin/restart_app.sh &
 #systemctl start cam-operate

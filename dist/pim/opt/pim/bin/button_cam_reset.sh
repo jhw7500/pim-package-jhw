@@ -4,7 +4,7 @@ tag=$(basename "$0")
 logger -p local0.notice "[RST][$tag:$LINENO] button cam reset start"
 
 GPIO_PIN=131  # GPIO number to use
-SCRIPT="/opt/pim/bin/cam_disable.sh"  # Path to the script to execute
+#SCRIPT="/opt/pim/bin/cam_disable.sh"  # Path to the script to execute
 reset_flag=0
 # Export GPIO
 if [ ! -d "/sys/class/gpio/gpio${GPIO_PIN}" ]; then
@@ -32,6 +32,8 @@ while true; do
     elif [[ "$value" -eq 0 ]] && [[ "$reset_flag" -eq 1 ]]; then
         #echo "GPIO is $value, reset_flag is $reset_flag"
         #dmesg -n 3
+        echo 0 > /sys/devices/platform/leds/leds/gpio1_led/brightness
+        echo heartbeat > /sys/devices/platform/leds/leds/gpio1_led/trigger
         /opt/pim/bin/cam_disable.sh
         echo none > /sys/devices/platform/leds/leds/gpio1_led/trigger
         echo 0 > /sys/devices/platform/leds/leds/gpio1_led/brightness
