@@ -327,6 +327,15 @@ END
     systemctl enable pre-reboot-custom
   fi
 
+  daemon_name=hciattach
+  status=$(systemctl is-enable $daemon_name 2>/dev/null)
+  if [ "$status" == "disabled" ]; then
+    echo "$daemon_name is $status"
+  else
+    echo "disable $daemon_name"
+    systemctl disable $daemon_name
+  fi
+
   echo "check directory"
 makeDirectory() {
 if [ ! -d "$1" ]; then
@@ -493,6 +502,8 @@ END
   /opt/pim/bin/change_line.sh "watchdog-timeout = 15" "watchdog-timeout" /etc/watchdog.conf
   /opt/pim/bin/change_line.sh "watchdog-device = /dev/watchdog" "watchdog-device" /etc/watchdog.conf
   /opt/pim/bin/change_line.sh "kernel.printk = 2 4 1 3" "kernel.printk" /etc/sysctl.conf
+  /opt/pim/bin/change_line.sh "net.core.wmem_max=2621440" /etc/sysctl.conf
+  /opt/pim/bin/change_line.sh "net.core.rmem_max=2621440" /etc/sysctl.conf
   /opt/pim/bin/change_line.sh "SystemMaxUse=10000M" "SystemMaxUse=" /etc/systemd/journald.conf
   /opt/pim/bin/change_line.sh "SystemKeepFree=5000M" "SystemKeepFree=" /etc/systemd/journald.conf
   /opt/pim/bin/change_line.sh "ForwardToWall=no" "ForwardToWall=" /etc/systemd/journald.conf

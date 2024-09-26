@@ -1,8 +1,8 @@
 Package: pim-mp
-Version: 0.4.3
+Version: 0.4.4
 Replaces: cis
 Breaks: cis
-Section: test
+Section: mass
 Priority: optional
 Architecture: arm64 
 Depends: 
@@ -53,3 +53,5 @@ Description: PIM application
 0.4.1 : combine cis iot app
 0.4.2 : release integrated package
 0.4.3 : max9296(1.6) for using free any combination of channel, ord(0.3.8) for evt, mnt use disk size 95%->98%, rsyslog local0 level
+0.4.4 : mmc0(cis sd) for sdhc/sdxc, network buffer size, iomode fixed dma, etc(disk, log, audio, jig)
+

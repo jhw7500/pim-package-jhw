@@ -1,7 +1,8 @@
 #!/bin/bash
 tag=$(basename "$0")
 key=RST
-iomode=0
+#0:auto, 3:userptr, 4:dma
+iomode=4
 delay=5
 #app=PIMCAM
 #app=gstApp
