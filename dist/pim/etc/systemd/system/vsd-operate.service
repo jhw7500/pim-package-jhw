@@ -1,0 +1,11 @@
+[Unit]
+Description=Cantops Setting Program Service
+After=rc-local.service
+
+[Service]
+User=root
+WorkingDirectory=/root
+ExecStart=vsd
+
+[Install]
+WantedBy=multi-user.target

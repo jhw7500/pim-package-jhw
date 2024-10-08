@@ -1,7 +1,7 @@
 #!/bin/bash
 
 tag=$(basename "$0")
-list="BG_Check_for_pim.sh restart_app.sh vcm ord vsd streamApp gstApp PIMCAM"
+list="BG_Check_for_pim.sh restart_app.sh vcm ord streamApp gstApp PIMCAM"
 #list="chk_mem.sh"
 limitcnt=20
 KEY=RST
@@ -33,7 +33,7 @@ for service in $list; do
             echo $service
             if [ -n "$pid" ]; then
                 if [ "$cnt" -ge "$rebootcnt" ]; then
-                    logger -p local0.emerg "[$KEY][$tag:$LINENO] creboot because doesn't kill"
+                    logger -p local0.emerg "[$KEY][$tag:$LINENO] reboot because doesn't kill"
                     #sleep 1
                     #creboot
                     reboot

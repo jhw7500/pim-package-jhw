@@ -86,7 +86,7 @@ configure)
     cp /opt/pim/etc/security/limits.conf /etc/security/
   fi
 
-  local backup_alias=""
+  backup_alias=""
   if [ "$model" == "cis-a2" ] || [ "$model" == "cis-c2" ]; then
     #sea_app alias backup
     backup_alias="$(awk '/date >> boot_time.log/,EOF' /root/.bashrc >> /root/.bashrc)"
@@ -204,7 +204,7 @@ configure)
     echo "$daemon_name is $status"
   else
     echo "disable imx8-isp"
-    systemctl disable imx8-isp
+    systemctl disable $daemon_name
   fi
 
 #  systemctl restart cron
@@ -235,19 +235,19 @@ END
   if [ "$status" == "disabled" ]; then
     echo "$daemon_name is $status"
   else
-    echo "disable network manager"
-    systemctl disable NetworkManager
+    echo "disable $daemon_name"
+    systemctl disable $daemon_name
   fi
 
   daemon_name=systemd-network-wait-online
   status=$(systemctl is-enabled $daemon_name 2>/dev/null)
   if [ "$status" == "masked" ]; then
-    echo "systemd-network-wait-online is mask"
+    echo "$daemon_name is mask"
   else
-    echo "disable network-wait"
-    systemctl disable systemd-networkd-wait-online.service
-    echo "mask network-wait"
-    systemctl mask systemd-networkd-wait-online.service
+    echo "disable $daemon_name"
+    systemctl disable $daemon_name
+    echo "mask $daemon_name"
+    systemctl mask $daemon_name
   fi
 
   daemon_name=nfs-client.target
@@ -256,7 +256,7 @@ END
     echo "$daemon_name is $status"
   else
     echo "disable nfs"
-    systemctl disable nfs-client.target
+    systemctl disable $daemon_name
   fi
 
 #  systemctl stop connman.service
@@ -267,7 +267,7 @@ END
     status=$(systemctl is-enabled $daemon_name 2>/dev/null)
     if [ "$status" == "disabled" ]; then
       echo "enable docker"
-      systemctl enable docker
+      systemctl enable $daemon_name
     else
       echo "$daemon_name is $status"
     fi
@@ -276,7 +276,7 @@ END
     status=$(systemctl is-enabled $daemon_name 2>/dev/null)
     if [ "$status" == "disabled" ]; then
       echo "enable docker.socket"
-      systemctl enable docker.socket
+      systemctl enable $daemon_name
     else
       echo "$daemon_name is $status"
     fi
@@ -287,7 +287,7 @@ END
       echo "$daemon_name is $status"
     else
       echo "disable docker"
-      systemctl disable docker
+      systemctl disable $daemon_name
     fi
 
     daemon_name=docker.socket
@@ -295,8 +295,8 @@ END
     if [ "$status" == "disabled" ]; then
       echo "$daemon_name is $status"
     else
-      echo "disable docker.socket"
-      systemctl disable docker.socket
+      echo "disable $daemon_name"
+      systemctl disable $daemon_name
     fi
   fi
 
@@ -305,8 +305,17 @@ END
   if [ "$status" == "enabled" ]; then
     echo "$daemon_name is $status"
   else
-    echo "enable cam-operate"
-    systemctl enable cam-operate
+    echo "enable $daemon_name"
+    systemctl enable $daemon_name
+  fi
+
+  daemon_name=vsd-operate
+  status=$(systemctl is-enabled $daemon_name 2>/dev/null)
+  if [ "$status" == "enabled" ]; then
+    echo "$daemon_name is $status"
+  else
+    echo "enable $daemon_name"
+    systemctl enable $daemon_name
   fi
 
   daemon_name=run-watchdog-custom
@@ -314,8 +323,8 @@ END
   if [ "$status" == "enabled" ]; then
     echo "$daemon_name is $status"
   else
-    echo "enable run-watchdog-custom"
-    systemctl enable run-watchdog-custom
+    echo "enable $daemon_name"
+    systemctl enable $daemon_name
   fi
 
   daemon_name=pre-reboot-custom
@@ -323,8 +332,8 @@ END
   if [ "$status" == "enabled" ]; then
     echo "$daemon_name is $status"
   else
-    echo "enable pre-reboot-custom"
-    systemctl enable pre-reboot-custom
+    echo "enable $daemon_name"
+    systemctl enable $daemon_name
   fi
 
   daemon_name=hciattach
@@ -502,8 +511,8 @@ END
   /opt/pim/bin/change_line.sh "watchdog-timeout = 15" "watchdog-timeout" /etc/watchdog.conf
   /opt/pim/bin/change_line.sh "watchdog-device = /dev/watchdog" "watchdog-device" /etc/watchdog.conf
   /opt/pim/bin/change_line.sh "kernel.printk = 2 4 1 3" "kernel.printk" /etc/sysctl.conf
-  /opt/pim/bin/change_line.sh "net.core.wmem_max=2621440" /etc/sysctl.conf
-  /opt/pim/bin/change_line.sh "net.core.rmem_max=2621440" /etc/sysctl.conf
+  /opt/pim/bin/change_line.sh "net.core.wmem_max=2621440" "net.core.wmem_max" /etc/sysctl.conf
+  /opt/pim/bin/change_line.sh "net.core.rmem_max=2621440" "net.core.rmem_max" /etc/sysctl.conf
   /opt/pim/bin/change_line.sh "SystemMaxUse=10000M" "SystemMaxUse=" /etc/systemd/journald.conf
   /opt/pim/bin/change_line.sh "SystemKeepFree=5000M" "SystemKeepFree=" /etc/systemd/journald.conf
   /opt/pim/bin/change_line.sh "ForwardToWall=no" "ForwardToWall=" /etc/systemd/journald.conf

@@ -2,7 +2,7 @@
 
 #service=$1
 #logger -s -t 'sh   ' streamApp PIMCAM vcm 
-list="restart_app vcm ord vsd streamApp PIMCAM"
+list="restart_app vcm ord streamApp PIMCAM"
 tag=$(basename "$0")
 touch /tmp/kill_flag
 for service in $list; do

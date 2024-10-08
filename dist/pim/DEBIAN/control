@@ -2,7 +2,7 @@ Package: pim-mp
 Version: 0.4.4
 Replaces: cis
 Breaks: cis
-Section: mass
+Section: test
 Priority: optional
 Architecture: arm64 
 Depends: 
