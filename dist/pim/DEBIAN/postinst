@@ -383,6 +383,7 @@ makeDirectory /var/log/cantops/gst
 makeDirectory /share
 makeDirectory /root/boot
 makeDirectory /root/fwupgrade
+makeDirectory /mnt/sd
 
 if mount | grep -q "$DEVICE on $MOUNT_POINT"; then
     #echo "$DEVICE is already mounted on $MOUNT_POINT."
