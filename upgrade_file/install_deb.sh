@@ -251,6 +251,16 @@ else
   echo '{"PROGRESS":'"$prog_per"',"MSG":"installed '"$package"'"}'
 fi
 
+package="cpulimit"
+if [ -z "$(dpkg -s $package 2> /dev/null)" ]; then
+  echo '{"PROGRESS":'"$prog_per"',"MSG":"install '"$package"'"}'
+  var='cpulimit_2.6-2_arm64.deb'
+  echo '{"PROGRESS":'"$prog_per"',"MSG":"dpkg -i '"$var"'"}'
+  dpkg -i "$var" > /dev/null 2> /dev/null
+else
+  echo '{"PROGRESS":'"$prog_per"',"MSG":"installed '"$package"'"}'
+fi
+
 ########################################
 ## Install pip packages               ##
 ########################################
