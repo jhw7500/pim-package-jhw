@@ -118,3 +118,11 @@ ugrade_zip_file=$(echo ${package} | tr [a-z] [A-Z] | tr '-' '_')"_release_"$(ech
 mv ${BASEDIR}/release/upgrade_file.zip ${BASEDIR}/release/${ugrade_zip_file}
 
 echo "create ${ugrade_zip_file}"
+
+#### create old upgrade file #################
+cd ${BASEDIR}/release/upgrade_file/
+mv setup.sh pim_update.sh
+ugrade_old_zip_file="pim_update_"$(echo ${version})".tar"
+tar cvf "../${ugrade_old_zip_file}" ./
+
+echo "create ${ugrade_old_zip_file}"
