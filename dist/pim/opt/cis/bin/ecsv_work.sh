@@ -1,12 +1,24 @@
 #!/bin/bash
 
+LOG_DEBUG="local1.debug"
+LOG_INFO="local1.info"
+LOG_ERROR="local1.err"
+
+fn_LogWrite() {
+    local log_level=$1
+    shift
+    local log_message="ECSV_WORK|$@"
+
+    logger -p "$log_level" "$log_message"
+}
+
 fn_run() {
     #$1 : time
     #$2 : ftype
     local min="";
     local wait_t=0;
     local per=0;
-    local min_coeff=70;
+    local min_coeff=85;
     local is_error=0;
     local farray=""
 
@@ -23,13 +35,15 @@ fn_run() {
         farray+=("/root/shared_v/dump_data/ADC0.csv")        
         farray+=("/root/shared_v/dump_data/N_ACC0.acc")
         farray+=("/root/shared_v/dump_data/N_ADC0.adc")
-        min_coeff=75
+        min_coeff=85
     else
         echo 'ERROR:bad arguments'
         exit 1;
     fi
     
     echo '{"PROGRESS":0,"MSG":"start"}'
+
+    fn_LogWrite $LOG_INFO "start ecsv $min"
 
     # 1STEP : delete file
     if [ -d "/root/shared_v/dump_data" ]; then
@@ -44,17 +58,22 @@ fn_run() {
     ##ecsv $min;
     /usr/bin/docker exec edge python3 main_controller start_datalogging $min > /dev/null 2>&1
     if [ $? -ne 0 ]; then 
+        fn_LogWrite $LOG_ERROR "ecsv not excuted"
         echo 'ERROR:ecsv not excuted'
         exit 1; 
     fi
     
     # 3STEP : delay time
     wait_t=`expr $min \* $min_coeff`
+    tag_t=`expr $min \* 60`
 	for ((i=0;i<wait_t;i++))
 	do
         sleep 1
         per=`echo "$i $wait_t"|awk '{printf "%d", (($1+1) * 100) / ($2 +1)}'`
         echo "{\"PROGRESS\":$per,\"MSG\":\"measuring...\"}"
+        if [ i == $tag_t ]; then
+            fn_LogWrite $LOG_ERROR "$min minutes have passed"
+        fi
 	done
     
     # 4STEP : check file
@@ -74,6 +93,7 @@ fn_run() {
     done
 
     if [ ${is_error} -ne 0 ]; then
+        fn_LogWrite $LOG_ERROR "files does not exist"
         echo 'ERROR:files does not exist'
         exit 1;
     fi
@@ -87,6 +107,7 @@ fn_run() {
         mv $var "/shared/dump_data"
     done
 
+    fn_LogWrite $LOG_INFO "Finished"
     echo '{"PROGRESS":100,"MSG":"Finished"}'
 }
 
