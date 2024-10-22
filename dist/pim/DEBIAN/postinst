@@ -103,6 +103,14 @@ configure)
   cp /opt/pim/etc/logrotate.d/rsyslog /etc/logrotate.d/
   cp /opt/pim/etc/samba/smb.conf /etc/samba/
   cp /opt/pim/driver/max9296.ko /lib/modules/$KERNEL_VERSION/kernel/drivers/media/i2c/
+  #cp /opt/pim/driver/compat.ko /lib/modules/$KERNEL_VERSION/updates/compat/
+  #cp /opt/pim/driver/mac80211.ko /lib/modules/$KERNEL_VERSION/updates/net/max80211/
+  #cp /opt/pim/driver/cfg80211.ko /lib/modules/$KERNEL_VERSION/updates/net/wireless/
+  #cp /opt/pim/driver/lrdmwl.ko  /lib/modules/$KERNEL_VERSION/updates/drivers/net/wireless/laird/lrdmwl/
+  #cp /opt/pim/driver/lrdmwl_pcie.ko  /lib/modules/$KERNEL_VERSION/updates/drivers/net/wireless/laird/lrdmwl/
+  tar -xvf /opt/pim/driver/laird_backport.tar -C /lib/modules/$KERNEL_VERSION/updates/
+  tar -xvf /opt/pim/firmware/laird_firmware.tar -C /lib/firmware/
+
   rm -f /usr/lib/libpiencrypt*
   ln -s /usr/local/lib/libpiencrypt.so.0  /usr/lib/libpiencrypt.so.0
   ln -s /usr/local/lib/libpiencrypt.so.0  /usr/lib/libpiencrypt.so
@@ -351,7 +359,7 @@ if [ ! -d "$1" ]; then
     echo "Creating $1 directory..."
     mkdir -p "$1"
     if [ $? -eq 0 ]; then
-        echo "Directory $EVENT_DIR created successfully."
+        echo "Directory $1 created successfully."
     else
         #echo "Failed to create $1 directory."
         logger -s -p local0.err "Failed to create $1 directory."
