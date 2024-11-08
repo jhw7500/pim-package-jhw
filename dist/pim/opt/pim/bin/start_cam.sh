@@ -31,7 +31,7 @@ StartCam() {
         logger -p local0.emerg "[$key][$tag:$LINENO] restart_app start"
         /opt/pim/bin/restart_app.sh &
     fi
-    /opt/pim/bin/cpulimit-all.sh --limit=320 --max-depth=5 -e $1 --watch-interval=1m
+    #/opt/pim/bin/cpulimit-all.sh --limit=320 --max-depth=5 -e $1 --watch-interval=1m &
 }
 
 if [[ -n "$1" ]]; then

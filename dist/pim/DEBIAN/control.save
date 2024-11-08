@@ -55,4 +55,4 @@ Description: PIM application
 0.4.3 : max9296(1.6) for using free any combination of channel, ord(0.3.8) for evt, mnt use disk size 95%->98%, rsyslog local0 level
 0.4.4 : mmc0(cis sd) for sdhc/sdxc, network buffer size, iomode fixed dma, etc(disk, log, audio, jig)
 0.4.5 : backport module(12.29), pcie_fw(5.4.58), seperate vsd daemon for AX model, disable wlp1s0 power save mode, limit cpu on cam app
-0.4.6 : disable cpulimit
+0.4.6 : fix chk_cam_operate not working because cpulimit-all.sh is not running in the background. 
