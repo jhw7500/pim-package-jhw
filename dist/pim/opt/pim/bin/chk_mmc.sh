@@ -36,7 +36,7 @@ per=$(echo $per | sed 's/%//')
 #echo "per:$per, max_per:$max_per"
 if (( per > max_per1 )); then
     #touch /tmp/emmc_warning
-    logger -p local0.emerg "[$KEY][$tag:$LINENO] emmc size $per% > $max_per3"
+    logger -p local0.emerg "[$KEY][$tag:$LINENO] emmc size $per% > $max_per1"
     logger -p local0.emerg "[$KEY][$tag:$LINENO] rsyslog, journald stop and disable"
     systemctl stop rsyslog
     systemctl stop journald
@@ -59,7 +59,7 @@ elif (( per > max_per2 )); then
     systemctl enable rsyslog
     systemctl enable journald
 elif (( per > max_per3 )); then
-    logger -p local0.emerg "[$KEY][$tag:$LINENO] emmc size $per% > $max_per1"
+    logger -p local0.emerg "[$KEY][$tag:$LINENO] emmc size $per% > $max_per3"
     logger -p local0.emerg "[$KEY][$tag:$LINENO] log level change to notice"
     /opt/pim/bin/change_line.sh "local0.notice;*.emerg       /var/log/cantops/local0.log" "/var/log/cantops/local0.log" /etc/rsyslog.d/50-default.conf
     /opt/pim/bin/change_line.sh "*.notice;auth,authpriv,local0,kern.none;     /var/log/cantops/syslog" "/var/log/cantops/syslog" /etc/rsyslog.d/50-default.conf
@@ -76,7 +76,7 @@ elif (( per > max_per3 )); then
     systemctl enable journald
 else
     logger -p local0.notice "[$KEY][$tag:$LINENO] emmc size $per% <= $max_per1%"
-    logger -p local0.notice "[$KEY][$tag:$LINENO] log level change (logcal0 : notice, local1 : all, syslog : all, kern : notice, journald : all)"
+    logger -p local0.notice "[$KEY][$tag:$LINENO] log level change (local0 : notice, local1 : all, syslog : all, kern : notice, journald : all)"
     /opt/pim/bin/change_line.sh "local0.notice;*.emerg       /var/log/cantops/local0.log" "/var/log/cantops/local0.log" /etc/rsyslog.d/50-default.conf
     /opt/pim/bin/change_line.sh "*.*;auth,authpriv,local0,kern.none;     /var/log/cantops/syslog" "/var/log/cantops/syslog" /etc/rsyslog.d/50-default.conf
     /opt/pim/bin/change_line.sh "kern.notice         /var/log/cantops/kern.log" "/var/log/cantops/kern.log" /etc/rsyslog.d/50-default.conf

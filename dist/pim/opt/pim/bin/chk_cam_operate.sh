@@ -6,7 +6,7 @@ GetConfig() {
     cam_ch2=$(jq '.VHL_CAM.i2c1.ch2.enable' "$FILE_JSON")
     cam_ch3=$(jq '.VHL_CAM.i2c1.ch3.enable' "$FILE_JSON")
     srt_en=$(jq '.VCM.srt_enable' "$FILE_JSON_")
-    time_rec_en=$(jq '.VCM.file_time_recording' "$FILE_JSON_")
+    time_rec_en=$(jq '.VCM.file_time_check' "$FILE_JSON_")
     vhl_name=$(jq -r '.VHL_CAM.vhl_name' "$FILE_JSON")
     rec_time=$(jq '.VHL_CAM.recording_time' "$FILE_JSON")
     rec_time=$((rec_time*60))
@@ -38,7 +38,7 @@ if [ ! -n "$pid" ]; then
 fi
 }
 
-FILE_=/tmp/start_video_time_
+FILE_=/tmp/start_video_time_chk
 #FILE_JSON=/root/shared_v/edgeconf_pim.json
 FILE_JSON_=/root/shared_v/ord_vcm_conf.json
 FILE_CHECK=/tmp/file_check
