@@ -1,6 +1,6 @@
 #!/bin/bash
 tag=0
-offset=-99999.99
+offset=-0
 velocity=0.0
 json_data=""
 
