@@ -82,7 +82,7 @@ int main()
 
 	strftime(datetime, sizeof(datetime), "%Y%m%d_%H%M%S", &tm);
 
-	//memset(msgBuf.cfi.data.prefix, 0, 32);
+	memset(msgBuf.cfi.data.prefix, 0, 32);
 	sprintf((char *)msgBuf.cfi.data.prefix, "%s_%s", CFI_VHL_NAME, datetime);
 	//memcpy(msgBuf.cfi.data.prefix, CFI_PREFIX, strlen(CFI_PREFIX));
 	
