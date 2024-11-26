@@ -18,13 +18,14 @@
 #include <sys/types.h>
 
 #include <arpa/inet.h>
-#include <json-c/json.h>
+
 #define MSG_Q_KEY	(0x65)
 #define CFI_DATA_LEN 50
 #define CFI_VERISON	0x300
 #define CFI_CMD_ID	0x300
 #define CFI_SID		"CANTOP"
-#define CFI_PREFIX	"VD3001_20241122_102035"
+#define CFI_VHL_NAME	"VD3001"
+//#define CFI_PREFIX	"VD3001_20241122_102035"
 
 enum PIPE_MSG_TYPE {
   PMSG_TYPE_UNUSED = 0,
@@ -74,8 +75,16 @@ int main()
 	msgBuf.cfi.data.tx_id = 1;
 	msgBuf.cfi.data.reserved = 0;
 	msgBuf.cfi.data.cap_cnt = 2;
-	memset(msgBuf.cfi.data.prefix, 0, 32);
-	memcpy(msgBuf.cfi.data.prefix, CFI_PREFIX, strlen(CFI_PREFIX));
+
+	time_t t = time(NULL);
+	struct tm tm = *localtime(&t);
+	char datetime[20];
+
+	strftime(datetime, sizeof(datetime), "%Y%m%d_%H%M%S", &tm);
+
+	//memset(msgBuf.cfi.data.prefix, 0, 32);
+	sprintf((char *)msgBuf.cfi.data.prefix, "%s_%s", CFI_VHL_NAME, datetime);
+	//memcpy(msgBuf.cfi.data.prefix, CFI_PREFIX, strlen(CFI_PREFIX));
 	
 	sprintf(strTmp, "len:%d, ver:0x%x, cmd_id:0x%x, tx_id:%d, reserved:%d\n", \
 		msgBuf.cfi.data.len, msgBuf.cfi.data.ver, msgBuf.cfi.data.cmd_id, msgBuf.cfi.data.tx_id, msgBuf.cfi.data.reserved);

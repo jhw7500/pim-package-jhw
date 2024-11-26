@@ -261,6 +261,19 @@ else
   echo '{"PROGRESS":'"$prog_per"',"MSG":"installed '"$package"'"}'
 fi
 
+package="hiredis"
+if [ -z "$(dpkg -s $package 2> /dev/null)" ]; then
+  echo '{"PROGRESS":'"$prog_per"',"MSG":"install '"$package"'"}'
+  var='libhiredis0.14_0.14.0-6_arm64.deb'
+  echo '{"PROGRESS":'"$prog_per"',"MSG":"dpkg -i '"$var"'"}'
+  dpkg -i "$var" > /dev/null 2> /dev/null
+  var='libhiredis-dev_0.14.0-6_arm64.deb'
+  echo '{"PROGRESS":'"$prog_per"',"MSG":"dpkg -i '"$var"'"}'
+  dpkg -i "$var" > /dev/null 2> /dev/null
+else
+  echo '{"PROGRESS":'"$prog_per"',"MSG":"installed '"$package"'"}'
+fi
+
 ########################################
 ## Install pip packages               ##
 ########################################

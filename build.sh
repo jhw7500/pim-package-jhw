@@ -8,6 +8,7 @@ if [ ! -d ${BASEDIR}/ord/build ]; then
 fi
 cd ${BASEDIR}/ord/build
 cmake ..
+#cd ${BASEDIR}/ord/
 make
 if [ $? != 0 ]; then
     echo "ord compile error"
@@ -31,6 +32,7 @@ if [ ! -d ${BASEDIR}/vcm/build ]; then
 fi
 cd ${BASEDIR}/vcm/build
 cmake ..
+#cd ${BASEDIR}/vcm
 make
 if [ $? != 0 ]; then
 	    echo "vcm compile error"
