@@ -1,6 +1,7 @@
 /var/log/cantops/kern.log
 /var/log/cantops/local0.log
 /var/log/cantops/local1.log
+/var/log/cantops/pim_gate.log
 /var/log/cantops/syslog
 {
 	rotate 24

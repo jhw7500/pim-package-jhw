@@ -94,7 +94,21 @@ cp ${BASEDIR}/adab/build/adab ${BASEDIR}/release/pim/opt/cis/bin/adab_adc
 cp ${BASEDIR}/adab_ecat/build/adab_ecat ${BASEDIR}/release/pim/opt/cis/bin/adab_ecat
 cp ${BASEDIR}/cism/build/cism ${BASEDIR}/release/pim/opt/cis/bin/
 cp ${BASEDIR}/stm32update/build/stm32update ${BASEDIR}/release/pim/opt/cis/bin/
-cd ${BASEDIR}/release
+
+SOURCEDIR=${BASEDIR}/pim_gate
+WORKDIR=${BASEDIR}/release/pim
+mkdir -p ${WORKDIR}/opt/pim_gate/bin/
+mkdir -p ${WORKDIR}/opt/pim_gate/conf/
+cp ${SOURCEDIR}/*.py ${WORKDIR}/opt/pim_gate/bin/
+cp ${SOURCEDIR}/pim_gate.sh ${WORKDIR}/opt/pim_gate/bin/
+cp ${SOURCEDIR}/P2_cmd_data.txt ${WORKDIR}/opt/pim_gate/bin/
+cp -R ${SOURCEDIR}/conf_taiwan_demo/ ${WORKDIR}/opt/pim_gate/conf/
+cp -R ${SOURCEDIR}/conf_cfi_station/ ${WORKDIR}/opt/pim_gate/conf/
+cp -R ${SOURCEDIR}/conf_nanya/ ${WORKDIR}/opt/pim_gate/conf/
+cp -R ${SOURCEDIR}/conf_tower_lift/ ${WORKDIR}/opt/pim_gate/conf/
+echo "/root/shared_v/pim_gate/" > ${WORKDIR}/opt/pim_gate/bin/conf_dir
+
+cd ${BASEDIR}/release 
 version=$(cat ../dist/pim/DEBIAN/control| grep Version |grep -v ^$#| cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n' | tr -d ' ')
 package=$(cat ../dist/pim/DEBIAN/control| grep Package |grep -v ^$#| cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n' | tr -d ' ')
 echo version:$version
