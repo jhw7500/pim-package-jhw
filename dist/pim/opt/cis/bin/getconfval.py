@@ -83,7 +83,15 @@ def get_json_val(json_key):
     elif json_key == "iot_longrun_en" :
         json_path = "/etc/cts/model_override.json"
         json_defval = False
-
+    elif json_key == "LOG_LEVEL" :
+        json_path = "/etc/cts/model_override.json"
+        json_defval = "INFO"
+    elif json_key == "bme_enable" :
+        json_path = "/etc/cts/model_override.json"
+        json_defval = False
+    elif json_key == "send_data_cnt" :
+        json_path = "/etc/cts/model_override.json"
+        json_defval = 1000
     try:
         with open(json_path, "r") as f :
             jsonconf = json.load(f)
@@ -234,6 +242,96 @@ def get_json_val(json_key):
                 return json_defval
         except:
             return json_defval
+    elif json_key == "LOG_LEVEL" :
+        try:
+            if is_json_key_present(jsonconf["iot"],"log_level") == True:
+                lvl = jsonconf["iot"]["log_level"]
+                if lvl == "debug" or lvl == "DEBUG" :
+                    return "DEBUG"
+                elif lvl == "info" or lvl == "INFO" :
+                    return "INFO"
+                else :
+                    return json_defval
+            else :
+                return json_defval
+        except:
+            return json_defval
+    elif json_key == "bme_enable" :
+        try:
+            if is_json_key_present(jsonconf["iot"],"bme_enable") == True:
+                return jsonconf["iot"]["bme_enable"]
+            else :
+                return json_defval
+        except:
+            return json_defval
+    elif json_key == "send_data_cnt" :
+        try:
+            if is_json_key_present(jsonconf["iot"],"send_data_cnt") == True:
+                return jsonconf["iot"]["send_data_cnt"]
+            else :
+                return json_defval
+        except:
+            return json_defval
+
+def set_json_val(json_key, json_value):
+    if json_key == "iot_longrun_en" :
+        json_path = "/etc/cts/model_override.json"
+        try:
+            with open(json_path, "r") as f :
+                jsonconf = json.load(f)
+            if json_value == "True" or json_value == "true" or json_value == True :
+                jsonconf["iot"]["longrun_en"] = True
+            elif json_value == "False" or json_value == "false" or json_value == False :
+                jsonconf["iot"]["longrun_en"] = False
+            else :
+                return
+            with open(json_path, 'w') as f:
+                json.dump(jsonconf, f, indent=3)
+        except:
+            return
+    elif json_key == "LOG_LEVEL" :
+        json_path = "/etc/cts/model_override.json"
+        try:
+            with open(json_path, "r") as f :
+                jsonconf = json.load(f)
+            if json_value == "debug" or json_value == "DEBUG" :
+                jsonconf["iot"]["log_level"] = "BEBUG"
+            elif json_value == "info" or json_value == "INFO" :
+                jsonconf["iot"]["log_level"] = "INFO"
+            else :
+                return
+            with open(json_path, 'w') as f:
+                json.dump(jsonconf, f, indent=3)
+        except:
+            sys.exit()
+    elif json_key == "bme_enable" :
+        json_path = "/etc/cts/model_override.json"
+        try:
+            with open(json_path, "r") as f :
+                jsonconf = json.load(f)
+            if json_value == "True" or json_value == "true" or json_value == True :
+                jsonconf["iot"]["bme_enable"] = True
+            else :
+                jsonconf["iot"]["bme_enable"] = False
+            with open(json_path, 'w') as f:
+                json.dump(jsonconf, f, indent=3)
+        except:
+            sys.exit()
+    elif json_key == "send_data_cnt" :
+        json_path = "/etc/cts/model_override.json"
+        try:
+            with open(json_path, "r") as f :
+                jsonconf = json.load(f)
+            if isinstance(json_value,str) and json_value.isdigit() :
+                jsonconf["iot"]["send_data_cnt"] = int(json_value)
+            elif isinstance(json_value,int) :
+                jsonconf["iot"]["send_data_cnt"] = json_value
+            else :
+                return
+            with open(json_path, 'w') as f:
+                json.dump(jsonconf, f, indent=3)
+        except:
+            sys.exit()
 
 ###########################################
 ### arg[1] : json_path
@@ -244,5 +342,9 @@ if __name__ == "__main__":
     if len(sys.argv) == 2 :
         json_key = sys.argv[1]
         print(get_json_val(json_key))
+    elif len(sys.argv) == 3 :
+        json_key = sys.argv[1]
+        json_value = sys.argv[2]
+        set_json_val(json_key, json_value)
     else :
         sys.exit()

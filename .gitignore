@@ -2,3 +2,5 @@ release/
 dist/pim/usr/local/bin/ord
 dist/pim/usr/local/bin/vcm
 dist/pim/usr/local/bin/vsd
+.vscode/
+boot_time.log

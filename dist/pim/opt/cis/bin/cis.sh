@@ -38,6 +38,14 @@ start() {
             dbmon start
         fi
         
+        iot_app=$(python3 /opt/cis/bin/getconfval.py iot_app)
+        if [[ ${iot_app} == "siren" ]]; then
+            /opt/cis/bin/binwork_ramdisk.sh create > /dev/null 2> /dev/null
+        	siren start
+        elif [[ ${iot_app} == "pim_gate" ]]; then
+        	pim_gate start
+        fi
+
         longrun service_start
     else
         reboot
@@ -46,6 +54,7 @@ start() {
 
 stop() {
     fwdriver stop
+    pim_gate stop
     cism stop
     dbmon stop
     wifim stop

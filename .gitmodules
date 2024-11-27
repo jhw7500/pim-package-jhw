@@ -21,3 +21,6 @@
 [submodule "adab_ecat"]
 	path = adab_ecat
 	url = http://192.168.10.2:31406/cantops-iot-solution/adab_ecat.git
+[submodule "pim_gate"]
+	path = pim_gate
+	url = http://192.168.10.2:31406/cantops-iot-solution/pim_gate.git

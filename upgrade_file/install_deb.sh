@@ -274,6 +274,48 @@ else
   echo '{"PROGRESS":'"$prog_per"',"MSG":"installed '"$package"'"}'
 fi
 
+package="redis-server"
+if [ -z "$(dpkg -s $package 2> /dev/null)" ]; then
+  echo '{"PROGRESS":'"$prog_per"',"MSG":"install '"$package"'"}'
+  deb_list=('libjemalloc2_5.2.1-1ubuntu1_arm64.deb' \
+    'lua-cjson_2.1.0+dfsg-2.1_arm64.deb' \
+    'lua-bitop_1.0.2-5_arm64.deb' \
+    'liblua5.1-0_5.1.5-8.1build4_arm64.deb' \
+    'redis-tools_5%3a5.0.7-2ubuntu0.1_arm64.deb' \
+    'redis-server_5%3a5.0.7-2ubuntu0.1_arm64.deb' )
+  for var in "${deb_list[@]}"
+  do
+    echo '{"PROGRESS":'"$prog_per"',"MSG":"dpkg -i '"$var"'"}'
+    dpkg -i "$var" > /dev/null 2> /dev/null
+  done
+else
+  echo '{"PROGRESS":'"$prog_per"',"MSG":"installed '"$package"'"}'
+fi
+
+# Check if the directory exists
+need_restart=0
+if [ ! -f "/etc/tmpfiles.d/redis.conf" ]; then
+  echo '{"PROGRESS":'"$prog_per"',"MSG":"'"$package"', create /etc/tmpfiles.d/redis.conf "}'
+  echo 'd  /var/volatile/log/redis  0755  redis redis  -
+d  /var/run/redis           0755  redis redis  -' > /etc/tmpfiles.d/redis.conf
+  systemctl restart systemd-tmpfiles-clean.service
+  systemd-tmpfiles --create
+  need_restart=1
+fi
+
+str=$(cat /etc/redis/redis.conf | grep ^notify-keyspace-events | tr -d '\r\n')
+if [ "${str}" != "notify-keyspace-events \"KA\"" ]; then
+  echo '{"PROGRESS":'"$prog_per"',"MSG":"'"$package"', edit notify-keyspace-events "}'
+  sed "s/$str/notify-keyspace-events \"KA\"/" -i /etc/redis/redis.conf
+  need_restart=1
+fi
+
+if [ $need_restart == 1 ]; then
+  echo '{"PROGRESS":'"$prog_per"',"MSG":"'"$package"', Restarting Redis-server service..."}'
+  systemctl daemon-reload
+  systemctl restart redis-server
+fi
+
 ########################################
 ## Install pip packages               ##
 ########################################
@@ -287,7 +329,11 @@ package_list=('schedule' \
           'pyserial' \
           'ipaddress' \
           'lockfile' \
-          'jsonpath-ng' )
+          'jsonpath-ng' \
+          'redis'
+          'paho-mqtt'
+          'numpy'
+          'dataclasses')
 for package in "${package_list[@]}"
 do
   installed_pip=$(echo "$pip_list" | grep -E "${package}\s")
@@ -298,6 +344,18 @@ do
     echo '{"PROGRESS":'"$prog_per"',"MSG":"pip installed '"$package"'"}'
   fi
 done
+
+package="aioredis"
+package_ver="1.3.1"
+installed_pip=$(echo "$pip_list" | grep -E "${package}\s")
+installed_package_ver=$(echo "$installed_pip" | awk '{print $2}')
+
+if [[ -n "${installed_pip}"  && "${installed_package_ver}" == "${package_ver}" ]]; then
+  echo '{"PROGRESS":'"$prog_per"',"MSG":"pip installed '"$package"'=='"$package_ver"'"}'
+else
+  echo '{"PROGRESS":'"$prog_per"',"MSG":"pip install '"$package"'=='"$package_ver"'"}'
+  pip install --no-index --find-links=./ "$package"'=='"$package_ver" > /dev/null 2> /dev/null
+fi
 
 package="psutil"
 installed_pip=$(echo "$pip_list" | grep -E "${package}\s")

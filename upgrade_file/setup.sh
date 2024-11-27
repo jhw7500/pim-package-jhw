@@ -198,6 +198,7 @@ cis-a2|pim-a2)
   wifim stop > /dev/null 2> /dev/null
   automnt stop > /dev/null 2> /dev/null
   longrun stop > /dev/null 2> /dev/null	
+  pim_gate stop 1> /dev/null 2>&1
   set_db_uartmon 0
   ;;
 esac
@@ -235,6 +236,11 @@ cis-a2|pim-a2)
   dbmon start > /dev/null 2> /dev/null
   wifim start > /dev/null 2> /dev/null
   automnt start > /dev/null 2> /dev/null
+
+  iot_app=$(python3 /opt/cis/bin/getconfval.py iot_app)
+  if [[ ${iot_app} == "pim_gate" ]]; then
+      pim_gate start 1> /dev/null 2>&1
+  fi
   set_db_uartmon 1
   echo '{"PROGRESS":99,"MSG":"start adab"}'
   ;;
