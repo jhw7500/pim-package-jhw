@@ -1,8 +1,8 @@
 Package: pim-mp
-Version: 0.4.6
+Version: 0.4.7
 Replaces: cis
 Breaks: cis
-Section: mass
+Section: test
 Priority: optional
 Architecture: arm64 
 Depends: 
@@ -56,3 +56,4 @@ Description: PIM application
 0.4.4 : mmc0(cis sd) for sdhc/sdxc, network buffer size, iomode fixed dma, etc(disk, log, audio, jig)
 0.4.5 : backport module(12.29), pcie_fw(5.4.58), seperate vsd daemon for AX model, disable wlp1s0 power save mode, limit cpu on cam app
 0.4.6 : disable cpulimit
+0.4.7 : pim_gate, vcm(3.9), ord(4.1), etc for nanya demo
