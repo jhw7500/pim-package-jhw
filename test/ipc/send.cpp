@@ -53,11 +53,13 @@ struct _MSGQueue {
 };
 #pragma pack(pop)
 
-int main()
+int main(int argc, char *argv[])
 {
 	int ret = 0;
 	int msg_id = msgget((key_t)MSG_Q_KEY, IPC_CREAT | 0666);
 	char strTmp[512]; 
+    bool loop = false;
+
 
 	if (msg_id == -1) {
 		ret = -1;
@@ -74,7 +76,16 @@ int main()
 	msgBuf.cfi.data.cmd_id = CFI_CMD_ID;
 	msgBuf.cfi.data.tx_id = 1;
 	msgBuf.cfi.data.reserved = 0;
-	msgBuf.cfi.data.cap_cnt = 2;
+
+    //syslog(LOG_LOCAL0, "test");
+    if(argc >= 2)
+    {
+        msgBuf.cfi.data.cap_cnt = atoi(argv[1]);
+    }
+    else
+    {
+        msgBuf.cfi.data.cap_cnt = 1;
+    }
 
 	time_t t = time(NULL);
 	struct tm tm = *localtime(&t);
@@ -90,15 +101,15 @@ int main()
 		msgBuf.cfi.data.len, msgBuf.cfi.data.ver, msgBuf.cfi.data.cmd_id, msgBuf.cfi.data.tx_id, msgBuf.cfi.data.reserved);
 	syslog(LOG_LOCAL0, "%s", strTmp);
 
-	while(1)
+	do
 	{
 		msgBuf.cfi.data.tx_id++;
 
 		//memcpy(msgBuf.cfi.byte, data, len);
 		ret = msgsnd(msg_id, &msgBuf, msgBuf.cfi.data.len, IPC_NOWAIT);
 
-		sleep(5);
-	}
+		if(loop) sleep(5);
+	} while(loop);
 #if 0
 	if (ret < 0) {
 		perror("msgsnd fail");

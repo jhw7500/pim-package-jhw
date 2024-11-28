@@ -94,6 +94,7 @@ cp ${BASEDIR}/adab/build/adab ${BASEDIR}/release/pim/opt/cis/bin/adab_adc
 cp ${BASEDIR}/adab_ecat/build/adab_ecat ${BASEDIR}/release/pim/opt/cis/bin/adab_ecat
 cp ${BASEDIR}/cism/build/cism ${BASEDIR}/release/pim/opt/cis/bin/
 cp ${BASEDIR}/stm32update/build/stm32update ${BASEDIR}/release/pim/opt/cis/bin/
+cp -R ${BASEDIR}/test ${BASEDIR}/release/pim/opt/pim/bin/
 
 SOURCEDIR=${BASEDIR}/pim_gate
 WORKDIR=${BASEDIR}/release/pim
