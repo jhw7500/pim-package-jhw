@@ -45,7 +45,7 @@ json_pim_a2='{
     "model_name":"pim-a2",
     "mainboard_type":"plus",
     "daughterboard_type":"analog",
-    "iot_app": "none",
+    "iot_app": "pim_gate",
     "cam_max_channel": 2,
     "dev": {
         "f_status": 131,
@@ -65,7 +65,7 @@ json_pim_c2='{
     "model_name":"pim-c2",
     "mainboard_type":"plus",
     "daughterboard_type":"ethercat",
-    "iot_app": "none",
+    "iot_app": "pim_gate",
     "cam_max_channel": 0,
     "dev": {
         "f_status": 131,
@@ -85,7 +85,7 @@ json_pim_x2='{
     "model_name":"pim-x2",
     "mainboard_type":"plus",
     "daughterboard_type":"none",
-    "iot_app": "none",
+    "iot_app": "pim_gate",
     "cam_max_channel": 2,
     "dev": {
         "f_status": 131,
@@ -105,7 +105,7 @@ json_pim_x4='{
     "model_name":"pim-x4",
     "mainboard_type":"plus",
     "daughterboard_type":"none",
-    "iot_app": "none",
+    "iot_app": "pim_gate",
     "cam_max_channel": 4,
     "dev": {
         "f_status": 131,
