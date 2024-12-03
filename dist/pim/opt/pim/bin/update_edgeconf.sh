@@ -103,7 +103,9 @@ jq '.VHL_CAM.log_level |= if . == null then 5 else . end |
 .VHL_CAM.debug_level |= if . == null then 0 else . end | 
 .VHL_CAM.app |= if . == null then "streamApp" else . end |
 .VHL_CAM.id |= if . == null then "user" else . end |
+.VHL_CAM.capture |= if . == null then false else . end |
 .VHL_CAM.fps |= if . == null then 15 else . end' "$FILE_JSON" > tmp.$$ && mv tmp.$$ "$FILE_JSON"
+
 
 key_name=0
 for num in {0..3}

@@ -10,6 +10,7 @@ GetConfig() {
     vhl_name=$(jq -r '.VHL_CAM.vhl_name' "$FILE_JSON")
     rec_time=$(jq '.VHL_CAM.recording_time' "$FILE_JSON")
     rec_time=$((rec_time*60))
+    cap_en=$(jq '.VHL_CAM.capture' "$FILE_JSON")
     #rst_time=$((rec_time+90))
     #rst_time=20
     if [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] || [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]; then
@@ -82,10 +83,6 @@ do
     check_num=0
     file_cnt=0
     #file_time_err=0
-    if [[ "$time_rec_en" != *"$ENABLE_VAL"* ]]; then
-        sleep 30
-        continue
-    fi
 
     if [ -f /tmp/kill_flag ]; then
         logger -p local0.notice "[$KEY][$tag:$LINENO] kill_flag set"
@@ -94,6 +91,15 @@ do
         timer=0
     fi
 
+    if [[ "$time_rec_en" != *"$ENABLE_VAL"* ]]; then
+        sleep 5
+        continue
+    fi
+
+    if [[ "$cap_en" == *"$ENABLE_VAL"* ]]; then
+        sleep 5
+        continue
+    fi
 
     #if [ -e "$FILE_" ]; then
     startTime=$(cat $FILE_ 2>/dev/null| tr -d '\n')

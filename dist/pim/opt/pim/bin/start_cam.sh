@@ -19,8 +19,18 @@ fi
 StartCam() {
     logger -p local0.notice "[$key][$tag:$LINENO] touch /tmp/kill_flag"
     touch /tmp/kill_flag
-    logger -p local0.notice "[$key][$tag:$LINENO] $1 -d $2 -m $3 &"
-    $1 -d $2 -m $3 &
+    delay=$2
+    if [ "$4" = "true" ]; then
+        #$1 -d $2 -m $3 &
+        if [ "$delay" -ge 15 ]; then
+            delay=15
+        fi
+        start_cmd="gstApp -e 0 -E 0 -N 1 -y 1 -C 0 -a 1 -f 1 -d $delay -m $3 -R 1 &"
+    else
+        start_cmd="$1 -d $delay -m $3 &"
+    fi
+    logger -p local0.notice "[$key][$tag:$LINENO] app start : $start_cmd"
+    eval "$start_cmd"
     #cgexec -g memory:myappgroup $1 -d $2 -m $3 &
     if ! CheckApp "BG_Check_for_pim.sh"; then
         logger -p local0.emerg "[$key][$tag:$LINENO] BG_Check_for_pim.sh start"
@@ -44,13 +54,14 @@ FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} |grep -v '/$' |
 logger -p local0.notice "[$key][$tag:$LINENO] json_file : $FILE_JSON"
 app=$(jq -r '.VHL_CAM.app' "$FILE_JSON")
 GST_LOG_FILE="/var/log/cantops/gst/$app_$(date +'%Y%m%d_%H%M%S').log"
-
+cap_en="false"
 if [ "$app" = "streamApp" ]; then
     app="PIMCAM"
     GST_LOG_FILE="/var/log/cantops/gst/streamApp_$(date +'%Y%m%d_%H%M%S').log"
 elif [ "$app" = "gstApp" ]; then
     app="gstApp"
     GST_LOG_FILE="/var/log/cantops/gst/gstApp_$(date +'%Y%m%d_%H%M%S').log"
+    cap_en=$(jq -r '.VHL_CAM.capture' "$FILE_JSON")
 else
     logger -p local0.err "[$key][$tag:$LINENO] app : $app"
     logger -p local0.err "[$key][$tag:$LINENO] please update json"
@@ -82,6 +93,6 @@ if CheckApp "BG_Check_for_pim.sh"; then
 fi
 
 #logger -p local0.notice "[$key][$tag:$LINENO] $app -d $delay -m $iomode &"
-StartCam $app $delay $iomode
+StartCam $app $delay $iomode $cap_en
 exit 0
 
