@@ -19,7 +19,8 @@
 
 #include <arpa/inet.h>
 
-#define MSG_Q_KEY	(0x65)
+#define MSG_Q_REQ_KEY (0x65)
+#define MSG_Q_RES_KEY (0x66)
 #define CFI_DATA_LEN 50
 #define CFI_VERISON	0x300
 #define CFI_CMD_ID	0x300
@@ -29,8 +30,7 @@
 
 enum MSG_TYPE {
   PMSG_TYPE_UNUSED = 0,
-  PMSG_TYPE_IPC_RECV,
-  PMSG_TYPE_IPC_SEND,
+  PMSG_TYPE_IPC,
   PMSG_TYPE_OVERLAY,
   PMSG_TYPE_OSS
 };
@@ -66,7 +66,7 @@ struct _MSGQueue {
 int main(int argc, char *argv[])
 {
   int ret = 0;
-  int msg_id = msgget((key_t)MSG_Q_KEY, IPC_CREAT | 0666);
+  int msg_id = msgget((key_t)MSG_Q_RES_KEY, IPC_CREAT | 0666);
   char strTmp[512];
   _MSGQueue msgBuf;
 
@@ -77,21 +77,22 @@ int main(int argc, char *argv[])
     return msg_id;
   }
 
-#if 0
+#if 1
 	ret = msgctl(msg_id, IPC_RMID, NULL);
     if(ret < 0) {
 		 perror("msgctl fail");
 	}
 #endif
 
-  // msg_id = msgget((key_t)MSG_Q_KEY, IPC_CREAT | 0666);
+  msg_id = msgget((key_t)MSG_Q_RES_KEY, IPC_CREAT | 0666);
+  
   while (1)
   {
-    usleep(100000);
+    usleep(1000);
 
     // msg_id = msgget((key_t)MSG_Q_KEY, IPC_CREAT | 0666);
 
-    ret = msgrcv(msg_id, &msgBuf, sizeof(msgBuf) - sizeof(long), PMSG_TYPE_IPC_SEND, 0);
+    ret = msgrcv(msg_id, &msgBuf, sizeof(msgBuf) - sizeof(long), PMSG_TYPE_IPC, 0);
     if (ret <= 0)
     {
       perror("msgrcv fail");
@@ -102,6 +103,7 @@ int main(int argc, char *argv[])
             msgBuf.cfi.data.reserved, msgBuf.cfi.data.cap_cnt);
     syslog(LOG_LOCAL0, "%s", strTmp);
   };
+
 
   return 0;
 }

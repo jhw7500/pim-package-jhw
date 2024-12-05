@@ -19,7 +19,8 @@
 
 #include <arpa/inet.h>
 
-#define MSG_Q_KEY	(0x65)
+#define MSG_Q_REQ_KEY (0x65)
+#define MSG_Q_RES_KEY (0x66)
 #define CFI_DATA_LEN 50
 #define CFI_VERISON	0x300
 #define CFI_CMD_ID	0x300
@@ -57,7 +58,7 @@ struct _MSGQueue {
 int main(int argc, char *argv[])
 {
 	int ret = 0;
-	int msg_id = msgget((key_t)MSG_Q_KEY, IPC_CREAT | 0666);
+	int msg_id = msgget((key_t)MSG_Q_REQ_KEY, IPC_CREAT | 0666);
 	char strTmp[512]; 
     bool loop = false;
 
