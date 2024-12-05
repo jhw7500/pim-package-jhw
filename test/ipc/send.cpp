@@ -41,7 +41,8 @@ union TCfiData {
     uint8_t sid[6];
     uint16_t cmd_id;
     uint16_t tx_id;
-    uint16_t reserved;
+    uint8_t channel;
+    uint8_t reserved;
     uint16_t cap_cnt;
     uint8_t prefix[32];
   } data;
@@ -60,7 +61,6 @@ int main(int argc, char *argv[])
 	char strTmp[512]; 
     bool loop = false;
 
-
 	if (msg_id == -1) {
 		ret = -1;
 		perror("msgget fail");
@@ -74,7 +74,8 @@ int main(int argc, char *argv[])
 	msgBuf.cfi.data.ver = CFI_VERISON;
 	memcpy(msgBuf.cfi.data.sid, CFI_SID, strlen(CFI_SID));
 	msgBuf.cfi.data.cmd_id = CFI_CMD_ID;
-	msgBuf.cfi.data.tx_id = 1;
+	msgBuf.cfi.data.tx_id = 0;
+	msgBuf.cfi.data.channel = 0x03;
 	msgBuf.cfi.data.reserved = 0;
 
     //syslog(LOG_LOCAL0, "test");
@@ -97,14 +98,13 @@ int main(int argc, char *argv[])
 	sprintf((char *)msgBuf.cfi.data.prefix, "%s_%s", CFI_VHL_NAME, datetime);
 	//memcpy(msgBuf.cfi.data.prefix, CFI_PREFIX, strlen(CFI_PREFIX));
 	
-	sprintf(strTmp, "len:%d, ver:0x%x, cmd_id:0x%x, tx_id:%d, reserved:%d\n", \
-		msgBuf.cfi.data.len, msgBuf.cfi.data.ver, msgBuf.cfi.data.cmd_id, msgBuf.cfi.data.tx_id, msgBuf.cfi.data.reserved);
+	sprintf(strTmp, "len:%d, ver:0x%x, cmd_id:0x%x, tx_id:%d, ch:0x%x reserved:%d\n", \
+		msgBuf.cfi.data.len, msgBuf.cfi.data.ver, msgBuf.cfi.data.cmd_id, msgBuf.cfi.data.tx_id, msgBuf.cfi.data.channel, msgBuf.cfi.data.reserved);
 	syslog(LOG_LOCAL0, "%s", strTmp);
 
 	do
 	{
 		msgBuf.cfi.data.tx_id++;
-
 		//memcpy(msgBuf.cfi.byte, data, len);
 		ret = msgsnd(msg_id, &msgBuf, msgBuf.cfi.data.len, IPC_NOWAIT);
 
