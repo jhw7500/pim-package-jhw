@@ -5,7 +5,7 @@ timestamp=`date +"%Y-%m-%d %T,%3N"`
 
 JSON_PREFIX=edgeconf_
 JOSN_SUFFIX=.json
-TEST_CONFIG_FILE=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} |grep -v '/$' | tail -1 |tr -d '\r\n')
+TEST_CONFIG_FILE=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' | grep "${JSON_SUFFIX}$" | tail -1 | tr -d '\r\n')
 PCI_FIND=$(lspci | grep -o 'Marvell Technology')
 
 

@@ -20,7 +20,7 @@ FILE_CHECK=/tmp/file_check
 
 JSON_PREFIX=edgeconf_
 JOSN_SUFFIX=.json
-FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} |grep -v '/$' | tail -1 |tr -d '\r\n')
+FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' | grep "${JSON_SUFFIX}$" | tail -1 | tr -d '\r\n')
 rec_time=$(jq '.VHL_CAM.recording_time' "$FILE_JSON")
 vhl_name=$(jq -r '.VHL_CAM.vhl_name' "$FILE_JSON")
 logger -p local0.notice "[$KEY][$tag:$LINENO] ip:$FTP_SERVER, id:$USERNAME, pwd:$PASSWORD, remote_dir:$REMOTE_DIR, json:$FILE_JSON, rec_time:$rec_time vhl_name:$vhl_name"

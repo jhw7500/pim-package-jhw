@@ -21,7 +21,7 @@ list="BG_Check_for_pim.sh vcm"
 
 JSON_PREFIX=edgeconf_
 JOSN_SUFFIX=.json
-FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} |grep -v '/$' | tail -1 |tr -d '\r\n')
+FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' | grep "${JSON_SUFFIX}$" | tail -1 | tr -d '\r\n')
 list+=" gstApp streamApp PIMCAM"
 :<<'END'
 app=$(jq -r '.VHL_CAM.app' "$FILE_JSON")

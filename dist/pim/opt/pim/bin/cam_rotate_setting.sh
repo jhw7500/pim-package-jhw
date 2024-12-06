@@ -2,7 +2,7 @@
 
 JSON_PREFIX=edgeconf_
 JOSN_SUFFIX=.json
-TEST_CONFIG_FILE=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} |grep -v '/$' | tail -1 |tr -d '\r\n')
+TEST_CONFIG_FILE=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' | grep "${JSON_SUFFIX}$" | tail -1 | tr -d '\r\n')
 SUCCESS_VAL="true"
 FAIL_VAL="error"
 result=1;

@@ -54,7 +54,7 @@ KEY=RST
 logger -p local0.emerg "[$KEY][$tag:$LINENO] cam-operate daemon start"
 JSON_PREFIX=edgeconf_
 JOSN_SUFFIX=.json
-FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} |grep -v '/$' | tail -1 |tr -d '\r\n')
+FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' | grep "${JSON_SUFFIX}$" | tail -1 | tr -d '\r\n')
 timer=0
 mnt_folder="/mnt/sd_cam"
 start_f=0

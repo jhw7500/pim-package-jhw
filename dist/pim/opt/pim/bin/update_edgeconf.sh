@@ -4,7 +4,7 @@ KEY=PKG
 #FILE_JSON="/home/user/edgeconf_pim.json"
 JSON_PREFIX=edgeconf_
 JOSN_SUFFIX=.json
-FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} |grep -v '/$' | tail -1 |tr -d '\r\n')
+FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' | grep "${JSON_SUFFIX}$" | tail -1 | tr -d '\r\n')
 cp "$FILE_JSON" "/opt/pim/config/${FILE_JSON##*/}.backup"
 #updated_json=$(jq '(.VHL_CAM.vertical // 0) as $v | if $v == 0 then .VHL_CAM.vertical = 0 else . end' "$FILE_JSON")
 #UPDATE_JSON=$(jq '(.VHL_CAM.vertical_flip // 0) as $v | (.VHL_CAM.horizontal_flip // 0) as $h | .VHL_CAM.vertical_flip = $v | .VHL_CAM.horizontal_flip = $h' "$FILE_JSON")
