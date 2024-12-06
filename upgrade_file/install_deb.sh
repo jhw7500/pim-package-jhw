@@ -370,7 +370,7 @@ else
     echo '{"PROGRESS":'"$prog_per"',"MSG":"pip installed '"$package"'"}'
 fi
 
-package="sysv_ipc"
+package="sysv-ipc"
 installed_pip=$(echo "$pip_list" | grep -E "${package}\s")
 if [ -z "${installed_pip}" ]; then
   var="sysv_ipc-1.1.0"

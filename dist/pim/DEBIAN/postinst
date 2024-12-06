@@ -480,7 +480,8 @@ END
   useradd -m semes && (echo semes; echo semes;) | passwd semes
 
 #  chmod -R 777 /mnt/sd_cam
-#  chmod 777 /share
+  chmod 777 /share
+  chmod 777 /shared
   echo "set sshd"
   sed 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' -i /etc/ssh/sshd_config
 
