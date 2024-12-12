@@ -25,7 +25,10 @@ FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' 
 list+=" gstApp streamApp PIMCAM"
 :<<'END'
 app=$(jq -r '.VHL_CAM.app' "$FILE_JSON")
-if [ "$app" == "streamApp" ]; then
+cap_en=$(jq -r '.VHL_CAM.capture.enable' "$FILE_JSON")
+if [ "$cap_en" == "true" ]; then
+    list+=" gstApp"
+elif [ "$app" == "streamApp" ]; then
     list+=" streamApp PIMCAM"
 elif [ "$app" == "gstApp" ]; then
     list+=" gstApp"
