@@ -97,13 +97,25 @@ else
     echo "ch3_rotate is exist"
 fi
 
+capture_en=$(jq -r '.VHL_CAM.capture' "$FILE_JSON")
+if [ -z "$capture_en" ] || [ "$capture_en" == "null" ]; then
+    echo "capture is not exist"
+    capture_en="false"
+else
+    echo "capture is exist"
+    if [ "$capture_en" == "true" ] || [ "$capture_en" == "false" ]; then
+        echo "del capture"
+        jq 'del (.VHL_CAM.capture)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+    fi
+fi
+echo "capture : $capture_en"
+
 echo "bps=$bps, ch0=${ch0_en},$ch0_rotate, ch1=$ch1_en,$ch1_rotate ch2=$ch2_en,$ch2_rotate, ch3=$ch3_en,$ch3_rotate"
 echo "update log, debug, app, id, fps"
 jq '.VHL_CAM.log_level |= if . == null then 5 else . end | 
 .VHL_CAM.debug_level |= if . == null then 0 else . end | 
 .VHL_CAM.app |= if . == null then "streamApp" else . end |
 .VHL_CAM.id |= if . == null then "user" else . end |
-.VHL_CAM.capture |= if . == null then false else . end |
 .VHL_CAM.fps |= if . == null then 15 else . end' "$FILE_JSON" > tmp.$$ && mv tmp.$$ "$FILE_JSON"
 
 
@@ -122,6 +134,13 @@ jq 'del(.VHL_CAM.bitrate, .VHL_CAM.rec_fps, .VHL_CAM.rtsp_fps, .VHL_CAM.rec_bps,
 
 echo "check exp_time"
 jq 'del (.VHL_CAM.ch0.exp_time, .VHL_CAM.ch1.exp_time, .VHL_CAM.ch2.exp_time, .VHL_CAM.ch3.exp_time)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+
+echo "check capture"
+#jq 'del (.VHL_CAM.capture)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+#jq --argjson capture_en "$capture_en" '.VHL_CAM.capture |= (if .enable == null then .enable = $capture_en else . end)
+#| .VHL_CAM.capture |= (if .delay == null then .delay = 0 else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+jq --argjson key0 "$capture_en" --argjson key1 0 '.VHL_CAM.capture |= (if .enable == null then .enable = $key0 else . end)
+| .VHL_CAM.capture |= (if .delay == null then .delay = $key1 else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
 echo "update i2c header"
 jq '.VHL_CAM.i2c2 |= (if .exp_time == null then .exp_time = 10000 else . end)

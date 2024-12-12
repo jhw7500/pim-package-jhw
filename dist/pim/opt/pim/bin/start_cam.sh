@@ -54,14 +54,14 @@ FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' 
 logger -p local0.notice "[$key][$tag:$LINENO] json_file : $FILE_JSON"
 app=$(jq -r '.VHL_CAM.app' "$FILE_JSON")
 GST_LOG_FILE="/var/log/cantops/gst/$app_$(date +'%Y%m%d_%H%M%S').log"
-cap_en="false"
+cap_en=$(jq -r '.VHL_CAM.capture.enable' "$FILE_JSON")
+
 if [ "$app" = "streamApp" ]; then
     app="PIMCAM"
     GST_LOG_FILE="/var/log/cantops/gst/streamApp_$(date +'%Y%m%d_%H%M%S').log"
 elif [ "$app" = "gstApp" ]; then
     app="gstApp"
     GST_LOG_FILE="/var/log/cantops/gst/gstApp_$(date +'%Y%m%d_%H%M%S').log"
-    cap_en=$(jq -r '.VHL_CAM.capture' "$FILE_JSON")
 else
     logger -p local0.err "[$key][$tag:$LINENO] app : $app"
     logger -p local0.err "[$key][$tag:$LINENO] please update json"
