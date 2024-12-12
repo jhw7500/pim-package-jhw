@@ -177,6 +177,7 @@
         "debug_level": 0,
         "app": "streamApp",
         "id": "user",
+        "capture" : false,
         "i2c2": {
             "exp_time": 10000,
             "ch0": {
