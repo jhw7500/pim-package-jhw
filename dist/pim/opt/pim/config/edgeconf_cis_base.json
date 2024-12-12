@@ -164,8 +164,8 @@
         }
     },
     "VHL_CAM": {
-        "cam_width": 1920,
-        "cam_height": 1080,
+        "cam_width": 1280,
+        "cam_height": 720,
         "event_auto_remove": true,
         "event_storage_size": 10,
         "floor": "NONAME",
@@ -177,7 +177,10 @@
         "debug_level": 0,
         "app": "streamApp",
         "id": "user",
-        "capture" : false,
+        "capture" : {
+            "enable": false,
+            "delay" : 0
+        },
         "i2c2": {
             "exp_time": 10000,
             "ch0": {

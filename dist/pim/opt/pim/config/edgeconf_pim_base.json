@@ -4,7 +4,7 @@
         "WLAN0": {
             "security": "PSK",
             "ssid": "PIM_TEST_3",
-            "identity": "c0ee40c518fc@u.things",
+            "identity": "c0ee40c518fc",
             "passwd": "1qaz2wsx!!",
             "method": "DHCP",
             "address": "100.100.100.102",
@@ -170,7 +170,10 @@
         "debug_level": 0,
         "app": "streamApp",
         "id": "user",
-        "capture" : false,
+        "capture" : {
+            "enable": false,
+            "delay" : 0
+        },
         "i2c2": {
             "exp_time": 10000,
             "ch0": {
