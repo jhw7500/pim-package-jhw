@@ -44,18 +44,17 @@ logger -p local0.notice "[$KEY][$tag:$LINENO] Previous Mode : $MODE"
 per=$(df -h |grep /dev/root | awk '{print $5}')
 per=$(echo $per | sed 's/%//')
 #echo "per:$per, max_per:$max_per"
-if (( per > max_per1 && MODE != 3)); then
+if (( per > max_per1 && MODE != 4)); then
     #touch /tmp/emmc_warning
-    NEW_MODE=3
+    NEW_MODE=4
     logger -p local0.emerg "[$KEY][$tag:$LINENO] New Mode : $NEW_MODE, emmc size $per% > $max_per1"
     logger -p local0.emerg "[$KEY][$tag:$LINENO] rsyslog, journald stop and disable"
     systemctl stop rsyslog
-    systemctl stop journald
+    systemctl stop systemd-journald*
     systemctl disable rsyslog
-    systemctl disable journald
     echo "MODE=$NEW_MODE" > "$VAR_FILE"
-elif (( per > max_per2 && MODE != 2)); then
-    NEW_MODE=2
+elif (( per > max_per2 && MODE != 3)); then
+    NEW_MODE=3
     logger -p local0.emerg "[$KEY][$tag:$LINENO] New Mode : $NEW_MODE, emmc size $per% > $max_per2"
     logger -p local0.emerg "[$KEY][$tag:$LINENO] log level change to err"
     /opt/pim/bin/change_line.sh "local0.err;*.emerg       /var/log/cantops/local0.log" "/var/log/cantops/local0.log" /etc/rsyslog.d/50-default.conf
@@ -68,12 +67,11 @@ elif (( per > max_per2 && MODE != 2)); then
     /opt/pim/bin/change_line.sh "MaxLevelConsole=err" "MaxLevelConsole" /etc/systemd/journald.conf
     /opt/pim/bin/change_line.sh "MaxLevelWall=err" "MaxLevelWall" /etc/systemd/journald.conf
     systemctl restart rsyslog
-    systemctl restart journald
+    systemctl restart systemd-journald
     systemctl enable rsyslog
-    systemctl enable journald
     echo "MODE=$NEW_MODE" > "$VAR_FILE"
-elif (( per > max_per3 && MODE != 1)); then
-    NEW_MODE=1
+elif (( per > max_per3 && MODE != 2)); then
+    NEW_MODE=2
     logger -p local0.emerg "[$KEY][$tag:$LINENO] New Mode : $NEW_MODE, emmc size $per% > $max_per3"
     logger -p local0.emerg "[$KEY][$tag:$LINENO] log level change to notice"
     /opt/pim/bin/change_line.sh "local0.notice;*.emerg       /var/log/cantops/local0.log" "/var/log/cantops/local0.log" /etc/rsyslog.d/50-default.conf
@@ -86,12 +84,11 @@ elif (( per > max_per3 && MODE != 1)); then
     /opt/pim/bin/change_line.sh "MaxLevelConsole=notice" "MaxLevelConsole" /etc/systemd/journald.conf
     /opt/pim/bin/change_line.sh "MaxLevelWall=notice" "MaxLevelWall" /etc/systemd/journald.conf
     systemctl restart rsyslog
-    systemctl restart journald
+    systemctl restart systemd-journald
     systemctl enable rsyslog
-    systemctl enable journald
     echo "MODE=$NEW_MODE" > "$VAR_FILE"
-elif (( MODE != 0 )); then
-    NEW_MODE=0
+elif (( MODE != 1 )); then
+    NEW_MODE=1
     logger -p local0.notice "[$KEY][$tag:$LINENO] New Mode : $NEW_MODE, emmc size $per% <= $max_per1%"
     logger -p local0.notice "[$KEY][$tag:$LINENO] log level change (local0 : notice, local1 : all, syslog : all, kern : notice, journald : all)"
     /opt/pim/bin/change_line.sh "local0.notice;*.emerg       /var/log/cantops/local0.log" "/var/log/cantops/local0.log" /etc/rsyslog.d/50-default.conf
@@ -104,8 +101,7 @@ elif (( MODE != 0 )); then
     /opt/pim/bin/change_line.sh "MaxLevelConsole=debug" "MaxLevelConsole" /etc/systemd/journald.conf
     /opt/pim/bin/change_line.sh "MaxLevelWall=debug" "MaxLevelWall" /etc/systemd/journald.conf
     systemctl restart rsyslog
-    systemctl restart journald
+    systemctl restart systemd-journald
     systemctl enable rsyslog
-    systemctl enable journald
     echo "MODE=$NEW_MODE" > "$VAR_FILE"
 fi
