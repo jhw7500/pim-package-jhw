@@ -11,12 +11,12 @@ cp "$FILE_JSON" "/opt/pim/config/${FILE_JSON##*/}.backup"
 
 if ! command -v jq &> /dev/null
 then
-    logger -p local0.err "jq could not be found. Please install jq to run this script."
+    logger -p local0.err "[$KEY][$tag:$LINENO] jq could not be found. Please install jq to run this script."
     exit 1
 fi
 
-#echo -e "\e[32mplease wait for update $FILE_JSON\e[0m"
-logger -p local0.notice "$(printf '\033[1;33m')[$KEY][$tag:$LINENO] please wait for update $FILE_JSON$(printf '\033[0m')"
+echo -e "\e[32mplease wait for update $FILE_JSON\e[0m"
+logger -p local0.notice "[$KEY][$tag:$LINENO] please wait for update $FILE_JSON$"
 
 header_to_remove="ORD"
 echo "check $header_to_remove header"
@@ -202,6 +202,6 @@ elif [[ $1 == 2 ]]; then
 fi
 
 sync
-logger -p local0.notice "$(printf '\033[1;33m')[$KEY][$tag:$LINENO] complete update $FILE_JSON$(printf '\033[0m')"
-#echo -e "\e[32mcomplete update $FILE_JSON\e[0m"
+logger -p local0.notice "[$KEY][$tag:$LINENO] complete update $FILE_JSON$"
+echo -e "\e[32mcomplete update $FILE_JSON\e[0m"
 #echo -e "\e[33mif you want the streamApp, run '/opt/pim/bin/update_json 1' but you want the gstApp, run 'opt/pim/bin/update_json 2'\e[0m"

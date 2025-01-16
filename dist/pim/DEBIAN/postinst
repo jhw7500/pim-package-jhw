@@ -564,8 +564,11 @@ END
   #update_json 2 &
   #/opt/pim/bin/bgscan_polling.sh
   rm -f /usr/local/bin/update_edgeconf
+  rm -f /usr/local/bin/update_ordvcmconf
   ln -s /opt/pim/bin/update_edgeconf.sh /usr/local/bin/update_edgeconf
+  ln -s /opt/pim/bin/update_ordvcmconf.sh /usr/local/bin/update_ordvcmconf
   update_edgeconf
+  update_ordvcmconf
 
   echo "update_network.py"
   python3 /opt/cis/bin/init.py power_on
@@ -574,7 +577,8 @@ END
   #systemctl start cam-operate
   sync
   PACKAGE_NAME="$DPKG_MAINTSCRIPT_PACKAGE"
-  logger -s -p local0.notice "[$KEY][$tag:$LINENO] install $PACKAGE_NAME-$(dpkg-query -W -f='${Version}' $PACKAGE_NAME) finish"
+  echo -e "\e[32m install $PACKAGE_NAME-$(dpkg-query -W -f='${Version}' $PACKAGE_NAME) finish\e[0m"
+  logger -p local0.notice "[$KEY][$tag:$LINENO] install $PACKAGE_NAME-$(dpkg-query -W -f='${Version}' $PACKAGE_NAME) finish"
   ;;
 
 upgrade)
