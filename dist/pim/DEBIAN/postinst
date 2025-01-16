@@ -448,6 +448,13 @@ fi
     cp /etc/defaultconf.json /root/shared_v/edgeconf_pim.json
   fi
 
+  echo "check ord_vcm config"
+  if [ ! -f  /root/shared_v/ord_vcm*.json ]; then
+    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp ord_vcm_conf.json"
+    cp /opt/pim/config/ord_vcm_conf.json /root/shared_v/ord_vcm_conf.json
+  fi
+
+  echo "check rsyslog"
   cp /opt/pim/etc/rsyslog.d/50-default.conf /etc/rsyslog.d/
 
 :<<'END'
