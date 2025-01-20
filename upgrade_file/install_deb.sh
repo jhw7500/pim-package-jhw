@@ -366,6 +366,7 @@ if [ -z "${installed_pip}" ]; then
   echo '{"PROGRESS":'"$prog_per"',"MSG":"pip install '"$package"'"}'
   cd ${BASEDIR}/pip/${var}
   python3 ./setup.py install > /dev/null 2> /dev/null
+  cd ${BASEDIR}/pip
 else
     echo '{"PROGRESS":'"$prog_per"',"MSG":"pip installed '"$package"'"}'
 fi
@@ -379,6 +380,7 @@ if [ -z "${installed_pip}" ]; then
   echo '{"PROGRESS":'"$prog_per"',"MSG":"pip install '"$package"'"}'
   cd ${BASEDIR}/pip/${var}
   python3 ./setup.py install > /dev/null 2> /dev/null
+  cd ${BASEDIR}/pip
 else
     echo '{"PROGRESS":'"$prog_per"',"MSG":"pip installed '"$package"'"}'
 fi

@@ -7,6 +7,12 @@ default_sysinfo_cis_a2='{
     "daughterboard_version":"V0.2"
 }'
 
+default_sysinfo_cis_a4='{
+    "hostname":"cis-a4-v001",
+    "mainboard_version":"V0.3",
+    "daughterboard_version":"V0.2"
+}'
+
 default_sysinfo_cis_c2='{
     "hostname":"cis-c2-v001",
     "mainboard_version":"V0.3",
@@ -15,6 +21,12 @@ default_sysinfo_cis_c2='{
 
 default_sysinfo_pim_a2='{
     "hostname":"pim-a2-V001",
+    "mainboard_version":"V0.3",
+    "daughterboard_version":"V0.2"
+}'
+
+default_sysinfo_pim_a4='{
+    "hostname":"pim-a4-V001",
     "mainboard_version":"V0.3",
     "daughterboard_version":"V0.2"
 }'
@@ -40,8 +52,10 @@ default_sysinfo_pim_x4='{
 create_sysinfo() {
     case $1 in
     cis-a2) echo "$default_sysinfo_cis_a2" > /etc/cts/sysinfo.json;;
+    cis-a4) echo "$default_sysinfo_cis_a4" > /etc/cts/sysinfo.json;;
     cis-c2) echo "$default_sysinfo_cis_c2" > /etc/cts/sysinfo.json;;
     pim-a2) echo "$default_sysinfo_pim_a2" > /etc/cts/sysinfo.json;;
+    pim-a4) echo "$default_sysinfo_pim_a4" > /etc/cts/sysinfo.json;;
     pim-c2) echo "$default_sysinfo_pim_c2" > /etc/cts/sysinfo.json;;
     pim-x2) echo "$default_sysinfo_pim_x2" > /etc/cts/sysinfo.json;;
     pim-x4) echo "$default_sysinfo_pim_x4" > /etc/cts/sysinfo.json;;
@@ -51,7 +65,7 @@ create_sysinfo() {
 
 ## main
 case $1 in
-cis-a2|cis-c2|pim-a2|pim-c2|pim-x2|pim-x4)
+cis-a2|cis-a4|cis-c2|pim-a2|pim-a4|pim-c2|pim-x2|pim-x4)
     create_sysinfo $1
     ;;
 *) 

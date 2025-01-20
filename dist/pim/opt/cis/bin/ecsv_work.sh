@@ -72,7 +72,7 @@ fn_run() {
         per=`echo "$i $wait_t"|awk '{printf "%d", (($1+1) * 100) / ($2 +1)}'`
         echo "{\"PROGRESS\":$per,\"MSG\":\"measuring...\"}"
         if [ i == $tag_t ]; then
-            fn_LogWrite $LOG_ERROR "$min minutes have passed"
+            fn_LogWrite $LOG_INFO "$min minutes have passed"
         fi
 	done
     

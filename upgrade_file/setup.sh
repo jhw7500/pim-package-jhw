@@ -190,7 +190,7 @@ case "$model" in
 esac
 
 case $model in
-cis-a2|pim-a2)
+cis-a2|cis-a4|cis-c2|pim-a2|pim-a4|pim-c2)
   echo '{"PROGRESS":22,"MSG":"stop adab"}'
   # iot관련 앱을 종료한다.
   adab stop > /dev/null 2> /dev/null
@@ -211,7 +211,7 @@ echo '{"PROGRESS":24,"MSG":"End install pim-mp"}'
 ## Upgrade daughter board firmware    ##
 ########################################
 case $model in
-cis-a2|pim-a2)
+cis-a2|cis-a4|cis-c2|pim-a2|pim-a4|pim-c2)
   /opt/cis/bin/init_daughter_gpio.sh > /dev/null 2> /dev/null
   sleep 1
   dbver=$(get_db_version)
@@ -229,7 +229,7 @@ esac
 ## Excute APP                         ##
 ########################################
 case $model in
-cis-a2|pim-a2)
+cis-a2|cis-a4|cis-c2|pim-a2|pim-a4|pim-c2)
   # iot관련 앱을 실행한다.
   python3 /opt/cis/bin/init.py power_on > /dev/null 2> /dev/null
   adab start > /dev/null 2> /dev/null

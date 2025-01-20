@@ -87,7 +87,7 @@ configure)
   fi
 
   backup_alias=""
-  if [ "$model" == "cis-a2" ] || [ "$model" == "cis-c2" ]; then
+  if [ "$model" == "cis-a2" ] || [ "$model" == "cis-a4" ] || [ "$model" == "cis-c2" ]; then
     #sea_app alias backup
     backup_alias="$(awk '/date >> boot_time.log/,EOF' /root/.bashrc >> /root/.bashrc)"
   fi
@@ -282,7 +282,7 @@ END
 #  systemctl stop connman.service
 #  systemctl disable connman.service
 
-  if [ "$model" == "cis-a2" ] || [ "$model" == "cis-c2" ]; then
+  if [ "$model" == "cis-a2" ] || [ "$model" == "cis-a4" ] || [ "$model" == "cis-c2" ]; then
     daemon_name=docker
     status=$(systemctl is-enabled $daemon_name 2>/dev/null)
     if [ "$status" == "disabled" ]; then
@@ -555,7 +555,7 @@ END
   /opt/pim/bin/change_line.sh "APT::Periodic::Unattended-Upgrade \"0\";" "APT::Periodic::Unattended-Upgrade" /etc/apt/apt.conf.d/20auto-upgrades
 
 
-  if [ "$model" == "cis-a2" ] || [ "$model" == "cis-c2" ]; then
+  if [ "$model" == "cis-a2" ] || [ "$model" == "cis-a4" ] || [ "$model" == "cis-c2" ]; then
         echo "sea_app is installed"
         /opt/pim/bin/change_line.sh "    #/opt/pim/bin/chk_voltage.sh 2>/dev/null" "/opt/pim/bin/chk_voltage.sh" /opt/pim/bin/BG_Check_for_pim.sh
         /opt/pim/bin/change_line.sh "    #/opt/pim/bin/led_ctrl.sh 2>/dev/null" "/opt/pim/bin/led_ctrl.sh" /opt/pim/bin/BG_Check_for_pim.sh
