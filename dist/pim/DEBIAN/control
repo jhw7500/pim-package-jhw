@@ -1,5 +1,5 @@
 Package: pim-mp
-Version: 0.4.8
+Version: 0.4.9
 Replaces: cis
 Breaks: cis
 Section: test
@@ -58,3 +58,4 @@ Description: PIM application
 0.4.6 : disable cpulimit
 0.4.7 : pim_gate, vcm(3.9), ord(4.1), etc for nanya demo
 0.4.8 : add capture feature in edgeconf_pim.json
+0.4.9 : pim_gate, record sync for nanya demo
