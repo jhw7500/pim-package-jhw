@@ -14,6 +14,8 @@ fi
 
 echo -e "\e[32mplease wait for update $FILE_JSON\e[0m"
 logger -p local0.notice "[$KEY][$tag:$LINENO] please wait for update $FILE_JSON$"
+#clean for jq format
+jq '.ORD |= if . == null then . else . end' "$FILE_JSON" > tmp.$$ && mv tmp.$$ "$FILE_JSON"
 
 echo "ORD check"
 jq '.ORD.vib_enable |= if . == null then false else . end |
