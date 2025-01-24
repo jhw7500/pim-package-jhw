@@ -15,7 +15,7 @@ start() {
     then
         /opt/cis/bin/cism > /dev/null &
         for ((i=0;i<10;i++)); do
-            if [ -z `ps -ef | grep 'cism' | grep -v 'grep' | grep -v '/usr/local/bin/cism' | awk '{print $2}'` ]
+            if [ -z "$(ps -ef | grep 'cism' | grep -v 'grep' | grep -v '/usr/local/bin/cism' | awk '{print $2}')" ]
             then
                 echo "RETRY" 
             else
@@ -42,7 +42,7 @@ stop() {
     else
         echo "quit" > /var/run/cism.pipe
         for ((i=0;i<3;i++)); do
-            if [ -z `ps -ef | grep 'cism' | grep -v 'grep' | grep -v '/usr/local/bin/cism' | awk '{print $2}'` ]
+            if [ -z "$(ps -ef | grep 'cism' | grep -v 'grep' | grep -v '/usr/local/bin/cism' | awk '{print $2}')" ]
             then
                 break
             fi

@@ -19,7 +19,7 @@ start() {
     then
         /opt/cis/bin/wifilog.sh 2> /dev/null &
         for ((i=0;i<10;i++)); do
-            if [ -z `ps -ef | grep 'wifilog' | grep -v 'grep' | grep -v '/usr/local/bin/wifim' | awk '{print $2}'` ]
+            if [ -z "$(ps -ef | grep 'wifilog' | grep -v 'grep' | grep -v '/usr/local/bin/wifim' | awk '{print $2}')" ]
             then
                 echo "RETRY" 
             else
@@ -43,7 +43,7 @@ start() {
     then
         /opt/cis/bin/wifi_checker.sh 2> /dev/null &
         for ((i=0;i<10;i++)); do
-            if [ -z `ps -ef | grep 'wifi_checker' | grep -v 'grep' | grep -v '/usr/local/bin/wifim' | awk '{print $2}'` ]
+            if [ -z "$(ps -ef | grep 'wifi_checker' | grep -v 'grep' | grep -v '/usr/local/bin/wifim' | awk '{print $2}')" ]
             then
                 echo "RETRY" 
             else
@@ -72,7 +72,7 @@ stop() {
         kill $pid
         fn_LogWrite "WiFiLOG|stop"
         for ((i=0;i<3;i++)); do
-            if [ -z `ps -ef | grep 'wifilog' | grep -v 'grep' | grep -v '/usr/local/bin/wifim' | awk '{print $2}'` ]
+            if [ -z "$(ps -ef | grep 'wifilog' | grep -v 'grep' | grep -v '/usr/local/bin/wifim' | awk '{print $2}')" ]
             then
                 break
             fi
@@ -94,7 +94,7 @@ stop() {
         kill $pid
         fn_LogWrite "WiFiCHK|stop"
         for ((i=0;i<3;i++)); do
-            if [ -z `ps -ef | grep 'wifi_checker' | grep -v 'grep' | grep -v '/usr/local/bin/wifim' | awk '{print $2}'` ]
+            if [ -z "$(ps -ef | grep 'wifi_checker' | grep -v 'grep' | grep -v '/usr/local/bin/wifim' | awk '{print $2}')" ]
             then
                 break
             fi

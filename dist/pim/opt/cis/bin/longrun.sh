@@ -17,7 +17,7 @@ start() {
     then
         /opt/cis/bin/longrunlog.sh > /dev/null &
         for ((i=0;i<10;i++)); do
-            if [ -z `ps -ef | grep 'longrunlog.sh' | grep -v 'grep' | grep -v '/usr/local/bin/longrun' | awk '{print $2}'` ]
+            if [ -z "$(ps -ef | grep 'longrunlog.sh' | grep -v 'grep' | grep -v '/usr/local/bin/longrun' | awk '{print $2}')" ]
             then
                 echo "RETRY" 
             else
@@ -44,7 +44,7 @@ stop() {
     else
         kill $pid
         for ((i=0;i<3;i++)); do
-            if [ -z `ps -ef | grep 'longrunlog.sh' | grep -v 'grep' | grep -v '/usr/local/bin/longrun' | awk '{print $2}'` ]
+            if [ -z "$(ps -ef | grep 'longrunlog.sh' | grep -v 'grep' | grep -v '/usr/local/bin/longrun' | awk '{print $2}')" ]
             then
                 break
             fi

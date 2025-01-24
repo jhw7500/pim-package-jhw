@@ -15,7 +15,7 @@ start() {
     then
         /opt/cis/bin/adab > /dev/null &
         for ((i=0;i<10;i++)); do
-            if [ -z `ps -ef | grep 'adab' | grep -v 'grep' | grep -v 'adab.' | grep -v '/usr/local/bin/adab' | awk '{print $2}'` ]
+            if [ -z "$(ps -ef | grep 'adab' | grep -v 'grep' | grep -v 'adab.' | grep -v '/usr/local/bin/adab' | awk '{print $2}')" ]
             then
                 echo "RETRY"
             else
@@ -42,7 +42,7 @@ stop() {
     else
         echo "quit" > /var/run/adab.pipe
         for ((i=0;i<3;i++)); do
-            if [ -z `ps -ef | grep 'adab' | grep -v 'grep' | grep -v 'adab.' | grep -v '/usr/local/bin/adab' | awk '{print $2}'` ]
+            if [ -z "$(ps -ef | grep 'adab' | grep -v 'grep' | grep -v 'adab.' | grep -v '/usr/local/bin/adab' | awk '{print $2}')" ]
             then
                 break
             fi

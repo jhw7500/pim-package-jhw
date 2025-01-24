@@ -15,7 +15,7 @@ start() {
     then
         /opt/cis/bin/db_monitor.sh 2> /dev/null &
         for ((i=0;i<10;i++)); do
-            if [ -z `ps -ef | grep 'db_monitor' | grep -v 'grep' | grep -v '/usr/local/bin/dbmon' | awk '{print $2}'` ]
+            if [ -z "$(ps -ef | grep 'db_monitor' | grep -v 'grep' | grep -v '/usr/local/bin/dbmon' | awk '{print $2}')" ]
             then
                 echo "RETRY" 
             else
@@ -42,7 +42,7 @@ stop() {
     else
         kill $pid
         for ((i=0;i<3;i++)); do
-            if [ -z `ps -ef | grep 'db_monitor' | grep -v 'grep' | grep -v '/usr/local/bin/dbmon' | awk '{print $2}'` ]
+            if [ -z "$(ps -ef | grep 'db_monitor' | grep -v 'grep' | grep -v '/usr/local/bin/dbmon' | awk '{print $2}')" ]
             then
                 break
             fi
