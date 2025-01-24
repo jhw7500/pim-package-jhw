@@ -58,7 +58,7 @@ elif (( per > max_per2 && MODE != 3)); then
     logger -p local0.emerg "[$KEY][$tag:$LINENO] New Mode : $NEW_MODE, emmc size $per% > $max_per2"
     logger -p local0.emerg "[$KEY][$tag:$LINENO] log level change to err"
     /opt/pim/bin/change_line.sh "local0.err;*.emerg       /var/log/cantops/local0.log" "/var/log/cantops/local0.log" /etc/rsyslog.d/50-default.conf
-    /opt/pim/bin/change_line.sh "*.err;auth,authpriv,local0,kern.none;     /var/log/cantops/syslog" "/var/log/cantops/syslog" /etc/rsyslog.d/50-default.conf
+    /opt/pim/bin/change_line.sh "*.err;auth,authpriv,local0,kern.none     /var/log/cantops/syslog" "/var/log/cantops/syslog" /etc/rsyslog.d/50-default.conf
     /opt/pim/bin/change_line.sh "kern.err         /var/log/cantops/kern.log" "/var/log/cantops/kern.log" /etc/rsyslog.d/50-default.conf
     /opt/pim/bin/change_line.sh "local1.err                /var/log/cantops/local1.log;outfmt2" "/var/log/cantops/local1.log;outfmt2" /etc/rsyslog.d/50-default.conf
     /opt/pim/bin/change_line.sh "MaxLevelStore=err" "MaxLevelStore" /etc/systemd/journald.conf
@@ -75,7 +75,7 @@ elif (( per > max_per3 && MODE != 2)); then
     logger -p local0.emerg "[$KEY][$tag:$LINENO] New Mode : $NEW_MODE, emmc size $per% > $max_per3"
     logger -p local0.emerg "[$KEY][$tag:$LINENO] log level change to notice"
     /opt/pim/bin/change_line.sh "local0.notice;*.emerg       /var/log/cantops/local0.log" "/var/log/cantops/local0.log" /etc/rsyslog.d/50-default.conf
-    /opt/pim/bin/change_line.sh "*.notice;auth,authpriv,local0,kern.none;     /var/log/cantops/syslog" "/var/log/cantops/syslog" /etc/rsyslog.d/50-default.conf
+    /opt/pim/bin/change_line.sh "*.notice;auth,authpriv,local0,kern.none     /var/log/cantops/syslog" "/var/log/cantops/syslog" /etc/rsyslog.d/50-default.conf
     /opt/pim/bin/change_line.sh "kern.notice         /var/log/cantops/kern.log" "/var/log/cantops/kern.log" /etc/rsyslog.d/50-default.conf
     /opt/pim/bin/change_line.sh "local1.notice                /var/log/cantops/local1.log;outfmt2" "/var/log/cantops/local1.log;outfmt2" /etc/rsyslog.d/50-default.conf
     /opt/pim/bin/change_line.sh "MaxLevelStore=notice" "MaxLevelStore" /etc/systemd/journald.conf
@@ -92,7 +92,7 @@ elif (( MODE != 1 )); then
     logger -p local0.notice "[$KEY][$tag:$LINENO] New Mode : $NEW_MODE, emmc size $per% <= $max_per1%"
     logger -p local0.notice "[$KEY][$tag:$LINENO] log level change (local0 : notice, local1 : all, syslog : all, kern : notice, journald : all)"
     /opt/pim/bin/change_line.sh "local0.notice;*.emerg       /var/log/cantops/local0.log" "/var/log/cantops/local0.log" /etc/rsyslog.d/50-default.conf
-    /opt/pim/bin/change_line.sh "*.*;auth,authpriv,local0,kern.none;     /var/log/cantops/syslog" "/var/log/cantops/syslog" /etc/rsyslog.d/50-default.conf
+    /opt/pim/bin/change_line.sh "*.*;auth,authpriv,local0,kern.none     /var/log/cantops/syslog" "/var/log/cantops/syslog" /etc/rsyslog.d/50-default.conf
     /opt/pim/bin/change_line.sh "kern.notice         /var/log/cantops/kern.log" "/var/log/cantops/kern.log" /etc/rsyslog.d/50-default.conf
     /opt/pim/bin/change_line.sh "local1.*                /var/log/cantops/local1.log;outfmt2" "/var/log/cantops/local1.log;outfmt2" /etc/rsyslog.d/50-default.conf
     /opt/pim/bin/change_line.sh "MaxLevelStore=debug" "MaxLevelStore" /etc/systemd/journald.conf
