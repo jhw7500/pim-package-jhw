@@ -584,7 +584,7 @@ END
   echo "check swap memory 512MB"
   cur_swap=$(/opt/pim/bin/swap_mem.sh is_size)
   if [[ "$cur_swap" != "512M" ]]; then
-    /opt/pim/bin/swap_mem.sh create
+    /opt/pim/bin/swap_mem.sh create 512M
   fi
 
   #systemctl start cam-operate
