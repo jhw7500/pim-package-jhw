@@ -385,4 +385,18 @@ else
     echo '{"PROGRESS":'"$prog_per"',"MSG":"pip installed '"$package"'"}'
 fi
 
+package="posix-ipc"
+installed_pip=$(echo "$pip_list" | grep -E "${package}\s")
+if [ -z "${installed_pip}" ]; then
+  var="posix_ipc-1.1.1"
+  echo '{"PROGRESS":'"$prog_per"',"MSG":"xvzf '"$package"'.tar.gz"}'
+  tar xvzf "${var}.tar.gz" > /dev/null 2> /dev/null
+  echo '{"PROGRESS":'"$prog_per"',"MSG":"pip install '"$package"'"}'
+  cd ${BASEDIR}/pip/${var}
+  python3 ./setup.py install > /dev/null 2> /dev/null
+  cd ${BASEDIR}/pip
+else
+    echo '{"PROGRESS":'"$prog_per"',"MSG":"pip installed '"$package"'"}'
+fi
+
 cd ${BASEDIR}
