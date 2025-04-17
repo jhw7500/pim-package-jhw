@@ -1,5 +1,6 @@
 import json
 import subprocess
+import os
 import os.path
 import sys
 import glob
@@ -92,6 +93,9 @@ def get_json_val(json_key):
     elif json_key == "send_data_cnt" :
         json_path = "/etc/cts/model_override.json"
         json_defval = 1000
+    elif json_key == "ctsiotbe_enable" :
+        json_path = "/root/shared_v/ctsiotbe.json"
+        json_defval = False
     try:
         with open(json_path, "r") as f :
             jsonconf = json.load(f)
@@ -272,6 +276,14 @@ def get_json_val(json_key):
                 return json_defval
         except:
             return json_defval
+    elif json_key == "ctsiotbe_enable" :
+        try:
+            if is_json_key_present(jsonconf,"ctsiotbe_enable") == True:
+                return jsonconf["ctsiotbe_enable"]
+            else :
+                return json_defval
+        except:
+            return json_defval
 
 def set_json_val(json_key, json_value):
     if json_key == "iot_longrun_en" :
@@ -332,6 +344,24 @@ def set_json_val(json_key, json_value):
                 json.dump(jsonconf, f, indent=3)
         except:
             sys.exit()
+    elif json_key == "ctsiotbe_enable" :
+        json_path = "/root/shared_v/ctsiotbe.json"
+        if os.path.exists(json_path) :
+            with open(json_path, "r") as f :
+                try :
+                    jsonconf = json.load(f)
+                except json.JSONDecodeError:
+                    jsonconf = {}
+        else :
+            jsonconf = {}
+        
+        if json_value == "True" or json_value == "true" or json_value == True :
+            jsonconf["ctsiotbe_enable"] = True
+        else :
+            jsonconf["ctsiotbe_enable"] = False
+        
+        with open(json_path, 'w') as f:
+            json.dump(jsonconf, f, indent=3)
 
 ###########################################
 ### arg[1] : json_path

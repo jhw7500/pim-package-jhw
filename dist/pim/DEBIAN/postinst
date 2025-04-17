@@ -177,6 +177,12 @@ configure)
     python3 /opt/cis/bin/getconfval.py bme_enable     false
     python3 /opt/cis/bin/getconfval.py send_data_cnt  1000
   fi
+
+  cp /opt/pim/etc/tmpfiles.d/shm_share.conf /etc/tmpfiles.d/
+  systemd-tmpfiles --create
+
+  rm -f /usr/local/bin/ctsiotbe
+  ln -s /opt/cis/bin/ctsiotbe.sh /usr/local/bin/ctsiotbe
   ######
 
   status=$(df |grep /dev/root |awk '{print $2}')
@@ -279,10 +285,8 @@ END
     systemctl disable $daemon_name
   fi
 
-#  systemctl stop connman.service
-#  systemctl disable connman.service
-
-  if [ "$model" == "cis-a2" ] || [ "$model" == "cis-a4" ] || [ "$model" == "cis-c2" ]; then
+  ctsiotbe_enable=$(python3 /opt/cis/bin/getconfval.py ctsiotbe_enable)
+  if [ "$model" == "cis-a2" ] || [ "$model" == "cis-a4" ] || [ "$model" == "cis-c2" ] || [ ${ctsiotbe_enable} == "True" ]; then
     daemon_name=docker
     status=$(systemctl is-enabled $daemon_name 2>/dev/null)
     if [ "$status" == "disabled" ]; then

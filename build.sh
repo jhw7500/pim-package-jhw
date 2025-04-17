@@ -108,6 +108,7 @@ cp -R ${SOURCEDIR}/conf_cfi_station/ ${WORKDIR}/opt/pim_gate/conf/
 cp -R ${SOURCEDIR}/conf_nanya/ ${WORKDIR}/opt/pim_gate/conf/
 cp -R ${SOURCEDIR}/conf_tower_lift/ ${WORKDIR}/opt/pim_gate/conf/
 cp -R ${SOURCEDIR}/conf_daim/ ${WORKDIR}/opt/pim_gate/conf/
+cp -R ${SOURCEDIR}/conf_ctsiot/ ${WORKDIR}/opt/pim_gate/conf/
 echo "/root/shared_v/pim_gate/" > ${WORKDIR}/opt/pim_gate/bin/conf_dir
 
 cd ${BASEDIR}/release 
