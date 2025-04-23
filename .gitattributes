@@ -4,3 +4,4 @@
 *.cpp text eol=lf
 *.h text eol=lf
 
+dist/pim/root/SOMBASE_TEST/mfg60n-aarch64-9.32.0.6.sh binary
