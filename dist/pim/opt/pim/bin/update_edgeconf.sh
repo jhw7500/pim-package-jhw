@@ -158,6 +158,9 @@ jq '.VHL_CAM |= (if .ch0 == null then . else del(.ch0) end)
 | .VHL_CAM |= (if .ch2 == null then . else del(.ch2) end)
 | .VHL_CAM |= (if .ch3 == null then . else del(.ch3) end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
+echo "check path"
+jq '.VHL_CAM.tmp_path |= (if . == null then "/tmp" else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+
 echo "update new channel config"
 #echo "check ch0"
 jq --argjson key0 "$ch0_en" --argjson key1 "$ch0_rotate" --argjson key2 "$bps" '.VHL_CAM.i2c2.ch0 |= (if .enable == null then .enable = $key0 else . end)

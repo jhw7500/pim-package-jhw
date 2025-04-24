@@ -122,9 +122,17 @@ for service in $list; do
 done
 
 vhl_name=$(jq -r '.VHL_CAM.vhl_name' "$FILE_JSON")
-file_date=$(date "+%Y%m%d_%H%M00")
-logger -p local0.notice "[$KEY][$tag:$LINENO] rm /mnt/sd_cam/${vhl_name}_${file_date}*"
-rm /mnt/sd_cam/${vhl_name}_${file_date}*
+tmp_path=$(jq -r '.VHL_CAM.tmp_path' "$FILE_JSON")
+mnt_path="/mnt/sd_cam"
+if [ "$tmp_path" == "$mnt_path" ]; then
+    file_date=$(date "+%Y%m%d_%H%M00")
+    logger -p local0.notice "[$KEY][$tag:$LINENO] rm $mnt_path/${vhl_name}_${file_date}*"
+    rm $mnt_path/${vhl_name}_${file_date}*
+else
+    logger -p local0.notice "[$KEY][$tag:$LINENO] rm $tmp_path/${vhl_name}*"
+    rm $tmp_path/${vhl_name}*
+fi
+
 rm /tmp/restart_flag
 logger -p local0.notice "[$KEY][$tag:$LINENO] kill_test.sh end"
 #/opt/pim/bin/vcm &

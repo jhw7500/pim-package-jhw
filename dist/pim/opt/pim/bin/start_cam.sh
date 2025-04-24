@@ -27,7 +27,11 @@ StartCam() {
         fi
         start_cmd="gstApp -e 0 -E 0 -N 1 -y 1 -C 0 -a 1 -f 1 -d $delay -m $3 -R 1 &"
     else
-        start_cmd="$1 -d $delay -m $3 &"
+        if [ "$1" = "gstApp" ]; then
+            start_cmd="$1 -d $delay -m $3 -O $tmp_path &"
+        else
+            start_cmd="$1 -d $delay -m $3 -p $tmp_path &"
+        fi
     fi
     logger -p local0.notice "[$key][$tag:$LINENO] app start : $start_cmd"
     eval "$start_cmd"
@@ -55,6 +59,7 @@ logger -p local0.notice "[$key][$tag:$LINENO] json_file : $FILE_JSON"
 app=$(jq -r '.VHL_CAM.app' "$FILE_JSON")
 GST_LOG_FILE="/var/log/cantops/gst/$app_$(date +'%Y%m%d_%H%M%S').log"
 cap_en=$(jq -r '.VHL_CAM.capture.enable' "$FILE_JSON")
+tmp_path=$(jq -r '.VHL_CAM.tmp_path' "$FILE_JSON")
 
 if [ "$app" = "streamApp" ]; then
     app="PIMCAM"
@@ -63,10 +68,10 @@ elif [ "$app" = "gstApp" ]; then
     app="gstApp"
     GST_LOG_FILE="/var/log/cantops/gst/gstApp_$(date +'%Y%m%d_%H%M%S').log"
 else
-    logger -p local0.err "[$key][$tag:$LINENO] app : $app"
-    logger -p local0.err "[$key][$tag:$LINENO] please update json"
-    app="PIMCAM"
-    #exit 0
+    logger -p local0.crit "[$key][$tag:$LINENO] app : $app"
+    logger -p local0.crit "[$key][$tag:$LINENO] please update json"
+    #app="PIMCAM"
+    exit 0
 fi
 
 export GST_DEBUG_NO_COLOR=1
@@ -75,7 +80,7 @@ export GST_DEBUG=2,v4l2src:2
 export GST_DEBUG_FILE="$GST_LOG_FILE"
 export GST_DEBUG_DUMP_DOT_DIR=/var/log/cantops/dot/
 
-logger -p local0.notice "[$key][$tag:$LINENO] start app:$app delay:$delay"
+logger -p local0.notice "[$key][$tag:$LINENO] start app:$app delay:$delay file_path:$tmp_path"
 if CheckApp "$app"; then
     logger -p local0.err "[$key][$tag:$LINENO] $app already existed"
     exit 0

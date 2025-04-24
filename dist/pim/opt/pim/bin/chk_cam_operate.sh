@@ -7,10 +7,12 @@ GetConfig() {
     cam_ch3=$(jq '.VHL_CAM.i2c1.ch3.enable' "$FILE_JSON")
     srt_en=$(jq '.VCM.srt_enable' "$FILE_JSON_")
     time_rec_en=$(jq '.VCM.file_time_check' "$FILE_JSON_")
+    file_check_delay=$(jq '.ETC.file_check_delay' "$FILE_JSON_")
     vhl_name=$(jq -r '.VHL_CAM.vhl_name' "$FILE_JSON")
     rec_time=$(jq '.VHL_CAM.recording_time' "$FILE_JSON")
     rec_time=$((rec_time*60))
     cap_en=$(jq '.VHL_CAM.capture.enable' "$FILE_JSON")
+    tmp_path=$(jq -r '.VHL_CAM.tmp_path' "$FILE_JSON")
     #rst_time=$((rec_time+90))
     #rst_time=20
     if [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] || [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]; then
@@ -24,9 +26,11 @@ GetConfig() {
     fi
 
     if [[ "$csi1_en" -eq 1 ]] && [[ "$csi2_en" -eq 1 ]]; then
-        rst_time=30
+        rst_time=35
+        app_delay=25
     else
         rst_time=20
+        app_delay=15
     fi
 }
 
@@ -56,7 +60,8 @@ JSON_PREFIX=edgeconf_
 JOSN_SUFFIX=.json
 FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' | grep "${JSON_SUFFIX}$" | tail -1 | tr -d '\r\n')
 timer=0
-mnt_folder="/mnt/sd_cam"
+mnt_path="/mnt/sd_cam"
+tmp_path="/tmp"
 start_f=0
 curTimeEpoch=0
 startTimeEpoch=0
@@ -65,17 +70,17 @@ check_num=0
 file_cnt=0
 mp4date=0
 mp4date2=0
-check_time=10
+file_check_delay=10
 
 GetConfig
 
-logger -p local0.notice "[$KEY][$tag:$LINENO] /opt/pim/bin/start_cam.sh $((rst_time-5))"
-/opt/pim/bin/start_cam.sh $((rst_time-5))
+logger -p local0.notice "[$KEY][$tag:$LINENO] /opt/pim/bin/start_cam.sh $app_delay"
+/opt/pim/bin/start_cam.sh $app_delay
 #rst_time=60
 #StartApp start_cam.sh
 #StartScript restart_app.sh
 
-logger -p local0.notice "[$KEY][$tag:$LINENO] ch0:$cam_ch0, ch1:$cam_ch1, ch2:$cam_ch2, ch3:$cam_ch3, srt:$srt_en, time_rec_en:$time_rec_en, vhl_name:$vhl_name, rec_time:$rec_time, rst_time:$rst_time, cap_en:%cap_en"
+logger -p local0.notice "[$KEY][$tag:$LINENO] ch0:$cam_ch0, ch1:$cam_ch1, ch2:$cam_ch2, ch3:$cam_ch3, srt:$srt_en, time_rec_en:$time_rec_en, vhl_name:$vhl_name, rec_time:$rec_time, rst_time:$rst_time, cap_en:$cap_en, mnt_path:$mnt_path, tmp_path:$tmp_path, app_delay:$app_delay, file_check_delay:$file_check_delay"
 
 while :
 do
@@ -111,15 +116,20 @@ do
 		startTimeEpoch=$(date -d "$startTime" "+%s")
 		diffEpoch=$(echo "$curTimeEpoch - $startTimeEpoch" |bc)
         #logger -p local0.info "[$KEY][$tag:$LINENO] start_video_time_:$startTime, cur_time:$(date '+%Y%m%d %H:%M:%S'), diff:$diffEpoch"
-		if [ "$diffEpoch" -ge "$check_time" ]; then
+		if [ "$diffEpoch" -ge "$file_check_delay" ]; then
             logger -p local0.info "[$KEY][$tag:$LINENO] start_video_time_:$startTime, cur_time:$(date '+%Y%m%d %H:%M:%S'), diff:$diffEpoch"
             timer=0
 			cat /dev/null > $FILE_
             #logger -p local0.info "[$KEY][$tag:$LINENO] startTime : $startTime"
+            if [ "$mp4date2" != 0 ] && [ "$mnt_path" != "$tmp_path" ]; then
+                logger -p local0.notice "[$KEY][$tag:$LINENO] mv ${tmp_path}/${vhl_name}_${mp4date}* ${mnt_path}/"
+                mv ${tmp_path}/${vhl_name}_${mp4date2}* ${mnt_path}/
+            fi
+            #rm ${mnt_folder}/tmp/*
 			mp4date=$(date -d "$startTime" "+%Y%m%d_%H%M%S")
             mp4date2=$(date -d "$startTime" "+%Y%m%d_%H%M")
             #mp4date=$(echo $startTime)
-            logger -p local0.info "[$KEY][$tag:$LINENO] check_date : $mp4date"
+            logger -p local0.info "[$KEY][$tag:$LINENO] check_date : $mp4date ?= $mp4date2"
 :<<'END'
             logger -p local0.info "[$KEY][$tag:$LINENO] startTimeEpoch : $startTimeEpoch"
             startTimeEpoch=$((startTimeEpoch+rec_time))
@@ -130,10 +140,10 @@ do
 END
 			if [[ "$cam_ch0" == *"$ENABLE_VAL"* ]]; then
                 ((check_num++))
-                if [ -f "${mnt_folder}/${vhl_name}_${mp4date}"-ch0.mp4 ]; then
+                if [ -f "${tmp_path}/${vhl_name}_${mp4date}"-ch0.mp4 ]; then
 			        logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch0.mp4 exist"
                     ((file_cnt++))
-                elif [ -f "${mnt_folder}/${vhl_name}_${mp4date2}"*-ch0.mp4 ]; then
+                elif [ -f "${tmp_path}/${vhl_name}_${mp4date2}"*-ch0.mp4 ]; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-ch0.mp4 exist"
                     ((file_cnt++))
 	    		else
@@ -155,10 +165,10 @@ END
 
             if [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]; then
                 ((check_num++))
-                if [ -f "${mnt_folder}/${vhl_name}_${mp4date}"-ch1.mp4 ]; then
+                if [ -f "${tmp_path}/${vhl_name}_${mp4date}"-ch1.mp4 ]; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch1.mp4 exist"
                     ((file_cnt++))
-                elif [ -f "${mnt_folder}/${vhl_name}_${mp4date2}"*-ch1.mp4 ]; then
+                elif [ -f "${tmp_path}/${vhl_name}_${mp4date2}"*-ch1.mp4 ]; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-ch1.mp4 exist"
                     ((file_cnt++))
                 else
@@ -170,10 +180,10 @@ END
 
             if [[ "$cam_ch2" == *"$ENABLE_VAL"* ]]; then
                 ((check_num++))
-                if [ -f "${mnt_folder}/${vhl_name}_${mp4date}"-ch2.mp4 ]; then
+                if [ -f "${tmp_path}/${vhl_name}_${mp4date}"-ch2.mp4 ]; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch2.mp4 exist"
                     ((file_cnt++))
-                elif [ -f "${mnt_folder}/${vhl_name}_${mp4date2}"*-ch2.mp4 ]; then
+                elif [ -f "${tmp_path}/${vhl_name}_${mp4date2}"*-ch2.mp4 ]; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-ch2.mp4 exist"
                     ((file_cnt++))
                 else
@@ -185,10 +195,10 @@ END
 
             if [[ "$cam_ch3" == *"$ENABLE_VAL"* ]]; then
                 ((check_num++))
-                if [ -f "${mnt_folder}/${vhl_name}_${mp4date}"-ch3.mp4 ]; then
+                if [ -f "${tmp_path}/${vhl_name}_${mp4date}"-ch3.mp4 ]; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch3.mp4 exist"
                     ((file_cnt++))
-                elif [ -f "${mnt_folder}/${vhl_name}_${mp4date2}"*-ch3.mp4 ]; then
+                elif [ -f "${tmp_path}/${vhl_name}_${mp4date2}"*-ch3.mp4 ]; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-ch3.mp4 exist"
                     ((file_cnt++))
                 else
@@ -200,10 +210,10 @@ END
 
             if [[ "$srt_en" == *"$ENABLE_VAL"* ]]; then
                 ((check_num++))
-                if [ -f "${mnt_folder}/${vhl_name}_${mp4date}"-data.srt ]; then
+                if [ -f "${tmp_path}/${vhl_name}_${mp4date}"-data.srt ]; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-data.srt exist"
                     ((file_cnt++))
-                elif [ -f "${mnt_folder}/${vhl_name}_${mp4date2}"*-data.srt ]; then
+                elif [ -f "${tmp_path}/${vhl_name}_${mp4date2}"*-data.srt ]; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-data.srt exist"
                     ((file_cnt++))
                 else
@@ -246,7 +256,7 @@ END
             sync
 		fi
     else
-        if [ "$timer" -ge $((rec_time+check_time)) ]; then
+        if [ "$timer" -ge $((rec_time+file_check_delay)) ]; then
             logger -p local0.error "[$KEY][$tag:$LINENO start_f init beacause file not create"
             start_f=0
         fi
