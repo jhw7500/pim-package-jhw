@@ -1,5 +1,5 @@
 Package: pim-mp
-Version: 0.5.0
+Version: 0.5.1
 Replaces: cis
 Breaks: cis
 Section: test
@@ -60,3 +60,4 @@ Description: PIM application
 0.4.8 : add capture feature in edgeconf_pim.json
 0.4.9 : pim_gate, record sync for nanya demo
 0.5.0 : pim_gate sFTP_UDP, adab buffer mutex, fix rsyslog syntax error
+0.5.1 : pim_gate sFTP_UDP error code
