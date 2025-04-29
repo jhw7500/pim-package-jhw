@@ -34,7 +34,9 @@ jq '.VCM.file_time_check |= if . == null then true else . end |
 .VCM.vib_test |= if . == null then false else . end' "$FILE_JSON" > tmp.$$ && mv tmp.$$ "$FILE_JSON"
 
 echo "ETC check"
-jq '.ETC.file_check_delay |= if . == null then 10 else . end' "$FILE_JSON" > tmp.$$ && mv tmp.$$ "$FILE_JSON"
+jq '.ETC.file_check_delay |= if . == null then 10 else . end |
+.ETC.file_check_reboot |= if . == null then true else . end' "$FILE_JSON" > tmp.$$ && mv tmp.$$ "$FILE_JSON"
+
 
 sync
 echo -e "\e[32mcomplete update $FILE_JSON\e[0m"

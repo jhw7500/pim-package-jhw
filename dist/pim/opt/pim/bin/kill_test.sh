@@ -15,6 +15,9 @@ limitcnt=5
 rebootcnt=30
 defunct=0
 
+#FILE_CHECK="/tmp/file_check"
+#echo "ING" > $FILE_CHECK
+
 #list="BG_Check_for_pim.sh vcm streamApp PIMCAM"
 #list="BG_Check_for_pim.sh vcm gstApp"
 list="BG_Check_for_pim.sh vcm"

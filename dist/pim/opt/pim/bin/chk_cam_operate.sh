@@ -6,6 +6,7 @@ GetConfig() {
     cam_ch2=$(jq '.VHL_CAM.i2c1.ch2.enable' "$FILE_JSON")
     cam_ch3=$(jq '.VHL_CAM.i2c1.ch3.enable' "$FILE_JSON")
     srt_en=$(jq '.VCM.srt_enable' "$FILE_JSON_")
+    file_chk_reboot=$(jq '.ETC.file_check_reboot' "$FILE_JSON_")
     time_rec_en=$(jq '.VCM.file_time_check' "$FILE_JSON_")
     file_check_delay=$(jq '.ETC.file_check_delay' "$FILE_JSON_")
     vhl_name=$(jq -r '.VHL_CAM.vhl_name' "$FILE_JSON")
@@ -47,6 +48,7 @@ FILE_=/tmp/start_video_time_chk
 #FILE_JSON=/root/shared_v/edgeconf_pim.json
 FILE_JSON_=/root/shared_v/ord_vcm_conf.json
 FILE_CHECK=/tmp/file_check
+FLAG_PATH=/tmp
 tag=$(basename "$0")
 ENABLE_VAL=true
 DISABLE_VAL=false
@@ -80,7 +82,7 @@ logger -p local0.notice "[$KEY][$tag:$LINENO] /opt/pim/bin/start_cam.sh $app_del
 #StartApp start_cam.sh
 #StartScript restart_app.sh
 
-logger -p local0.notice "[$KEY][$tag:$LINENO] ch0:$cam_ch0, ch1:$cam_ch1, ch2:$cam_ch2, ch3:$cam_ch3, srt:$srt_en, time_rec_en:$time_rec_en, vhl_name:$vhl_name, rec_time:$rec_time, rst_time:$rst_time, cap_en:$cap_en, mnt_path:$mnt_path, tmp_path:$tmp_path, app_delay:$app_delay, file_check_delay:$file_check_delay"
+logger -p local0.notice "[$KEY][$tag:$LINENO] ch0:$cam_ch0, ch1:$cam_ch1, ch2:$cam_ch2, ch3:$cam_ch3, srt:$srt_en, time_rec_en:$time_rec_en, vhl_name:$vhl_name, rec_time:$rec_time, rst_time:$rst_time, cap_en:$cap_en, mnt_path:$mnt_path, tmp_path:$tmp_path, app_delay:$app_delay, file_check_delay:$file_check_delay file_chk_reboot:$file_chk_reboot"
 
 while :
 do
@@ -226,26 +228,39 @@ END
 			#logger -p local0.debug [$KEY][$tag:$LINENO] mp4date:$mp4date
 			logger -p local0.info "[$KEY][$tag:$LINENO] check_num:$check_num cnt:$file_cnt"
 			if [ "$check_num" -ne "$file_cnt" ]; then
+                logger -p local0.error "[$KEY][$tag:$LINENO] $check_num != $file_cnt file cnt check fail"
                 start_f=0
-				((retry++))
-                retry_total=$(($retry+$retry_boot))
-				logger -p local0.error "[$KEY][$tag:$LINENO] $check_num != $file_cnt file cnt check fail"
                 echo "NG" > $FILE_CHECK
-				if [ "$retry_total" -le 1 ]; then
-                    logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/kill_test.sh ($retry/$retry_boot/$retry_total)"
-                    #rm ${mnt_folder}/${vhl_name}_${mp4date2}*
-					/opt/pim/bin/kill_test.sh
-				elif [ "$retry_total" -le 3 ]; then
-                    logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh ($retry/$retry_boot/$retry_total)"
-                    #rm ${mnt_folder}/${vhl_name}_${mp4date2}*
-					/opt/pim/bin/init_cam.sh
-				else
-                    logger -p local0.error "[$KEY][$tag:$LINENO] retry:$retry over"
-					logger -p local0.emerg "[$KEY][$tag:$LINENO] rebooting because file check fail ($retry/$retry_boot/$retry_total)"
-                    sleep 1
-					#creboot
-                    reboot
-				fi
+                value=$(cat $FLAG_PATH/bg_chk_flag.bin)
+                cam_disconnect_flag=$((value&0xf))
+                if [[ "$cam_disconnect_flag" != 0x0 ]]; then
+                    ((retry++))
+                    retry_total=$(($retry+$retry_boot))
+                    if [ "$retry_total" -le 3 ]; then
+                        logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/kill_test.sh ($retry/$retry_boot/$retry_total)"
+                        #rm ${mnt_folder}/${vhl_name}_${mp4date2}*
+                        /opt/pim/bin/kill_test.sh
+                    elif [ "$retry_total" -le 5 ]; then
+                        logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh ($retry/$retry_boot/$retry_total)"
+                        #rm ${mnt_folder}/${vhl_name}_${mp4date2}*
+                        /opt/pim/bin/init_cam.sh
+                    else
+                        logger -p local0.error "[$KEY][$tag:$LINENO] retry total $retry_total is over"
+                        if [[ "$file_chk_reboot" == *"$ENABLE_VAL"* ]]; then
+                            logger -p local0.emerg "[$KEY][$tag:$LINENO] rebooting because file check fail ($retry/$retry_boot/$retry_total)"
+                            sleep 1
+                            #creboot
+                            reboot
+                        else
+                            logger -p local0.notice "[$KEY][$tag:$LINENO] retry count reset because file_check_reboot is not true"
+                            retry=0
+                            retry_boot=0
+                            retry_total=0
+                        fi
+                    fi
+                else
+                    logger -p local0.err  "[$KEY][$tag:$LINENO] no retry because cam is disconnect($cam_disconnect_flag)"
+                fi
 			else
 				logger -p local0.notice "[$KEY][$tag:$LINENO] mp4,srt file cnt check ok ($retry/$retry_boot/$retry_total)"
 				retry=0
@@ -266,26 +281,45 @@ END
         if [ "$timer" -ge "$rst_time" ]; then 
             logger -p local0.error "[$KEY][$tag:$LINENO] $app all file not create"
             timer=0
+            start_f=0
             if [ "$csi1_en" -eq 0 ] && [ "$csi2_en" -eq 0 ]; then
                 logger -p local0.error "[$KEY][$tag:$LINENO] all channel disabled at $FILE_JSON"
                 continue;
             fi
-            ((retry_boot++))
-            retry_total=$(($retry+$retry_boot))
-            #if [ "$retry_boot" -le 1 ]; then
-            #    logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/kill_test.sh ($retry/$retry_boot/$retry_total)"
-            #    /opt/pim/bin/kill_test.sh
-            if [ "$retry_total" -le 3 ]; then
-                logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh ($retry/$retry_boot/$retry_total)"
-                /opt/pim/bin/init_cam.sh
+
+            echo "NG" > $FILE_CHECK
+            value=$(cat $FLAG_PATH/bg_chk_flag.bin)
+            cam_disconnect_flag=$((value&0xf))
+            if [[ "$cam_disconnect_flag" != 0x0 ]]; then
+                ((retry_boot++))
+                retry_total=$(($retry+$retry_boot))
+                #if [ "$retry_boot" -le 1 ]; then
+                #    logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/kill_test.sh ($retry/$retry_boot/$retry_total)"
+                #    /opt/pim/bin/kill_test.sh
+                if [ "$retry_total" -le 3 ]; then
+                    logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/kill_test.sh ($retry/$retry_boot/$retry_total)"
+                    #rm ${mnt_folder}/${vhl_name}_${mp4date2}*
+                    /opt/pim/bin/kill_test.sh
+                elif [ "$retry_total" -le 5 ]; then
+                    logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh ($retry/$retry_boot/$retry_total)"
+                    /opt/pim/bin/init_cam.sh
+                else
+                    logger -p local0.error "[$KEY][$tag:$LINENO] retry_total $retry_total is over"
+                    if [[ "$file_chk_reboot" == *"$ENABLE_VAL"* ]]; then
+                        logger -p local0.emerg "[$KEY][$tag:$LINENO] rebooting because all file not create ($retry/$retry_boot/$retry_total)"
+                        sleep 1
+                        #creboot
+                        reboot
+                    else
+                        logger -p local0.notice "[$KEY][$tag:$LINENO] retry count reset because file_check_reboot is not true"
+                        retry=0
+                        retry_boot=0
+                        retry_total=0
+                    fi
+                fi
             else
-                logger -p local0.emerg "[$KEY][$tag:$LINENO] reboot because all file not create ($retry/$retry_boot/$retry_total)"
-                sleep 1
-                reboot
-                #creboot
-                #logger -p local0.emerg "[$KEY][$tag:$LINENO] creboot end"
+                logger -p local0.err  "[$KEY][$tag:$LINENO] no retry because cam is disconnect($cam_disconnect_flag)"
             fi
-            start_f=0
 	    fi
     fi
 
