@@ -24,7 +24,7 @@ if [ "$app" != "streamApp" ] && [ "$app" != "gstApp" ]; then
 fi
 
 cap_en=$(jq -r '.VHL_CAM.capture.enable' "$FILE_JSON")
-if [ "$cap_en" == "true" ]; then
+if [ "$cap_en" = "true" ]; then
     app="gstApp"
 fi
 

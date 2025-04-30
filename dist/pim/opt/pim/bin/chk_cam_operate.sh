@@ -91,6 +91,11 @@ do
     file_cnt=0
     #file_time_err=0
 
+    if [ -f /tmp/init_cam_flag ] || [ -f /tmp/restart_flag ]; then
+        sleep 1
+        continue
+    fi
+
     if [ -f /tmp/kill_flag ]; then
         logger -p local0.notice "[$KEY][$tag:$LINENO] kill_flag set"
         rm /tmp/kill_flag
@@ -98,12 +103,7 @@ do
         timer=0
     fi
 
-    if [[ "$time_rec_en" != *"$ENABLE_VAL"* ]]; then
-        sleep 5
-        continue
-    fi
-
-    if [[ "$cap_en" == *"$ENABLE_VAL"* ]]; then
+    if [[ "$time_rec_en" != *"$ENABLE_VAL"* ]] || [[ "$cap_en" == *"$ENABLE_VAL"* ]]; then
         sleep 5
         continue
     fi

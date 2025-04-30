@@ -25,7 +25,7 @@ StartCam() {
         if [ "$delay" -ge 15 ]; then
             delay=15
         fi
-        start_cmd="gstApp -e 0 -E 0 -N 1 -y 1 -C 0 -a 1 -f 1 -d $delay -m $3 -R 1 &"
+        start_cmd="$1 -e 0 -E 0 -N 1 -y 1 -C 0 -a 1 -f 1 -d $delay -m $3 -R 1 &"
     else
         if [ "$1" = "gstApp" ]; then
             start_cmd="$1 -d $delay -m $3 -O $tmp_path &"
@@ -34,16 +34,25 @@ StartCam() {
         fi
     fi
     logger -p local0.notice "[$key][$tag:$LINENO] app start : $start_cmd"
-    eval "$start_cmd"
+    if ! CheckApp "$1"; then
+        eval "$start_cmd"
+    else
+        logger -p local0.notice "[$key][$tag:$LINENO] alreay start $1"
+    fi
+
     #cgexec -g memory:myappgroup $1 -d $2 -m $3 &
     if ! CheckApp "BG_Check_for_pim.sh"; then
         logger -p local0.emerg "[$key][$tag:$LINENO] BG_Check_for_pim.sh start"
          /opt/pim/bin/BG_Check_for_pim.sh $2 & 2>/dev/null
+    else
+        logger -p local0.notice "[$key][$tag:$LINENO] alreay start BG_Check_for_pim.sh"
     fi
 
     if ! CheckApp "restart_app.sh"; then
         logger -p local0.emerg "[$key][$tag:$LINENO] restart_app start"
         /opt/pim/bin/restart_app.sh &
+    else
+        logger -p local0.notice "[$key][$tag:$LINENO] alreay start restart_app.sh"
     fi
     #/opt/pim/bin/cpulimit-all.sh --limit=320 --max-depth=5 -e $1 --watch-interval=1m &
 }
@@ -72,6 +81,10 @@ else
     logger -p local0.crit "[$key][$tag:$LINENO] please update json"
     #app="PIMCAM"
     exit 0
+fi
+
+if [ "$cap_en" = "true" ]; then
+    app="gstApp"
 fi
 
 export GST_DEBUG_NO_COLOR=1

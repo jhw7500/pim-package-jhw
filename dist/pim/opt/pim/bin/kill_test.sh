@@ -6,8 +6,14 @@ tag=$(basename "$0")
 KEY=RST
 
 logger -p local0.notice "[$KEY][$tag:$LINENO] kill_test.sh start"
+
+if [ -f /tmp/restart_flag ]; then
+    logger -p local0.notice "[RST][$tag:$LINENO] exit because already kill app..."
+    exit 0
+fi
+
 touch /tmp/restart_flag
-touch /tmp/kill_flag
+#touch /tmp/kill_flag
 pid=0
 cnt=0
 service=0
@@ -25,8 +31,8 @@ list="BG_Check_for_pim.sh vcm"
 JSON_PREFIX=edgeconf_
 JOSN_SUFFIX=.json
 FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' | grep "${JSON_SUFFIX}$" | tail -1 | tr -d '\r\n')
-list+=" gstApp streamApp PIMCAM"
-:<<'END'
+#list+=" gstApp streamApp PIMCAM"
+#:<<'END'
 app=$(jq -r '.VHL_CAM.app' "$FILE_JSON")
 cap_en=$(jq -r '.VHL_CAM.capture.enable' "$FILE_JSON")
 if [ "$cap_en" == "true" ]; then
@@ -38,10 +44,10 @@ elif [ "$app" == "gstApp" ]; then
 else
     logger -p local0.err "[$KEY][$tag:$LINENO] app : $app"
     logger -p local0.err "[$KEY][$tag:$LINENO] please update json"
-    list+="streamApp PIMCAM"
+    list+=" streamApp PIMCAM gstApp"
     #exit 0
 fi
-END
+#END
 
 logger -p local0.notice "[$KEY][$tag:$LINENO] service : $list"
 :<<'END'
@@ -136,7 +142,10 @@ else
     rm $tmp_path/${vhl_name}*
 fi
 
+logger -p local0.notice "[$KEY][$tag:$LINENO] touch /tmp/kill_flag, rm /tmp/restart_flag"
+touch /tmp/kill_flag
 rm /tmp/restart_flag
+
 logger -p local0.notice "[$KEY][$tag:$LINENO] kill_test.sh end"
 #/opt/pim/bin/vcm &
 exit 0

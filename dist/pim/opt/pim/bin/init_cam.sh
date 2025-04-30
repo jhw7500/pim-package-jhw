@@ -6,8 +6,15 @@ logger -p local0.notice "[RST][$tag:$LINENO] module reset start"
 #/opt/pim/bin/kill_test.sh
 #systemctl stop cam-operate
 #pkill chk_cam_operate.sh
-touch /tmp/init_cam_flag
+
+if [ -f /tmp/init_cam_flag ]; then
+    logger -p local0.notice "[RST][$tag:$LINENO] exit because already module reset..."
+    exit 0
+fi
+
+
 /opt/pim/bin/kill_test.sh
+touch /tmp/init_cam_flag
 
 #sleep 3
 logger -p local0.notice "[RST][$tag:$LINENO] rmmod imx8-media-dev, max9296"
