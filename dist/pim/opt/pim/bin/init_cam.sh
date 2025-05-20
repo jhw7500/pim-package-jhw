@@ -1,20 +1,20 @@
 #!/bin/bash
 
 tag=$(basename "$0")
-logger -p local0.notice "[RST][$tag:$LINENO] module reset start"
 #killall -s KILL restart_app.sh
 #/opt/pim/bin/kill_test.sh
 #systemctl stop cam-operate
 #pkill chk_cam_operate.sh
 
+rm /tmp/gst_err
 if [ -f /tmp/init_cam_flag ]; then
     logger -p local0.notice "[RST][$tag:$LINENO] exit because already module reset..."
     exit 0
 fi
 
-
-/opt/pim/bin/kill_test.sh
+logger -p local0.notice "[RST][$tag:$LINENO] set init_cam_flag"
 touch /tmp/init_cam_flag
+/opt/pim/bin/kill_test.sh
 
 #sleep 3
 logger -p local0.notice "[RST][$tag:$LINENO] rmmod imx8-media-dev, max9296"

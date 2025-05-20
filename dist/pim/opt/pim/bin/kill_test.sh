@@ -5,13 +5,14 @@
 tag=$(basename "$0")
 KEY=RST
 
-logger -p local0.notice "[$KEY][$tag:$LINENO] kill_test.sh start"
+#logger -p local0.notice "[$KEY][$tag:$LINENO] kill_test.sh start"
 
 if [ -f /tmp/restart_flag ]; then
     logger -p local0.notice "[RST][$tag:$LINENO] exit because already kill app..."
     exit 0
 fi
 
+logger -p local0.notice "[$KEY][$tag:$LINENO] set restart_flag"
 touch /tmp/restart_flag
 #touch /tmp/kill_flag
 pid=0
@@ -142,11 +143,11 @@ else
     rm $tmp_path/${vhl_name}*
 fi
 
-logger -p local0.notice "[$KEY][$tag:$LINENO] touch /tmp/kill_flag, rm /tmp/restart_flag"
+logger -p local0.notice "[$KEY][$tag:$LINENO] set kill_flag, reset restart_flag"
 touch /tmp/kill_flag
 rm /tmp/restart_flag
 
-logger -p local0.notice "[$KEY][$tag:$LINENO] kill_test.sh end"
+#logger -p local0.notice "[$KEY][$tag:$LINENO] kill_test.sh end"
 #/opt/pim/bin/vcm &
 exit 0
 

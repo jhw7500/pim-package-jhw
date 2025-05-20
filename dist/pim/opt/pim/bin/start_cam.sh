@@ -17,7 +17,7 @@ fi
 }
 
 StartCam() {
-    logger -p local0.notice "[$key][$tag:$LINENO] touch /tmp/kill_flag"
+    logger -p local0.notice "[$key][$tag:$LINENO] set kill_flag"
     touch /tmp/kill_flag
     delay=$2
     if [ "$4" = "true" ]; then
@@ -33,23 +33,30 @@ StartCam() {
             start_cmd="$1 -d $delay -m $3 -p $tmp_path &"
         fi
     fi
-    logger -p local0.notice "[$key][$tag:$LINENO] app start : $start_cmd"
+
     if ! CheckApp "$1"; then
-        eval "$start_cmd"
+        if [ -f /tmp/gst_err ]; then
+            logger -p local0.err "[$key][$tag:$LINENO] init_cam.sh because gst_err"
+            /opt/pim/bin/init_cam.sh
+        else
+            logger -p local0.notice "[$key][$tag:$LINENO] $1 start"
+            logger -p local0.emerg "[$key][$tag:$LINENO] cam app cmd : $start_cmd"
+            eval "$start_cmd"
+        fi
     else
         logger -p local0.notice "[$key][$tag:$LINENO] alreay start $1"
     fi
 
     #cgexec -g memory:myappgroup $1 -d $2 -m $3 &
     if ! CheckApp "BG_Check_for_pim.sh"; then
-        logger -p local0.emerg "[$key][$tag:$LINENO] BG_Check_for_pim.sh start"
+        logger -p local0.notice "[$key][$tag:$LINENO] BG_Check_for_pim.sh start"
          /opt/pim/bin/BG_Check_for_pim.sh $2 & 2>/dev/null
     else
         logger -p local0.notice "[$key][$tag:$LINENO] alreay start BG_Check_for_pim.sh"
     fi
 
     if ! CheckApp "restart_app.sh"; then
-        logger -p local0.emerg "[$key][$tag:$LINENO] restart_app start"
+        logger -p local0.notice "[$key][$tag:$LINENO] restart_app start"
         /opt/pim/bin/restart_app.sh &
     else
         logger -p local0.notice "[$key][$tag:$LINENO] alreay start restart_app.sh"
@@ -96,6 +103,16 @@ export GST_DEBUG_DUMP_DOT_DIR=/var/log/cantops/dot/
 logger -p local0.notice "[$key][$tag:$LINENO] start app:$app delay:$delay file_path:$tmp_path"
 if CheckApp "$app"; then
     logger -p local0.err "[$key][$tag:$LINENO] $app already existed"
+    exit 0
+fi
+
+if CheckApp "init_cam.sh"; then
+    logger -p local0.err "[$key][$tag:$LINENO] init_cam.sh already existed"
+    exit 0
+fi
+
+if CheckApp "kill_test.sh"; then
+    logger -p local0.err "[$key][$tag:$LINENO] kill_test.sh already existed"
     exit 0
 fi
 

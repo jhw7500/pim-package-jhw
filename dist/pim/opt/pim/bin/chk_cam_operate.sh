@@ -92,7 +92,7 @@ do
     #file_time_err=0
 
     if [ -f /tmp/init_cam_flag ] || [ -f /tmp/restart_flag ]; then
-        sleep 1
+        sleep 3
         continue
     fi
 

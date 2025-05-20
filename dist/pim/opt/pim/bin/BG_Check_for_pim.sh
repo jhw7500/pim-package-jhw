@@ -120,6 +120,7 @@ while true; do
     sleep 1
 
     if [ -f /tmp/init_cam_flag ] || [ -f /tmp/restart_flag ]; then
+        i=0
         continue
     fi
 
