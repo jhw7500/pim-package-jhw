@@ -129,6 +129,8 @@ configure)
   rm -f /usr/lib/libpiwriter*
   ln -s /usr/local/lib/libpiwriter.so.0  /usr/lib/libpiwriter.so.0
   ln -s /usr/local/lib/libpiwriter.so.0  /usr/lib/libpiwriter.so
+  ln -s /opt/pim/bin/kill_test.sh /usr/local/bin/killcam
+  ln -s /opt/pim/bin/start_cam.sh /usr/local/bin/startcam
 
   ## cis
   rm -f /etc/init.d/cis.sh

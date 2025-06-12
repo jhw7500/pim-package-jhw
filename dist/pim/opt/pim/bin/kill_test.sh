@@ -5,15 +5,25 @@
 tag=$(basename "$0")
 KEY=RST
 
-logger -p local0.notice "[$KEY][$tag:$LINENO] kill_test.sh start"
+#logger -p local0.notice "[$KEY][$tag:$LINENO] kill_test.sh start"
+
+if [ -f /tmp/restart_flag ]; then
+    logger -p local0.notice "[RST][$tag:$LINENO] exit because already kill app..."
+    exit 0
+fi
+
+logger -p local0.notice "[$KEY][$tag:$LINENO] set restart_flag"
 touch /tmp/restart_flag
-touch /tmp/kill_flag
+#touch /tmp/kill_flag
 pid=0
 cnt=0
 service=0
 limitcnt=5
 rebootcnt=30
 defunct=0
+
+#FILE_CHECK="/tmp/file_check"
+#echo "ING" > $FILE_CHECK
 
 #list="BG_Check_for_pim.sh vcm streamApp PIMCAM"
 #list="BG_Check_for_pim.sh vcm gstApp"
@@ -22,8 +32,8 @@ list="BG_Check_for_pim.sh vcm"
 JSON_PREFIX=edgeconf_
 JOSN_SUFFIX=.json
 FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' | grep "${JSON_SUFFIX}$" | tail -1 | tr -d '\r\n')
-list+=" gstApp streamApp PIMCAM"
-:<<'END'
+#list+=" gstApp streamApp PIMCAM"
+#:<<'END'
 app=$(jq -r '.VHL_CAM.app' "$FILE_JSON")
 cap_en=$(jq -r '.VHL_CAM.capture.enable' "$FILE_JSON")
 if [ "$cap_en" == "true" ]; then
@@ -35,10 +45,10 @@ elif [ "$app" == "gstApp" ]; then
 else
     logger -p local0.err "[$KEY][$tag:$LINENO] app : $app"
     logger -p local0.err "[$KEY][$tag:$LINENO] please update json"
-    list+="streamApp PIMCAM"
+    list+=" streamApp PIMCAM gstApp"
     #exit 0
 fi
-END
+#END
 
 logger -p local0.notice "[$KEY][$tag:$LINENO] service : $list"
 :<<'END'
@@ -122,11 +132,22 @@ for service in $list; do
 done
 
 vhl_name=$(jq -r '.VHL_CAM.vhl_name' "$FILE_JSON")
-file_date=$(date "+%Y%m%d_%H%M00")
-logger -p local0.notice "[$KEY][$tag:$LINENO] rm /mnt/sd_cam/${vhl_name}_${file_date}*"
-rm /mnt/sd_cam/${vhl_name}_${file_date}*
+tmp_path=$(jq -r '.VHL_CAM.tmp_path' "$FILE_JSON")
+mnt_path="/mnt/sd_cam"
+if [ "$tmp_path" == "$mnt_path" ]; then
+    file_date=$(date "+%Y%m%d_%H%M00")
+    logger -p local0.notice "[$KEY][$tag:$LINENO] rm $mnt_path/${vhl_name}_${file_date}*"
+    rm $mnt_path/${vhl_name}_${file_date}*
+else
+    logger -p local0.notice "[$KEY][$tag:$LINENO] rm $tmp_path/${vhl_name}*"
+    rm $tmp_path/${vhl_name}*
+fi
+
+logger -p local0.notice "[$KEY][$tag:$LINENO] set kill_flag, reset restart_flag"
+touch /tmp/kill_flag
 rm /tmp/restart_flag
-logger -p local0.notice "[$KEY][$tag:$LINENO] kill_test.sh end"
+
+#logger -p local0.notice "[$KEY][$tag:$LINENO] kill_test.sh end"
 #/opt/pim/bin/vcm &
 exit 0
 

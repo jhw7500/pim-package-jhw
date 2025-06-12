@@ -24,7 +24,7 @@ if [ "$app" != "streamApp" ] && [ "$app" != "gstApp" ]; then
 fi
 
 cap_en=$(jq -r '.VHL_CAM.capture.enable' "$FILE_JSON")
-if [ "$cap_en" == "true" ]; then
+if [ "$cap_en" = "true" ]; then
     app="gstApp"
 fi
 
@@ -39,7 +39,7 @@ while [ 1 ]; do
         logger -p local0.notice "[$KEY][$tag:$LINENO] $app killed"
         killall -s KILL PIMCAM
         #killall -s KILL BG_Check_for_pim.sh
-        logger -p local0.emerg "[$KEY][$tag:$LINENO] start_cam.sh"
+        logger -p local0.notice "[$KEY][$tag:$LINENO] start_cam.sh"
         /opt/pim/bin/start_cam.sh
     fi
 
@@ -51,7 +51,7 @@ while [ 1 ]; do
             if [ ! -n "$pid" ]; then
                 #echo "no" >/dev/null
                 #sleep 0.5
-                logger -p local0.emerg "[$KEY][$tag:$LINENO] $service start"
+                logger -p local0.notice "[$KEY][$tag:$LINENO] $service start"
                 $service &
             fi
         fi

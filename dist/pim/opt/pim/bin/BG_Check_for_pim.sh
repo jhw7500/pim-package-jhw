@@ -11,6 +11,7 @@ cam_ch0=$(jq '.VHL_CAM.i2c2.ch0.enable' "$FILE_JSON")
 cam_ch1=$(jq '.VHL_CAM.i2c2.ch1.enable' "$FILE_JSON")
 cam_ch2=$(jq '.VHL_CAM.i2c1.ch2.enable' "$FILE_JSON")
 cam_ch3=$(jq '.VHL_CAM.i2c1.ch3.enable' "$FILE_JSON")
+
 if [[ $cam_ch0 == "true" ]]; then
     cam_ch0=1
 else
@@ -84,7 +85,7 @@ function MAKE_RESULT_FLAG() {
 
 CLEAR_CHK_LOG
 sleep $delay
-logger -p local0.notice [CHK][$tag:$LINENO] check loop start
+logger -p local0.notice "[CHK][$tag:$LINENO] BG check loop start(ch0:$cam_ch0, ch1:$cam_ch1, ch2:$cam_ch2, ch3:$cam_ch3"
 
 #/opt/pim/bin/chk_cam_disconnect.sh $cam_ch_bit 3 2>/dev/null
 
@@ -115,7 +116,13 @@ while true; do
     MAKE_RESULT_FLAG
     #echo "led"
     /opt/pim/bin/led_ctrl.sh 2>/dev/null
+
     sleep 1
+
+    if [ -f /tmp/init_cam_flag ] || [ -f /tmp/restart_flag ]; then
+        i=0
+        continue
+    fi
 
     if [ -f "${FLAG_PATH}"/err_cam0.log ] || [ -f "${FLAG_PATH}"/err_cam1.log ] || [ -f "${FLAG_PATH}"/err_cam2.log ]  || [ -f "${FLAG_PATH}"/err_cam3.log ] ; then
         #echo "cam_err"
@@ -123,10 +130,12 @@ while true; do
         ((i++))
         logger -p local0.emerg "[CHK][$tag:$LINENO] cam disconnect : $i"
         #creboot
-        if [ "$i" -gt 3 ]; then
-            logger -p local0.emerg "[CHK][$tag:$LINENO] reboot because cam disconnect"
-            sleep 1
-            reboot
+        if [ "$i" -gt 1 ]; then
+                #logger -p local0.emerg "[CHK][$tag:$LINENO] reboot because cam disconnect"
+                #sleep 1
+                #reboot
+                logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh"
+                /opt/pim/bin/init_cam.sh
         fi
     else
         i=0
