@@ -96,20 +96,13 @@ cp ${BASEDIR}/cism/build/cism ${BASEDIR}/release/pim/opt/cis/bin/
 cp ${BASEDIR}/stm32update/build/stm32update ${BASEDIR}/release/pim/opt/cis/bin/
 cp -R ${BASEDIR}/test ${BASEDIR}/release/pim/opt/pim/bin/
 
+# build pim_gate
 SOURCEDIR=${BASEDIR}/pim_gate
 WORKDIR=${BASEDIR}/release/pim
-mkdir -p ${WORKDIR}/opt/pim_gate/bin/
-mkdir -p ${WORKDIR}/opt/pim_gate/conf/
-cp ${SOURCEDIR}/*.py ${WORKDIR}/opt/pim_gate/bin/
-cp ${SOURCEDIR}/pim_gate.sh ${WORKDIR}/opt/pim_gate/bin/
-cp ${SOURCEDIR}/P2_cmd_data.txt ${WORKDIR}/opt/pim_gate/bin/
-cp -R ${SOURCEDIR}/conf_taiwan_demo/ ${WORKDIR}/opt/pim_gate/conf/
-cp -R ${SOURCEDIR}/conf_cfi_station/ ${WORKDIR}/opt/pim_gate/conf/
-cp -R ${SOURCEDIR}/conf_nanya/ ${WORKDIR}/opt/pim_gate/conf/
-cp -R ${SOURCEDIR}/conf_tower_lift/ ${WORKDIR}/opt/pim_gate/conf/
-cp -R ${SOURCEDIR}/conf_daim/ ${WORKDIR}/opt/pim_gate/conf/
-cp -R ${SOURCEDIR}/conf_ctsiot/ ${WORKDIR}/opt/pim_gate/conf/
-echo "/root/shared_v/pim_gate/" > ${WORKDIR}/opt/pim_gate/bin/conf_dir
+cd ${SOURCEDIR}
+${SOURCEDIR}/build.sh
+
+cp -R ${SOURCEDIR}/release/pim-gate/opt/pim_gate/  ${WORKDIR}/opt/
 
 cd ${BASEDIR}/release 
 version=$(cat ../dist/pim/DEBIAN/control| grep Version |grep -v ^$#| cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n' | tr -d ' ')
