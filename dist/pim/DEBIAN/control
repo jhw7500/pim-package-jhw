@@ -1,5 +1,5 @@
 Package: pim-mp
-Version: 0.5.2
+Version: 0.5.3
 Replaces: cis
 Breaks: cis
 Section: test
@@ -62,3 +62,4 @@ Description: PIM application
 0.5.0 : pim_gate sFTP_UDP, adab buffer mutex, fix rsyslog syntax error
 0.5.1 : pim_gate sFTP_UDP error code
 0.5.2 : pim_gate sFTP_UDP modify prefix, gstApp(0.9), vcm(4.2), ord(4.4)
+0.5.3 : pim_gate version1
