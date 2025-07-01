@@ -24,6 +24,8 @@
 #define CFI_DATA_LEN 50
 #define CFI_VERISON	0x300
 #define CFI_CMD_ID	0x300
+#define CTS_CAP_START_CMD_ID 0x900
+#define CTS_CAP_STOP_CMD_ID 0x901
 #define CFI_SID		"CANTOP"
 #define CFI_VHL_NAME	"VD3001"
 //#define CFI_PREFIX	"VD3001_20241122_102035"
@@ -75,8 +77,9 @@ int main(int argc, char *argv[])
 	msgBuf.cfi.data.ver = CFI_VERISON;
 	memcpy(msgBuf.cfi.data.sid, CFI_SID, strlen(CFI_SID));
 	msgBuf.cfi.data.cmd_id = CFI_CMD_ID;
+    //msgBuf.cfi.data.cmd_id = CTS_CAP_STOP_CMD_ID;
 	msgBuf.cfi.data.tx_id = 0;
-	msgBuf.cfi.data.channel = 0x03;
+	msgBuf.cfi.data.channel = 0x01;
 	msgBuf.cfi.data.reserved = 0;
 
     //syslog(LOG_LOCAL0, "test");
