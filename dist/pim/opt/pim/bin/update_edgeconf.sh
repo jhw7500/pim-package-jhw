@@ -116,7 +116,8 @@ jq '.VHL_CAM.log_level |= if . == null then 5 else . end |
 .VHL_CAM.debug_level |= if . == null then 0 else . end | 
 .VHL_CAM.app |= if . == null then "streamApp" else . end |
 .VHL_CAM.id |= if . == null then "user" else . end |
-.VHL_CAM.fps |= if . == null then 15 else . end' "$FILE_JSON" > tmp.$$ && mv tmp.$$ "$FILE_JSON"
+.VHL_CAM.fps |= if . == null then 15 else . end |
+.VHL_CAM.muxer |= if . == null then "mp4" else . end' "$FILE_JSON" > tmp.$$ && mv tmp.$$ "$FILE_JSON"
 
 
 key_name=0
@@ -139,7 +140,7 @@ echo "check capture"
 #jq 'del (.VHL_CAM.capture)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 #jq --argjson capture_en "$capture_en" '.VHL_CAM.capture |= (if .enable == null then .enable = $capture_en else . end)
 #| .VHL_CAM.capture |= (if .delay == null then .delay = 0 else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
-jq --argjson key0 "$capture_en" --argjson key1 0 --argjson key2 5 '.VHL_CAM.capture |= (if .enable == null then .enable = $key0 else . end)
+jq --argjson key0 "$capture_en" --argjson key1 0 --argjson key2 200 '.VHL_CAM.capture |= (if .enable == null then .enable = $key0 else . end)
 | .VHL_CAM.capture |= (if .delay == null then .delay = $key1 else . end)
 | .VHL_CAM.capture |= (if .timeout == null then .timeout = $key2 else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
