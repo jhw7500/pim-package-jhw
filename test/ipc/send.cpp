@@ -29,6 +29,7 @@
 #define CFI_SID		"CANTOP"
 #define CFI_VHL_NAME	"VD3001"
 //#define CFI_PREFIX	"VD3001_20241122_102035"
+#define INTERVAL_USEC 100000
 
 enum PIPE_MSG_TYPE {
   PMSG_TYPE_UNUSED = 0,
@@ -62,8 +63,8 @@ int main(int argc, char *argv[])
 	int ret = 0;
 	int msg_id = msgget((key_t)MSG_Q_REQ_KEY, IPC_CREAT | 0666);
 	char strTmp[512]; 
-    bool loop = false;
-
+    bool loop = true;
+    int loop_delay = INTERVAL_USEC;
 	if (msg_id == -1) {
 		ret = -1;
 		perror("msgget fail");
@@ -79,11 +80,16 @@ int main(int argc, char *argv[])
 	msgBuf.cfi.data.cmd_id = CFI_CMD_ID;
     //msgBuf.cfi.data.cmd_id = CTS_CAP_STOP_CMD_ID;
 	msgBuf.cfi.data.tx_id = 0;
-	msgBuf.cfi.data.channel = 0x01;
+	msgBuf.cfi.data.channel = 0x03;
 	msgBuf.cfi.data.reserved = 0;
-
+    msgBuf.cfi.data.cap_cnt = 1;
+    int i = 0;
     //syslog(LOG_LOCAL0, "test");
-    if(argc >= 2)
+    if(argc >= 3)
+    {
+        loop_delay = atoi(argv[2]);
+    }
+    else if(argc >= 2)
     {
         msgBuf.cfi.data.cap_cnt = atoi(argv[1]);
     }
@@ -99,20 +105,33 @@ int main(int argc, char *argv[])
 	strftime(datetime, sizeof(datetime), "%Y%m%d_%H%M%S", &tm);
 
 	memset(msgBuf.cfi.data.prefix, 0, 32);
-	sprintf((char *)msgBuf.cfi.data.prefix, "%s_%s", CFI_VHL_NAME, datetime);
+	//sprintf((char *)msgBuf.cfi.data.prefix, "%s_%s", CFI_VHL_NAME, datetime);
 	//memcpy(msgBuf.cfi.data.prefix, CFI_PREFIX, strlen(CFI_PREFIX));
 	
 	sprintf(strTmp, "len:%d, ver:0x%x, cmd_id:0x%x, tx_id:%d, ch:0x%x reserved:%d\n", \
 		msgBuf.cfi.data.len, msgBuf.cfi.data.ver, msgBuf.cfi.data.cmd_id, msgBuf.cfi.data.tx_id, msgBuf.cfi.data.channel, msgBuf.cfi.data.reserved);
 	syslog(LOG_LOCAL0, "%s", strTmp);
 
+    struct timespec next;
+    clock_gettime(CLOCK_MONOTONIC, &next);
+
 	do
 	{
+        if(i > 1000) i=0;
+        sprintf((char *)msgBuf.cfi.data.prefix, "%s_%d", CFI_VHL_NAME, i++);
 		msgBuf.cfi.data.tx_id++;
 		//memcpy(msgBuf.cfi.byte, data, len);
 		ret = msgsnd(msg_id, &msgBuf, msgBuf.cfi.data.len, IPC_NOWAIT);
 
-		if(loop) sleep(5);
+		if(loop) usleep(250000);
+#if 0
+        next.tv_nsec += loop_delay * 1000;
+        if (next.tv_nsec >= 1000000000) {
+            next.tv_sec++;
+            next.tv_nsec -= 1000000000;
+        }
+        clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next, NULL);
+#endif
 	} while(loop);
 #if 0
 	if (ret < 0) {
