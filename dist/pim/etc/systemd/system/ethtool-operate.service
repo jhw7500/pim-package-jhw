@@ -1,0 +1,11 @@
+[Unit]
+Description=Configure eth0 speed using ethtool
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/pim/bin/set_link_speed.py
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
