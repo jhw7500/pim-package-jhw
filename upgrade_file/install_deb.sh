@@ -414,3 +414,19 @@ else
 fi
 
 cd ${BASEDIR}
+
+
+########################################
+## Install mfg60n                     ##
+########################################
+prog_per=3
+cd ${BASEDIR}/mfg60n
+version=$(lmu 2>&1 | sed -n 's/^Syntax (\(.*\)):/\1/p')
+if [ "$version" != "v12.29.0.22" ]; then
+    echo '{"PROGRESS":'"$prog_per"',"MSG":"Install mfg60n"}'
+    tar -xvjf mfg60n-aarch64-12.29.0.22.tar.bz2 > /dev/null 2> /dev/null
+    ${BASEDIR}/mfg60n/mfg60n-aarch64-12.29.0.22.sh uninstall > /dev/null 2> /dev/null
+    ${BASEDIR}/mfg60n/mfg60n-aarch64-12.29.0.22.sh install > /dev/null 2> /dev/null
+else
+    echo '{"PROGRESS":'"$prog_per"',"MSG":"Installed mfg60n"}'
+fi
