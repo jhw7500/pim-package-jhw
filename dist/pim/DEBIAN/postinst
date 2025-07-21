@@ -371,6 +371,15 @@ END
     systemctl disable $daemon_name
   fi
 
+  daemon_name=ethtool-operate
+  status=$(systemctl is-enabled $daemon_name 2>/dev/null)
+  if [ "$status" == "enabled" ]; then
+    echo "$daemon_name is $status"
+  else
+    echo "enable $daemon_name"
+    systemctl enable $daemon_name
+  fi
+
   echo "check directory"
 makeDirectory() {
 if [ ! -d "$1" ]; then
