@@ -521,6 +521,7 @@ END
   #update_edgeconf &
   /opt/pim/bin/add_line.sh "root        soft    nofile      65536" /etc/security/limits.conf
   /opt/pim/bin/add_line.sh ". ~/.bash_cantops" /root/.bashrc
+  /opt/pim/bin/add_line.sh "tmpfs                /tmp                 tmpfs      defaults,nosuid,nodev,size=512M  0  0" /etc/fstab
   #/opt/pim/bin/add_line.sh "00 00   1 * *   root    logrotate /etc/logrotate.d/rsyslog" /etc/crontab
   #/opt/pim/bin/add_line.sh "00 00   * * *   root    /opt/pim/bin/chk_mmc.sh" /etc/crontab
   #/opt/pim/bin/add_line.sh "00  *   * * *   root    hwclock --systohc" /etc/crontab

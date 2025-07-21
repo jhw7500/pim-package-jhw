@@ -63,12 +63,38 @@ struct _MSGQueue {
 };
 #pragma pack(pop)
 
+void log_with_timestamp(const char *message) {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);  // 초 + 마이크로초
+
+    struct tm tm_now;
+    localtime_r(&tv.tv_sec, &tm_now);
+
+    char timestamp[64];
+    snprintf(timestamp, sizeof(timestamp),
+             "%04d-%02d-%02d %02d:%02d:%02d.%03ld",
+             tm_now.tm_year + 1900,
+             tm_now.tm_mon + 1,
+             tm_now.tm_mday,
+             tm_now.tm_hour,
+             tm_now.tm_min,
+             tm_now.tm_sec,
+             tv.tv_usec / 1000);  // 밀리초
+
+    fprintf(stderr, "[%s] %s\n", timestamp, message);
+
+    syslog(LOG_INFO, "%s", message);
+}
+
 int main(int argc, char *argv[])
 {
   int ret = 0;
   int msg_id = msgget((key_t)MSG_Q_RES_KEY, IPC_CREAT | 0666);
   char strTmp[512];
   _MSGQueue msgBuf;
+
+  openlog("MyApp", LOG_PID, LOG_USER);  // LOG_PERROR => stderr에도 출력
+  setlogmask(LOG_UPTO(LOG_DEBUG));
 
   if (msg_id == -1)
   {
@@ -98,10 +124,10 @@ int main(int argc, char *argv[])
       perror("msgrcv fail");
       continue;
     }
-    sprintf(strTmp, "len:%d, ver:0x%x, cmd_id:0x%x, tx_id:%d, ch:0x%x, reserved:%d, cap_cnt:%d\n",
+    sprintf(strTmp, "len:%d, ver:0x%x, cmd_id:0x%x, tx_id:%d, ch:0x%x, reserved:%d, cap_cnt:%d",
             msgBuf.cfi.data.len, msgBuf.cfi.data.ver, msgBuf.cfi.data.cmd_id, msgBuf.cfi.data.tx_id, msgBuf.cfi.data.channel,
             msgBuf.cfi.data.reserved, msgBuf.cfi.data.cap_cnt);
-    syslog(LOG_LOCAL0, "%s", strTmp);
+    log_with_timestamp(strTmp);
   };
 
 

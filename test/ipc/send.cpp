@@ -117,7 +117,7 @@ int main(int argc, char *argv[])
 
 	do
 	{
-        if(i > 1000) i=0;
+        if(i > 200) i=0;
         sprintf((char *)msgBuf.cfi.data.prefix, "%s_%d", CFI_VHL_NAME, i++);
 		msgBuf.cfi.data.tx_id++;
 		//memcpy(msgBuf.cfi.byte, data, len);
