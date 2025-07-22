@@ -13,6 +13,8 @@ GetConfig() {
     rec_time=$(jq '.VHL_CAM.recording_time' "$FILE_JSON")
     rec_time=$((rec_time*60))
     cap_en=$(jq '.VHL_CAM.capture.enable' "$FILE_JSON")
+    cap_record_en=$(jq '.VHL_CAM.capture.record' "$FILE_JSON")
+    cap_rtsp_en=$(jq '.VHL_CAM.capture.rtsp' "$FILE_JSON")
     tmp_path=$(jq -r '.VHL_CAM.tmp_path' "$FILE_JSON")
     muxer=$(jq -r '.VHL_CAM.muxer' "$FILE_JSON")
     #rst_time=$((rec_time+90))
@@ -45,14 +47,14 @@ if [ ! -n "$pid" ]; then
 fi
 }
 
-FILE_=/tmp/start_video_time_chk
+FILE_="/tmp/start_video_time_chk"
 #FILE_JSON=/root/shared_v/edgeconf_pim.json
 FILE_JSON_=/root/shared_v/ord_vcm_conf.json
 FILE_CHECK=/tmp/file_check
 FLAG_PATH=/tmp
 tag=$(basename "$0")
-ENABLE_VAL=true
-DISABLE_VAL=false
+ENABLE_VAL="true"
+DISABLE_VAL="false"
 retry=0
 retry_boot=0
 retry_total=0
@@ -75,8 +77,17 @@ mp4date=0
 mp4date2=0
 file_check_delay=10
 muxer=""
+cap_en="false"
+cap_record_en="false"
+cap_rtsp_en="false"
+startTime=""
+startTime_=""
 
 GetConfig
+
+if [ ! -d "$tmp_path" ]; then
+    mkdir -p "$tmp_path"
+fi
 
 logger -p local0.notice "[$KEY][$tag:$LINENO] /opt/pim/bin/start_cam.sh $app_delay"
 /opt/pim/bin/start_cam.sh $app_delay
@@ -106,16 +117,35 @@ do
         timer=0
     fi
 
-    if [[ "$time_rec_en" != *"$ENABLE_VAL"* ]] || [[ "$cap_en" == *"$ENABLE_VAL"* ]]; then
+    if [[ "$time_rec_en" != *"$ENABLE_VAL"* ]]; then
+        sleep 5
+        continue
+    fi
+
+    if [[ "$cap_en" == *"$ENABLE_VAL"* && "$cap_record_en" != *"$ENABLE_VAL"* ]]; then
         sleep 5
         continue
     fi
 
     #if [ -e "$FILE_" ]; then
     startTime=$(cat $FILE_ 2>/dev/null| tr -d '\n')
+:<<'END'
+    if [[ "$startTime" != "$startTime_" && "$startTime_" != "" ]]; then
+        if [ "$mnt_path" != "$tmp_path" ]; then
+            logger -p local0.notice "[$KEY][$tag:$LINENO] first file copy(pre:$startTime_, new:$startTime)"
+              if [ "$mp4date2" != 0 ]; then
+                    cmd="mv ${tmp_path}/${vhl_name}_${mp4date2}* ${mnt_path}/"
+                else
+                    cmd="mv ${tmp_path}/${vhl_name}_$(date -d '1 min ago' '+%Y%m%d_%H%M00')* ${mnt_path}/ 2>/dev/null"
+                fi
+            mv "${tmp_path}/${vhl_name}_$(date -d '1 min ago' '+%Y%m%d_%H%M00')"* "${mnt_path}/" 2>/dev/null
+        fi
+    fi
+    startTime_="$startTime"
+END
 
 	if [ -n "$startTime"  ]; then
-        #timer=0
+        timer=0
         start_f=1
 		curTimeEpoch=$(date "+%s")
 		startTimeEpoch=$(date -d "$startTime" "+%s")
@@ -123,12 +153,19 @@ do
         #logger -p local0.info "[$KEY][$tag:$LINENO] start_video_time_:$startTime, cur_time:$(date '+%Y%m%d %H:%M:%S'), diff:$diffEpoch"
 		if [ "$diffEpoch" -ge "$file_check_delay" ]; then
             logger -p local0.info "[$KEY][$tag:$LINENO] start_video_time_:$startTime, cur_time:$(date '+%Y%m%d %H:%M:%S'), diff:$diffEpoch"
-            timer=0
+            #timer=0
 			cat /dev/null > $FILE_
             #logger -p local0.info "[$KEY][$tag:$LINENO] startTime : $startTime"
-            if [ "$mp4date2" != 0 ] && [ "$mnt_path" != "$tmp_path" ]; then
-                logger -p local0.notice "[$KEY][$tag:$LINENO] mv ${tmp_path}/${vhl_name}_${mp4date}* ${mnt_path}/"
-                mv ${tmp_path}/${vhl_name}_${mp4date2}* ${mnt_path}/
+            if [ "$mnt_path" != "$tmp_path" ]; then
+                if [ "$mp4date2" != 0 ]; then
+                    cmd="mv ${tmp_path}/${vhl_name}_${mp4date2}* ${mnt_path}/"
+                else
+                    cmd="mv ${tmp_path}/${vhl_name}_$(date -d '1 min ago' '+%Y%m%d_%H%M00')* ${mnt_path}/ 2>/dev/null"
+                fi
+                logger -p local0.notice "[$KEY][$tag:$LINENO] $cmd"
+                eval "$cmd"
+                #mv "${tmp_path}/${vhl_name}_$(date -d '1 min ago' '+%Y%m%d_%H%M00')"* "${mnt_path}/" 2>/dev/null
+                #mv "${tmp_path}/${vhl_name}_${mp4date2}"* "${mnt_path}/"
             fi
             #rm ${mnt_folder}/tmp/*
 			mp4date=$(date -d "$startTime" "+%Y%m%d_%H%M%S")
@@ -282,7 +319,7 @@ END
 
     if [ "$start_f" -eq 0 ]; then
         if [ "$timer" -ge "$rst_time" ]; then 
-            logger -p local0.error "[$KEY][$tag:$LINENO] $app all file not create"
+            logger -p local0.error "[$KEY][$tag:$LINENO] $app all file not create($timer >= $rst_time), $FILE_:$startTime"
             timer=0
             start_f=0
             if [ "$csi1_en" -eq 0 ] && [ "$csi2_en" -eq 0 ]; then

@@ -25,7 +25,17 @@ StartCam() {
         if [ "$delay" -ge 15 ]; then
             delay=15
         fi
-        start_cmd="$1 -e 0 -E 0 -N 1 -y 1 -C 0 -a 1 -f 1 -d $delay -m $3 -R 1 &"
+        record_en=$(jq -r '.VHL_CAM.capture.record' "$FILE_JSON")
+        rtsp_en=$(jq -r '.VHL_CAM.capture.rtsp' "$FILE_JSON")
+        if [[ "$record_en" = "true" || "$rtsp_en" = "true" ]]; then
+            start_cmd="$1 -e 1 -E 1 -N 1 -y 1 -C 0 -a 1 -f 1 -d $delay -m $3 -R 1 &"
+        elif [[ "$record_en" = "true" ]]; then
+            start_cmd="$1 -e 1 -E 0 -N 1 -y 1 -C 0 -a 1 -f 1 -d $delay -m $3 -R 1 &"
+        elif [[ "$rtsp_en" = "true" ]]; then
+            start_cmd="$1 -e 0 -E 1 -N 1 -y 1 -C 0 -a 1 -f 1 -d $delay -m $3 -R 1 &"
+        else
+            start_cmd="$1 -e 0 -E 0 -N 1 -y 1 -C 0 -a 1 -f 1 -d $delay -m $3 -R 1 &"
+        fi
     else
         if [ "$1" = "gstApp" ]; then
             start_cmd="$1 -d $delay -m $3 -O $tmp_path &"

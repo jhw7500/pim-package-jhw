@@ -85,7 +85,7 @@ function MAKE_RESULT_FLAG() {
 
 CLEAR_CHK_LOG
 sleep $delay
-logger -p local0.notice "[CHK][$tag:$LINENO] BG check loop start(ch0:$cam_ch0, ch1:$cam_ch1, ch2:$cam_ch2, ch3:$cam_ch3"
+logger -p local0.notice "[CHK][$tag:$LINENO] BG check loop start(ch0:$cam_ch0, ch1:$cam_ch1, ch2:$cam_ch2, ch3:$cam_ch3)"
 
 #/opt/pim/bin/chk_cam_disconnect.sh $cam_ch_bit 3 2>/dev/null
 
