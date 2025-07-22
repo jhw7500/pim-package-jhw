@@ -330,10 +330,11 @@ package_list=('schedule' \
           'ipaddress' \
           'lockfile' \
           'jsonpath-ng' \
-          'redis'
-          'paho-mqtt'
-          'numpy'
-          'dataclasses')
+          'redis' \
+          'paho-mqtt' \
+          'numpy' \
+          'dataclasses' \
+          'typing_extensions')
 for package in "${package_list[@]}"
 do
   installed_pip=$(echo "$pip_list" | grep -E "${package}\s")
