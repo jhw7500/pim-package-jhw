@@ -267,7 +267,7 @@ END
     systemctl disable $daemon_name
   fi
 
-  daemon_name=systemd-network-wait-online
+  daemon_name=systemd-networkd-wait-online
   status=$(systemctl is-enabled $daemon_name 2>/dev/null)
   if [ "$status" == "masked" ]; then
     echo "$daemon_name is mask"

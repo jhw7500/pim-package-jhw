@@ -27,7 +27,7 @@ StartCam() {
         fi
         record_en=$(jq -r '.VHL_CAM.capture.record' "$FILE_JSON")
         rtsp_en=$(jq -r '.VHL_CAM.capture.rtsp' "$FILE_JSON")
-        if [[ "$record_en" = "true" || "$rtsp_en" = "true" ]]; then
+        if [[ "$record_en" = "true" && "$rtsp_en" = "true" ]]; then
             start_cmd="$1 -e 1 -E 1 -N 1 -y 1 -C 0 -a 1 -f 1 -d $delay -m $3 -R 1 &"
         elif [[ "$record_en" = "true" ]]; then
             start_cmd="$1 -e 1 -E 0 -N 1 -y 1 -C 0 -a 1 -f 1 -d $delay -m $3 -R 1 &"
@@ -51,6 +51,7 @@ StartCam() {
         else
             logger -p local0.notice "[$key][$tag:$LINENO] $1 start"
             logger -p local0.emerg "[$key][$tag:$LINENO] cam app cmd : $start_cmd"
+            rm /tmp/start_video_time
             eval "$start_cmd"
         fi
     else
@@ -109,6 +110,9 @@ export GST_DEBUG=2,v4l2src:2
 #export GST_DEBUG=2,*:5
 export GST_DEBUG_FILE="$GST_LOG_FILE"
 export GST_DEBUG_DUMP_DOT_DIR=/var/log/cantops/dot/
+#export GST_TRACERS="latency"
+#export GST_DEBUG="GST_TRACER:7"
+#export GST_DEBUG_FILE=/tmp/gst-latency.log
 
 logger -p local0.notice "[$key][$tag:$LINENO] start app:$app delay:$delay file_path:$tmp_path"
 if CheckApp "$app"; then

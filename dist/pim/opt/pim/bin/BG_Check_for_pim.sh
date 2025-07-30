@@ -98,7 +98,7 @@ while true; do
     /opt/pim/bin/chk_wifi.sh 2>/dev/null
     #eth0 check
     #echo "eth0"
-    /opt/pim/bin/chk_eth1.sh 2>/dev/null
+    #/opt/pim/bin/chk_eth1.sh 2>/dev/null
     #sd mount check
     #echo "sd"
     /opt/pim/bin/chk_sd_mount.sh 2>/dev/null

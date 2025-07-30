@@ -80,7 +80,7 @@ int main(int argc, char *argv[])
 	msgBuf.cfi.data.cmd_id = CFI_CMD_ID;
     //msgBuf.cfi.data.cmd_id = CTS_CAP_STOP_CMD_ID;
 	msgBuf.cfi.data.tx_id = 0;
-	msgBuf.cfi.data.channel = 0x03;
+	msgBuf.cfi.data.channel = 0x0f;
 	msgBuf.cfi.data.reserved = 0;
     msgBuf.cfi.data.cap_cnt = 1;
     int i = 0;

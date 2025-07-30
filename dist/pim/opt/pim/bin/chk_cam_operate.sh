@@ -10,8 +10,8 @@ GetConfig() {
     time_rec_en=$(jq '.VCM.file_time_check' "$FILE_JSON_")
     file_check_delay=$(jq '.ETC.file_check_delay' "$FILE_JSON_")
     vhl_name=$(jq -r '.VHL_CAM.vhl_name' "$FILE_JSON")
-    rec_time=$(jq '.VHL_CAM.recording_time' "$FILE_JSON")
-    rec_time=$((rec_time*60))
+    rec_min=$(jq '.VHL_CAM.recording_time' "$FILE_JSON")
+    rec_time=$((rec_min*60))
     cap_en=$(jq '.VHL_CAM.capture.enable' "$FILE_JSON")
     cap_record_en=$(jq '.VHL_CAM.capture.record' "$FILE_JSON")
     cap_rtsp_en=$(jq '.VHL_CAM.capture.rtsp' "$FILE_JSON")
@@ -82,7 +82,8 @@ cap_record_en="false"
 cap_rtsp_en="false"
 startTime=""
 startTime_=""
-
+rec_time=0
+rec_min=0
 GetConfig
 
 if [ ! -d "$tmp_path" ]; then
@@ -102,7 +103,6 @@ do
 
     check_num=0
     file_cnt=0
-    #file_time_err=0
 
     if [ -f /tmp/init_cam_flag ] || [ -f /tmp/restart_flag ]; then
         sleep 3
@@ -129,6 +129,7 @@ do
 
     #if [ -e "$FILE_" ]; then
     startTime=$(cat $FILE_ 2>/dev/null| tr -d '\n')
+    #startTime=$(cat "$FILE_" 2>/dev/null | tr -d '\n' | sed 's/:[0-9][0-9]$/:00/')
 :<<'END'
     if [[ "$startTime" != "$startTime_" && "$startTime_" != "" ]]; then
         if [ "$mnt_path" != "$tmp_path" ]; then
@@ -150,30 +151,28 @@ END
 		curTimeEpoch=$(date "+%s")
 		startTimeEpoch=$(date -d "$startTime" "+%s")
 		diffEpoch=$(echo "$curTimeEpoch - $startTimeEpoch" |bc)
-        #logger -p local0.info "[$KEY][$tag:$LINENO] start_video_time_:$startTime, cur_time:$(date '+%Y%m%d %H:%M:%S'), diff:$diffEpoch"
+        logger -p local0.info "[$KEY][$tag:$LINENO] start_video_time_:$startTime, cur_time:$(date '+%Y%m%d %H:%M:%S'), diff:$diffEpoch"
 		if [ "$diffEpoch" -ge "$file_check_delay" ]; then
             logger -p local0.info "[$KEY][$tag:$LINENO] start_video_time_:$startTime, cur_time:$(date '+%Y%m%d %H:%M:%S'), diff:$diffEpoch"
             #timer=0
 			cat /dev/null > $FILE_
-            #logger -p local0.info "[$KEY][$tag:$LINENO] startTime : $startTime"
-            if [ "$mnt_path" != "$tmp_path" ]; then
-                if [ "$mp4date2" != 0 ]; then
-                    cmd="mv ${tmp_path}/${vhl_name}_${mp4date2}* ${mnt_path}/"
-                else
-                    cmd="mv ${tmp_path}/${vhl_name}_$(date -d '1 min ago' '+%Y%m%d_%H%M00')* ${mnt_path}/ 2>/dev/null"
-                fi
-                logger -p local0.notice "[$KEY][$tag:$LINENO] $cmd"
-                eval "$cmd"
-                #mv "${tmp_path}/${vhl_name}_$(date -d '1 min ago' '+%Y%m%d_%H%M00')"* "${mnt_path}/" 2>/dev/null
-                #mv "${tmp_path}/${vhl_name}_${mp4date2}"* "${mnt_path}/"
-            fi
-            #rm ${mnt_folder}/tmp/*
 			mp4date=$(date -d "$startTime" "+%Y%m%d_%H%M%S")
             mp4date2=$(date -d "$startTime" "+%Y%m%d_%H%M")
             #mp4date=$(echo $startTime)
             logger -p local0.info "[$KEY][$tag:$LINENO] check_date : $mp4date ?= $mp4date2"
 :<<'END'
             logger -p local0.info "[$KEY][$tag:$LINENO] startTimeEpoch : $startTimeEpoch"
+                if [ -f "${tmp_path}/${vhl_name}_${mp4date}"-ch0.${muxer} ]; then
+                    logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch0.${muxer} exist"
+                    ((file_cnt++))
+                elif [ -f "${tmp_path}/${vhl_name}_${mp4date2}"*ch0* ]; then
+                    logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-ch0.${muxer} exist"
+                    ((file_cnt++))
+                else
+                    logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-ch0.${muxer} not exist"
+                    #((file_cnt--))
+                    #((file_time_err++))
+                fi
             startTimeEpoch=$((startTimeEpoch+rec_time))
             logger -p local0.info "[$KEY][$tag:$LINENO] next startTimeEpoch : $startTimeEpoch"
             startTime=$(date -d @$startTimeEpoch +"%Y%m%d %H:%M:%S")
@@ -182,10 +181,10 @@ END
 END
 			if [[ "$cam_ch0" == *"$ENABLE_VAL"* ]]; then
                 ((check_num++))
-                if [ -f "${tmp_path}/${vhl_name}_${mp4date}"-ch0.${muxer} ]; then
+                if [ -f "${tmp_path}/${vhl_name}_${mp4date}-ch0.${muxer}" ]; then
 			        logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch0.${muxer} exist"
                     ((file_cnt++))
-                elif [ -f "${tmp_path}/${vhl_name}_${mp4date2}"*-ch0.${muxer} ]; then
+                elif compgen -G "${tmp_path}/${vhl_name}_${mp4date2}"*ch0* > /dev/null; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-ch0.${muxer} exist"
                     ((file_cnt++))
 	    		else
@@ -207,10 +206,10 @@ END
 
             if [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]; then
                 ((check_num++))
-                if [ -f "${tmp_path}/${vhl_name}_${mp4date}"-ch1.${muxer} ]; then
+                if [ -f "${tmp_path}/${vhl_name}_${mp4date}-ch1.${muxer}" ]; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch1.${muxer} exist"
                     ((file_cnt++))
-                elif [ -f "${tmp_path}/${vhl_name}_${mp4date2}"*-ch1.${muxer} ]; then
+                elif compgen -G "${tmp_path}/${vhl_name}_${mp4date2}"*ch1* > /dev/null; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-ch1.${muxer} exist"
                     ((file_cnt++))
                 else
@@ -222,10 +221,10 @@ END
 
             if [[ "$cam_ch2" == *"$ENABLE_VAL"* ]]; then
                 ((check_num++))
-                if [ -f "${tmp_path}/${vhl_name}_${mp4date}"-ch2.${muxer} ]; then
+                if [ -f "${tmp_path}/${vhl_name}_${mp4date}-ch2.${muxer}" ]; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch2.${muxer} exist"
                     ((file_cnt++))
-                elif [ -f "${tmp_path}/${vhl_name}_${mp4date2}"*-ch2.${muxer} ]; then
+                elif compgen -G "${tmp_path}/${vhl_name}_${mp4date2}"*ch2* > /dev/null; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-ch2.${muxer} exist"
                     ((file_cnt++))
                 else
@@ -237,10 +236,10 @@ END
 
             if [[ "$cam_ch3" == *"$ENABLE_VAL"* ]]; then
                 ((check_num++))
-                if [ -f "${tmp_path}/${vhl_name}_${mp4date}"-ch3.${muxer} ]; then
+                if [ -f "${tmp_path}/${vhl_name}_${mp4date}-ch3.${muxer}" ]; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch3.${muxer} exist"
                     ((file_cnt++))
-                elif [ -f "${tmp_path}/${vhl_name}_${mp4date2}"*-ch3.${muxer} ]; then
+                elif compgen -G "${tmp_path}/${vhl_name}_${mp4date2}"*ch0* > /dev/null; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-ch3.${muxer} exist"
                     ((file_cnt++))
                 else
@@ -255,7 +254,7 @@ END
                 if [ -f "${tmp_path}/${vhl_name}_${mp4date}"-data.srt ]; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-data.srt exist"
                     ((file_cnt++))
-                elif [ -f "${tmp_path}/${vhl_name}_${mp4date2}"*-data.srt ]; then
+                elif compgen -G "${tmp_path}/${vhl_name}_${mp4date2}"*-data.srt > /dev/null; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-data.srt exist"
                     ((file_cnt++))
                 else
@@ -265,6 +264,18 @@ END
                 fi
             fi
 
+            if [ "$mnt_path" != "$tmp_path" ]; then
+                cmd="mv ${tmp_path}/${vhl_name}_$(date -d '1 min ago' '+%Y%m%d_%H%M')* ${mnt_path}/ 2>/dev/null"
+                logger -p local0.notice "[$KEY][$tag:$LINENO] $cmd"
+                eval "$cmd"
+                if [ "$rec_min" -gt 1 ]; then
+                    timestamp=$(date -d "${rec_min} min ago" '+%Y%m%d_%H%M')
+                    cmd="mv ${tmp_path}/${vhl_name}_${timestamp}* ${mnt_path}/ 2>/dev/null"
+                    logger -p local0.notice "[$KEY][$tag:$LINENO] $cmd"
+                    eval "$cmd"
+                fi
+            fi
+            sync
 			#logger -p local0.debug [$KEY][$tag:$LINENO] mp4date:$mp4date
 			logger -p local0.info "[$KEY][$tag:$LINENO] check_num:$check_num cnt:$file_cnt"
 			if [ "$check_num" -ne "$file_cnt" ]; then
@@ -308,7 +319,6 @@ END
                 retry_total=0
                 echo "OK" > $FILE_CHECK
 			fi
-            sync
 		fi
     else
         if [ "$timer" -ge $((rec_time+file_check_delay)) ]; then

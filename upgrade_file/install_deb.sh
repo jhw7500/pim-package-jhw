@@ -261,6 +261,16 @@ else
   echo '{"PROGRESS":'"$prog_per"',"MSG":"installed '"$package"'"}'
 fi
 
+package="turbojpeg"
+if [ -z "$(dpkg -s $package 2> /dev/null)" ]; then
+  echo '{"PROGRESS":'"$prog_per"',"MSG":"install '"$package"'"}'
+  var='libturbojpeg_2.0.3-0ubuntu1.20.04.3_arm64.deb'
+  echo '{"PROGRESS":'"$prog_per"',"MSG":"dpkg -i '"$var"'"}'
+  dpkg -i "$var" > /dev/null 2> /dev/null
+else
+  echo '{"PROGRESS":'"$prog_per"',"MSG":"installed '"$package"'"}'
+fi
+
 package="hiredis"
 if [ -z "$(dpkg -s $package 2> /dev/null)" ]; then
   echo '{"PROGRESS":'"$prog_per"',"MSG":"install '"$package"'"}'
