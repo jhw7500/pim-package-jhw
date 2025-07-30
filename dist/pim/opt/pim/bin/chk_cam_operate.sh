@@ -74,7 +74,6 @@ diffEpoch=0
 check_num=0
 file_cnt=0
 mp4date=0
-mp4date2=0
 file_check_delay=10
 muxer=""
 cap_en="false"
@@ -105,7 +104,7 @@ do
     file_cnt=0
 
     if [ -f /tmp/init_cam_flag ] || [ -f /tmp/restart_flag ]; then
-        sleep 3
+        sleep 5
         timer=0
         continue
     fi
@@ -130,77 +129,32 @@ do
     #if [ -e "$FILE_" ]; then
     startTime=$(cat $FILE_ 2>/dev/null| tr -d '\n')
     #startTime=$(cat "$FILE_" 2>/dev/null | tr -d '\n' | sed 's/:[0-9][0-9]$/:00/')
-:<<'END'
-    if [[ "$startTime" != "$startTime_" && "$startTime_" != "" ]]; then
-        if [ "$mnt_path" != "$tmp_path" ]; then
-            logger -p local0.notice "[$KEY][$tag:$LINENO] first file copy(pre:$startTime_, new:$startTime)"
-              if [ "$mp4date2" != 0 ]; then
-                    cmd="mv ${tmp_path}/${vhl_name}_${mp4date2}* ${mnt_path}/"
-                else
-                    cmd="mv ${tmp_path}/${vhl_name}_$(date -d '1 min ago' '+%Y%m%d_%H%M00')* ${mnt_path}/ 2>/dev/null"
-                fi
-            mv "${tmp_path}/${vhl_name}_$(date -d '1 min ago' '+%Y%m%d_%H%M00')"* "${mnt_path}/" 2>/dev/null
-        fi
-    fi
-    startTime_="$startTime"
-END
-
 	if [ -n "$startTime"  ]; then
         timer=0
         start_f=1
 		curTimeEpoch=$(date "+%s")
 		startTimeEpoch=$(date -d "$startTime" "+%s")
 		diffEpoch=$(echo "$curTimeEpoch - $startTimeEpoch" |bc)
-        logger -p local0.info "[$KEY][$tag:$LINENO] start_video_time_:$startTime, cur_time:$(date '+%Y%m%d %H:%M:%S'), diff:$diffEpoch"
+        #logger -p local0.info "[$KEY][$tag:$LINENO] start_video_time_:$startTime, cur_time:$(date '+%Y%m%d %H:%M:%S'), diff:$diffEpoch"
 		if [ "$diffEpoch" -ge "$file_check_delay" ]; then
             logger -p local0.info "[$KEY][$tag:$LINENO] start_video_time_:$startTime, cur_time:$(date '+%Y%m%d %H:%M:%S'), diff:$diffEpoch"
             #timer=0
 			cat /dev/null > $FILE_
 			mp4date=$(date -d "$startTime" "+%Y%m%d_%H%M%S")
-            mp4date2=$(date -d "$startTime" "+%Y%m%d_%H%M")
             #mp4date=$(echo $startTime)
-            logger -p local0.info "[$KEY][$tag:$LINENO] check_date : $mp4date ?= $mp4date2"
-:<<'END'
-            logger -p local0.info "[$KEY][$tag:$LINENO] startTimeEpoch : $startTimeEpoch"
-                if [ -f "${tmp_path}/${vhl_name}_${mp4date}"-ch0.${muxer} ]; then
-                    logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch0.${muxer} exist"
-                    ((file_cnt++))
-                elif [ -f "${tmp_path}/${vhl_name}_${mp4date2}"*ch0* ]; then
-                    logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-ch0.${muxer} exist"
-                    ((file_cnt++))
-                else
-                    logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-ch0.${muxer} not exist"
-                    #((file_cnt--))
-                    #((file_time_err++))
-                fi
-            startTimeEpoch=$((startTimeEpoch+rec_time))
-            logger -p local0.info "[$KEY][$tag:$LINENO] next startTimeEpoch : $startTimeEpoch"
-            startTime=$(date -d @$startTimeEpoch +"%Y%m%d %H:%M:%S")
-            echo "$startTime" > $FILE_
-            logger -p local0.info "[$KEY][$tag:$LINENO] next startTime : $startTime"
-END
 			if [[ "$cam_ch0" == *"$ENABLE_VAL"* ]]; then
                 ((check_num++))
                 if [ -f "${tmp_path}/${vhl_name}_${mp4date}-ch0.${muxer}" ]; then
 			        logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch0.${muxer} exist"
                     ((file_cnt++))
-                elif compgen -G "${tmp_path}/${vhl_name}_${mp4date2}"*ch0* > /dev/null; then
-                    logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-ch0.${muxer} exist"
+                elif compgen -G "${tmp_path}/${vhl_name}_${mp4date}"-ch0* > /dev/null; then
+                    logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch0* exist"
                     ((file_cnt++))
 	    		else
-		    		logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-ch0.${muxer} not exist"
+		    		logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch0* not exist"
                     #((file_cnt--))
                     #((file_time_err++))
                 fi
-:<<'END'
-                    test=$(echo ${vhl_name}_${ch_time:0:8}_${ch_time:9:2}${ch_time:12:2}${ch_time:15:2}-ch0.${muxer})
-                    logger -p local0.notice "[$KEY][$tag:$LINENO] rename:$test"
-                    if [[ "$mp4date" == "$ch_time" ]]; then
-                        echo ok > /dev/null
-                    else
-                        logger -p local0.error "[$KEY][$tag:$LINENO] ch0 time error ( ch0.${muxer} : $ch_time )"
-                    fi
-END
 			fi
 
 
@@ -209,11 +163,11 @@ END
                 if [ -f "${tmp_path}/${vhl_name}_${mp4date}-ch1.${muxer}" ]; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch1.${muxer} exist"
                     ((file_cnt++))
-                elif compgen -G "${tmp_path}/${vhl_name}_${mp4date2}"*ch1* > /dev/null; then
-                    logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-ch1.${muxer} exist"
+                elif compgen -G "${tmp_path}/${vhl_name}_${mp4date}"-ch1* > /dev/null; then
+                    logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch1* exist"
                     ((file_cnt++))
                 else
-                    logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-ch1.${muxer} not exist"
+                    logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch1* not exist"
                     #((file_cnt--))
                     #((file_time_err++))
                 fi
@@ -224,11 +178,11 @@ END
                 if [ -f "${tmp_path}/${vhl_name}_${mp4date}-ch2.${muxer}" ]; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch2.${muxer} exist"
                     ((file_cnt++))
-                elif compgen -G "${tmp_path}/${vhl_name}_${mp4date2}"*ch2* > /dev/null; then
-                    logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-ch2.${muxer} exist"
+                elif compgen -G "${tmp_path}/${vhl_name}_${mp4date}"-ch2* > /dev/null; then
+                    logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch2* exist"
                     ((file_cnt++))
                 else
-                    logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-ch2.${muxer} not exist"
+                    logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch2* not exist"
                     #((file_cnt--))
                     #((file_time_err++))
                 fi
@@ -239,11 +193,11 @@ END
                 if [ -f "${tmp_path}/${vhl_name}_${mp4date}-ch3.${muxer}" ]; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch3.${muxer} exist"
                     ((file_cnt++))
-                elif compgen -G "${tmp_path}/${vhl_name}_${mp4date2}"*ch0* > /dev/null; then
-                    logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-ch3.${muxer} exist"
+                elif compgen -G "${tmp_path}/${vhl_name}_${mp4date}"*ch0* > /dev/null; then
+                    logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch3* exist"
                     ((file_cnt++))
                 else
-                    logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-ch3.${muxer} not exist"
+                    logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-ch3* not exist"
                     #((file_cnt--))
                     #((file_time_err++))
                 fi
@@ -254,23 +208,31 @@ END
                 if [ -f "${tmp_path}/${vhl_name}_${mp4date}"-data.srt ]; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-data.srt exist"
                     ((file_cnt++))
-                elif compgen -G "${tmp_path}/${vhl_name}_${mp4date2}"*-data.srt > /dev/null; then
-                    logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-data.srt exist"
+                elif compgen -G "${tmp_path}/${vhl_name}_${mp4date}"-data* > /dev/null; then
+                    logger -p local0.info "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-data* exist"
                     ((file_cnt++))
                 else
-                    logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date2}*-data.srt not exist"
+                    logger -p local0.error "[$KEY][$tag:$LINENO] ${vhl_name}_${mp4date}-data* not exist"
                     #((file_cnt--))
                     #((file_time_err++))
                 fi
             fi
 
             if [ "$mnt_path" != "$tmp_path" ]; then
-                cmd="mv ${tmp_path}/${vhl_name}_$(date -d '1 min ago' '+%Y%m%d_%H%M')* ${mnt_path}/ 2>/dev/null"
-                logger -p local0.notice "[$KEY][$tag:$LINENO] $cmd"
-                eval "$cmd"
-                if [ "$rec_min" -gt 1 ]; then
+                if [ -f /tmp/sd_mount_flag ];  then
+                    cmd="mv ${tmp_path}/${vhl_name}_$(date -d '1 min ago' '+%Y%m%d_%H%M')* ${mnt_path}/ 2>/dev/null"
+                    logger -p local0.notice "[$KEY][$tag:$LINENO] $cmd"
+                    eval "$cmd"
+                    if [ "$rec_min" -gt 1 ]; then
+                        timestamp=$(date -d "${rec_min} min ago" '+%Y%m%d_%H%M')
+                        cmd="mv ${tmp_path}/${vhl_name}_${timestamp}* ${mnt_path}/ 2>/dev/null"
+                        logger -p local0.notice "[$KEY][$tag:$LINENO] $cmd"
+                        eval "$cmd"
+                    fi
+                else
+                    logger -p local0.err "[$KEY][$tag:$LINENO] no sd mount...don't move ${tmp_path} to ${mnt_path}"
                     timestamp=$(date -d "${rec_min} min ago" '+%Y%m%d_%H%M')
-                    cmd="mv ${tmp_path}/${vhl_name}_${timestamp}* ${mnt_path}/ 2>/dev/null"
+                    cmd="rm ${tmp_path}/${vhl_name}_${timestamp}*"
                     logger -p local0.notice "[$KEY][$tag:$LINENO] $cmd"
                     eval "$cmd"
                 fi
@@ -289,11 +251,9 @@ END
                     retry_total=$(($retry+$retry_boot))
                     if [ "$retry_total" -le 3 ]; then
                         logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/kill_test.sh ($retry/$retry_boot/$retry_total)"
-                        #rm ${mnt_folder}/${vhl_name}_${mp4date2}*
                         /opt/pim/bin/kill_test.sh
                     elif [ "$retry_total" -le 5 ]; then
                         logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh ($retry/$retry_boot/$retry_total)"
-                        #rm ${mnt_folder}/${vhl_name}_${mp4date2}*
                         /opt/pim/bin/init_cam.sh
                     else
                         logger -p local0.error "[$KEY][$tag:$LINENO] retry total $retry_total is over"
@@ -348,7 +308,6 @@ END
                 #    /opt/pim/bin/kill_test.sh
                 if [ "$retry_total" -le 3 ]; then
                     logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/kill_test.sh ($retry/$retry_boot/$retry_total)"
-                    #rm ${mnt_folder}/${vhl_name}_${mp4date2}*
                     /opt/pim/bin/kill_test.sh
                 elif [ "$retry_total" -le 5 ]; then
                     logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh ($retry/$retry_boot/$retry_total)"

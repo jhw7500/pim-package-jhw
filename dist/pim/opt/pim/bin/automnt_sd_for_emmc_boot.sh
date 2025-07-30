@@ -7,6 +7,7 @@ mnt_state_=0
 mnt_cnt_=0
 mnt_folder=$1
 mount_dev=0
+mnt_flag="/tmp/sd_mount_flag"
 logger -p local0.notice "[$KEY][$TAG:$LINENO] automnt $1 start"
 
 LOCKFILE="/tmp/automnt_sd_for_emmc_boot.lock"
@@ -45,7 +46,7 @@ while true; do
                     logger -p local0.notice "[$KEY][$TAG:$LINENO] mount /dev/mmcblk1p1 $mnt_folder"
                     mount /dev/mmcblk1p1 $mnt_folder
                     logger -p local0.notice "[$KEY][$TAG:$LINENO] /tmp/sd_mount_flag set"
-                    echo '1' > /tmp/sd_mount_flag
+                    echo '1' > $mnt_flag
                 elif [ $mout_dev != "/dev/mmcblk1p1" ]; then
                     umount $mnt_folder
                     mount /dev/mmcblk1p1 $mnt_folder
@@ -63,6 +64,7 @@ while true; do
                     logger -p local0.error "[$KEY][$TAG:$LINENO] umount $mnt_folder"
                     umount $mnt_folder
                     mnt_state_=0
+                    rm $mnt_flag
                 fi
             else
                 mnt_cnt_=0
@@ -70,6 +72,7 @@ while true; do
                 if [ -z $mout_dev ]; then
                     logger -p local0.error "[$KEY][$TAG:$LINENO] not mounted $mnt_folder"
                     mnt_state_=0
+                    rm $mnt_flag
                 fi
             fi
         ;;

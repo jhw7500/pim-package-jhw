@@ -120,10 +120,10 @@ if CheckApp "$app"; then
     exit 0
 fi
 
-if CheckApp "init_cam.sh"; then
-    logger -p local0.err "[$key][$tag:$LINENO] init_cam.sh already existed"
-    exit 0
-fi
+#if CheckApp "init_cam.sh"; then
+#    logger -p local0.err "[$key][$tag:$LINENO] init_cam.sh already existed"
+#    exit 0
+#fi
 
 if CheckApp "kill_test.sh"; then
     logger -p local0.err "[$key][$tag:$LINENO] kill_test.sh already existed"
@@ -140,6 +140,11 @@ if CheckApp "BG_Check_for_pim.sh"; then
     #pkill BG_Check_for_pim.sh
     killall BG_Check_for_pim.sh
 fi
+
+#if [ -f /tmp/sd_mount_flag ]; then
+#    logger -p local0.err "[$key][$tag:$LINENO] not excute $app because sd card cannot mount!"
+#    exit 0
+#fi
 
 #logger -p local0.notice "[$key][$tag:$LINENO] $app -d $delay -m $iomode &"
 StartCam $app $delay $iomode $cap_en
