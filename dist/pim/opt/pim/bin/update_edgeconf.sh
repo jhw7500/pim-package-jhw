@@ -143,8 +143,9 @@ echo "check capture"
 jq --argjson key0 "$capture_en" --argjson key1 0 --argjson key2 200 '.VHL_CAM.capture |= (if .enable == null then .enable = $key0 else . end)
 | .VHL_CAM.capture |= (if .delay == null then .delay = $key1 else . end)
 | .VHL_CAM.capture |= (if .timeout == null then .timeout = $key2 else . end)
-| .VHL_CAM.capture |= (if .record == null then .record = "false" else . end)
-| .VHL_CAM.capture |= (if .rtsp == null then .rtsp = "false" else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+| .VHL_CAM.capture |= (if .record == null then .record = false else . end)
+| .VHL_CAM.capture |= (if .rtsp == null then .rtsp = false else . end)
+| .VHL_CAM.capture |= (if .turbojpeg == null then .turbojpeg = false else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
 echo "update i2c header"
 jq '.VHL_CAM.i2c2 |= (if .exp_time == null then .exp_time = 10000 else . end)
