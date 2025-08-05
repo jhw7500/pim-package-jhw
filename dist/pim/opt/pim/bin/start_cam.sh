@@ -90,21 +90,20 @@ tmp_path=$(jq -r '.VHL_CAM.tmp_path' "$FILE_JSON")
 
 if [ "$app" = "streamApp" ]; then
     app="PIMCAM"
-    GST_LOG_FILE="/var/log/cantops/gst/streamApp_$(date +'%Y%m%d_%H%M%S').log"
-elif [ "$app" = "gstApp" ]; then
-    app="gstApp"
-    GST_LOG_FILE="/var/log/cantops/gst/gstApp_$(date +'%Y%m%d_%H%M%S').log"
-else
-    logger -p local0.crit "[$key][$tag:$LINENO] app : $app"
-    logger -p local0.crit "[$key][$tag:$LINENO] please update json"
-    #app="PIMCAM"
-    exit 0
 fi
 
 if [ "$cap_en" = "true" ]; then
     app="gstApp"
 fi
 
+if [ "$app" != "PIMCAM" ] && [ "$app" != "gstApp" ]; then
+    logger -p local0.crit "[$key][$tag:$LINENO] app : $app"
+    logger -p local0.crit "[$key][$tag:$LINENO] please update json"
+    #app="PIMCAM"
+    exit 0
+fi
+
+GST_LOG_FILE="/var/log/cantops/gst/$app_$(date +'%Y%m%d_%H%M%S').log"
 export GST_DEBUG_NO_COLOR=1
 export GST_DEBUG=2,v4l2src:2
 #export GST_DEBUG=2,*:5

@@ -255,8 +255,9 @@ do
                 start_f=0
                 echo "NG" > $FILE_CHECK
                 value=$(cat $FLAG_PATH/bg_chk_flag.bin)
+                value=$(( 0x$(printf '%x' "$value") ))
                 cam_disconnect_flag=$((value&0xf))
-                if [[ "$cam_disconnect_flag" != 0x0 ]]; then
+                if (( cam_disconnect_flag == 0x0 )); then
                     ((retry++))
                     retry_total=$(($retry+$retry_boot))
                     if [ "$retry_total" -le 3 ]; then
@@ -309,8 +310,9 @@ do
 
             echo "NG" > $FILE_CHECK
             value=$(cat $FLAG_PATH/bg_chk_flag.bin)
+            value=$(( 0x$(printf '%x' "$value") ))
             cam_disconnect_flag=$((value&0xf))
-            if [[ "$cam_disconnect_flag" != 0x0 ]]; then
+            if (( cam_disconnect_flag == 0x0 )); then
                 ((retry_boot++))
                 retry_total=$(($retry+$retry_boot))
                 #if [ "$retry_boot" -le 1 ]; then
