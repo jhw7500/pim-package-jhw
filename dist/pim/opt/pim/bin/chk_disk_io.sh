@@ -4,7 +4,7 @@ KEY=DSK
 
 logger -p local0.notice "[$KEY][$tag:$LINENO] start"
 #LOGFILE="disk_io_monitor.log"
-INTERVAL=1
+INTERVAL=3
 
 while true; do
     #iostat_output=$(iostat -x 1 2 | awk '$1 ~ /^[a-zA-Z0-9]/ && $NF ~ /^[0-9.]+$/ {print $1, $NF}')

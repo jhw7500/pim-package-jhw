@@ -80,7 +80,7 @@ int main(int argc, char *argv[])
 	msgBuf.cfi.data.cmd_id = CFI_CMD_ID;
     //msgBuf.cfi.data.cmd_id = CTS_CAP_STOP_CMD_ID;
 	msgBuf.cfi.data.tx_id = 0;
-	msgBuf.cfi.data.channel = 0x03;
+	msgBuf.cfi.data.channel = 0x0f;
 	msgBuf.cfi.data.reserved = 0;
     msgBuf.cfi.data.cap_cnt = 1;
     int i = 0;
@@ -117,12 +117,11 @@ int main(int argc, char *argv[])
 
 	do
 	{
-        if(i > 200) i=0;
-        sprintf((char *)msgBuf.cfi.data.prefix, "%s_%d", CFI_VHL_NAME, i++);
-		msgBuf.cfi.data.tx_id++;
+        sprintf((char *)msgBuf.cfi.data.prefix, "%s_%d", CFI_VHL_NAME, i);
 		//memcpy(msgBuf.cfi.byte, data, len);
 		ret = msgsnd(msg_id, &msgBuf, msgBuf.cfi.data.len, IPC_NOWAIT);
-
+        if(i++ > 1000) i = 0;
+        if(msgBuf.cfi.data.tx_id++ > 1000) msgBuf.cfi.data.tx_id = 0;
 		if(loop) usleep(250000);
 #if 0
         next.tv_nsec += loop_delay * 1000;

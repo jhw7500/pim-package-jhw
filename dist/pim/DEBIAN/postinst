@@ -267,7 +267,7 @@ END
     systemctl disable $daemon_name
   fi
 
-  daemon_name=systemd-network-wait-online
+  daemon_name=systemd-networkd-wait-online
   status=$(systemctl is-enabled $daemon_name 2>/dev/null)
   if [ "$status" == "masked" ]; then
     echo "$daemon_name is mask"
@@ -537,7 +537,7 @@ END
   #/opt/pim/bin/add_line.sh "write_enable=YES" /etc/vsftpd.conf
   #/opt/pim/bin/add_line.sh "local_umask=022" /etc/vsftpd.conf
   #/opt/pim/bin/comment_line.sh "$Umask 0022" /etc/rsyslog.conf
-  /opt/pim/bin/change_line.sh "tmpfs                /tmp                 tmpfs      defaults,nosuid,nodev,size=512M  0  0" "tmpfs                /tmp" /etc/fstab
+  /opt/pim/bin/change_line.sh "#tmpfs                /tmp                 tmpfs      defaults,nosuid,nodev,size=1024M  0  0" "tmpfs                /tmp" /etc/fstab
   /opt/pim/bin/change_line.sh "max9296" "max9296" /etc/modules
   /opt/pim/bin/change_line.sh "rts_ds1307" "rts_ds1307" /etc/modules
   /opt/pim/bin/change_line.sh "blacklist imx8-media-dev" "imx8-media-dev" /etc/modprobe.d/blacklist.conf

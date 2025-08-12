@@ -3,10 +3,10 @@ tag=$(basename "$0")
 KEY=RST
 logger -p local0.emerg "[$KEY][$tag:$LINENO] rc.local start : Booting"
 #sd mount
-/opt/pim/bin/automnt_sd_for_emmc_boot.sh /mnt/sd_cam &
+#/opt/pim/bin/automnt_sd_for_emmc_boot.sh /mnt/sd_cam &
 
 #module
-modprobe imx8-media-dev
+#modprobe imx8-media-dev
 
 #log manage
 #logger -p local0.notice "[$KEY][$tag:$LINENO] Boot log manage"

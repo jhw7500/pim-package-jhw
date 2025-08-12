@@ -31,8 +31,12 @@ install)
   rm /var/cache/apt/archives/lock
   rm /var/lib/dpkg/lock*
   dpkg --configure -a
-  dpkg --purge pim
-  dpkg --purge pim-test
+  if dpkg -s pim &> /dev/null; then
+    dpkg --purge pim
+  fi
+  if dpkg -s pim-test &> /dev/null; then
+    dpkg --purge pim-test
+  fi
 #  systemctl stop rsyslog
 #  git config --global user.name "hwjo" && git config --global user.email "hwjo@cantops.biz"
 #  /root/SOMBASE_TEST/mfg60n-aarch64-9.32.0.6.sh install

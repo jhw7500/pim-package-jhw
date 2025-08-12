@@ -85,7 +85,7 @@ function MAKE_RESULT_FLAG() {
 
 CLEAR_CHK_LOG
 sleep $delay
-logger -p local0.notice "[CHK][$tag:$LINENO] BG check loop start(ch0:$cam_ch0, ch1:$cam_ch1, ch2:$cam_ch2, ch3:$cam_ch3"
+logger -p local0.notice "[CHK][$tag:$LINENO] BG check loop start(ch0:$cam_ch0, ch1:$cam_ch1, ch2:$cam_ch2, ch3:$cam_ch3)"
 
 #/opt/pim/bin/chk_cam_disconnect.sh $cam_ch_bit 3 2>/dev/null
 
@@ -98,7 +98,7 @@ while true; do
     /opt/pim/bin/chk_wifi.sh 2>/dev/null
     #eth0 check
     #echo "eth0"
-    /opt/pim/bin/chk_eth1.sh 2>/dev/null
+    #/opt/pim/bin/chk_eth1.sh 2>/dev/null
     #sd mount check
     #echo "sd"
     /opt/pim/bin/chk_sd_mount.sh 2>/dev/null

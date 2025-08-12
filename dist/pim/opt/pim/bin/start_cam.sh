@@ -25,7 +25,17 @@ StartCam() {
         if [ "$delay" -ge 15 ]; then
             delay=15
         fi
-        start_cmd="$1 -e 0 -E 0 -N 1 -y 1 -C 0 -a 1 -f 1 -d $delay -m $3 -R 1 &"
+        record_en=$(jq -r '.VHL_CAM.capture.record' "$FILE_JSON")
+        rtsp_en=$(jq -r '.VHL_CAM.capture.rtsp' "$FILE_JSON")
+        if [[ "$record_en" = "true" && "$rtsp_en" = "true" ]]; then
+            start_cmd="$1 -e 1 -E 1 -N 1 -y 1 -C 0 -a 1 -f 1 -d $delay -m $3 -R 1 &"
+        elif [[ "$record_en" = "true" ]]; then
+            start_cmd="$1 -e 1 -E 0 -N 1 -y 1 -C 0 -a 1 -f 1 -d $delay -m $3 -R 1 &"
+        elif [[ "$rtsp_en" = "true" ]]; then
+            start_cmd="$1 -e 0 -E 1 -N 1 -y 1 -C 0 -a 1 -f 1 -d $delay -m $3 -R 1 &"
+        else
+            start_cmd="$1 -e 0 -E 0 -N 1 -y 1 -C 0 -a 1 -f 1 -d $delay -m $3 -R 1 &"
+        fi
     else
         if [ "$1" = "gstApp" ]; then
             start_cmd="$1 -d $delay -m $3 -O $tmp_path &"
@@ -41,6 +51,7 @@ StartCam() {
         else
             logger -p local0.notice "[$key][$tag:$LINENO] $1 start"
             logger -p local0.emerg "[$key][$tag:$LINENO] cam app cmd : $start_cmd"
+            rm /tmp/start_video_time
             eval "$start_cmd"
         fi
     else
@@ -79,26 +90,28 @@ tmp_path=$(jq -r '.VHL_CAM.tmp_path' "$FILE_JSON")
 
 if [ "$app" = "streamApp" ]; then
     app="PIMCAM"
-    GST_LOG_FILE="/var/log/cantops/gst/streamApp_$(date +'%Y%m%d_%H%M%S').log"
-elif [ "$app" = "gstApp" ]; then
-    app="gstApp"
-    GST_LOG_FILE="/var/log/cantops/gst/gstApp_$(date +'%Y%m%d_%H%M%S').log"
-else
-    logger -p local0.crit "[$key][$tag:$LINENO] app : $app"
-    logger -p local0.crit "[$key][$tag:$LINENO] please update json"
-    #app="PIMCAM"
-    exit 0
 fi
 
 if [ "$cap_en" = "true" ]; then
     app="gstApp"
 fi
 
+if [ "$app" != "PIMCAM" ] && [ "$app" != "gstApp" ]; then
+    logger -p local0.crit "[$key][$tag:$LINENO] app : $app"
+    logger -p local0.crit "[$key][$tag:$LINENO] please update json"
+    #app="PIMCAM"
+    exit 0
+fi
+
+GST_LOG_FILE="/var/log/cantops/gst/$app_$(date +'%Y%m%d_%H%M%S').log"
 export GST_DEBUG_NO_COLOR=1
 export GST_DEBUG=2,v4l2src:2
 #export GST_DEBUG=2,*:5
 export GST_DEBUG_FILE="$GST_LOG_FILE"
 export GST_DEBUG_DUMP_DOT_DIR=/var/log/cantops/dot/
+#export GST_TRACERS="latency"
+#export GST_DEBUG="GST_TRACER:7"
+#export GST_DEBUG_FILE=/tmp/gst-latency.log
 
 logger -p local0.notice "[$key][$tag:$LINENO] start app:$app delay:$delay file_path:$tmp_path"
 if CheckApp "$app"; then
@@ -106,10 +119,10 @@ if CheckApp "$app"; then
     exit 0
 fi
 
-if CheckApp "init_cam.sh"; then
-    logger -p local0.err "[$key][$tag:$LINENO] init_cam.sh already existed"
-    exit 0
-fi
+#if CheckApp "init_cam.sh"; then
+#    logger -p local0.err "[$key][$tag:$LINENO] init_cam.sh already existed"
+#    exit 0
+#fi
 
 if CheckApp "kill_test.sh"; then
     logger -p local0.err "[$key][$tag:$LINENO] kill_test.sh already existed"
@@ -126,6 +139,11 @@ if CheckApp "BG_Check_for_pim.sh"; then
     #pkill BG_Check_for_pim.sh
     killall BG_Check_for_pim.sh
 fi
+
+#if [ -f /tmp/sd_mount_flag ]; then
+#    logger -p local0.err "[$key][$tag:$LINENO] not excute $app because sd card cannot mount!"
+#    exit 0
+#fi
 
 #logger -p local0.notice "[$key][$tag:$LINENO] $app -d $delay -m $iomode &"
 StartCam $app $delay $iomode $cap_en

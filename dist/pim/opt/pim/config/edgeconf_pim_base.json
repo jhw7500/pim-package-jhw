@@ -170,9 +170,14 @@
         "debug_level": 0,
         "app": "streamApp",
         "id": "user",
+        "muxer": "mpt4"
+        "tmp_path": "/dev/shm"
         "capture" : {
             "enable": false,
-            "delay" : 0
+            "delay": 0,
+            "record": false,
+            "rtsp": false,
+            "turbojpeg": false
         },
         "i2c2": {
             "exp_time": 10000,
