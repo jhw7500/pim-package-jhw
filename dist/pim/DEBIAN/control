@@ -1,5 +1,5 @@
 Package: pim-mp
-Version: 0.5.3.2
+Version: 0.5.4
 Replaces: cis
 Breaks: cis
 Section: test
@@ -63,5 +63,4 @@ Description: PIM application
 0.5.1 : pim_gate sFTP_UDP error code
 0.5.2 : pim_gate sFTP_UDP modify prefix, gstApp(0.9), vcm(4.2), ord(4.4)
 0.5.3 : pim_gate version1
-0.5.3.1 : pim_gate sFTP_UDP exception, link speed service, gstApp capture delay and dir, ord(4.5) 
-0.5.3.2 : pim_gate version1 debug udp record
+0.5.4 : pim_gate version1 debug, link speed service, gstApp(1.0), ord(4.5), streamApp(2.4)
