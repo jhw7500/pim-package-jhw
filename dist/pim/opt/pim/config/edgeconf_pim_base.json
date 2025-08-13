@@ -170,8 +170,8 @@
         "debug_level": 0,
         "app": "streamApp",
         "id": "user",
-        "muxer": "mpt4"
-        "tmp_path": "/dev/shm"
+        "muxer": "mp4",
+        "tmp_path": "/dev/shm",
         "capture" : {
             "enable": false,
             "delay": 0,
