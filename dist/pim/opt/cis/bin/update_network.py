@@ -74,6 +74,10 @@ assert edgeconf['NETWORK']['ETH1']
 assert edgeconf['NETWORK']['WLAN0']
 
 change_netplan_flag = False
+sel_interface = None
+if 'used' in edgeconf['NETWORK'] and \
+   edgeconf['NETWORK'].get('used',None) in {'ETH0', 'ETH1', 'WLAN0'} :
+   sel_interface = edgeconf['NETWORK']['used']
 
 with open("/tmp/eth0.yaml", "w") as f :
     f.write("network:\n  version: 2\n  ethernets:\n    eth0:\n      renderer: networkd\n")
@@ -95,7 +99,7 @@ with open("/tmp/eth0.yaml", "w") as f :
     else :
         f.write("      dhcp4: yes\n")
 
-    if edgeconf['NETWORK']['used'] != 'ETH0' :
+    if sel_interface is not None and sel_interface != 'ETH0' :
         f.write("      dhcp4-overrides:\n")
         f.write("         use-routes: false\n")
     
@@ -128,7 +132,7 @@ with open("/tmp/eth1.yaml", "w") as f :
     else :
         f.write("      dhcp4: yes\n")
     
-    if edgeconf['NETWORK']['used'] != 'ETH1' :
+    if sel_interface is not None and sel_interface != 'ETH1' :
         f.write("      dhcp4-overrides:\n")
         f.write("         use-routes: false\n")
 
@@ -205,7 +209,7 @@ with open(temp_conn_wlan0, "w") as f :
         f.write("      dhcp4: yes\n")
         f.write("      dhcp-identifier: mac\n")
 
-    if edgeconf['NETWORK']['used'] != 'WLAN0' :
+    if sel_interface is not None and sel_interface != 'WLAN0' :
         f.write("      dhcp4-overrides:\n")
         f.write("         use-routes: false\n")
 
