@@ -63,7 +63,7 @@ int main(int argc, char *argv[])
 	int ret = 0;
 	int msg_id = msgget((key_t)MSG_Q_REQ_KEY, IPC_CREAT | 0666);
 	char strTmp[512]; 
-    bool loop = true;
+    bool loop = false;
     int loop_delay = INTERVAL_USEC;
 	if (msg_id == -1) {
 		ret = -1;

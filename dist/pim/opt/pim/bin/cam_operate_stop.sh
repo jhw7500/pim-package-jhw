@@ -1,4 +1,5 @@
 #!/bin/bash
+killcam
 
 rm /tmp/init_cam_flag
 rm /tmp/restart_flag
