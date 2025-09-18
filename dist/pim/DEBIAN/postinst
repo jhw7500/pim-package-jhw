@@ -111,6 +111,21 @@ configure)
   tar -xvf /opt/pim/driver/laird_backport.tar -C /lib/modules/$KERNEL_VERSION/updates/
   tar -xvf /opt/pim/firmware/laird_firmware.tar -C /lib/firmware/
 
+  KO=/opt/pim/driver/sc16is7xx_ext.ko
+  DEST=/lib/modules/$KERNEL_VERSION/extra/sc16is7xx_ext.ko
+  NEED_DEPMOD=0
+  if [ ! -f "$DEST" ]; then
+    NEED_DEPMOD=1
+  else
+    if ! cmp -s "$KO" "$DEST"; then
+        NEED_DEPMOD=1
+    fi
+  fi
+  cp "$KO" "$DEST"
+  if [ $NEED_DEPMOD -eq 1 ]; then
+    depmod -a
+  fi
+
   rm -f /usr/lib/libpiencrypt*
   ln -s /usr/local/lib/libpiencrypt.so.0  /usr/lib/libpiencrypt.so.0
   ln -s /usr/local/lib/libpiencrypt.so.0  /usr/lib/libpiencrypt.so
