@@ -16,10 +16,18 @@ KEY=PKG
 logger -s -p local0.notice "[$KEY][$tag:$LINENO] install $PACKAGE_NAME-$(dpkg-query -W -f='${Version}' $PACKAGE_NAME) start"
 echo "stop cam-operate daemon"
 systemctl stop cam-operate
+echo "stop sd-mount daemon"
+systemctl stop sd-mount
 
-pid=$(ps -ef |grep "automnt_sd_for_emmc_boot" |grep -v grep |awk '{print $2}')
+pid=$(ps -ef |grep "automnt_sd_for_emmc_boot.sh" |grep -v grep |awk '{print $2}')
 if [ -n "$pid" ]; then
-    echo "auto mount process($pid) kill"
+    echo "automnt_sd_for_emmc_boot($pid) kill"
+    kill $pid
+fi
+
+pid=$(ps -ef |grep "restart_app.sh" |grep -v grep |awk '{print $2}')
+if [ -n "$pid" ]; then
+    echo "restart_app.sh($pid) kill"
     kill $pid
 fi
 

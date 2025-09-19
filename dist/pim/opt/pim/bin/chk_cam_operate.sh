@@ -1,5 +1,15 @@
 #!/bin/bash
+tag=$(basename "$0")
+KEY=RST
+
+GetConfig_() {
+    read  srt_en file_chk_reboot time_rec_en file_check_delay < <(jq -r '[.VCM.srt_enable, .ETC.file_check_reboot, .VCM.file_time_check, .ETC.file_check_delay] | @tsv' $FILE_JSON_)
+}
 GetConfig() {
+    read app vhl_name rec_min cap_en cap_record_en cap_rtsp_en tmp_path muxer cam_ch0 cam_ch1 cam_ch2 cam_ch3 < <(
+    jq -r '[.VHL_CAM.app, .VHL_CAM.vhl_name, .VHL_CAM.recording_time, .VHL_CAM.capture.enable, .VHL_CAM.capture.record, .VHL_CAM.capture.rtsp, .VHL_CAM.tmp_path, .VHL_CAM.muxer, .VHL_CAM.i2c2.ch0.enable, .VHL_CAM.i2c2.ch1.enable, .VHL_CAM.i2c1.ch2.enable, .VHL_CAM.i2c1.ch3.enable] | @tsv' $FILE_JSON)
+
+:<<'END'
     app=$(jq '.VHL_CAM.app' "$FILE_JSON")
     cam_ch0=$(jq '.VHL_CAM.i2c2.ch0.enable' "$FILE_JSON")
     cam_ch1=$(jq '.VHL_CAM.i2c2.ch1.enable' "$FILE_JSON")
@@ -11,12 +21,13 @@ GetConfig() {
     file_check_delay=$(jq '.ETC.file_check_delay' "$FILE_JSON_")
     vhl_name=$(jq -r '.VHL_CAM.vhl_name' "$FILE_JSON")
     rec_min=$(jq '.VHL_CAM.recording_time' "$FILE_JSON")
-    rec_time=$((rec_min*60))
     cap_en=$(jq '.VHL_CAM.capture.enable' "$FILE_JSON")
     cap_record_en=$(jq '.VHL_CAM.capture.record' "$FILE_JSON")
     cap_rtsp_en=$(jq '.VHL_CAM.capture.rtsp' "$FILE_JSON")
     tmp_path=$(jq -r '.VHL_CAM.tmp_path' "$FILE_JSON")
     muxer=$(jq -r '.VHL_CAM.muxer' "$FILE_JSON")
+END
+    rec_time=$((rec_min*60))
     #rst_time=$((rec_time+90))
     #rst_time=20
     if [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] || [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]; then
@@ -31,10 +42,10 @@ GetConfig() {
 
     if [[ "$csi1_en" -eq 1 ]] && [[ "$csi2_en" -eq 1 ]]; then
         rst_time=35
-        app_delay=25
+        app_delay=20
     else
         rst_time=25
-        app_delay=15
+        app_delay=10
     fi
 }
 
@@ -48,22 +59,22 @@ fi
 }
 
 logger -p local0.emerg "[$KEY][$tag:$LINENO] cam-operate daemon start"
-/opt/pim/bin/automnt_sd_for_emmc_boot.sh /mnt/sd_cam &
+#/opt/pim/bin/automnt_sd_for_emmc_boot.sh /mnt/sd_cam &
+modprobe max9296
 modprobe imx8-media-dev
+#/opt/pim/bin/start_cam.sh 20
 
 FILE_="/tmp/start_video_time_chk"
 #FILE_JSON=/root/shared_v/edgeconf_pim.json
 FILE_JSON_=/root/shared_v/ord_vcm_conf.json
 FILE_CHECK=/tmp/file_check
 FLAG_PATH=/tmp
-tag=$(basename "$0")
 ENABLE_VAL="true"
 DISABLE_VAL="false"
 retry=0
 retry_boot=0
 retry_total=0
 #touch $FILE_
-KEY=RST
 
 JSON_PREFIX=edgeconf_
 JOSN_SUFFIX=.json
@@ -101,11 +112,13 @@ logger -p local0.notice "[$KEY][$tag:$LINENO] /opt/pim/bin/start_cam.sh $app_del
 #StartApp start_cam.sh
 #StartScript restart_app.sh
 
+GetConfig_
+
 logger -p local0.notice "[$KEY][$tag:$LINENO] ch0:$cam_ch0, ch1:$cam_ch1, ch2:$cam_ch2, ch3:$cam_ch3, srt:$srt_en, time_rec_en:$time_rec_en, vhl_name:$vhl_name, rec_time:$rec_time, rst_time:$rst_time, cap_en:$cap_en, mnt_path:$mnt_path, tmp_path:$tmp_path, app_delay:$app_delay, muxer:$muxer, file_check_delay:$file_check_delay file_chk_reboot:$file_chk_reboot"
 
-if [ ! -f /tmp/sd_mount_flag ]; then
+if [ ! -f /dev/shm/sd_mount_flag ]; then
     tmp_path="/dev/shm"
-    logger -p local0.err "[$KEY][$tag:$LINENO] /tmp/sd_mount_flag not exist : tmp_path:${tmp_path}"
+    logger -p local0.err "[$KEY][$tag:$LINENO] sd_mount_flag not exist : tmp_path:${tmp_path}"
 fi
 
 while :
@@ -230,7 +243,7 @@ do
             fi
 
             if [ "$mnt_path" != "$tmp_path" ]; then
-                if [ -f /tmp/sd_mount_flag ];  then
+                if [ -f /dev/shm/sd_mount_flag ];  then
                     cmd="mv ${tmp_path}/${vhl_name}_$(date -d '1 min ago' '+%Y%m%d_%H%M')* ${mnt_path}/ 2>/dev/null"
                     logger -p local0.notice "[$KEY][$tag:$LINENO] $cmd"
                     eval "$cmd"

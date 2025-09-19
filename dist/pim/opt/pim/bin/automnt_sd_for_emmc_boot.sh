@@ -7,7 +7,7 @@ mnt_state_=0
 mnt_cnt_=0
 mnt_folder=$1
 mount_dev=0
-mnt_flag="/tmp/sd_mount_flag"
+mnt_flag="/dev/shm/sd_mount_flag"
 logger -p local0.notice "[$KEY][$TAG:$LINENO] automnt $1 start"
 
 LOCKFILE="/tmp/automnt_sd_for_emmc_boot.lock"
@@ -26,7 +26,7 @@ rm -rf $1
 while true; do
     case $mnt_state_ in
         0)
-             logger -p local0.notice "[$KEY][$TAG:$LINENO] case 0"
+            logger -p local0.notice "[$KEY][$TAG:$LINENO] case 0"
             if [ -d /sys/bus/mmc/devices/mmc1:*/block/mmcblk1/mmcblk1p1 ]; then
                 logger -p local0.notice "[$KEY][$TAG:$LINENO] sd card file system check : fsck.vfat -a /dev/mmcblk1p1"
                 mout_dev=`df | grep '/mnt/sd_cam' | awk '{print $1}'`
@@ -45,7 +45,7 @@ while true; do
                     fi
                     logger -p local0.notice "[$KEY][$TAG:$LINENO] mount /dev/mmcblk1p1 $mnt_folder"
                     mount /dev/mmcblk1p1 $mnt_folder
-                    logger -p local0.notice "[$KEY][$TAG:$LINENO] /tmp/sd_mount_flag set"
+                    logger -p local0.notice "[$KEY][$TAG:$LINENO] sd_mount_flag set"
                     echo '1' > $mnt_flag
                 elif [ $mout_dev != "/dev/mmcblk1p1" ]; then
                     umount $mnt_folder

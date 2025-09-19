@@ -210,7 +210,6 @@ configure)
     /opt/pim/bin/auto_fs_sizeup.sh 2 2
   fi
 
-
   status=$(timedatectl |grep NTP|awk '{print $3}')
   if [ "$status" == "inactive" ]; then
     echo "ntp is $status"
@@ -271,7 +270,6 @@ END
     echo "disable $daemon_name"
     systemctl disable $daemon_name
   fi
-
 
   daemon_name=NetworkManager
   status=$(systemctl is-enabled $daemon_name 2>/dev/null)
@@ -387,6 +385,15 @@ END
   fi
 
   daemon_name=ethtool-operate
+  status=$(systemctl is-enabled $daemon_name 2>/dev/null)
+  if [ "$status" == "enabled" ]; then
+    echo "$daemon_name is $status"
+  else
+    echo "enable $daemon_name"
+    systemctl enable $daemon_name
+  fi
+
+  daemon_name=sd-mount
   status=$(systemctl is-enabled $daemon_name 2>/dev/null)
   if [ "$status" == "enabled" ]; then
     echo "$daemon_name is $status"
@@ -620,10 +627,10 @@ END
   #fi
 
   #systemctl start cam-operate
-  sync
   PACKAGE_NAME="$DPKG_MAINTSCRIPT_PACKAGE"
   echo -e "\e[32m install $PACKAGE_NAME-$(dpkg-query -W -f='${Version}' $PACKAGE_NAME) finish\e[0m"
   logger -p local0.notice "[$KEY][$tag:$LINENO] install $PACKAGE_NAME-$(dpkg-query -W -f='${Version}' $PACKAGE_NAME) finish"
+  sync
   ;;
 
 upgrade)

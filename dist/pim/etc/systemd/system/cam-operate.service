@@ -2,7 +2,9 @@
 Description=PIM CAM Operation Service
 #After=syslog.service
 #After=rc-local.service
-After=vsd-operate.service
+After=sd-mount.service
+DefaultDependencies=no
+#Before=sysinit.target
 
 [Service]
 User=root

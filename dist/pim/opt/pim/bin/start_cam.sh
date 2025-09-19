@@ -61,10 +61,9 @@ JSON_PREFIX=edgeconf_
 JOSN_SUFFIX=.json
 FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' | grep "${JSON_SUFFIX}$" | tail -1 | tr -d '\r\n')
 logger -p local0.notice "[$key][$tag:$LINENO] json_file : $FILE_JSON"
-app=$(jq -r '.VHL_CAM.app' "$FILE_JSON")
 GST_LOG_FILE="/var/log/cantops/gst/$app_$(date +'%Y%m%d_%H%M%S').log"
-cap_en=$(jq -r '.VHL_CAM.capture.enable' "$FILE_JSON")
-tmp_path=$(jq -r '.VHL_CAM.tmp_path' "$FILE_JSON")
+
+read app cap_en tmp_path < <(jq -r '[.VHL_CAM.app, .VHL_CAM.capture.enable, .VHL_CAM.tmp_path] | @tsv' $FILE_JSON)
 
 if [ "$app" = "streamApp" ]; then
     app="PIMCAM"

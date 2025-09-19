@@ -1,0 +1,12 @@
+[Unit]
+Description=PIM SD Mount Service
+DefaultDependencies=no
+Before=sysinit.target
+
+[Service]
+User=root
+WorkingDirectory=/root
+ExecStart=/opt/pim/bin/automnt_sd_for_emmc_boot.sh /mnt/sd_cam
+
+[Install]
+WantedBy=multi-user.target
