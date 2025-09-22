@@ -210,21 +210,21 @@ configure)
     /opt/pim/bin/auto_fs_sizeup.sh 2 2
   fi
 
-  status=$(timedatectl |grep NTP|awk '{print $3}')
-  if [ "$status" == "inactive" ]; then
-    echo "ntp is $status"
-  else
-    echo "set-ntp false"
-    timedatectl set-ntp false
-  fi
+  # status=$(timedatectl |grep NTP|awk '{print $3}')
+  # if [ "$status" == "inactive" ]; then
+  #   echo "ntp is $status"
+  # else
+  #   echo "set-ntp false"
+  #   timedatectl set-ntp false
+  # fi
 
-  status=$(timedatectl |grep Time|awk '{print $3}')
-  if [ "$status" == "Asia/Seoul" ]; then
-    echo "timezone is $status"
-  else
-    echo "set-timezone Asis/Seoul"
-    timedatectl set-timezone Asia/Seoul
-  fi
+  # status=$(timedatectl |grep Time|awk '{print $3}')
+  # if [ "$status" == "Asia/Seoul" ]; then
+  #   echo "timezone is $status"
+  # else
+  #   echo "set-timezone Asis/Seoul"
+  #   timedatectl set-timezone Asia/Seoul
+  # fi
 
   #timedatectl set-timezone Etc/UTC
 
