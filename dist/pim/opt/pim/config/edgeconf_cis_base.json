@@ -182,9 +182,11 @@
         "capture" : {
             "enable": false,
             "delay": 0,
+            "timeout": 500,
             "record": false,
             "rtsp": false,
-            "turbojpeg": false
+            "encoder": "turbo",
+            "quality": 85
         },
         "i2c2": {
             "exp_time": 10000,
