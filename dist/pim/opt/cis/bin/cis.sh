@@ -27,6 +27,7 @@ start() {
     
     if [ -n "${WLAN0_FIND}" ] && [ "${WLAN0_FIND}" = "${_dev_wlan}" ]; then
         mkdir /var/run/sea
+        python3 /opt/cis/bin/db_fw_check.py > /dev/null 2> /dev/null
         python3 /opt/cis/bin/auto_fwupgrade.py > /dev/null 2> /dev/null
         python3 /opt/cis/bin/init.py power_on > /dev/null 2> /dev/null
         python3 /opt/cis/bin/update_network.py > /dev/null 2> /dev/null

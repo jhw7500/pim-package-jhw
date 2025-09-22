@@ -1,0 +1,4 @@
+{
+    "ver":"1.0.1",
+    "fw_file" : "cis-dcxx_1.0.1.hex"
+}

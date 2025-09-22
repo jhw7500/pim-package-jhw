@@ -77,12 +77,13 @@ status() {
     osver=`cat /etc/issue | awk '{print $1, $2, $3}' | sed 's/[[:blank:]]*$//'`
     board=$(python3 /opt/cis/bin/getconfval.py daughterboard_type | tr -d '\r\n')
     #mode
-    if [ -f '/tmp/edgeconf.lock' ]
-    then
+    if [ -f '/tmp/fwupgrade.lock' ]; then
+        mode="upgrading"
+    elif [ -f '/tmp/edgeconf.lock' ]; then
         mode="setting"
     else
         pid=`ps -ef | grep 'adab' | grep -v 'grep' | grep -v '/usr/local/bin/adab' | awk '{print $2}'`
-        if [ -z $pid ]
+        if [ -z "$pid" ]
         then
             local error=`cat /tmp/adab_status 2> /dev/null | grep ERROR | cut -d':' -f2 | tr -d '\r\n'`
             if [ -z "$error" -o "$error" == " " -o "$error" == "" -o "$error" == "0" ]; then
@@ -97,7 +98,7 @@ status() {
 
     #cism
     pid=`ps -ef | grep 'cism' | grep -v 'grep' | grep -v '/usr/local/bin/cism' | awk '{print $2}'`
-    if [ -z $pid ]
+    if [ -z "$pid" ]
     then
         cism="stop"
     else
@@ -118,11 +119,11 @@ status() {
     if [ -z "$antval" -o "$antval" == " " -o "$antval" == "" ]; then
         ant="2"
     else
-		if [ $antval == "0" ]; then
+		if [ "$antval" == "0" ]; then
 			ant="2"
-		elif [ $antval == "1" ]; then
+		elif [ "$antval" == "1" ]; then
             ant="0"
-		elif [ $antval == "2" ]; then
+		elif [ "$antval" == "2" ]; then
             ant="1"
         fi
     fi
