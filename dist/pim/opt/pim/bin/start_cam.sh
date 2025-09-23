@@ -63,7 +63,17 @@ FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' 
 logger -p local0.notice "[$key][$tag:$LINENO] json_file : $FILE_JSON"
 GST_LOG_FILE="/var/log/cantops/gst/$app_$(date +'%Y%m%d_%H%M%S').log"
 
-read app cap_en tmp_path < <(jq -r '[.VHL_CAM.app, .VHL_CAM.capture.enable, .VHL_CAM.tmp_path] | @tsv' $FILE_JSON)
+#read app cap_en tmp_path < <(jq -r '[.VHL_CAM.app, .VHL_CAM.capture.enable, .VHL_CAM.tmp_path] | @tsv' $FILE_JSON)
+
+IFS=$'\t' read -r \
+    app cap_en tmp_path < <(
+    jq -r '[
+        (.VHL_CAM.app // "streamApp"),
+        (.VHL_CAM.capture.enable // false),
+        (.VHL_CAM.tmp_path // "/dev/shm")
+    ] | @tsv' "$FILE_JSON"
+)
+unset IFS
 
 if [ "$app" = "streamApp" ]; then
     app="PIMCAM"

@@ -15,7 +15,16 @@ sleep 1
 JSON_PREFIX=edgeconf_
 JOSN_SUFFIX=.json
 FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' | grep "${JSON_SUFFIX}$" | tail -1 | tr -d '\r\n')
-read app cap_en < <(jq -r '[.VHL_CAM.app, .VHL_CAM.capture.enable] | @tsv' $FILE_JSON)
+#read app cap_en < <(jq -r '[.VHL_CAM.app, .VHL_CAM.capture.enable] | @tsv' $FILE_JSON)
+IFS=$'\t' read -r \
+    app cap_en < <(
+    jq -r '[
+        (.VHL_CAM.app // "streamApp"),
+        (.VHL_CAM.capture.enable // false)
+    ] | @tsv' "$FILE_JSON"
+)
+unset IFS
+
 if [ "$app" != "streamApp" ] && [ "$app" != "gstApp" ]; then
     logger -p local0.err "[$KEY][$tag:$LINENO] app : $app"
     logger -p local0.err "[$KEY][$tag:$LINENO] please update json"

@@ -135,7 +135,6 @@ else
         jq 'del (.VHL_CAM.capture)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
     fi
 fi
-capture_en=$(jq -r '.VHL_CAM.capture' "$FILE_JSON")
 
 jq --argjson key0 "$capture_en" --argjson key1 0 --argjson key2 200 '.VHL_CAM.capture |= (if .enable == null then .enable = $key0 else . end)
 | .VHL_CAM.capture |= (if .delay == null then .delay = $key1 else . end)
@@ -164,7 +163,7 @@ jq '.VHL_CAM |= (if .ch0 == null then . else del(.ch0) end)
 | .VHL_CAM |= (if .ch3 == null then . else del(.ch3) end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
 echo "check path"
-jq '.VHL_CAM.tmp_path |= (if . == null then "/tmp" else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+jq '.VHL_CAM.tmp_path |= (if . == null then "/dev/shm" else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
 echo "update new channel config"
 #echo "check ch0"

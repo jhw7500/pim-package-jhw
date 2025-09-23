@@ -32,10 +32,21 @@ modprobe imx8-media-dev
 sleep 2
 #PIMCAM -m 0 -c 3 &
 FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' | grep "${JSON_SUFFIX}$" | tail -1 | tr -d '\r\n')
-cam_ch0=$(jq '.VHL_CAM.i2c2.ch0.enable' "$FILE_JSON")
-cam_ch1=$(jq '.VHL_CAM.i2c2.ch1.enable' "$FILE_JSON")
-cam_ch2=$(jq '.VHL_CAM.i2c1.ch2.enable' "$FILE_JSON")
-cam_ch3=$(jq '.VHL_CAM.i2c1.ch3.enable' "$FILE_JSON")
+#cam_ch0=$(jq '.VHL_CAM.i2c2.ch0.enable' "$FILE_JSON")
+#cam_ch1=$(jq '.VHL_CAM.i2c2.ch1.enable' "$FILE_JSON")
+#cam_ch2=$(jq '.VHL_CAM.i2c1.ch2.enable' "$FILE_JSON")
+#cam_ch3=$(jq '.VHL_CAM.i2c1.ch3.enable' "$FILE_JSON")
+IFS=$'\t' read -r \
+    cam_ch0 cam_ch1 cam_ch2 cam_ch3 < <(
+    jq -r '[
+        (.VHL_CAM.i2c2.ch0.enable // false),
+        (.VHL_CAM.i2c2.ch1.enable // false),
+        (.VHL_CAM.i2c1.ch2.enable // false),
+        (.VHL_CAM.i2c1.ch3.enable // false)
+    ] | @tsv' "$FILE_JSON"
+)
+unset IFS
+
 csi1_en=0
 if [[ "$cam_ch0" == "true" ]] || [[ "$cam_ch1" == "true" ]]; then
     csi1_en=1

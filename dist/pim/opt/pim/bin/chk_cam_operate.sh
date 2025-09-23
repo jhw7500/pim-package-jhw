@@ -3,11 +3,40 @@ tag=$(basename "$0")
 KEY=RST
 
 GetConfig_() {
-    read  srt_en file_chk_reboot time_rec_en file_check_delay < <(jq -r '[.VCM.srt_enable, .ETC.file_check_reboot, .VCM.file_time_check, .ETC.file_check_delay] | @tsv' $FILE_JSON_)
+    IFS=$'\t' read -r \
+        srt_en file_chk_reboot time_rec_en file_check_delay < <(
+        jq -r '[
+            (.VCM.srt_enable // true),
+            (.ETC.file_check_reboot // true),
+            (.VCM.file_time_check // true),
+            (.ETC.file_check_delay // 10)
+        ] | @tsv' "$FILE_JSON_"
+    )
+    unset IFS
+
+    #read  srt_en file_chk_reboot time_rec_en file_check_delay < <(jq -r '[.VCM.srt_enable, .ETC.file_check_reboot, .VCM.file_time_check, .ETC.file_check_delay] | @tsv' $FILE_JSON_)
 }
+
 GetConfig() {
-    read app vhl_name rec_min cap_en cap_record_en cap_rtsp_en tmp_path muxer cam_ch0 cam_ch1 cam_ch2 cam_ch3 < <(
-    jq -r '[.VHL_CAM.app, .VHL_CAM.vhl_name, .VHL_CAM.recording_time, .VHL_CAM.capture.enable, .VHL_CAM.capture.record, .VHL_CAM.capture.rtsp, .VHL_CAM.tmp_path, .VHL_CAM.muxer, .VHL_CAM.i2c2.ch0.enable, .VHL_CAM.i2c2.ch1.enable, .VHL_CAM.i2c1.ch2.enable, .VHL_CAM.i2c1.ch3.enable] | @tsv' $FILE_JSON)
+    IFS=$'\t' read -r \
+        app vhl_name rec_min cap_en cap_record_en cap_rtsp_en \
+        tmp_path muxer cam_ch0 cam_ch1 cam_ch2 cam_ch3 < <(
+        jq -r '[
+            (.VHL_CAM.app // "streamApp"),
+            (.VHL_CAM.vhl_name // "VD3001"),
+            (.VHL_CAM.recording_time // 1),
+            (.VHL_CAM.capture.enable // false),
+            (.VHL_CAM.capture.record // false),
+            (.VHL_CAM.capture.rtsp   // false),
+            (.VHL_CAM.tmp_path // "/dev/shm/"),
+            (.VHL_CAM.muxer // "mp4"),
+            (.VHL_CAM.i2c2.ch0.enable // false),
+            (.VHL_CAM.i2c2.ch1.enable // false),
+            (.VHL_CAM.i2c1.ch2.enable // false),
+            (.VHL_CAM.i2c1.ch3.enable // false)
+        ] | @tsv' "$FILE_JSON"
+    )
+    unset IFS
 
 :<<'END'
     app=$(jq '.VHL_CAM.app' "$FILE_JSON")
