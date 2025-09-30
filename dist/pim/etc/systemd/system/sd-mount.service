@@ -6,7 +6,7 @@ Before=sysinit.target
 [Service]
 User=root
 WorkingDirectory=/root
-ExecStart=/opt/pim/bin/automnt_sd_for_emmc_boot.sh /mnt/sd_cam
+ExecStart=/opt/pim/bin/automnt_sd_for_emmc_boot.sh
 
 [Install]
 WantedBy=multi-user.target

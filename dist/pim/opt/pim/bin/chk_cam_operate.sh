@@ -6,9 +6,9 @@ GetConfig_() {
     IFS=$'\t' read -r \
         srt_en file_chk_reboot time_rec_en file_check_delay < <(
         jq -r '[
-            (.VCM.srt_enable // true),
-            (.ETC.file_check_reboot // true),
-            (.VCM.file_time_check // true),
+            (.VCM.srt_enable // false),
+            (.ETC.file_check_reboot // false),
+            (.VCM.file_time_check // false),
             (.ETC.file_check_delay // 10)
         ] | @tsv' "$FILE_JSON_"
     )
