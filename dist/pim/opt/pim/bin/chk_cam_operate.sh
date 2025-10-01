@@ -87,8 +87,9 @@ if [ ! -n "$pid" ]; then
 fi
 }
 
-logger -p local0.emerg "[$KEY][$tag:$LINENO] cam-operate daemon start"
+logger -p local0.emerg "[$KEY][$tag:$LINENO] cam-operate daemon start : Booting"
 #/opt/pim/bin/automnt_sd_for_emmc_boot.sh /mnt/sd_cam &
+modprobe rtc_ds1307
 modprobe max9296
 modprobe imx8-media-dev
 #/opt/pim/bin/start_cam.sh 20

@@ -561,7 +561,7 @@ END
   #/opt/pim/bin/comment_line.sh "$Umask 0022" /etc/rsyslog.conf
   /opt/pim/bin/change_line.sh "#tmpfs                /tmp                 tmpfs      defaults,nosuid,nodev,size=1024M  0  0" "tmpfs                /tmp" /etc/fstab
   /opt/pim/bin/change_line.sh "max9296" "max9296" /etc/modules
-  /opt/pim/bin/change_line.sh "rts_ds1307" "rts_ds1307" /etc/modules
+  /opt/pim/bin/change_line.sh "rtc_ds1307" "rts_ds1307" /etc/modules
   /opt/pim/bin/change_line.sh "blacklist imx8-media-dev" "imx8-media-dev" /etc/modprobe.d/blacklist.conf
   /opt/pim/bin/change_line.sh "set tabsize 4" "set tabsize" /etc/nanorc
   /opt/pim/bin/change_line.sh "set tabstospaces" "set tabstospaces" /etc/nanorc
