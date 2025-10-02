@@ -129,6 +129,8 @@ startTime=""
 startTime_=""
 rec_time=0
 rec_min=0
+csi1_en=0
+csi2_en=0
 
 GetConfig
 
@@ -176,6 +178,11 @@ do
     fi
 
     if [[ "$cap_en" == *"$ENABLE_VAL"* && "$cap_record_en" != *"$ENABLE_VAL"* ]]; then
+        sleep 5
+        continue
+    fi
+
+    if [[ "$csi1_en" -eq 0 ]] && [[ "$csi2_en" -eq 0 ]]; then
         sleep 5
         continue
     fi
