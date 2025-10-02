@@ -45,7 +45,7 @@ while true; do
                     echo '1' > $mnt_flag
 		            mnt_state_=1
 		            mnt_cnt=0
-                elif [ $mnt_dev != $DEVICE ]; then
+                elif [ "$mnt_dev" != "$DEVICE" ]; then
 		            logger -p local0.err "[$KEY][$TAG:$LINENO] mnt_dev : $mnt_dev != $DEVICE"
                     mnt_state_=1
 		            #logger -p local0.err "[$KEY][$TAG:$LINENO] force unmount..."
@@ -70,7 +70,7 @@ while true; do
             else
                 mnt_cnt_=0
                 mnt_dev=`df | grep $mnt_folder | awk '{print $1}'`
-                if [ $mnt_dev != $DEVICE ]; then
+                if [ "$mnt_dev" != "$DEVICE" ]; then
                     logger -p local0.error "[$KEY][$TAG:$LINENO] mnt_dev : $mnt_dev != $DEVICE"
                     umount $mnt_folder
                     umount $DEVICE
