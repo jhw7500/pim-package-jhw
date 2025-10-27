@@ -39,6 +39,7 @@ start() {
             dbmon start
         fi
         
+        disco_react start
         iot_app=$(python3 /opt/cis/bin/getconfval.py iot_app)
         
         if [[ ${iot_app} == "siren" ]]; then
@@ -65,6 +66,7 @@ stop() {
         ctsiotbe stop
     fi
     fwdriver stop
+    disco_react start
     pim_gate stop
     cism stop
     dbmon stop

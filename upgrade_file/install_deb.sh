@@ -344,7 +344,8 @@ package_list=('schedule' \
           'paho-mqtt' \
           'numpy' \
           'dataclasses' \
-          'typing_extensions')
+          'typing_extensions' \
+          'scapy' )
 for package in "${package_list[@]}"
 do
   installed_pip=$(echo "$pip_list" | grep -E "${package}\s")

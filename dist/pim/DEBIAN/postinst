@@ -179,6 +179,9 @@ configure)
   ln -s /opt/cis/bin/longrun.sh /usr/local/bin/longrun
   rm -f /usr/local/bin/dbmon
   ln -s /opt/cis/bin/dbmon.sh /usr/local/bin/dbmon
+  rm -f /usr/local/bin/disco_react
+  ln -s /opt/cis/bin/disco_react.sh /usr/local/bin/disco_react
+
   #crontab -r
   #(crontab -l 2>/dev/null; echo "0 0 * * * /usr/sbin/logrotate -f /etc/logrotate.d/cis_logrotate") | crontab -
   #service cron restart
