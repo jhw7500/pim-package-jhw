@@ -71,10 +71,10 @@ END
 
     if [[ "$csi1_en" -eq 1 ]] && [[ "$csi2_en" -eq 1 ]]; then
         rst_time=35
-        app_delay=20
+        app_delay=22
     else
         rst_time=25
-        app_delay=10
+        app_delay=11
     fi
 }
 

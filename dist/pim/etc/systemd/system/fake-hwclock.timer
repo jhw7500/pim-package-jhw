@@ -1,0 +1,12 @@
+[Unit]
+Description=Periodic save of fake-hwclock
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=1min
+AccuracySec=1min
+Persistent=true
+Unit=fake-hwclock-save.service
+
+[Install]
+WantedBy=timers.target
