@@ -190,7 +190,18 @@ class UdpBroadcastResponder(object):
                 if self.mac != req_mac:
                     return None
             if "model" in req["filter"]:
-                if not fnmatchcase(self.model, req["filter"]["model"]):
+                if isinstance(req["filter"]["model"], str) :
+                    patterns = [req["filter"]["model"]]
+                elif isinstance(req["filter"]["model"], list) :
+                    patterns = req["filter"]["model"]
+                else :
+                    return None
+                is_pass = True
+                for pattern in patterns :
+                    if fnmatchcase(self.model, pattern):
+                        is_pass = False
+                        break
+                if is_pass:
                     return None
         ip = self.get_interface_info(self.iface)
         extra_info = self.get_extra_info()
@@ -291,7 +302,7 @@ class UdpBroadcastResponder(object):
 
     @staticmethod
     def get_interface_info(iface):
-        info = {'mode': None, 'ip': "", 'netmask': "", 'gw': ""}
+        info = {'mode': None, 'addr': "", 'netmask': "", 'gw': ""}
         yaml_path = f"/etc/netplan/{iface}.yaml"
         try:
             with open(yaml_path, 'r') as f:
@@ -310,7 +321,7 @@ class UdpBroadcastResponder(object):
             addrs = netifaces.ifaddresses(iface)
             if netifaces.AF_INET in addrs:
                 ipv4 = addrs[netifaces.AF_INET][0]
-                info['ip'] = ipv4.get('addr')
+                info['addr'] = ipv4.get('addr')
                 info['netmask'] = ipv4.get('netmask')
 
             gateways = netifaces.gateways()
@@ -329,10 +340,10 @@ class UdpBroadcastResponder(object):
         try:
             conf_list = glob.glob(r"/root/shared_v/edgeconf_*.json")
             if len(conf_list) == 1:
-                extra_info['device_id'] = get_jsonexpr_value(conf_list[0],"device_id")
-                extra_info['vhl_name'] = get_jsonexpr_value(conf_list[0],"VHL_CAM.vhl_name")
-                extra_info['floor'] = get_jsonexpr_value(conf_list[0],"VHL_CAM.floor")
-                extra_info['line'] = get_jsonexpr_value(conf_list[0],"VHL_CAM.line")
+                extra_info['device_id'] = get_jsonexpr_value(conf_list[0],"device_id") or ""
+                extra_info['vhl_name'] = get_jsonexpr_value(conf_list[0],"VHL_CAM.vhl_name") or ""
+                extra_info['floor'] = get_jsonexpr_value(conf_list[0],"VHL_CAM.floor") or ""
+                extra_info['line'] = get_jsonexpr_value(conf_list[0],"VHL_CAM.line") or ""
         except Exception as e:
             logger.warning(f"get_extra_info Error: {e}")
         return extra_info
