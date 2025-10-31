@@ -46,6 +46,26 @@ def get_jsonexpr_value(fpath, key) :
     else:
         None
 
+def get_global_ipv4_info(iface: str):
+    addrs = netifaces.ifaddresses(iface).get(netifaces.AF_INET, [])
+    for a in addrs:
+        ip = a.get('addr')
+        mask = a.get('netmask')
+        if not ip:
+            continue
+        ipobj = ipaddress.ip_address(ip)
+        if ipobj.is_loopback or ipobj.is_link_local:
+            continue
+        return (ip, mask)
+
+    for a in addrs:
+        ip = a.get('addr')
+        mask = a.get('netmask')
+        if ip and ipaddress.ip_address(ip).is_link_local:
+            return (ip, mask)
+
+    return None
+
 class MyLogger(logging.Logger):
     def __init__(self, name, level=logging.NOTSET):
         super().__init__(name, level)
@@ -126,7 +146,11 @@ class UdpBroadcastResponder(object):
         await asyncio.gather(self._worker, return_exceptions=True)
 
     def send(self, payload, meta):
-        if_addr = get_if_addr(self.iface)
+        iface_info = get_global_ipv4_info(self.iface)
+        if not iface_info:
+            logger.warning(f"{iface} No IPv4 address")
+            return
+        if_addr, _ = iface_info
         eth_frame = Ether(dst=meta["src_mac"], src=self.mac) / IP(dst=meta["src_ip"],src=if_addr) / UDP(dport=meta["src_port"],sport=self.port) / payload
         sendp(eth_frame, iface=self.iface, count=1, inter=0, verbose=False)
 
@@ -318,12 +342,11 @@ class UdpBroadcastResponder(object):
                 dhcp4 = iface_conf.get('dhcp4')
                 info['mode'] = "DHCP" if dhcp4 else "STATIC"
 
-            addrs = netifaces.ifaddresses(iface)
-            if netifaces.AF_INET in addrs:
-                ipv4 = addrs[netifaces.AF_INET][0]
-                info['addr'] = ipv4.get('addr')
-                info['netmask'] = ipv4.get('netmask')
-
+            iface_info = get_global_ipv4_info(iface)
+            if iface_info:
+                addr, mask = iface_info
+                info['addr'] = addr
+                info['netmask'] = mask
             gateways = netifaces.gateways()
             default_gw = gateways.get('default', {}).get(netifaces.AF_INET)
             if default_gw and default_gw[1] == iface:
