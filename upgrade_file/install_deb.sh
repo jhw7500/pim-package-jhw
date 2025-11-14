@@ -302,6 +302,16 @@ else
   echo '{"PROGRESS":'"$prog_per"',"MSG":"installed '"$package"'"}'
 fi
 
+package="rsync"
+if [ -z "$(dpkg -s $package 2> /dev/null)" ]; then
+  echo '{"PROGRESS":'"$prog_per"',"MSG":"install '"$package"'"}'
+  var='rsync_3.1.3-8ubuntu0.9_arm64.deb'
+  echo '{"PROGRESS":'"$prog_per"',"MSG":"dpkg -i '"$var"'"}'
+  dpkg -i "$var" > /dev/null 2> /dev/null
+else
+  echo '{"PROGRESS":'"$prog_per"',"MSG":"installed '"$package"'"}'
+fi
+
 # Check if the directory exists
 need_restart=0
 if [ ! -f "/etc/tmpfiles.d/redis.conf" ]; then
