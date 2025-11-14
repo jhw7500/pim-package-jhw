@@ -35,7 +35,7 @@ case "$1" in
     date "+%Y-%m-%d %H:%M:%S" > "$STATE_FILE".tmp
     mv -f "$STATE_FILE".tmp "$STATE_FILE"
     chmod 0644 "$STATE_FILE"
-    logger -p local0.notice "[$KEY][$tag:$LINENO] Saved time to $STATE_FILE"
+    logger -p local0.info "[$KEY][$tag:$LINENO] Saved time to $STATE_FILE"
     ;;
   *)
     echo "Usage: fake-hwclock {save|load}"

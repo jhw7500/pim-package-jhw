@@ -6,3 +6,5 @@ Before=shutdown.target
 [Service]
 Type=oneshot
 ExecStart=/opt/pim/bin/fake-hwclock.sh save
+StandardOutput=null
+StandardError=journal
