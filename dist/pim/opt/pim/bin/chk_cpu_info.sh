@@ -10,7 +10,7 @@ delay=60
 if [[ -n "$1" ]]; then
     delay=$1
 fi
-logger -p local0.notice "[$KEY][$tag:$LINENO] cpu info check delay : $delay"
+logger -p local0.info "[$KEY][$tag:$LINENO] cpu info check delay : $delay"
 
 CPU_TEMP_MAX0=0
 CPU_TEMP_MIN0=100

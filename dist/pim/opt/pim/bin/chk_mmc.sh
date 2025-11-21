@@ -39,7 +39,7 @@ if [[ ! -f "$VAR_FILE" ]]; then
 fi
 
 source "$VAR_FILE"
-logger -p local0.notice "[$KEY][$tag:$LINENO] Previous Mode : $MODE"
+logger -p local0.info "[$KEY][$tag:$LINENO] Previous Mode : $MODE"
 
 per=$(df -h |grep /dev/root | awk '{print $5}')
 per=$(echo $per | sed 's/%//')
@@ -90,16 +90,16 @@ elif (( per > max_per3 && MODE != 2)); then
 elif (( MODE != 1 )); then
     NEW_MODE=1
     logger -p local0.notice "[$KEY][$tag:$LINENO] New Mode : $NEW_MODE, emmc size $per% <= $max_per1%"
-    logger -p local0.notice "[$KEY][$tag:$LINENO] log level change (local0 : notice, local1 : all, syslog : all, kern : notice, journald : all)"
+    logger -p local0.notice "[$KEY][$tag:$LINENO] log level change (local0 : notice, local1 : all, syslog : all, kern : notice, journald : info)"
     /opt/pim/bin/change_line.sh "local0.notice;*.emerg       /var/log/cantops/local0.log" "/var/log/cantops/local0.log" /etc/rsyslog.d/50-default.conf
     /opt/pim/bin/change_line.sh "*.*;auth,authpriv,local0,kern.none     /var/log/cantops/syslog" "/var/log/cantops/syslog" /etc/rsyslog.d/50-default.conf
     /opt/pim/bin/change_line.sh "kern.notice         /var/log/cantops/kern.log" "/var/log/cantops/kern.log" /etc/rsyslog.d/50-default.conf
     /opt/pim/bin/change_line.sh "local1.*                /var/log/cantops/local1.log;outfmt2" "/var/log/cantops/local1.log;outfmt2" /etc/rsyslog.d/50-default.conf
-    /opt/pim/bin/change_line.sh "MaxLevelStore=debug" "MaxLevelStore" /etc/systemd/journald.conf
-    /opt/pim/bin/change_line.sh "MaxLevelSyslog=debug" "MaxLevelSyslog" /etc/systemd/journald.conf
-    /opt/pim/bin/change_line.sh "MaxLevelKMsg=debug" "MaxLevelKMsg" /etc/systemd/journald.conf
-    /opt/pim/bin/change_line.sh "MaxLevelConsole=debug" "MaxLevelConsole" /etc/systemd/journald.conf
-    /opt/pim/bin/change_line.sh "MaxLevelWall=debug" "MaxLevelWall" /etc/systemd/journald.conf
+    /opt/pim/bin/change_line.sh "MaxLevelStore=info" "MaxLevelStore" /etc/systemd/journald.conf
+    /opt/pim/bin/change_line.sh "MaxLevelSyslog=info" "MaxLevelSyslog" /etc/systemd/journald.conf
+    /opt/pim/bin/change_line.sh "MaxLevelKMsg=info" "MaxLevelKMsg" /etc/systemd/journald.conf
+    /opt/pim/bin/change_line.sh "MaxLevelConsole=info" "MaxLevelConsole" /etc/systemd/journald.conf
+    /opt/pim/bin/change_line.sh "MaxLevelWall=info" "MaxLevelWall" /etc/systemd/journald.conf
     systemctl restart rsyslog
     systemctl restart systemd-journald
     systemctl enable rsyslog

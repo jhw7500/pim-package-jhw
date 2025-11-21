@@ -8,6 +8,7 @@ STATE_FILE="/etc/fake-hwclock.data"
 
 case "$1" in
   load)
+:<<'END'
     for i in {1..5}; do
         if [ -e /sys/class/rtc/rtc0/name ] && grep -qi 'ds1307' /sys/class/rtc/rtc0/name; then
             if hwclock --hctosys 2>/dev/null; then
@@ -17,7 +18,7 @@ case "$1" in
         fi
     sleep 2
     done
-
+END
     if [ -f "$STATE_FILE" ]; then
         DATE_STR="$(cat "$STATE_FILE")"
         if [ -n "$DATE_STR" ]; then

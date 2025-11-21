@@ -1,7 +1,7 @@
 #!/bin/bash
 tag=$(basename "$0")
 KEY=RST
-logger -p local0.emerg "[$KEY][$tag:$LINENO] rc.local start"
+logger -p local0.info "[$KEY][$tag:$LINENO] rc.local start"
 #sd mount
 #/opt/pim/bin/automnt_sd_for_emmc_boot.sh /mnt/sd_cam &
 

@@ -138,7 +138,7 @@ if [ ! -d "$tmp_path" ]; then
     mkdir -p "$tmp_path"
 fi
 
-logger -p local0.notice "[$KEY][$tag:$LINENO] /opt/pim/bin/start_cam.sh $app_delay"
+logger -p local0.info "[$KEY][$tag:$LINENO] /opt/pim/bin/start_cam.sh $app_delay"
 /opt/pim/bin/start_cam.sh $app_delay
 #rst_time=60
 #StartApp start_cam.sh
@@ -146,11 +146,13 @@ logger -p local0.notice "[$KEY][$tag:$LINENO] /opt/pim/bin/start_cam.sh $app_del
 
 GetConfig_
 
-logger -p local0.notice "[$KEY][$tag:$LINENO] ch0:$cam_ch0, ch1:$cam_ch1, ch2:$cam_ch2, ch3:$cam_ch3, srt:$srt_en, time_rec_en:$time_rec_en, vhl_name:$vhl_name, rec_time:$rec_time, rst_time:$rst_time, cap_en:$cap_en, mnt_path:$mnt_path, tmp_path:$tmp_path, app_delay:$app_delay, muxer:$muxer, file_check_delay:$file_check_delay file_chk_reboot:$file_chk_reboot"
+logger -p local0.info "[$KEY][$tag:$LINENO] ch0:$cam_ch0, ch1:$cam_ch1, ch2:$cam_ch2, ch3:$cam_ch3, srt:$srt_en, time_rec_en:$time_rec_en, vhl_name:$vhl_name, rec_time:$rec_time, rst_time:$rst_time, cap_en:$cap_en, mnt_path:$mnt_path, tmp_path:$tmp_path, app_delay:$app_delay, muxer:$muxer, file_check_delay:$file_check_delay file_chk_reboot:$file_chk_reboot"
 
-if [ ! -f /dev/shm/sd_mount_flag ]; then
+if [ -f /dev/shm/sd_mount_flag ] && grep -qE '^(1|2)$' /dev/shm/sd_mount_flag; then
+    logger -p local0.info "[$KEY][$tag:$LINENO] sd flag is 1 or 2"
+else
     tmp_path="/dev/shm"
-    logger -p local0.err "[$KEY][$tag:$LINENO] sd_mount_flag not exist : tmp_path:${tmp_path}"
+    logger -p local0.err "[$KEY][$tag:$LINENO] invalid sd flag or not exist : tmp_path:${tmp_path}"
 fi
 
 while :
@@ -188,7 +190,7 @@ do
     fi
 
     #if [ -e "$FILE_" ]; then
-    startTime=$(cat $FILE_ 2>/dev/null| tr -d '\n')
+    startTime=$(cat $FILE_ 2>/dev/null| tr -d '\n' 2>/dev/null)
     #startTime=$(cat "$FILE_" 2>/dev/null | tr -d '\n' | sed 's/:[0-9][0-9]$/:00/')
 	if [ -n "$startTime"  ]; then
         timer=0
@@ -280,7 +282,7 @@ do
             fi
 
             if [ "$mnt_path" != "$tmp_path" ]; then
-                if [ -f /dev/shm/sd_mount_flag ];  then
+                if [ -f /dev/shm/sd_mount_flag ] && grep -qE '^(1|2)$' /dev/shm/sd_mount_flag; then     #if [ -f /dev/shm/sd_mount_flag ];  then
                     cmd="mv ${tmp_path}/${vhl_name}_$(date -d '1 min ago' '+%Y%m%d_%H%M')* ${mnt_path}/ 2>/dev/null"
                     logger -p local0.notice "[$KEY][$tag:$LINENO] $cmd"
                     eval "$cmd"
@@ -291,7 +293,7 @@ do
                         eval "$cmd"
                     fi
                 else
-                    logger -p local0.err "[$KEY][$tag:$LINENO] no sd mount...don't move ${tmp_path} to ${mnt_path}"
+                    logger -p local0.err "[$KEY][$tag:$LINENO] sd mount err...dont move ${tmp_path} to ${mnt_path}"
                     timestamp=$(date -d "${rec_min} min ago" '+%Y%m%d_%H%M')
                     cmd="rm ${tmp_path}/${vhl_name}_${timestamp}*"
                     logger -p local0.notice "[$KEY][$tag:$LINENO] $cmd"

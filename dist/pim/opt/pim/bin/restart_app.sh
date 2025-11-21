@@ -3,9 +3,9 @@
 tag=$(basename "$0")
 KEY=RST
 
-logger -p local0.notice "[$KEY][$tag:$LINENO] restart_app.sh start"
+logger -p local0.info "[$KEY][$tag:$LINENO] restart_app.sh start"
 
-list="ord vcm vsd"
+list="ord vcm"
 pid=0
 service=0
 cam_disable=0
@@ -60,7 +60,7 @@ while [ 1 ]; do
             if [ ! -n "$pid" ]; then
                 #echo "no" >/dev/null
                 #sleep 0.5
-                logger -p local0.notice "[$KEY][$tag:$LINENO] $service start"
+                logger -p local0.info "[$KEY][$tag:$LINENO] $service start"
                 $service &
             fi
         fi
@@ -73,10 +73,10 @@ while [ 1 ]; do
 
     pid=$(ps -ef |grep "$app" |grep -v grep |awk '{print $2}')
     if [ -z "$pid" ]; then
-        logger -p local0.notice "[$KEY][$tag:$LINENO] $app killed"
+        logger -p local0.info "[$KEY][$tag:$LINENO] $app killed"
         killall -s KILL PIMCAM
         #killall -s KILL BG_Check_for_pim.sh
-        logger -p local0.notice "[$KEY][$tag:$LINENO] start_cam.sh"
+        logger -p local0.info "[$KEY][$tag:$LINENO] start_cam.sh"
         /opt/pim/bin/start_cam.sh
     fi
 

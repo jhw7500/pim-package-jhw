@@ -50,7 +50,7 @@ else
 fi
 #END
 
-logger -p local0.notice "[$KEY][$tag:$LINENO] service : $list"
+logger -p local0.info "[$KEY][$tag:$LINENO] service : $list"
 :<<'END'
 for service in $list; do
 #logger -p local0.notice [$KEY][$tag:$LINENO] $service 
@@ -71,7 +71,7 @@ END
 for service in $list; do
     cnt=0
     if [ ! -z "$service" ]; then
-        logger -p local0.notice "[$KEY][$tag:$LINENO] kill $service"
+        logger -p local0.info "[$KEY][$tag:$LINENO] kill $service"
         pid=$(ps -ef |grep $service |grep -v grep |awk '{print $2}')
         #sudo pkill $service
         if [ -n "$pid" ]; then
@@ -105,12 +105,12 @@ for service in $list; do
                         #logger -p local0.err "[$KEY][$tag:$LINENO] killall $service"
                         #killall -s KILL $service
                         if [ "$cnt" -ge 15 ]; then
-                            logger -p local0.emerg "[$KEY][$tag:$LINENO] kill -9 $pid($service)"
+                            logger -p local0.notice "[$KEY][$tag:$LINENO] kill -9 $pid($service)"
                             kill -9 $pid
                         fi
                     else
                         logger -p local0.err "[$KEY][$tag:$LINENO] defunct : $defunct"
-                        logger -p local0.emerg "[$KEY][$tag:$LINENO] kill -9 $pid($service)"
+                        logger -p local0.notice "[$KEY][$tag:$LINENO] kill -9 $pid($service)"
                         kill -9 $pid
                     fi
                 fi

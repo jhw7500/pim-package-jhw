@@ -64,7 +64,7 @@ else
     rst_time=15
 fi
 
-logger -p local0.notice "[RST][$tag:$LINENO] module reset end"
+logger -p local0.notice "[RST][$tag:$LINENO] reset init_cam_flag"
 rm /tmp/init_cam_flag
 /opt/pim/bin/start_cam.sh $rst_time
 

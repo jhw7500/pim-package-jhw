@@ -2,7 +2,7 @@
 tag=$(basename "$0")
 KEY=DSK
 
-logger -p local0.notice "[$KEY][$tag:$LINENO] start"
+logger -p local0.info "[$KEY][$tag:$LINENO] start"
 #LOGFILE="disk_io_monitor.log"
 INTERVAL=3
 

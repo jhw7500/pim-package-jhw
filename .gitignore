@@ -5,3 +5,8 @@ dist/pim/usr/local/bin/vsd
 .vscode/
 boot_time.log
 test/bin/
+ord/ord
+vcm/vcm
+test/gstApp
+test/streamApp
+test/PIMCAM

@@ -17,7 +17,7 @@ fi
 }
 
 StartCam() {
-    logger -p local0.notice "[$key][$tag:$LINENO] set kill_flag"
+    logger -p local0.info "[$key][$tag:$LINENO] set kill_flag"
     touch /tmp/kill_flag
     delay=$2
     start_cmd="$1 -d $delay -m $3 &"
@@ -27,7 +27,6 @@ StartCam() {
             logger -p local0.err "[$key][$tag:$LINENO] init_cam.sh because gst_err"
             /opt/pim/bin/init_cam.sh
         else
-            logger -p local0.notice "[$key][$tag:$LINENO] $1 start"
             logger -p local0.emerg "[$key][$tag:$LINENO] cam app cmd : $start_cmd"
             rm /tmp/start_video_time
             eval "$start_cmd"
@@ -38,17 +37,17 @@ StartCam() {
 
     #cgexec -g memory:myappgroup $1 -d $2 -m $3 &
     if ! CheckApp "BG_Check_for_pim.sh"; then
-        logger -p local0.notice "[$key][$tag:$LINENO] BG_Check_for_pim.sh start"
+        logger -p local0.info "[$key][$tag:$LINENO] BG_Check_for_pim.sh start"
          /opt/pim/bin/BG_Check_for_pim.sh $2 & 2>/dev/null
     else
-        logger -p local0.notice "[$key][$tag:$LINENO] alreay start BG_Check_for_pim.sh"
+        logger -p local0.info "[$key][$tag:$LINENO] alreay start BG_Check_for_pim.sh"
     fi
 
     if ! CheckApp "restart_app.sh"; then
-        logger -p local0.notice "[$key][$tag:$LINENO] restart_app start"
+        logger -p local0.info "[$key][$tag:$LINENO] restart_app start"
         /opt/pim/bin/restart_app.sh &
     else
-        logger -p local0.notice "[$key][$tag:$LINENO] alreay start restart_app.sh"
+        logger -p local0.info "[$key][$tag:$LINENO] alreay start restart_app.sh"
     fi
     #/opt/pim/bin/cpulimit-all.sh --limit=320 --max-depth=5 -e $1 --watch-interval=1m &
 }
@@ -60,7 +59,7 @@ fi
 JSON_PREFIX=edgeconf_
 JOSN_SUFFIX=.json
 FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' | grep "${JSON_SUFFIX}$" | tail -1 | tr -d '\r\n')
-logger -p local0.notice "[$key][$tag:$LINENO] json_file : $FILE_JSON"
+logger -p local0.info "[$key][$tag:$LINENO] json_file : $FILE_JSON"
 GST_LOG_FILE="/var/log/cantops/gst/$app_$(date +'%Y%m%d_%H%M%S').log"
 
 #read app cap_en tmp_path < <(jq -r '[.VHL_CAM.app, .VHL_CAM.capture.enable, .VHL_CAM.tmp_path] | @tsv' $FILE_JSON)
@@ -100,7 +99,7 @@ export GST_DEBUG_DUMP_DOT_DIR=/var/log/cantops/dot/
 #export GST_DEBUG="GST_TRACER:7"
 #export GST_DEBUG_FILE=/tmp/gst-latency.log
 
-logger -p local0.notice "[$key][$tag:$LINENO] start app:$app delay:$delay file_path:$tmp_path"
+logger -p local0.info "[$key][$tag:$LINENO] start app:$app delay:$delay file_path:$tmp_path"
 if CheckApp "$app"; then
     logger -p local0.err "[$key][$tag:$LINENO] $app already existed"
     exit 0
