@@ -75,12 +75,19 @@ while true; do
                     mnt_folder=$(df | grep $DEVICE | awk '{print $6}')
                     if [ "$mnt_folder" == "$DIR" ]; then
                         if [ ! -z "$(mount |grep -i mount |awk '{print $6}' |grep -i '(rw,')" ]; then
+                            shopt -s nocaseglob
+                            FILES=("$DIR"/FSCK*)
+                            if [ -e "${FILES[0]}" ]; then
+                                rm -f "$DIR"/FSCK*
+                            fi
+                            shopt -u nocaseglob
+
                             logger -p local0.notice "[$KEY][$TAG:$LINENO] sd_mount_flag set"
                             echo '1' > $mnt_flag
 		                    mnt_state=1
 		                    mnt_cnt=0
                             fsck_cnt=0
-                            rm '$DIR/FSCK*'
+
                             daemon_name=cam-operate
                             status=$(systemctl is-enabled $daemon_name 2>/dev/null)
                             if [ "$status" == "enabled" ]; then
