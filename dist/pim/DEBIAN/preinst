@@ -19,17 +19,7 @@ systemctl stop cam-operate
 echo "stop sd-mount daemon"
 systemctl stop sd-mount
 
-pid=$(ps -ef |grep "automnt_sd_for_emmc_boot.sh" |grep -v grep |awk '{print $2}')
-if [ -n "$pid" ]; then
-    echo "automnt_sd_for_emmc_boot($pid) kill"
-    kill $pid
-fi
-
-pid=$(ps -ef |grep "restart_app.sh" |grep -v grep |awk '{print $2}')
-if [ -n "$pid" ]; then
-    echo "restart_app.sh($pid) kill"
-    kill $pid
-fi
+timedatectl set-timezone Asia/Seoul
 
 case "$1" in
 install)
