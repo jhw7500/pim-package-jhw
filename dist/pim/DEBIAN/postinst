@@ -27,64 +27,29 @@ case "$1" in
 configure)
   echo "postinst configure ($model)"
 
-  cp /opt/pim/etc/rsyslog.d/50-default.conf /etc/rsyslog.d/
-
-  if [ ! -f  /etc/rsyslog.conf ]; then
-    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/rsyslog.conf"
-    cp /opt/pim/etc/rsyslog.conf /etc/
+cpchk() {
+  if [ ! -f $2 ]; then
+    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp $1 $2"
+    cp $1 $2
   fi
+}
+  cp /opt/pim/etc/rsyslog.d/50-default.conf /etc/rsyslog.d/
+  cpchk /opt/pim/etc/rsyslog.conf /etc/rsyslog.conf
 
   systemctl restart rsyslog
 
-  if [ ! -f  /etc/sysctl.conf ]; then
-    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/sysctl.conf"
-    cp /opt/pim/etc/sysctl.conf /etc/
-  fi
-
-  if [ ! -f  /etc/modules ]; then
-    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/modules"
-    cp /opt/pim/etc/modules /etc/
-  fi
-
-  if [ ! -f  /etc/crontab ]; then
-    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/crontab"
-    cp /opt/pim/etc/crontab /etc/
-  fi
-
-  if [ ! -f  /etc/nanorc ]; then
-    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/nanorc"
-    cp /opt/pim/etc/nanorc /etc/
-  fi
-
-  if [ ! -f  /etc/vsftpd.conf ]; then
-    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/vsftpd.conf"
-    cp /opt/pim/etc/vsftpd.conf /etc/
-  fi
-
-  if [ ! -f  /etc/watchdog.conf ]; then
-    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/watchdog.conf"
-    cp /opt/pim/etc/watchdog.conf /etc/
-  fi
-
-  if [ ! -f  /etc/cron.daily/logrotate ]; then
-    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/cron.daily/logrotate"
-    cp /opt/pim/etc/cron.daily/logrotate /etc/cron.daily
-  fi
-
-  if [ ! -f  /etc/modprobe.d/blacklist.conf ]; then
-    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/modprobe.d/blacklist.conf"
-    cp /opt/pim/etc/modprobe.d/blacklist.conf /etc/modprobe.d/
-  fi
-
-  if [ ! -f  /etc/systemd/journald.conf ]; then
-    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/systemd/journald.conf"
-    cp /opt/pim/etc/systemd/journald.conf /etc/systemd/
-  fi
-
-  if [ ! -f  /etc/security/limits.conf ]; then
-    logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /etc/security/limits.conf"
-    cp /opt/pim/etc/security/limits.conf /etc/security/
-  fi
+  cpchk /opt/pim/etc/sysctl.conf /etc/sysctl.conf
+  cpchk /opt/pim/etc/modules /etc/modules
+  cpchk /opt/pim/etc/crontab /etc/crontab
+  cpchk /opt/pim/etc/nanorc /etc/nanorc
+  cpchk /opt/pim/etc/vsftpd.conf /etc/vsftpd.conf
+  cpchk /opt/pim/etc/watchdog.conf /etc/watchdog.conf
+  cpchk /opt/pim/etc/cron.daily/logrotate /etc/cron.daily/logrotate
+  cpchk /opt/pim/etc/modprobe.d/blacklist.conf /etc/modprobe.d/blacklist.conf
+  cpchk /opt/pim/etc/systemd/journald.conf /etc/systemd/journald.conf
+  cpchk /opt/pim/etc/security/limits.conf /etc/security/limits.conf
+  #cpchk /etc/defaultconf.json /root/shared_v/edgeconf_pim.json
+  #cpchk /opt/pim/config/ord_vcm_conf.json /root/shared_v/ord_vcm_conf.json
 
   backup_alias=""
   if [ "$model" == "cis-a2" ] || [ "$model" == "cis-a4" ] || [ "$model" == "cis-c2" ]; then
@@ -99,15 +64,9 @@ configure)
     echo "$backup_alias" >> /root/.bashrc
   fi
 
-  cp /opt/pim/etc/rsyslog.d/50-default.conf /etc/rsyslog.d/
   cp /opt/pim/etc/logrotate.d/rsyslog /etc/logrotate.d/
   cp /opt/pim/etc/samba/smb.conf /etc/samba/
   cp /opt/pim/driver/max9296.ko /lib/modules/$KERNEL_VERSION/kernel/drivers/media/i2c/
-  #cp /opt/pim/driver/compat.ko /lib/modules/$KERNEL_VERSION/updates/compat/
-  #cp /opt/pim/driver/mac80211.ko /lib/modules/$KERNEL_VERSION/updates/net/max80211/
-  #cp /opt/pim/driver/cfg80211.ko /lib/modules/$KERNEL_VERSION/updates/net/wireless/
-  #cp /opt/pim/driver/lrdmwl.ko  /lib/modules/$KERNEL_VERSION/updates/drivers/net/wireless/laird/lrdmwl/
-  #cp /opt/pim/driver/lrdmwl_pcie.ko  /lib/modules/$KERNEL_VERSION/updates/drivers/net/wireless/laird/lrdmwl/
   tar -xvf /opt/pim/driver/laird_backport.tar -C /lib/modules/$KERNEL_VERSION/updates/
   tar -xvf /opt/pim/firmware/laird_firmware.tar -C /lib/firmware/
 
@@ -213,6 +172,31 @@ configure)
     /opt/pim/bin/auto_fs_sizeup.sh 2 2
   fi
 
+customctl() {
+    target=$1
+    daemon_name=$2
+
+    status=$(systemctl is-enabled $daemon_name 2>/dev/null)
+
+    if [[ $status != ${target}* ]]; then
+        if [[ $target = enable* ]]; then
+            systemctl enable $daemon_name
+        elif [[ $target = disable* ]]; then
+            systemctl disable --now $daemon_name
+        elif [[ $target = maske* ]]; then
+            systemctl disable --now $daemon_name
+            systemctl mask $daemon_name
+        else
+            echo "$target is wrong status"
+            return 1
+        fi
+    fi
+
+    status=$(systemctl is-enabled $daemon_name 2>/dev/null)
+    echo "$daemon_name is $status"
+    #echo "[installer] installing..." > /dev/ttyGS0
+}
+
   # status=$(timedatectl |grep NTP|awk '{print $3}')
   # if [ "$status" == "inactive" ]; then
   #   echo "ntp is $status"
@@ -230,7 +214,6 @@ configure)
   # fi
 
   #timedatectl set-timezone Etc/UTC
-
   status=$(systemctl get-default 2>/dev/null)
   #default_mode="graphical.target"
   default_mode="multi-user.target"
@@ -242,194 +225,31 @@ configure)
   fi
 
 #  systemctl set-default multi-user.target
+  #customctl disable connman
+  customctl disable hciattach
+  customctl disable imx8-isp
+  customctl disable fake-hwclock.timer
+  customctl disable journald-snapshot.timer
+  customctl disable connman-wait-online
+  customctl disable NetworkManager
+  customctl disable nfs-client.target
+  customctl mask systemd-networkd-wait-online
 
-  daemon_name=imx8-isp
-  status=$(systemctl is-enabled $daemon_name 2>/dev/null)
-  if [ "$status" == "disabled" ]; then
-    echo "$daemon_name is $status"
-  else
-    echo "disable imx8-isp"
-    systemctl disable $daemon_name
-  fi
-
-#  systemctl restart cron
-
-:<<'END'
-  daemon_name=connman
-  status=$(systemctl is-enabled $daemon_name 2>/dev/null)
-  if [ "$status" == "disabled" ]; then
-    echo "$daemon_name is $status"
-  else
-    echo "disable $daemon_name"
-    systemctl disable $daemon_name
-  fi
-END
-
-  daemon_name=connman-wait-online
-  status=$(systemctl is-enabled $daemon_name 2>/dev/null)
-  if [ "$status" == "disabled" ]; then
-    echo "$daemon_name is $status"
-  else
-    echo "disable $daemon_name"
-    systemctl disable $daemon_name
-  fi
-
-  daemon_name=NetworkManager
-  status=$(systemctl is-enabled $daemon_name 2>/dev/null)
-  if [ "$status" == "disabled" ]; then
-    echo "$daemon_name is $status"
-  else
-    echo "disable $daemon_name"
-    systemctl disable $daemon_name
-  fi
-
-  daemon_name=systemd-networkd-wait-online
-  status=$(systemctl is-enabled $daemon_name 2>/dev/null)
-  if [ "$status" == "masked" ]; then
-    echo "$daemon_name is mask"
-  else
-    echo "disable $daemon_name"
-    systemctl disable $daemon_name
-    echo "mask $daemon_name"
-    systemctl mask $daemon_name
-  fi
-
-  daemon_name=nfs-client.target
-  status=$(systemctl is-enabled $daemon_name 2>/dev/null)
-  if [ "$status" == "disabled" ]; then
-    echo "$daemon_name is $status"
-  else
-    echo "disable nfs"
-    systemctl disable $daemon_name
-  fi
+  customctl enable cam-operate
+  customctl enable vsd-operate
+  customctl enable run-watchdog-custom
+  customctl enable pre-reboot-custom
+  customctl enable ethtool-operate
+  customctl enable sd-mount
+  customctl enable fake-hwclock
 
   ctsiotbe_enable=$(python3 /opt/cis/bin/getconfval.py ctsiotbe_enable)
   if [ "$model" == "cis-a2" ] || [ "$model" == "cis-a4" ] || [ "$model" == "cis-c2" ] || [ ${ctsiotbe_enable} == "True" ]; then
-    daemon_name=docker
-    status=$(systemctl is-enabled $daemon_name 2>/dev/null)
-    if [ "$status" == "disabled" ]; then
-      echo "enable docker"
-      systemctl enable $daemon_name
-    else
-      echo "$daemon_name is $status"
-    fi
-
-    daemon_name=docker.socket
-    status=$(systemctl is-enabled $daemon_name 2>/dev/null)
-    if [ "$status" == "disabled" ]; then
-      echo "enable docker.socket"
-      systemctl enable $daemon_name
-    else
-      echo "$daemon_name is $status"
-    fi
+    customctl enable docker
+    customctl enable docker.socket
   else
-    daemon_name=docker
-    status=$(systemctl is-enabled $daemon_name 2>/dev/null)
-    if [ "$status" == "disabled" ]; then
-      echo "$daemon_name is $status"
-    else
-      echo "disable docker"
-      systemctl disable $daemon_name
-    fi
-
-    daemon_name=docker.socket
-    status=$(systemctl is-enabled $daemon_name 2>/dev/null)
-    if [ "$status" == "disabled" ]; then
-      echo "$daemon_name is $status"
-    else
-      echo "disable $daemon_name"
-      systemctl disable $daemon_name
-    fi
-  fi
-
-  daemon_name=cam-operate
-  status=$(systemctl is-enabled $daemon_name 2>/dev/null)
-  if [ "$status" == "enabled" ]; then
-    echo "$daemon_name is $status"
-  else
-    echo "enable $daemon_name"
-    systemctl enable $daemon_name
-  fi
-
-  daemon_name=vsd-operate
-  status=$(systemctl is-enabled $daemon_name 2>/dev/null)
-  if [ "$status" == "enabled" ]; then
-    echo "$daemon_name is $status"
-  else
-    echo "enable $daemon_name"
-    systemctl enable $daemon_name
-  fi
-
-  daemon_name=run-watchdog-custom
-  status=$(systemctl is-enabled $daemon_name 2>/dev/null)
-  if [ "$status" == "enabled" ]; then
-    echo "$daemon_name is $status"
-  else
-    echo "enable $daemon_name"
-    systemctl enable $daemon_name
-  fi
-
-  daemon_name=pre-reboot-custom
-  status=$(systemctl is-enabled $daemon_name 2>/dev/null)
-  if [ "$status" == "enabled" ]; then
-    echo "$daemon_name is $status"
-  else
-    echo "enable $daemon_name"
-    systemctl enable $daemon_name
-  fi
-
-  daemon_name=hciattach
-  status=$(systemctl is-enable $daemon_name 2>/dev/null)
-  if [ "$status" == "disabled" ]; then
-    echo "$daemon_name is $status"
-  else
-    echo "disable $daemon_name"
-    systemctl disable $daemon_name
-  fi
-
-  daemon_name=ethtool-operate
-  status=$(systemctl is-enabled $daemon_name 2>/dev/null)
-  if [ "$status" == "enabled" ]; then
-    echo "$daemon_name is $status"
-  else
-    echo "enable $daemon_name"
-    systemctl enable $daemon_name
-  fi
-
-  daemon_name=sd-mount
-  status=$(systemctl is-enabled $daemon_name 2>/dev/null)
-  if [ "$status" == "enabled" ]; then
-    echo "$daemon_name is $status"
-  else
-    echo "enable $daemon_name"
-    systemctl enable $daemon_name
-  fi
-
-  daemon_name=fake-hwclock.service
-  status=$(systemctl is-enabled $daemon_name 2>/dev/null)
-  if [ "$status" == "enabled" ]; then
-    echo "$daemon_name is $status"
-  else
-    echo "enable $daemon_name"
-    systemctl enable $daemon_name
-  fi
-
-  daemon_name=fake-hwclock.timer
-  status=$(systemctl is-enabled $daemon_name 2>/dev/null)
-  if [ "$status" == "enabled" ]; then
-    echo "$daemon_name is $status"
-  else
-    echo "enable $daemon_name"
-    systemctl enable $daemon_name
-  fi
-
-  daemon_name=journald-snapshot.timer
-  status=$(systemctl is-enabled $daemon_name 2>/dev/null)
-  if [ "$status" == "enabled" ]; then
-    echo "$daemon_name is $status"
-  else
-    echo "enable $daemon_name"
-    systemctl enable $daemon_name
+    customctl disable docker
+    customctl disable docker.socket
   fi
 
   echo "check directory"
@@ -522,27 +342,6 @@ fi
     cp /opt/pim/config/ord_vcm_conf.json /root/shared_v/ord_vcm_conf.json
   fi
 
-  echo "check rsyslog"
-  cp /opt/pim/etc/rsyslog.d/50-default.conf /etc/rsyslog.d/
-
-:<<'END'
-  if [ ! -f  /etc/netplan/eth0.yaml ]; then
-        logger -s -p local0.notice "[$KEY][$tag:$LINENO] apply default netplan eth0"
-        cp /opt/pim/config/eth0.yaml /etc/netplan/
-  fi
-
-  if [ ! -f  /etc/netplan/eth1.yaml ]; then
-        logger -s -p local0.notice "[$KEY][$tag:$LINENO] apply default netplan eth1"
-        cp /opt/pim/config/eth1.yaml /etc/netplan/
-  fi
-
-  if [ ! -f /etc/netplan/wlp1s0.yaml ]; then 
-        logger -s -p local0.notice "[$KEY][$tag:$LINENO] apply default netplan wlp1s0"
-        cp /opt/pim/config/wlp1s0.yaml /etc/netplan/
- fi
-END
-
-
   echo "update dtb"
   mount /dev/mmcblk2p1 /root/boot
   cp /opt/pim/boot/imx8mp*.dtb /root/boot/
@@ -599,6 +398,8 @@ END
   /opt/pim/bin/change_line.sh "30 *   * * *   root    /opt/pim/bin/chk_mmc.sh" "/opt/pim/bin/chk_mmc.sh" /etc/crontab
   /opt/pim/bin/change_line.sh "00 12   * * *   root    hwclock --systohc" "hwclock --systohc" /etc/crontab
   /opt/pim/bin/change_line.sh "15 *   * * *   root    /opt/pim/bin/log_manage.sh /var/log/cantops 100 10" "/opt/pim/bin/log_manage.sh /var/log/cantops" /etc/crontab
+  /opt/pim/bin/change_line.sh "* *    * * *   root    /opt/pim/bin/fake-hwclock.sh save" "/opt/pim/bin/fake-hwclock.sh save" /etc/crontab
+  /opt/pim/bin/change_line.sh "* *    * * *   root    /opt/pim/bin/journald_snapshot.sh" "/opt/pim/bin/journald_snapshot.sh" /etc/crontab
   /opt/pim/bin/change_line.sh "write_enable=YES" "write_enable=" /etc/vsftpd.conf
   /opt/pim/bin/change_line.sh "local_umask=022" "local_umask=" /etc/vsftpd.conf
   /opt/pim/bin/change_line.sh "idle_session_timeout=0" "idle_session_timeout=" /etc/vsftpd.conf
@@ -613,11 +414,13 @@ END
   /opt/pim/bin/change_line.sh "net.core.wmem_max=2621440" "net.core.wmem_max" /etc/sysctl.conf
   /opt/pim/bin/change_line.sh "net.core.rmem_max=2621440" "net.core.rmem_max" /etc/sysctl.conf
   /opt/pim/bin/change_line.sh "Storage=volatile" "Storage=" /etc/systemd/journald.conf
-  /opt/pim/bin/change_line.sh "RuntimeMaxUse=256M" "RuntimeMaxUse=" /etc/systemd/journald.conf
-  /opt/pim/bin/change_line.sh "RuntimeKeepFree=32M" "RuntimeKeepFree=" /etc/systemd/journald.conf
+  /opt/pim/bin/change_line.sh "RuntimeMaxUse=64M" "RuntimeMaxUse=" /etc/systemd/journald.conf
+  /opt/pim/bin/change_line.sh "RuntimeKeepFree=8M" "RuntimeKeepFree=" /etc/systemd/journald.conf
   /opt/pim/bin/change_line.sh "SystemMaxUse=5000M" "SystemMaxUse=" /etc/systemd/journald.conf
   /opt/pim/bin/change_line.sh "SystemKeepFree=5000M" "SystemKeepFree=" /etc/systemd/journald.conf
   /opt/pim/bin/change_line.sh "ForwardToWall=no" "ForwardToWall=" /etc/systemd/journald.conf
+  /opt/pim/bin/change_line.sh "SyncIntervalSec=1m" "SyncIntervalSec=" /etc/systemd/journald.conf
+  /opt/pim/bin/change_line.sh "MaxFileSec=12h" "MaxFileSec=" /etc/systemd/journald.conf
   /opt/pim/bin/change_line.sh "#RuntimeWatchdogSec=1min" "RuntimeWatchdogSec=" /etc/systemd/system.conf
   /opt/pim/bin/change_line.sh "#RebootWatchdogSec=1min" "RebootWatchdogSec=" /etc/systemd/system.conf
   /opt/pim/bin/change_line.sh "#ShutdownWatchdogSec=1min" "ShutdownWatchdogSec=" /etc/systemd/system.conf
