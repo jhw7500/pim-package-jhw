@@ -67,3 +67,4 @@ Description: PIM application
 0.5.5 : gstApp(1.1), sd-mount.service, sc16is7xx_ext
 0.5.6 : disco_react, streamApp for cam rotate add fake-hwclock for rtc fault
 0.5.6.1 : pim_gate vl_vlb, avs
+0.5.7 : recovery for sd readonly, dynamic ext4, decrease log, fake-hwclock, journald-snapshot
