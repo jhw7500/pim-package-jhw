@@ -17,7 +17,7 @@ fn_LogWrite() {
 
 start() {
     pid=`ps -ef | grep 'automnt_sd\b' | grep -v 'grep' | grep -v '/usr/local/bin/automnt' | awk '{print $2}'`
-    if [ -z $pid ]
+    if [ -z "$pid" ]
     then
         /opt/cis/bin/automnt_sd 2> /dev/null &
         sleep .5
@@ -43,7 +43,7 @@ start() {
 
 stop() {
     pid=`ps -ef | grep 'automnt_sd\b' | grep -v 'grep' | grep -v '/usr/local/bin/automnt' | awk '{print $2}'`
-    if [ -z $pid ]
+    if [ -z "$pid" ]
     then
         echo "automnt is not running"
     else

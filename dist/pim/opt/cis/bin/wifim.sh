@@ -15,7 +15,7 @@ fn_LogWrite() {
 
 start() {
     pid=`ps -ef | grep 'wifilog' | grep -v 'grep' | grep -v '/usr/local/bin/wifim' | awk '{print $2}'`
-    if [ -z $pid ]
+    if [ -z "$pid" ]
     then
         /opt/cis/bin/wifilog.sh 2> /dev/null &
         for ((i=0;i<10;i++)); do
@@ -39,7 +39,7 @@ start() {
     fi
 
     pid=`ps -ef | grep 'wifi_checker' | grep -v 'grep' | grep -v '/usr/local/bin/wifim' | awk '{print $2}'`
-    if [ -z $pid ]
+    if [ -z "$pid" ]
     then
         /opt/cis/bin/wifi_checker.sh 2> /dev/null &
         for ((i=0;i<10;i++)); do
@@ -65,7 +65,7 @@ start() {
 
 stop() {
     pid=`ps -ef | grep 'wifilog' | grep -v 'grep' | grep -v '/usr/local/bin/wifim' | awk '{print $2}'`
-    if [ -z $pid ]
+    if [ -z "$pid" ]
     then
         echo "wifilog is not running"
     else
@@ -87,7 +87,7 @@ stop() {
     fi
 
     pid=`ps -ef | grep 'wifi_checker' | grep -v 'grep' | grep -v '/usr/local/bin/wifim' | awk '{print $2}'`
-    if [ -z $pid ]
+    if [ -z "$pid" ]
     then
         echo "wifi_checker is not running"
     else

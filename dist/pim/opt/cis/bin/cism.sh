@@ -11,7 +11,7 @@
 
 start() {
     pid=`ps -ef | grep 'cism' | grep -v 'grep' | grep -v '/usr/local/bin/cism' | awk '{print $2}'`    
-    if [ -z $pid ]
+    if [ -z "$pid" ]
     then
         /opt/cis/bin/cism > /dev/null &
         for ((i=0;i<10;i++)); do
@@ -36,7 +36,7 @@ start() {
 
 stop() {
     pid=`ps -ef | grep 'cism' | grep -v 'grep' | grep -v '/usr/local/bin/cism' | awk '{print $2}'`
-    if [ -z $pid ]
+    if [ -z "$pid" ]
     then
         echo "cism is not running"
     else

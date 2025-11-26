@@ -9,10 +9,10 @@
 # Short-Description: 
 ### END INIT INFO
 
-_dev_wlan=$(python3 /opt/cis/bin/getconfval.py dev_wlan | tr -d '\r\n')
-_daughterboard_type=$(python3 /opt/cis/bin/getconfval.py daughterboard_type | tr -d '\r\n')
-
 start() {
+    _dev_wlan=$(python3 /opt/cis/bin/getconfval.py dev_wlan | tr -d '\r\n')
+    _daughterboard_type=$(python3 /opt/cis/bin/getconfval.py daughterboard_type | tr -d '\r\n')
+
     rm /etc/netplan/${_dev_wlan}.yaml > /dev/null 2>&1
     /opt/cis/bin/automnt.sh start
     /opt/cis/bin/init_daughter_gpio.sh
@@ -42,10 +42,7 @@ start() {
         disco_react start
         iot_app=$(python3 /opt/cis/bin/getconfval.py iot_app)
         
-        if [[ ${iot_app} == "siren" ]]; then
-            /opt/cis/bin/binwork_ramdisk.sh create > /dev/null 2> /dev/null
-        	siren start
-        elif [[ ${iot_app} == "pim_gate" ]]; then
+        if [[ ${iot_app} == "pim_gate" ]]; then
             pim_gate start
 
             ctsiotbe_enable=$(python3 /opt/cis/bin/getconfval.py ctsiotbe_enable)
@@ -66,7 +63,7 @@ stop() {
         ctsiotbe stop
     fi
     fwdriver stop
-    disco_react start
+    disco_react stop
     pim_gate stop
     cism stop
     dbmon stop

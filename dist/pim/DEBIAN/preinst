@@ -19,7 +19,7 @@ systemctl stop cam-operate
 echo "stop sd-mount daemon"
 systemctl stop sd-mount
 
-timedatectl set-timezone Asia/Seoul
+#timedatectl set-timezone Asia/Seoul
 
 case "$1" in
 install)

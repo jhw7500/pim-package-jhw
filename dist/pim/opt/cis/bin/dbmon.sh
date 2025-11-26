@@ -11,7 +11,7 @@
 
 start() {
     pid=`ps -ef | grep 'db_monitor' | grep -v 'grep' | grep -v '/usr/local/bin/dbmon' | awk '{print $2}'`
-    if [ -z $pid ]
+    if [ -z "$pid" ]
     then
         /opt/cis/bin/db_monitor.sh 2> /dev/null &
         for ((i=0;i<10;i++)); do
@@ -36,7 +36,7 @@ start() {
 
 stop() {
     pid=`ps -ef | grep 'db_monitor' | grep -v 'grep' | grep -v '/usr/local/bin/dbmon' | awk '{print $2}'`
-    if [ -z $pid ]
+    if [ -z "$pid" ]
     then
         echo "db_monitor is not running"
     else

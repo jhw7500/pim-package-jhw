@@ -98,7 +98,7 @@ with open("/tmp/eth0.yaml", "w") as f :
         f.write("      dhcp4: no\n")
     else :
         f.write("      dhcp4: yes\n")
-        f.write("      link-local: [ipv4]\n")
+        #f.write("      link-local: [ipv4]\n")
 
     if sel_interface is not None and sel_interface != 'ETH0' :
         f.write("      dhcp4-overrides:\n")
@@ -132,7 +132,7 @@ with open("/tmp/eth1.yaml", "w") as f :
         f.write("      dhcp4: no\n")
     else :
         f.write("      dhcp4: yes\n")
-        f.write("      link-local: [ipv4]\n")
+        #f.write("      link-local: [ipv4]\n")
     
     if sel_interface is not None and sel_interface != 'ETH1' :
         f.write("      dhcp4-overrides:\n")
