@@ -59,7 +59,7 @@ while true; do
                             mount_cmd="mount -t vfat -o noatime,nodiratime,flush,dirsync,utf8=1,shortname=mixed $DEVICE $DIR"
                             ;;
                         ext4)
-                            mount_cmd="mount -t ext4 -o noatime,nodiratime,commit=60,data=writeback,barrier=1,errors=remount-ro $DEVICE $DIR"
+                            mount_cmd="mount -t ext4 -o noatime,nodiratime,commit=10,data=ordered,barrier=1,errors=remount-ro $DEVICE $DIR"
                             ;;
                         exfat)
                             mount_cmd="mount -t exfat -o noatime,nodiratime $DEVICE $DIR"
