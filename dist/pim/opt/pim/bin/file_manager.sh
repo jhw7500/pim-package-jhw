@@ -36,7 +36,23 @@ else
     #cnt_cmd="ls -lt $FILE_PATH | grep ^d | wc -l"
 fi
 
-logger -p local0.notice "[$tag:$LINENO] path : $INPUT_PATH, key : $KEY, $limit cnt : $LIMIT, limit size : $SIZE MB"
+#logger -p local0.notice "[$tag:$LINENO] path : $INPUT_PATH, key : $KEY, $limit cnt : $LIMIT, limit size : $SIZE MB"
+
+while :; do
+    current_size=$(du -sb $INPUT_PATH | awk '{print $1}')
+    if [ $current_size -gt $MAX_SIZE ]; then
+        #logger -p local0.info "[$tag:$LINENO] $INPUT_PATH dir $current_size byte over $MAX_SIZE byte!"
+        oldest_file=$(ls -tr $FILE_PATH | head -n 1)
+        #echo "Deleting oldest log file: $oldest_file"
+        logger -p local0.notice "[$tag:$LINENO] $FILE_PATH size ($current_size > $MAX_SIZE) :deleting $oldest_file"
+        rm -rf "$oldest_file"
+        #current_size=$(du -sb $INPUT_PATH | awk '{print $1}')
+        #logger -p local0.info "[$tag:$LINENO] $INPUT_PATH dir size : $current_size byte"
+        sleep 0.1
+        continue
+    fi
+    break
+done
 
 while :; do
     #echo "file_path:$FILE_PATH, file_cnt:$cnt"
@@ -57,18 +73,3 @@ while :; do
     break
 done
 
-while :; do
-    current_size=$(du -sb $INPUT_PATH | awk '{print $1}')
-    if [ $current_size -gt $MAX_SIZE ]; then
-        #logger -p local0.info "[$tag:$LINENO] $INPUT_PATH dir $current_size byte over $MAX_SIZE byte!"
-        oldest_file=$(ls -tr $FILE_PATH | head -n 1)
-        #echo "Deleting oldest log file: $oldest_file"
-        logger -p local0.notice "[$tag:$LINENO] $FILE_PATH size ($current_size > $MAX_SIZE) :deleting $oldest_file"
-        rm -rf "$oldest_file"
-        #current_size=$(du -sb $INPUT_PATH | awk '{print $1}')
-        #logger -p local0.info "[$tag:$LINENO] $INPUT_PATH dir size : $current_size byte"
-        sleep 0.1
-        continue
-    fi
-    break
-done
