@@ -26,7 +26,7 @@ if [[ $ETH1_PING != *"$_success_value"* ]]; then
 	err_count=$(cat ${FLAG_PATH}/$ERR_CNT)	
 	if [[ $(echo "$err_count > $MAX_CNT" | bc) -eq 1 ]]; then
 		echo "${timestamp} ETH1 PING ERR" >> ${FLAG_PATH}/err_eth1.log
-		logger -p local0.error [CHK][$tag:$LINENO] ETH1 199.10.100.20 PING ERR 3TIME	
+		logger -p local0.info [CHK][$tag:$LINENO] ETH1 199.10.100.20 PING ERR 3TIME	
 		echo $MAX_CNT > ${FLAG_PATH}/"$ERR_CNT"
 	fi
 else	

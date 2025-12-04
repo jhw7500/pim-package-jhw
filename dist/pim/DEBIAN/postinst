@@ -183,7 +183,7 @@ customctl() {
             systemctl enable $daemon_name
         elif [[ $target = disable* ]]; then
             systemctl disable --now $daemon_name
-        elif [[ $target = maske* ]]; then
+        elif [[ $target = mask* ]]; then
             systemctl disable --now $daemon_name
             systemctl mask $daemon_name
         else
@@ -224,8 +224,11 @@ customctl() {
     systemctl set-default "$default_mode"
   fi
 
-#  systemctl set-default multi-user.target
+  #systemctl set-default multi-user.target
   #customctl disable connman
+
+  customctl mask systemd-networkd-wait-online
+
   customctl disable hciattach
   customctl disable imx8-isp
   customctl disable fake-hwclock.timer
@@ -233,7 +236,6 @@ customctl() {
   customctl disable connman-wait-online
   customctl disable NetworkManager
   customctl disable nfs-client.target
-  customctl mask systemd-networkd-wait-online
 
   customctl enable cam-operate
   customctl enable vsd-operate
@@ -399,7 +401,8 @@ fi
   /opt/pim/bin/change_line.sh "00 12   * * *   root    hwclock --systohc" "hwclock --systohc" /etc/crontab
   /opt/pim/bin/change_line.sh "15 *   * * *   root    /opt/pim/bin/log_manage.sh /var/log/cantops 100 10" "/opt/pim/bin/log_manage.sh /var/log/cantops" /etc/crontab
   /opt/pim/bin/change_line.sh "* *    * * *   root    /opt/pim/bin/fake-hwclock.sh save" "/opt/pim/bin/fake-hwclock.sh save" /etc/crontab
-  /opt/pim/bin/change_line.sh "* *    * * *   root    /opt/pim/bin/journald_snapshot.sh" "/opt/pim/bin/journald_snapshot.sh" /etc/crontab
+  /opt/pim/bin/change_line.sh "* *    * * *   root    /opt/pim/bin/journald-snapshot.sh" "/opt/pim/bin/journald" /etc/crontab
+  /opt/pim/bin/change_line.sh "* *    * * *   root    /opt/pim/bin/file_manager.sh /dev/shm 20 1800" "/opt/pim/bin/file_manager.sh /dev/shm" /etc/crontab
   /opt/pim/bin/change_line.sh "write_enable=YES" "write_enable=" /etc/vsftpd.conf
   /opt/pim/bin/change_line.sh "local_umask=022" "local_umask=" /etc/vsftpd.conf
   /opt/pim/bin/change_line.sh "idle_session_timeout=0" "idle_session_timeout=" /etc/vsftpd.conf
@@ -414,8 +417,8 @@ fi
   /opt/pim/bin/change_line.sh "net.core.wmem_max=2621440" "net.core.wmem_max" /etc/sysctl.conf
   /opt/pim/bin/change_line.sh "net.core.rmem_max=2621440" "net.core.rmem_max" /etc/sysctl.conf
   /opt/pim/bin/change_line.sh "Storage=volatile" "Storage=" /etc/systemd/journald.conf
-  /opt/pim/bin/change_line.sh "RuntimeMaxUse=32M" "RuntimeMaxUse=" /etc/systemd/journald.conf
-  /opt/pim/bin/change_line.sh "RuntimeKeepFree=4M" "RuntimeKeepFree=" /etc/systemd/journald.conf
+  /opt/pim/bin/change_line.sh "RuntimeMaxUse=2M" "RuntimeMaxUse=" /etc/systemd/journald.conf
+  /opt/pim/bin/change_line.sh "RuntimeKeepFree=1M" "RuntimeKeepFree=" /etc/systemd/journald.conf
   /opt/pim/bin/change_line.sh "SystemMaxUse=5000M" "SystemMaxUse=" /etc/systemd/journald.conf
   /opt/pim/bin/change_line.sh "SystemKeepFree=5000M" "SystemKeepFree=" /etc/systemd/journald.conf
   /opt/pim/bin/change_line.sh "ForwardToWall=no" "ForwardToWall=" /etc/systemd/journald.conf

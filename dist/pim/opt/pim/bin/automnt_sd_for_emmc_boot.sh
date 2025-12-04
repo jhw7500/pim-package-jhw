@@ -20,9 +20,20 @@ flock -n 200 || exit 1
 #    logger -p local0.notice "[$KEY][$TAG:$LINENO] $line"
 #done
 
-#logger -p local0.notice "[$KEY][$TAG:$LINENO] mount folder clean : rm -rf $1"
 #umount $DEVICE
 #rm -rf $mnt_folder
+
+JSON_PREFIX=edgeconf_
+JOSN_SUFFIX=.json
+FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' | grep "${JSON_SUFFIX}$" | tail -1 | tr -d '\r\n')
+tmp_path=$(jq -r '.VHL_CAM.tmp_path' "$FILE_JSON")
+
+FSTYPE="$(blkid -o value -s TYPE "$DEVICE" 2>/dev/null)"
+if [ -z "$FSTYPE" ]; then
+    FSTYPE="$(lsblk -no FSTYPE "$DEVICE" 2>/dev/null)"
+fi
+
+logger -p local0.notice "[$KEY][$TAG:$LINENO] dev : $DEVICE, dir : $DIR, fstype : $FSTYPE, tmp_path : $tmp_path"
 
 mount_cmd="mount -t vfat -o noatime,nodiratime,flush,dirsync,utf8=1,shortname=mixed $DEVICE $DIR"
 fsck_cmd='fsck.vfat -vaw "$DEVICE" 2>&1 | sed -u "s/^/[${KEY}][${TAG}:${LINENO}] /" | logger -p local0.error'
@@ -31,6 +42,7 @@ fsck_cmd='fsck.vfat -vaw "$DEVICE" 2>&1 | sed -u "s/^/[${KEY}][${TAG}:${LINENO}]
 #fsck_cmd='fsck.ext4 -vyfp "$DEVICE" 2>&1 | sed -u "s/^/[${KEY}][${TAG}:${LINENO}] /" | logger -p local0.error'
 
 while true; do
+    #logger -p local0.notice "[$KEY][$TAG:$LINENO] mnt_state : $mnt_state, mntdev:$mnt_dev, device:$DEVICE"
     case $mnt_state in
         0)
             #logger -p local0.info "[$KEY][$TAG:$LINENO] case 0"
@@ -65,7 +77,8 @@ while true; do
                             mount_cmd="mount -t exfat -o noatime,nodiratime $DEVICE $DIR"
                             ;;
                         *)
-                            logger -p local0.emerg "[$KEY][$TAG:$LINENO] $DEVICE fstype is wrong! : fallback"
+                            logger -p local0.emerg "[$KEY][$TAG:$LINENO] $DEVICE fstype is undefined : $FSTYPE"
+                            mount_cmd="mount $DEVICE $DIR"
                             ;;
                     esac
 
@@ -102,6 +115,7 @@ while true; do
                         fi
                     else
                         logger -p local0.err "[$KEY][$TAG:$LINENO] sd mount failed"
+                        mnt_state=1
                     fi
                 elif [ "$mnt_dev" != "$DEVICE" ]; then
 		            logger -p local0.err "[$KEY][$TAG:$LINENO] mnt_dev : $mnt_dev != $DEVICE"
@@ -120,37 +134,31 @@ while true; do
                 else
                     mnt_state=1
                 fi
+            else
+                mnt_state=1
             fi
         ;;
         1)
             if [ ! -d /sys/bus/mmc/devices/mmc1:*/block/mmcblk1/mmcblk1p1 ]; then
-                echo '0' > $mnt_flag
                 ((mnt_cnt++))
-                #logger -p local0.error "[$KEY][$TAG:$LINENO] no sd card($mnt_cnt)"
-                if [ $mnt_cnt -ge 2 ]; then
-                    logger -p local0.error "[$KEY][$TAG:$LINENO] no sd card($mnt_cnt)"
+                #logger -p local0.error "[$KEY][$TAG:$LINENO] no sd card"
+                if [ $mnt_cnt -gt 3 ]; then
+                    echo '0' > $mnt_flag
+                    logger -p local0.emerg "[$KEY][$TAG:$LINENO] please insert sd card!!"
+                    tmp_path=$(jq -r '.VHL_CAM.tmp_path' "$FILE_JSON")
+                    if [ "$tmp_path" != "/dev/shm" ]; then
+                        logger -p local0.notice "[$KEY][$TAG:$LINENO] fallback tmp_path : $tmp_path -> /dev/shm"
+                        jq '.VHL_CAM.tmp_path = "/dev/shm"' "$FILE_JSON" > tmp.$$ && mv tmp.$$ "$FILE_JSON"
+                        systemctl restart cam-operate
+                    fi
                     mnt_cnt=0
                     mnt_state=0
-                    break
                 fi
             else
                 mnt_dev=$(df | grep $DIR | awk '{print $1}')
-                if [ "$mnt_dev" != "$DEVICE" ]; then
-                    echo '0' > $mnt_flag
+                if [ "$mnt_dev" != "$DEVICE" ] || [ "$(cat /sys/block/mmcblk1/ro)" = "1" ] || [ ! -z "$(mount |grep -i mount |awk '{print $6}' |grep -i '(ro,')" ]; then
                     ((mnt_cnt++))
-                    logger -p local0.error "[$KEY][$TAG:$LINENO] $mnt_dev != $DEVICE($mnt_cnt)"
-                    if [ $mnt_cnt -ge 2 ]; then
-                        #logger -p local0.error "[$KEY][$TAG:$LINENO] umount $DEVICE, $DIR"
-                        #umount $DEVICE
-                        #umount $DIR
-                        mnt_state=0
-                        break
-                    fi
-                fi
 
-		        if [ "$(cat /sys/block/mmcblk1/ro)" = "1" ] || [ ! -z "$(mount |grep -i mount |awk '{print $6}' |grep -i '(ro,')" ]; then
-                    echo '0' > $mnt_flag
-                    ((mnt_cnt++))
                     if [ "$(cat /sys/block/mmcblk1/ro)" = "1" ]; then
 		                logger -p local0.error "[$KEY][$TAG:$LINENO] $DEVICE is in H/W read-only mode(mnt_cnt:$mnt_cnt/fsck_cnt:$fsck_cnt)"
                     fi
@@ -159,19 +167,33 @@ while true; do
                         logger -p local0.error "[$KEY][$TAG:$LINENO] $DEVICE is in S/W read-only mode(mnt_cnt:$mnt_cnt/fsck_cnt:$fsck_cnt)"
                     fi
 
-                    if [ $mnt_cnt -ge 3 ]; then
-                        if [ "$tmp_path" == "$DIR" ]; then
-                            daemon_name=cam-operate
-                            status=$(systemctl is-active $daemon_name 2>/dev/null)
-                            if [ "$status" != "active" ]; then
-                                systemctl stop $daemon_name
+                    if [ $mnt_cnt -gt 3 ]; then
+                        echo '0' > $mnt_flag
+                        #if [ "$tmp_path" == "$DIR" ]; then
+                        #    daemon_name=cam-operate
+                        #    status=$(systemctl is-active $daemon_name 2>/dev/null)
+                        #    if [ "$status" != "active" ]; then
+                        #        systemctl stop $daemon_name
+                        #    fi
+                        #fi
+                        ((fsck++))
+                        if [ $fsck -gt 3 ]; then
+                            logger -p local0.emerg "[$KEY][$TAG:$LINENO] $DEVICE mount error"
+                            tmp_path=$(jq -r '.VHL_CAM.tmp_path' "$FILE_JSON")
+                            if [ "$tmp_path" != "/dev/shm" ]; then
+                                logger -p local0.notice "[$KEY][$TAG:$LINENO] fallback tmp_path : $tmp_path -> /dev/shm"
+                                jq '.VHL_CAM.tmp_path = "/dev/shm"' "$FILE_JSON" > tmp.$$ && mv tmp.$$ "$FILE_JSON"
+                                systemctl restart cam-operate
                             fi
+                            fsck_cnt=0
+                            mnt_state=0
+                            #sleep 5
+                            #reboot
+                            #exit 0
                         fi
-
-                        if [ $fsck_cnt -ge 5 ]; then
-                            logger -p local0.emerg "[$KEY][$TAG:$LINENO] $DEVICE cannot recovery : sd-mount exit"
-                            exit 0
-                        fi
+:<<'END'
+                        systemctl stop cam-operate
+                        sleep 1
                         logger -p local0.error "[$KEY][$TAG:$LINENO] unmount for fsck..."
 		                umount $DEVICE
                         sleep 2
@@ -197,13 +219,15 @@ while true; do
                                     fsck_cmd='fsck.vfat -vaw "$DEVICE" 2>&1 | sed -u "s/^/[${KEY}][${TAG}:${LINENO}] /" | logger -p local0.notice'
                                     ;;
                                 ext4)
-                                    fsck_cmd='fsck.ext4 -pv "$DEVICE" 2>&1 | sed -u "s/^/[${KEY}][${TAG}:${LINENO}] /" | logger -p local0.notice'
+                                    fsck_cmd='fsck.ext4 -y "$DEVICE" 2>&1 | sed -u "s/^/[${KEY}][${TAG}:${LINENO}] /" | logger -p local0.notice'
+                                    /opt/pim/bin/ext4_downgrade.sh /dev/mmcblk1p1
                                     ;;
                                 exfat)
                                     fsck_cmd='fsck.exfat -y "$DEVICE" 2>&1 | sed -u "s/^/[${KEY}][${TAG}:${LINENO}] /" | logger -p local0.notice'
                                     ;;
                                 *)
-                                    logger -p local0.emerg "[$KEY][$TAG:$LINENO] $DEVICE fstype is wrong! : fallback"
+                                    logger -p local0.emerg "[$KEY][$TAG:$LINENO] $DEVICE fstype is undefined : $FSTYPE"
+                                    fsck_cmd='fsck -V "$DEVICE" 2>&1 | sed -u "s/^/[${KEY}][${TAG}:${LINENO}] /" | logger -p local0.notice'
                                     ;;
                             esac
 
@@ -218,11 +242,12 @@ while true; do
                             logger -p local0.error "[$KEY][$TAG:$LINENO] force unmount for fsck..."
                             umount -f $DEVICE
                         fi
+END
                     fi
 		        fi
             fi
         ;;
     esac
-    sleep 3
+    sleep 5
 done
 

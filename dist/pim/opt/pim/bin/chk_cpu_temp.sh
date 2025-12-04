@@ -14,7 +14,7 @@ then
 else
 	echo "${timestamp} CPU TEMP ERR" >> ${FLAG_PATH}/err_cpu_temp.log
     if [ $CPU_TEMP -ge 90 ]; then
-        logger -p local0.error [CHK][$tag:$LINENO] CPU TEMP ERR : $CPU_TEMP
+        logger -p local0.info [CHK][$tag:$LINENO] CPU TEMP ERR : $CPU_TEMP
     else
         logger -p local0.info [CHK][$tag:$LINENO] CPU TEMP ERR : $CPU_TEM
     fi

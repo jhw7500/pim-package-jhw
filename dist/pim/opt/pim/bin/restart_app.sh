@@ -5,7 +5,7 @@ KEY=RST
 
 logger -p local0.info "[$KEY][$tag:$LINENO] restart_app.sh start"
 
-list="ord vcm"
+list="vcm ord"
 pid=0
 service=0
 cam_disable=0
@@ -61,9 +61,14 @@ while [ 1 ]; do
                 #echo "no" >/dev/null
                 #sleep 0.5
                 logger -p local0.info "[$KEY][$tag:$LINENO] $service start"
-                $service &
+                #if [ "$service" == "ord" ]; then
+                #    systemctl start ord-operate
+                #else
+                    $service &
+                #fi
             fi
         fi
+        sleep 1
     done
 
     if [ "$cam_disable" -eq 1 ]; then

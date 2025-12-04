@@ -100,7 +100,7 @@ logger -p local0.notice "[CHK][$tag:$LINENO] BG check loop start(ch0:$cam_ch0, c
 #/opt/pim/bin/chk_cam_disconnect.sh $cam_ch_bit 3 2>/dev/null
 
 while true; do
-    #sleep 0.5
+    sleep 1
     #echo "START!! BG_CHK"
     CLEAR_CHK_LOG
     #wifi check
@@ -126,8 +126,6 @@ while true; do
     MAKE_RESULT_FLAG
     #echo "led"
     /opt/pim/bin/led_ctrl.sh 2>/dev/null
-
-    sleep 1
 
     if [ -f /tmp/init_cam_flag ] || [ -f /tmp/restart_flag ]; then
         i=0

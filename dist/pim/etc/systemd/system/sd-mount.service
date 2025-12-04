@@ -10,7 +10,7 @@ WorkingDirectory=/root
 ExecStart=/opt/pim/bin/automnt_sd_for_emmc_boot.sh
 ExecStop=/opt/pim/bin/sd_mount_stop.sh
 Restart=on-failure
-RestartSec=10s
+RestartSec=5s
 #ExecStop=systemctl stop cam-operate
 #ExecStop=umount /dev/mmcblk1p1
 [Install]

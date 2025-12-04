@@ -41,8 +41,8 @@ CHECK_MOUNT_WELL() {
 		exit 1
 	fi
     else
-        logger -p local0.error [CHK][$tag:$LINENO] SD MOUNT ERR
-	echo "${timestamp} SDCARD MNT ERR" >> ${FLAG_PATH}/err_sdcard.log
+        logger -p local0.info [CHK][$tag:$LINENO] SD MOUNT ERR
+	    echo "${timestamp} SDCARD MNT ERR" >> ${FLAG_PATH}/err_sdcard.log
         exit 1
     fi
 }

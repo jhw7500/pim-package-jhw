@@ -4,7 +4,7 @@ tag=$(basename "$0")
 KEY="LOG"
 SRC="/run/log/journal"
 DIR="/var/log/cantops/journald"
-DST="$DIR/$(date +%Y%m%d)"
+DST="$DIR/$(date +%Y%m%d -d '1 min ago')"
 MAX_CNT=30
 MAX_SIZE=$((10 * 1024 * 1024 * 1024))
 mkdir -p "$DST"
