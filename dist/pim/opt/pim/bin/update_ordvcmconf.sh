@@ -20,7 +20,8 @@ jq '.ORD |= if . == null then . else . end' "$FILE_JSON" > tmp.$$ && mv tmp.$$ "
 echo "ORD check"
 jq '.ORD.vib_enable |= if . == null then false else . end |
 .ORD.ovl_buffering |= if . == null then 0 else . end |
-.ORD.evt_copy_delay |= if . == null then 15 else . end' "$FILE_JSON" > tmp.$$ && mv tmp.$$ "$FILE_JSON"
+.ORD.evt_copy_delay |= if . == null then 15 else . end
+.ORD.err_send_period |= if . == null then 300 else . end' "$FILE_JSON" > tmp.$$ && mv tmp.$$ "$FILE_JSON"
 
 echo "VCM check"
 jq 'del (.VCM.file_time_recording)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
