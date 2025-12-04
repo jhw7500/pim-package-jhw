@@ -49,6 +49,11 @@ start() {
             if [[ ${ctsiotbe_enable} == "True" ]]; then
                 ctsiotbe start
             fi
+
+            evtmod_enable=$(python3 /opt/cis/bin/getconfval.py evtmod_enable)
+            if [[ ${evtmod_enable} == "True" ]]; then
+                ctsiotbe_event start
+            fi
         fi
 
         longrun service_start
@@ -62,6 +67,11 @@ stop() {
     if [[ ${ctsiotbe_enable} == "True" ]]; then
         ctsiotbe stop
     fi
+    evtmod_enable=$(python3 /opt/cis/bin/getconfval.py evtmod_enable)
+    if [[ ${evtmod_enable} == "True" ]]; then
+        ctsiotbe_event stop
+    fi
+    
     fwdriver stop
     disco_react stop
     pim_gate stop

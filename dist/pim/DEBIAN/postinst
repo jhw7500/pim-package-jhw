@@ -162,6 +162,8 @@ cpchk() {
 
   rm -f /usr/local/bin/ctsiotbe
   ln -s /opt/cis/bin/ctsiotbe.sh /usr/local/bin/ctsiotbe
+  rm -f /usr/local/bin/ctsiotbe_event
+  ln -s /opt/cis/bin/ctsiotbe_event.sh /usr/local/bin/ctsiotbe_event
   ######
 
   status=$(df |grep /dev/root |awk '{print $2}')
