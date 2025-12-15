@@ -131,6 +131,7 @@ rec_time=0
 rec_min=0
 csi1_en=0
 csi2_en=0
+timestamp=0
 
 GetConfig
 
@@ -214,11 +215,11 @@ do
                 if [ -f "${tmp_path}/${vhl_name}_${datetime}-ch0.${muxer}" ]; then
 			        logger -p local0.info "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime}-ch0.${muxer} exist"
                     ((file_cnt++))
-                elif compgen -G "${tmp_path}/${vhl_name}_${datetime_}"*ch0* > /dev/null; then
-                    logger -p local0.info "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime_}*ch0* exist"
+                elif compgen -G "${tmp_path}/*${vhl_name}_${datetime_}*ch0*" > /dev/null; then
+                    logger -p local0.info "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*ch0* exist"
                     ((file_cnt++))
 	    		else
-		    		logger -p local0.error "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime_}*ch0* not exist"
+		    		logger -p local0.error "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*ch0* not exist"
                     #((file_cnt--))
                     #((file_time_err++))
                 fi
@@ -230,11 +231,11 @@ do
                 if [ -f "${tmp_path}/${vhl_name}_${datetime}-ch1.${muxer}" ]; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime}-ch1.${muxer} exist"
                     ((file_cnt++))
-                elif compgen -G "${tmp_path}/${vhl_name}_${datetime_}"*ch1* > /dev/null; then
-                    logger -p local0.info "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime_}*ch1* exist"
+                elif compgen -G "${tmp_path}/*${vhl_name}_${datetime_}*ch1*" > /dev/null; then
+                    logger -p local0.info "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*ch1* exist"
                     ((file_cnt++))
                 else
-                    logger -p local0.error "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime_}*ch1* not exist"
+                    logger -p local0.error "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*ch1* not exist"
                     #((file_cnt--))
                     #((file_time_err++))
                 fi
@@ -245,11 +246,11 @@ do
                 if [ -f "${tmp_path}/${vhl_name}_${datetime}-ch2.${muxer}" ]; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime}-ch2.${muxer} exist"
                     ((file_cnt++))
-                elif compgen -G "${tmp_path}/${vhl_name}_${datetime_}"*ch2* > /dev/null; then
-                    logger -p local0.info "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime_}*ch2* exist"
+                elif compgen -G "${tmp_path}/*${vhl_name}_${datetime_}*ch2*" > /dev/null; then
+                    logger -p local0.info "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*ch2* exist"
                     ((file_cnt++))
                 else
-                    logger -p local0.error "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime_}*ch2* not exist"
+                    logger -p local0.error "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*ch2* not exist"
                     #((file_cnt--))
                     #((file_time_err++))
                 fi
@@ -260,11 +261,11 @@ do
                 if [ -f "${tmp_path}/${vhl_name}_${datetime}-ch3.${muxer}" ]; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime}-ch3.${muxer} exist"
                     ((file_cnt++))
-                elif compgen -G "${tmp_path}/${vhl_name}_${datetime_}"*ch3* > /dev/null; then
-                    logger -p local0.info "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime_}*ch3* exist"
+                elif compgen -G "${tmp_path}/*${vhl_name}_${datetime_}*ch3*" > /dev/null; then
+                    logger -p local0.info "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*ch3* exist"
                     ((file_cnt++))
                 else
-                    logger -p local0.error "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime_}*ch3* not exist"
+                    logger -p local0.error "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*ch3* not exist"
                     #((file_cnt--))
                     #((file_time_err++))
                 fi
@@ -275,11 +276,11 @@ do
                 if [ -f "${tmp_path}/${vhl_name}_${datetime}-data.srt" ]; then
                     logger -p local0.info "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime}-data.srt exist"
                     ((file_cnt++))
-                elif compgen -G "${tmp_path}/${vhl_name}_${datetime_}"*data* > /dev/null; then
-                    logger -p local0.info "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime_}*data* exist"
+                elif compgen -G "${tmp_path}/*${vhl_name}_${datetime_}*data*" > /dev/null; then
+                    logger -p local0.info "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*data* exist"
                     ((file_cnt++))
                 else
-                    logger -p local0.error "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime_}*data* not exist"
+                    logger -p local0.error "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*data* not exist"
                     #((file_cnt--))
                     #((file_time_err++))
                 fi
@@ -287,12 +288,13 @@ do
 
             if [ "$mnt_path" != "$tmp_path" ]; then
                 if [ -f /dev/shm/sd_mount_flag ] && grep -qE '^(1|2)$' /dev/shm/sd_mount_flag; then     #if [ -f /dev/shm/sd_mount_flag ];  then
-                    cmd="mv ${tmp_path}/${vhl_name}_$(date -d '1 min ago' '+%Y%m%d_%H%M')* ${mnt_path}/ 2>/dev/null"
+                    timestamp=$(date -d '1 min ago' '+%Y%m%d_%H%M')
+                    cmd="mv ${tmp_path}/*${vhl_name}_${timestamp}* ${mnt_path}/ 2>/dev/null"
                     logger -p local0.notice "[$KEY][$tag:$LINENO] $cmd"
                     eval "$cmd"
                     if [ "$rec_min" -gt 1 ]; then
                         timestamp=$(date -d "${rec_min} min ago" '+%Y%m%d_%H%M')
-                        cmd="mv ${tmp_path}/${vhl_name}_${timestamp}* ${mnt_path}/ 2>/dev/null"
+                        cmd="mv ${tmp_path}/*${vhl_name}_${timestamp}* ${mnt_path}/ 2>/dev/null"
                         logger -p local0.notice "[$KEY][$tag:$LINENO] $cmd"
                         eval "$cmd"
                     fi
