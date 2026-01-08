@@ -142,7 +142,8 @@ jq --argjson key0 "$capture_en" --argjson key1 0 --argjson key2 200 '.VHL_CAM.ca
 | .VHL_CAM.capture |= (if .record == null then .record = false else . end)
 | .VHL_CAM.capture |= (if .rtsp == null then .rtsp = false else . end)
 | .VHL_CAM.capture |= (if .encoder == null then .encoder = "turbo" else . end)
-| .VHL_CAM.capture |= (if .quality == null then .quality = 85 else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+| .VHL_CAM.capture |= (if .quality == null then .quality = 85 else . end)
+| .VHL_CAM.capture |= (if .response == null then .response = true else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
 jq 'del (.VHL_CAM.capture.turbojpeg)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 

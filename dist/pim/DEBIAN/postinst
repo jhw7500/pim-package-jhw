@@ -419,8 +419,8 @@ fi
   /opt/pim/bin/change_line.sh "net.core.wmem_max=2621440" "net.core.wmem_max" /etc/sysctl.conf
   /opt/pim/bin/change_line.sh "net.core.rmem_max=2621440" "net.core.rmem_max" /etc/sysctl.conf
   /opt/pim/bin/change_line.sh "Storage=volatile" "Storage=" /etc/systemd/journald.conf
-  /opt/pim/bin/change_line.sh "RuntimeMaxUse=2M" "RuntimeMaxUse=" /etc/systemd/journald.conf
-  /opt/pim/bin/change_line.sh "RuntimeKeepFree=1M" "RuntimeKeepFree=" /etc/systemd/journald.conf
+  /opt/pim/bin/change_line.sh "RuntimeMaxUse=1M" "RuntimeMaxUse=" /etc/systemd/journald.conf
+  /opt/pim/bin/change_line.sh "RuntimeKeepFree=8M" "RuntimeKeepFree=" /etc/systemd/journald.conf
   /opt/pim/bin/change_line.sh "SystemMaxUse=5000M" "SystemMaxUse=" /etc/systemd/journald.conf
   /opt/pim/bin/change_line.sh "SystemKeepFree=5000M" "SystemKeepFree=" /etc/systemd/journald.conf
   /opt/pim/bin/change_line.sh "ForwardToWall=no" "ForwardToWall=" /etc/systemd/journald.conf
