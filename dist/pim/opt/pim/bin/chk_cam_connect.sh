@@ -71,7 +71,7 @@ cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
 	#CAM0, CAM1 ENABLE
 	if [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]; then
 		if [[ "$cam01_res" == *"$SUCCESS_VAL"*  ]]; then
-			logger -p local0.info "[CHK][$tag:$LINENO] CAM0 CAM1 OK"
+			logger -p local0.debug "[CHK][$tag:$LINENO] CAM0 CAM1 OK"
 		else
             logger -p local0.err "[CHK][$tag:$LINENO] CAM01 CONNECT ERR : $cam01_res"
 			for i in {1..5}; do
@@ -110,7 +110,7 @@ cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
 	#CAM0 ENABLE ONLY
 	elif [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch1" == *"$DISABLE_VAL"* ]]; then
 		if [[ "$cam01_res" == *"$CH0_EN_OK"*  ]]; then
-            logger -p local0.info "[CHK][$tag:$LINENO] CAM0 OK"
+            logger -p local0.debug "[CHK][$tag:$LINENO] CAM0 OK"
         elif [[ "$cam01_res" == *"$CH1_EN_OK"*  ]]; then
             logger -p local0.warn "[CHK][$tag:$LINENO] please swap ch0 and ch1(CAM0 enable but CAM1 display) : $cam01_res"
             #echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log
@@ -121,7 +121,7 @@ cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
     #CAM1 ENABLE ONLY
     elif [[ "$cam_ch0" == *"$DISABLE_VAL"* ]] && [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]; then
         if [[ "$cam01_res" == *"$CH1_EN_OK"*  ]]; then
-            logger -p local0.info "[CHK][$tag:$LINENO] CAM1 OK"
+            logger -p local0.debug "[CHK][$tag:$LINENO] CAM1 OK"
         elif [[ "$cam01_res" == *"$CH0_EN_OK"*  ]]; then
             logger -p local0.warn "[CHK][$tag:$LINENO] please swap ch0 and ch1(CAM1 enable but CAM0 display) : $cam01_res"
             #echo "${timestamp} CAM1 ERR" >> ${FLAG_PATH}/err_cam1.log
@@ -136,7 +136,7 @@ cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
 	#CAM2,CAM3 ENABLE
 	if [[ "$cam_ch2" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch3" == *"$ENABLE_VAL"* ]]; then
 		if [[ "$cam23_res" == *"$SUCCESS_VAL"*  ]]; then
-			logger -p local0.info "[CHK][$tag:$LINENO] CAM2 CAM3 OK"
+			logger -p local0.debug "[CHK][$tag:$LINENO] CAM2 CAM3 OK"
 		else
             logger -p local0.error "[CHK][$tag:$LINENO] CAM23 CONNECT ERR : $cam23_res"
 			for i in {1..5}; do	
@@ -171,7 +171,7 @@ cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
 	#CAM2 ENABLE ONLY
 	elif [[ "$cam_ch2" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch3" == *"$DISABLE_VAL"* ]]; then
 		if [[ "$cam23_res" == *"$CH2_EN_OK"*  ]]; then
-            logger -p local0.info "[CHK][$tag:$LINENO] CAM2 OK"
+            logger -p local0.debug "[CHK][$tag:$LINENO] CAM2 OK"
         elif [[ "$cam23_res" == *"$CH3_EN_OK"*  ]]; then
             logger -p local0.warn "[CHK][$tag:$LINENO] please swap ch2 and ch3(CAM2 enable but CAM3 display) : $cam23_res"
             #echo "${timestamp} CAM2 ERR" >> ${FLAG_PATH}/err_cam2.log
@@ -182,7 +182,7 @@ cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
     #CAM3 ENABLE ONLY
     elif [[ "$cam_ch2" == *"$DISABLE_VAL"* ]] && [[ "$cam_ch3" == *"$ENABLE_VAL"* ]]; then
         if [[ "$cam23_res" == *"$CH3_EN_OK"*  ]]; then
-            logger -p local0.info "[CHK][$tag:$LINENO] CAM3 OK"
+            logger -p local0.debug "[CHK][$tag:$LINENO] CAM3 OK"
         elif [[ "$cam23_res" == *"$CH2_EN_OK"*  ]]; then
             logger -p local0.warn "[CHK][$tag:$LINENO] please swap ch2 and ch3(CAM3 enable but CAM2 display) : $cam23_res"
             #echo "${timestamp} CAM3 ERR" >> ${FLAG_PATH}/err_cam3.log

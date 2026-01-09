@@ -179,7 +179,8 @@
             "record": false,
             "rtsp": false,
             "encoder": "turbo",
-            "quality": 85
+            "quality": 85,
+            "response": true
         },
         "i2c2": {
             "exp_time": 10000,
