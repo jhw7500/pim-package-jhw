@@ -1,7 +1,9 @@
 #!/bin/bash
 #scp jhw@192.168.3.81://opt/desktop/gitlab/gst-jhw/gstapp/gstapp/app/bin/gstApp /home/user
-sshpass -p jhw scp jhw@192.168.3.81:/opt/desktop/gitlab/gstApp/bin/gstApp .
-cp gstApp /usr/local/bin/ -f
+#sshpass -p jhw scp jhw@192.168.3.81:/opt/desktop/gitlab/gstApp/bin/gstApp .
+sshpass -p jhw scp jhw@192.168.3.81:/home/jhw/ai/claude/projects/gstApp/bin/gstApp .
+mv gstApp /usr/local/bin/
+#cp gstApp /usr/local/bin/ -f
 #sshpass -p jhw scp jhw@192.168.3.81:/opt/desktop/gitlab/gst-jhw/gstapp/gstapp/test/bin /home/user/pim-package/test/bin/
 #sshpass -p jhw scp jhw@192.168.3.81:/opt/desktop/gitlab/gst-jhw/gstapp/old/gstapp/app/bin/gstApp /home/user/pim-package/test/bin/
 
