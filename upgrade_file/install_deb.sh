@@ -336,6 +336,75 @@ if [ $need_restart == 1 ]; then
   systemctl restart redis-server
 fi
 
+cd ${BASEDIR}/dpkg
+package="ffmpeg"
+if [ -z "$(dpkg -s $package 2> /dev/null)" ]; then
+  echo '{"PROGRESS":'"$prog_per"',"MSG":"install '"$package"'"}'
+  deb_list=('libgme0_0.6.2-1build1_arm64.deb' \
+    'libshine3_3.1.1-2_arm64.deb' \
+    'libgsm1_1.0.18-2_arm64.deb' \
+    'libx264-155_2%3a0.155.2917+git0a84d98-2_arm64.deb' \
+    'libaom0_1.0.0.errata1-3+deb11u1ubuntu0.1_arm64.deb' \
+    'libnorm1_1.5.8+dfsg2-2build1_arm64.deb' \
+    'libmysofa1_1.0~dfsg0-1_arm64.deb' \
+    'libdc1394-22_2.2.5-2.1_arm64.deb' \
+    'libxvidcore4_2%3a1.3.7-1_arm64.deb' \
+    'libass9_1%3a0.14.0-2_arm64.deb' \
+    'libva2_2.7.0-2_arm64.deb' \
+    'libcodec2-0.9_0.9.2-2_arm64.deb' \
+    'libaacs0_0.9.0-2_arm64.deb' \
+    'libfftw3-double3_3.3.8-2ubuntu1_arm64.deb' \
+    'librubberband2_1.8.2-1build1_arm64.deb' \
+    'libsndio7.0_1.5.0-3_arm64.deb' \
+    'libbdplus0_0.1.2-3_arm64.deb' \
+    'libnuma1_2.0.12-1_arm64.deb' \
+    'libvidstab1.1_1.1.0-2_arm64.deb' \
+    'libflite1_2.1-release-3_arm64.deb' \
+    'libva-drm2_2.7.0-2_arm64.deb' \
+    'ocl-icd-libopencl1_2.2.11-1ubuntu1_arm64.deb' \
+    'libvdpau1_1.3-1ubuntu2_arm64.deb' \
+    'libbs2b0_3.1.0+dfsg-2.2build1_arm64.deb' \
+    'libopenal-data_1%3a1.19.1-1_all.deb' \
+    'libxss1_1%3a1.2.3-1_arm64.deb' \
+    'mesa-va-drivers_21.2.6-0ubuntu0.1~20.04.2_arm64.deb' \
+    'libbluray2_1%3a1.2.0-1_arm64.deb' \
+    'libsdl2-2.0-0_2.0.10+dfsg1-3_arm64.deb' \
+    'libva-x11-2_2.7.0-2_arm64.deb' \
+    'libwebpmux3_0.6.1-2ubuntu0.20.04.3_arm64.deb' \
+    'libopenmpt0_0.4.11-1build1_arm64.deb' \
+    'libzvbi-common_0.2.35-17_all.deb' \
+    'libpgm-5.2-0_5.2.122~dfsg-3ubuntu1_arm64.deb' \
+    'libserd-0-0_0.30.2-1_arm64.deb' \
+    'mesa-vdpau-drivers_21.2.6-0ubuntu0.1~20.04.2_arm64.deb' \
+    'libzvbi0_0.2.35-17_arm64.deb' \
+    'libzmq5_4.3.2-2ubuntu1_arm64.deb' \
+    'libx265-179_3.2.1-1build1_arm64.deb' \
+    'libopenal1_1%3a1.19.1-1_arm64.deb' \
+    'libavutil56_7%3a4.2.7-0ubuntu0.1_arm64.deb' \
+    'va-driver-all_2.7.0-2_arm64.deb' \
+    'libpostproc55_7%3a4.2.7-0ubuntu0.1_arm64.deb' \
+    'vdpau-driver-all_1.3-1ubuntu2_arm64.deb' \
+    'libsord-0-0_0.16.4-1_arm64.deb' \
+    'libsratom-0-0_0.6.4-1_arm64.deb' \
+    'libswscale5_7%3a4.2.7-0ubuntu0.1_arm64.deb' \
+    'liblilv-0-0_0.24.6-1ubuntu0.1_arm64.deb' \
+    'libswresample3_7%3a4.2.7-0ubuntu0.1_arm64.deb' \
+    'libavresample4_7%3a4.2.7-0ubuntu0.1_arm64.deb' \
+    'libavcodec58_7%3a4.2.7-0ubuntu0.1_arm64.deb' \
+    'libchromaprint1_1.4.3-3build1_arm64.deb' \
+    'libavformat58_7%3a4.2.7-0ubuntu0.1_arm64.deb' \
+    'libavfilter7_7%3a4.2.7-0ubuntu0.1_arm64.deb' \
+    'libavdevice58_7%3a4.2.7-0ubuntu0.1_arm64.deb' \
+    'ffmpeg_7%3a4.2.7-0ubuntu0.1_arm64.deb' )
+  for var in "${deb_list[@]}"
+  do
+    echo '{"PROGRESS":'"$prog_per"',"MSG":"dpkg -i '"$var"'"}'
+    dpkg -i "$var" > /dev/null 2> /dev/null
+  done
+else
+  echo '{"PROGRESS":'"$prog_per"',"MSG":"installed '"$package"'"}'
+fi
+
 ########################################
 ## Install pip packages               ##
 ########################################
