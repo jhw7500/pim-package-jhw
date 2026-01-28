@@ -3,6 +3,7 @@ tag=$(basename "$0")
 KEY=RST
 
 SD_MOUNT_FLAG_FILE="/dev/shm/sd_mount_flag"
+SD_WRITE_DISABLE_FILE_DEFAULT="/tmp/sd_write_disabled"
 
 # Mode B (SD BAD): commit + retention in RAM only
 RAM_ONLY_FINAL_PATH_DEFAULT="/dev/shm/recordings"
@@ -57,6 +58,10 @@ GetConfig() {
         ] | @tsv' "$FILE_JSON"
     )
     unset IFS
+
+    # Preserve config paths (used for SD retention even if runtime overrides apply)
+    final_path_cfg="$final_path"
+    sd_tmp_path_cfg="$sd_tmp_path"
 
 :<<'END'
     app=$(jq '.VHL_CAM.app' "$FILE_JSON")
@@ -170,7 +175,8 @@ extract_session_id_from_filename() {
 apply_storage_mode_overrides() {
     # Runtime-only overrides; do not edit edgeconf.
     # If SD is not OK, do not write to SD. Keep committing in RAM-only.
-    if ! is_sd_ok; then
+    local disable_file="${SD_WRITE_DISABLE_FILE:-$SD_WRITE_DISABLE_FILE_DEFAULT}"
+    if ! is_sd_ok || [ -f "$disable_file" ]; then
         final_path="${RAM_ONLY_FINAL_PATH:-$RAM_ONLY_FINAL_PATH_DEFAULT}"
         sd_tmp_path="$tmp_path"
     fi
@@ -217,8 +223,9 @@ get_df_usage_pct() {
 }
 
 enforce_sd_retention_if_needed() {
-    local target_dir="$final_path"
+    local target_dir="$1"
     local warn_pct=${WARN_PCT:-$WARN_PCT_DEFAULT}
+    local crit_pct=${CRIT_PCT:-$CRIT_PCT_DEFAULT}
     local protect_n=${PROTECT_RECENT_SESSIONS:-$PROTECT_RECENT_SESSIONS_DEFAULT}
     local usage sid
     local sessions keep_line
@@ -230,7 +237,11 @@ enforce_sd_retention_if_needed() {
         return 0
     fi
 
-    logger -p local0.error "[$KEY][$tag:$LINENO] retention: disk usage ${usage}% >= ${warn_pct}% (dir=$target_dir)"
+    if [ "$usage" -ge "$crit_pct" ]; then
+        logger -p local0.emerg "[$KEY][$tag:$LINENO] retention: disk usage ${usage}% >= ${crit_pct}% (dir=$target_dir)"
+    else
+        logger -p local0.error "[$KEY][$tag:$LINENO] retention: disk usage ${usage}% >= ${warn_pct}% (dir=$target_dir)"
+    fi
 
     sessions=$(list_sessions_in_dir_sorted "$target_dir")
     [ -n "$sessions" ] || return 0
@@ -258,6 +269,25 @@ enforce_sd_retention_if_needed() {
         sessions=$(list_sessions_in_dir_sorted "$target_dir")
         [ -n "$sessions" ] || break
     done
+}
+
+update_sd_write_disable_flag() {
+    local target_dir="$1"
+    local disable_file="${SD_WRITE_DISABLE_FILE:-$SD_WRITE_DISABLE_FILE_DEFAULT}"
+    local warn_pct=${WARN_PCT:-$WARN_PCT_DEFAULT}
+    local crit_pct=${CRIT_PCT:-$CRIT_PCT_DEFAULT}
+    local usage
+
+    usage=$(get_df_usage_pct "$target_dir")
+    [ -n "$usage" ] || return 0
+
+    if [ "$usage" -ge "$crit_pct" ]; then
+        logger -p local0.emerg "[$KEY][$tag:$LINENO] CRITICAL: disk usage ${usage}% >= ${crit_pct}% (disable SD writes)"
+        : > "$disable_file"
+    elif [ -f "$disable_file" ] && [ "$usage" -lt "$warn_pct" ]; then
+        rm -f "$disable_file"
+        logger -p local0.notice "[$KEY][$tag:$LINENO] disk usage ${usage}% < ${warn_pct}% (re-enable SD writes)"
+    fi
 }
 
 get_dir_size_bytes() {
@@ -452,16 +482,16 @@ CleanupStalePartFiles() {
 
 # Disk 사용량 체크
 CheckDiskSpace() {
-    # Backward-compatible wrapper.
-    # SD OK: enforce disk watermark retention.
-    # SD BAD: enforce RAM cap retention.
-    if [ ! -d "$final_path" ]; then
-        return 0
+    # SD OK: enforce retention against SD final path from config.
+    if is_sd_ok; then
+        if [ -n "$final_path_cfg" ] && [ -d "$final_path_cfg" ]; then
+            enforce_sd_retention_if_needed "$final_path_cfg"
+            update_sd_write_disable_flag "$final_path_cfg"
+        fi
     fi
 
-    if is_sd_ok; then
-        enforce_sd_retention_if_needed
-    else
+    # Always enforce RAM cap on the currently active final_path (may be SD or RAM)
+    if [ -d "$final_path" ]; then
         enforce_ram_cap_if_needed
     fi
     return 0
