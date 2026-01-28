@@ -10,3 +10,4 @@ vcm/vcm
 test/gstApp
 test/streamApp
 test/PIMCAM
+docker/

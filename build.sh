@@ -3,12 +3,51 @@
 BASEDIR=${PWD}
 echo "Script location: ${BASEDIR}"
 
+# Cross-compile setup for NXP i.MX8 (same as gstApp)
+HOST_ARCH=$(uname -m)
+if [ "$HOST_ARCH" = "x86_64" ]; then
+    # Use Yocto SDK environment
+    [ "$SDK_LOC" ] || SDK_LOC=/shared/fsl-imx-xwayland/5.10-hardknott
+    [ "$SDK_NAME" ] || SDK_NAME=cortexa53-crypto-poky-linux
+
+    SDK_ENV=${SDK_LOC}/environment-setup-${SDK_NAME}
+    if [ -e ${SDK_ENV} ]; then
+        echo "Cross-compiling for i.MX8 using Yocto SDK"
+        echo "SDK: ${SDK_ENV}"
+        . ${SDK_ENV}
+
+        # Configure pkg-config to use SDK sysroot (like gstApp's make-for-imx8)
+        SYSROOT=${SDK_LOC}/sysroots/${SDK_NAME}
+        export PKG_CONFIG_SYSROOT_DIR=${SYSROOT}
+        export PKG_CONFIG_PATH=${SYSROOT}/usr/lib/pkgconfig
+        echo "PKG_CONFIG_SYSROOT_DIR: $PKG_CONFIG_SYSROOT_DIR"
+
+        # Use system cmake with SDK toolchain to avoid GLIBC version issues
+        # SDK's cmake requires GLIBC 2.32+ but host may have older version
+        if [ -n "$OE_CMAKE_TOOLCHAIN_FILE" ]; then
+            CMAKE_TOOLCHAIN_ARG="-DCMAKE_TOOLCHAIN_FILE=$OE_CMAKE_TOOLCHAIN_FILE"
+            echo "Using toolchain: $OE_CMAKE_TOOLCHAIN_FILE"
+
+            # Force use of system cmake instead of SDK cmake
+            CMAKE=/usr/bin/cmake
+            echo "Using cmake: $CMAKE"
+        fi
+    else
+        echo "ERROR: SDK not found at ${SDK_ENV}"
+        echo "Please set SDK_LOC and SDK_NAME environment variables"
+        exit 1
+    fi
+else
+    echo "Native build for ${HOST_ARCH}"
+    CMAKE_TOOLCHAIN_ARG=""
+    CMAKE=cmake
+fi
+
 if [ ! -d ${BASEDIR}/ord/build ]; then
     mkdir ${BASEDIR}/ord/build
 fi
 cd ${BASEDIR}/ord/build
-cmake ..
-#cd ${BASEDIR}/ord/
+${CMAKE} ${CMAKE_TOOLCHAIN_ARG} ..
 make
 if [ $? != 0 ]; then
     echo "ord compile error"
@@ -20,7 +59,7 @@ if [ ! -d ${BASEDIR}/vsd/build ]; then
 fi
 cd ${BASEDIR}/vsd/build
 cp ${BASEDIR}/vsd/libpi* /usr/local/lib/ -a
-cmake ..
+${CMAKE} ${CMAKE_TOOLCHAIN_ARG} ..
 make
 if [ $? != 0 ]; then
     echo "vsd compile error"
@@ -28,22 +67,21 @@ if [ $? != 0 ]; then
 fi
 
 if [ ! -d ${BASEDIR}/vcm/build ]; then
-	    mkdir ${BASEDIR}/vcm/build
+    mkdir ${BASEDIR}/vcm/build
 fi
 cd ${BASEDIR}/vcm/build
-cmake ..
-#cd ${BASEDIR}/vcm
+${CMAKE} ${CMAKE_TOOLCHAIN_ARG} ..
 make
 if [ $? != 0 ]; then
-	    echo "vcm compile error"
-	        exit 1
+    echo "vcm compile error"
+    exit 1
 fi
 
 if [ ! -d ${BASEDIR}/adab/build ]; then
     mkdir ${BASEDIR}/adab/build
 fi
 cd ${BASEDIR}/adab/build
-cmake ..
+${CMAKE} ${CMAKE_TOOLCHAIN_ARG} ..
 make
 if [ $? != 0 ]; then
     echo "adab compile error"
@@ -54,7 +92,7 @@ if [ ! -d ${BASEDIR}/adab_ecat/build ]; then
     mkdir ${BASEDIR}/adab_ecat/build
 fi
 cd ${BASEDIR}/adab_ecat/build
-cmake ..
+${CMAKE} ${CMAKE_TOOLCHAIN_ARG} ..
 make
 if [ $? != 0 ]; then
     echo "adab_ecat compile error"
@@ -65,7 +103,7 @@ if [ ! -d ${BASEDIR}/cism/build ]; then
     mkdir ${BASEDIR}/cism/build
 fi
 cd ${BASEDIR}/cism/build
-cmake ..
+${CMAKE} ${CMAKE_TOOLCHAIN_ARG} ..
 make
 if [ $? != 0 ]; then
     echo "cism compile error"
@@ -76,7 +114,7 @@ if [ ! -d ${BASEDIR}/stm32update/build ]; then
     mkdir ${BASEDIR}/stm32update/build
 fi
 cd ${BASEDIR}/stm32update/build
-cmake ..
+${CMAKE} ${CMAKE_TOOLCHAIN_ARG} ..
 make
 if [ $? != 0 ]; then
     echo "stm32update compile error"
