@@ -487,6 +487,8 @@ CheckDiskSpace() {
         if [ -n "$final_path_cfg" ] && [ -d "$final_path_cfg" ]; then
             enforce_sd_retention_if_needed "$final_path_cfg"
             update_sd_write_disable_flag "$final_path_cfg"
+            # Apply runtime overrides immediately when CRIT flips SD write state.
+            apply_storage_mode_overrides
         fi
     fi
 
