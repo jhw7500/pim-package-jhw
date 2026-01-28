@@ -143,9 +143,11 @@ while true; do
                     #logger -p local0.notice "[$KEY][$TAG:$LINENO] remount $DEVICE $DIR"
                 elif [ "$(cat /sys/block/mmcblk1/ro)" = "1" ]; then
                     logger -p local0.error "[$KEY][$TAG:$LINENO] mmcblk1 h/w read only"
+                    echo '0' > $mnt_flag
                     mnt_state=1
                 elif [ ! -z "$(mount |grep -i mount |awk '{print $6}' |grep -i '(ro,')" ]; then
                     logger -p local0.error "[$KEY][$TAG:$LINENO] mmcblk1 s/w read only"
+                    echo '0' > $mnt_flag
                     mnt_state=1
                 else
                     mnt_state=1
@@ -170,18 +172,21 @@ while true; do
                     mnt_cnt=0
                     mnt_state=0
                 fi
-            else
-                mnt_dev=$(df | grep $DIR | awk '{print $1}')
-                if [ "$mnt_dev" != "$DEVICE" ] || [ "$(cat /sys/block/mmcblk1/ro)" = "1" ] || [ ! -z "$(mount |grep -i mount |awk '{print $6}' |grep -i '(ro,')" ]; then
-                    ((mnt_cnt++))
+                else
+                    mnt_dev=$(df | grep $DIR | awk '{print $1}')
+                    if [ "$mnt_dev" != "$DEVICE" ] || [ "$(cat /sys/block/mmcblk1/ro)" = "1" ] || [ ! -z "$(mount |grep -i mount |awk '{print $6}' |grep -i '(ro,')" ]; then
+                        ((mnt_cnt++))
 
-                    if [ "$(cat /sys/block/mmcblk1/ro)" = "1" ]; then
-		                logger -p local0.error "[$KEY][$TAG:$LINENO] $DEVICE is in H/W read-only mode(mnt_cnt:$mnt_cnt/fsck_cnt:$fsck_cnt)"
-                    fi
+                        # Disable SD writes immediately when RO/mismatch detected.
+                        echo '0' > $mnt_flag
 
-                    if [ ! -z "$(mount |grep -i mount |awk '{print $6}' |grep -i '(ro,')" ]; then
-                        logger -p local0.error "[$KEY][$TAG:$LINENO] $DEVICE is in S/W read-only mode(mnt_cnt:$mnt_cnt/fsck_cnt:$fsck_cnt)"
-                    fi
+                        if [ "$(cat /sys/block/mmcblk1/ro)" = "1" ]; then
+                            logger -p local0.error "[$KEY][$TAG:$LINENO] $DEVICE is in H/W read-only mode(mnt_cnt:$mnt_cnt/fsck_cnt:$fsck_cnt)"
+                        fi
+
+                        if [ ! -z "$(mount |grep -i mount |awk '{print $6}' |grep -i '(ro,')" ]; then
+                            logger -p local0.error "[$KEY][$TAG:$LINENO] $DEVICE is in S/W read-only mode(mnt_cnt:$mnt_cnt/fsck_cnt:$fsck_cnt)"
+                        fi
 
                     if [ $mnt_cnt -gt 3 ]; then
                         echo '0' > $mnt_flag
@@ -266,4 +271,3 @@ END
     esac
     sleep 5
 done
-
