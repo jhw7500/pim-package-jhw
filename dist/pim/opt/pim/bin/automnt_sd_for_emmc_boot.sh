@@ -101,6 +101,22 @@ while true; do
 		                    mnt_cnt=0
                             fsck_cnt=0
 
+                            # tmp 디렉터리 생성 및 .part 파일 정리
+                            if [ ! -d "$DIR/tmp" ]; then
+                                mkdir -p "$DIR/tmp"
+                                logger -p local0.notice "[$KEY][$TAG:$LINENO] created $DIR/tmp"
+                            fi
+
+                            # .part 파일 정리 (이전 마운트에서 남은 미완성 파일)
+                            part_count=$(find "$DIR/tmp" -name "*.part" 2>/dev/null | wc -l)
+                            if [ "$part_count" -gt 0 ]; then
+                                logger -p local0.notice "[$KEY][$TAG:$LINENO] cleaning up $part_count .part files in $DIR/tmp"
+                                find "$DIR/tmp" -name "*.part" -delete 2>/dev/null
+                            fi
+
+                            # 세션 완료 마커 정리
+                            rm -f /tmp/session_*.all_done 2>/dev/null
+
                             daemon_name=cam-operate
                             status=$(systemctl is-enabled $daemon_name 2>/dev/null)
                             if [ "$status" == "enabled" ]; then
