@@ -20,7 +20,7 @@ GetConfig_() {
 GetConfig() {
     IFS=$'\t' read -r \
         app vhl_name rec_min cap_en cap_record_en cap_rtsp_en \
-        tmp_path muxer cam_ch0 cam_ch1 cam_ch2 cam_ch3 < <(
+        tmp_path sd_tmp_path final_path muxer cam_ch0 cam_ch1 cam_ch2 cam_ch3 < <(
         jq -r '[
             (.VHL_CAM.app // "streamApp"),
             (.VHL_CAM.vhl_name // "VD3001"),
@@ -28,7 +28,9 @@ GetConfig() {
             (.VHL_CAM.capture.enable // false),
             (.VHL_CAM.capture.record // false),
             (.VHL_CAM.capture.rtsp   // false),
-            (.VHL_CAM.tmp_path // "/dev/shm/"),
+            (.VHL_CAM.tmp_path // "/mnt/sd_cam/tmp"),
+            (.VHL_CAM.sd_tmp_path // .VHL_CAM.tmp_path // "/mnt/sd_cam/tmp"),
+            (.VHL_CAM.final_path // "/mnt/sd_cam"),
             (.VHL_CAM.muxer // "mp4"),
             (.VHL_CAM.i2c2.ch0.enable // false),
             (.VHL_CAM.i2c2.ch1.enable // false),
@@ -85,6 +87,172 @@ if [ ! -n "$pid" ]; then
     logger -p local0.notice "[$KEY][$tag:$LINENO] $service start"
     /opt/pim/bin/$1 &
 fi
+}
+
+# .part 파일을 2단계로 이동하는 함수 (경로 동일 케이스 대응)
+MovePartFile() {
+    local part_file="$1"
+    local filename=$(basename "$part_file")
+    local final_name="${filename%.part}"  # .part 제거
+    local src_file="$part_file"
+
+    if [ ! -f "$part_file" ]; then
+        logger -p local0.warning "[$KEY][$tag:$LINENO] part file not found: $part_file"
+        return 1
+    fi
+
+    logger -p local0.info "[$KEY][$tag:$LINENO] processing: $filename"
+
+    # Stage 1: tmp_path → sd_tmp_path (경로가 다를 때만 실행)
+    if [ "$tmp_path" != "$sd_tmp_path" ]; then
+        # cross-filesystem copy
+        if ! cp "$part_file" "${sd_tmp_path}/${filename}"; then
+            logger -p local0.error "[$KEY][$tag:$LINENO] Stage1 cp failed: $filename"
+            return 1
+        fi
+
+        # 파일 flush
+        sync -f "${sd_tmp_path}/${filename}" 2>/dev/null || sync
+
+        # 디렉토리 flush
+        sync -f "$sd_tmp_path" 2>/dev/null || sync
+
+        # 원본 삭제 (RAM)
+        rm -f "$part_file"
+
+        logger -p local0.info "[$KEY][$tag:$LINENO] Stage1: $filename → sd_tmp"
+
+        # Stage 2의 소스는 sd_tmp_path
+        src_file="${sd_tmp_path}/${filename}"
+    fi
+
+    # Stage 2: sd_tmp_path → final_path (.part 제거)
+    if ! mv "$src_file" "${final_path}/${final_name}"; then
+        logger -p local0.error "[$KEY][$tag:$LINENO] Stage2 mv failed: $filename"
+        return 1
+    fi
+
+    logger -p local0.notice "[$KEY][$tag:$LINENO] Complete: $final_name"
+    return 0
+}
+
+# 완료된 세션의 모든 .part 파일 처리
+ProcessCompletedSessions() {
+    local done_file
+    local timestamp
+    local success_count=0
+    local fail_count=0
+
+    for done_file in /tmp/session_*.all_done; do
+        [ -f "$done_file" ] || continue
+
+        # 타임스탬프 추출 (session_20260127_1430.all_done -> 20260127_1430)
+        timestamp=$(basename "$done_file" | sed 's/session_\(.*\)\.all_done/\1/')
+
+        logger -p local0.notice "[$KEY][$tag:$LINENO] processing session: $timestamp"
+
+        # 해당 타임스탬프의 모든 .part 파일 처리
+        for part_file in "${tmp_path}"/*"${timestamp}"*.part; do
+            [ -f "$part_file" ] || continue
+
+            if MovePartFile "$part_file"; then
+                ((success_count++))
+            else
+                ((fail_count++))
+            fi
+        done
+
+        # final_path 디렉토리 flush (한 번만)
+        sync -f "$final_path" 2>/dev/null || sync
+
+        # 완료 마커 제거
+        rm -f "$done_file"
+
+        if [ $fail_count -eq 0 ]; then
+            logger -p local0.notice "[$KEY][$tag:$LINENO] session $timestamp completed: $success_count files"
+        else
+            logger -p local0.error "[$KEY][$tag:$LINENO] session $timestamp: $success_count ok, $fail_count failed"
+        fi
+
+        # 카운터 초기화
+        success_count=0
+        fail_count=0
+    done
+}
+
+# Stale .part 파일 정리 (10분 이상 방치된 파일)
+CleanupStalePartFiles() {
+    local stale_timeout=600  # 10분 (초)
+    local current_time=$(date +%s)
+    local file_mtime
+    local age
+    local removed_count=0
+
+    # tmp_path 정리
+    if [ -d "$tmp_path" ]; then
+        for part_file in "${tmp_path}"/*.part; do
+            [ -f "$part_file" ] || continue
+
+            file_mtime=$(stat -c %Y "$part_file" 2>/dev/null)
+            [ -z "$file_mtime" ] && continue
+
+            age=$((current_time - file_mtime))
+
+            if [ $age -gt $stale_timeout ]; then
+                logger -p local0.warning "[$KEY][$tag:$LINENO] removing stale tmp: $(basename $part_file) (age=${age}s)"
+                rm -f "$part_file"
+                ((removed_count++))
+            fi
+        done
+    fi
+
+    # sd_tmp_path 정리 (tmp_path와 다를 때만)
+    if [ "$tmp_path" != "$sd_tmp_path" ] && [ -d "$sd_tmp_path" ]; then
+        for part_file in "${sd_tmp_path}"/*.part; do
+            [ -f "$part_file" ] || continue
+
+            file_mtime=$(stat -c %Y "$part_file" 2>/dev/null)
+            [ -z "$file_mtime" ] && continue
+
+            age=$((current_time - file_mtime))
+
+            if [ $age -gt $stale_timeout ]; then
+                # Stage1 완료 후 Stage2 실패한 경우 - 복구 시도
+                logger -p local0.warning "[$KEY][$tag:$LINENO] recovering stale sd_tmp: $(basename $part_file) (age=${age}s)"
+                if MovePartFile "$part_file"; then
+                    logger -p local0.notice "[$KEY][$tag:$LINENO] recovered: $(basename $part_file)"
+                else
+                    logger -p local0.error "[$KEY][$tag:$LINENO] recovery failed, removing: $(basename $part_file)"
+                    rm -f "$part_file"
+                fi
+                ((removed_count++))
+            fi
+        done
+    fi
+
+    if [ $removed_count -gt 0 ]; then
+        logger -p local0.notice "[$KEY][$tag:$LINENO] processed $removed_count stale .part files"
+    fi
+}
+
+# Disk 사용량 체크
+CheckDiskSpace() {
+    if [ ! -d "$final_path" ]; then
+        return
+    fi
+
+    local usage=$(df "$final_path" | awk 'NR==2 {print $5}' | tr -d '%')
+
+    if [ "$usage" -ge 95 ]; then
+        logger -p local0.emerg "[$KEY][$tag:$LINENO] CRITICAL: disk usage ${usage}% >= 95%"
+        # 가장 오래된 파일 삭제 (file_manager.sh와 중복될 수 있음)
+        return 1
+    elif [ "$usage" -ge 90 ]; then
+        logger -p local0.error "[$KEY][$tag:$LINENO] WARNING: disk usage ${usage}% >= 90%"
+        return 1
+    fi
+
+    return 0
 }
 
 logger -p local0.emerg "[$KEY][$tag:$LINENO] cam-operate daemon start : Booting"
@@ -150,6 +318,14 @@ if [ ! -d "$tmp_path" ]; then
     mkdir -p "$tmp_path"
 fi
 
+if [ ! -d "$sd_tmp_path" ]; then
+    mkdir -p "$sd_tmp_path"
+fi
+
+if [ ! -d "$final_path" ]; then
+    mkdir -p "$final_path"
+fi
+
 logger -p local0.info "[$KEY][$tag:$LINENO] /opt/pim/bin/start_cam.sh $app_delay"
 /opt/pim/bin/start_cam.sh $app_delay
 #rst_time=60
@@ -158,7 +334,7 @@ logger -p local0.info "[$KEY][$tag:$LINENO] /opt/pim/bin/start_cam.sh $app_delay
 
 GetConfig_
 
-logger -p local0.notice "[$KEY][$tag:$LINENO] ch0:$cam_ch0, ch1:$cam_ch1, ch2:$cam_ch2, ch3:$cam_ch3, srt:$srt_en, time_rec_en:$time_rec_en, vhl_name:$vhl_name, rec_time:$rec_time, rst_time:$rst_time, cap_en:$cap_en, mnt_path:$mnt_path, tmp_path:$tmp_path, app_delay:$app_delay, muxer:$muxer, file_check_delay:$file_check_delay file_chk_reboot:$file_chk_reboot"
+logger -p local0.notice "[$KEY][$tag:$LINENO] ch0:$cam_ch0, ch1:$cam_ch1, ch2:$cam_ch2, ch3:$cam_ch3, srt:$srt_en, time_rec_en:$time_rec_en, vhl_name:$vhl_name, rec_time:$rec_time, rst_time:$rst_time, cap_en:$cap_en, mnt_path:$mnt_path, tmp_path:$tmp_path, sd_tmp_path:$sd_tmp_path, final_path:$final_path, app_delay:$app_delay, muxer:$muxer, file_check_delay:$file_check_delay file_chk_reboot:$file_chk_reboot"
 
 while :
 do
@@ -193,6 +369,9 @@ do
         sleep 5
         continue
     fi
+
+    # === 이벤트 기반: 완료된 세션 처리 ===
+    ProcessCompletedSessions
 
     #if [ -e "$FILE_" ]; then
     startTime=$(cat $FILE_ 2>/dev/null| tr -d '\n' 2>/dev/null)
@@ -286,26 +465,23 @@ do
                 fi
             fi
 
-            if [ "$mnt_path" != "$tmp_path" ]; then
-                if [ -f /dev/shm/sd_mount_flag ] && grep -qE '^(1|2)$' /dev/shm/sd_mount_flag; then     #if [ -f /dev/shm/sd_mount_flag ];  then
-                    timestamp=$(date -d '1 min ago' '+%Y%m%d_%H%M')
-                    cmd="mv ${tmp_path}/*${vhl_name}_${timestamp}* ${mnt_path}/ 2>/dev/null"
-                    logger -p local0.notice "[$KEY][$tag:$LINENO] $cmd"
-                    eval "$cmd"
-                    if [ "$rec_min" -gt 1 ]; then
-                        timestamp=$(date -d "${rec_min} min ago" '+%Y%m%d_%H%M')
-                        cmd="mv ${tmp_path}/*${vhl_name}_${timestamp}* ${mnt_path}/ 2>/dev/null"
-                        logger -p local0.notice "[$KEY][$tag:$LINENO] $cmd"
-                        eval "$cmd"
-                    fi
-                else
-                    logger -p local0.err "[$KEY][$tag:$LINENO] sd mount err...dont move ${tmp_path} to ${mnt_path}"
-                    #timestamp=$(date -d "${rec_min} min ago" '+%Y%m%d_%H%M')
-                    #cmd="rm ${tmp_path}/${vhl_name}_${timestamp}*"
-                    #logger -p local0.notice "[$KEY][$tag:$LINENO] $cmd"
-                    #eval "$cmd"
-                fi
-            fi
+            # === 기존 1분 이동 로직: .part 기반 로직으로 대체됨 ===
+            # if [ "$mnt_path" != "$tmp_path" ]; then
+            #     if [ -f /dev/shm/sd_mount_flag ] && grep -qE '^(1|2)$' /dev/shm/sd_mount_flag; then
+            #         timestamp=$(date -d '1 min ago' '+%Y%m%d_%H%M')
+            #         cmd="mv ${tmp_path}/*${vhl_name}_${timestamp}* ${mnt_path}/ 2>/dev/null"
+            #         logger -p local0.notice "[$KEY][$tag:$LINENO] $cmd"
+            #         eval "$cmd"
+            #         if [ "$rec_min" -gt 1 ]; then
+            #             timestamp=$(date -d "${rec_min} min ago" '+%Y%m%d_%H%M')
+            #             cmd="mv ${tmp_path}/*${vhl_name}_${timestamp}* ${mnt_path}/ 2>/dev/null"
+            #             logger -p local0.notice "[$KEY][$tag:$LINENO] $cmd"
+            #             eval "$cmd"
+            #         fi
+            #     else
+            #         logger -p local0.err "[$KEY][$tag:$LINENO] sd mount err...dont move ${tmp_path} to ${mnt_path}"
+            #     fi
+            # fi
             sync
 			logger -p local0.info "[$KEY][$tag:$LINENO] check_num:$check_num cnt:$file_cnt"
 			if [ "$check_num" -ne "$file_cnt" ]; then
@@ -400,6 +576,12 @@ do
                 logger -p local0.err  "[$KEY][$tag:$LINENO] no retry because cam is disconnect($cam_disconnect_flag)"
             fi
 	    fi
+    fi
+
+    # === 주기적 정리 작업 (30초마다) ===
+    if [ $((timer % 30)) -eq 0 ]; then
+        CleanupStalePartFiles
+        CheckDiskSpace
     fi
 
 	sleep 2
