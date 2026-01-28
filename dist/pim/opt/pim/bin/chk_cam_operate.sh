@@ -2,6 +2,24 @@
 tag=$(basename "$0")
 KEY=RST
 
+SD_MOUNT_FLAG_FILE="/dev/shm/sd_mount_flag"
+
+# Mode B (SD BAD): commit + retention in RAM only
+RAM_ONLY_FINAL_PATH_DEFAULT="/dev/shm/recordings"
+RAM_CAP_BYTES_DEFAULT=1717986918  # 1.6GiB
+
+# Mode A (SD OK): SD retention thresholds
+WARN_PCT_DEFAULT=90
+CRIT_PCT_DEFAULT=95
+
+# Protect last N sessions from deletion/cleanup
+PROTECT_RECENT_SESSIONS_DEFAULT=2
+
+# Stale .part detection without wall-clock (NTP-safe)
+PART_STATE_FILE_DEFAULT="/tmp/chk_cam_operate.part_state"
+STABLE_WINDOW_SEC_DEFAULT=120
+MAINTENANCE_INTERVAL_SEC_DEFAULT=30
+
 GetConfig_() {
     IFS=$'\t' read -r \
         srt_en file_chk_reboot time_rec_en file_check_delay < <(
@@ -136,6 +154,157 @@ MovePartFile() {
     return 0
 }
 
+is_sd_ok() {
+    [ -f "$SD_MOUNT_FLAG_FILE" ] && grep -qE '^(1|2)$' "$SD_MOUNT_FLAG_FILE"
+}
+
+extract_session_id_from_filename() {
+    # Expected patterns:
+    # - <name>_YYYYMMDD_HHMM00-chX.mp4(.part)
+    # - <name>_YYYYMMDD_HHMM00-chX.ts(.part)
+    # Return: YYYYMMDD_HHMM
+    local base="$1"
+    printf '%s' "$base" | sed -nE 's/.*_([0-9]{8}_[0-9]{4})00.*/\1/p'
+}
+
+apply_storage_mode_overrides() {
+    # Runtime-only overrides; do not edit edgeconf.
+    # If SD is not OK, do not write to SD. Keep committing in RAM-only.
+    if ! is_sd_ok; then
+        final_path="${RAM_ONLY_FINAL_PATH:-$RAM_ONLY_FINAL_PATH_DEFAULT}"
+        sd_tmp_path="$tmp_path"
+    fi
+}
+
+list_sessions_in_dir_sorted() {
+    local dir="$1"
+    declare -A _seen
+    local f base sid
+
+    [ -d "$dir" ] || return 0
+    for f in "$dir"/*; do
+        [ -f "$f" ] || continue
+        base=$(basename "$f")
+        case "$base" in
+            *.part) continue;;
+        esac
+        sid=$(extract_session_id_from_filename "$base")
+        [ -n "$sid" ] || continue
+        _seen["$sid"]=1
+    done
+
+    if [ ${#_seen[@]} -gt 0 ]; then
+        printf '%s\n' "${!_seen[@]}" | sort
+    fi
+}
+
+delete_session_in_dir() {
+    local dir="$1"
+    local sid="$2"
+
+    [ -d "$dir" ] || return 0
+    # mp4/ts
+    rm -f "$dir"/*"${sid}00"*-ch*.mp4 2>/dev/null
+    rm -f "$dir"/*"${sid}00"*-ch*.ts 2>/dev/null
+    # subtitle (naming may vary; keep it broad but still tied to sid)
+    rm -f "$dir"/*"${sid}"*data*.srt 2>/dev/null
+    rm -f "$dir"/*"${sid}"*.srt 2>/dev/null
+}
+
+get_df_usage_pct() {
+    local dir="$1"
+    df -P "$dir" 2>/dev/null | awk 'NR==2 {gsub(/%/,"",$5); print $5}'
+}
+
+enforce_sd_retention_if_needed() {
+    local target_dir="$final_path"
+    local warn_pct=${WARN_PCT:-$WARN_PCT_DEFAULT}
+    local protect_n=${PROTECT_RECENT_SESSIONS:-$PROTECT_RECENT_SESSIONS_DEFAULT}
+    local usage sid
+    local sessions keep_line
+
+    usage=$(get_df_usage_pct "$target_dir")
+    [ -n "$usage" ] || return 0
+
+    if [ "$usage" -lt "$warn_pct" ]; then
+        return 0
+    fi
+
+    logger -p local0.error "[$KEY][$tag:$LINENO] retention: disk usage ${usage}% >= ${warn_pct}% (dir=$target_dir)"
+
+    sessions=$(list_sessions_in_dir_sorted "$target_dir")
+    [ -n "$sessions" ] || return 0
+
+    # Compute protected newest sessions
+    keep_line=$(printf '%s\n' "$sessions" | tail -n "$protect_n" | tr '\n' '|' | sed 's/|$//')
+
+    while :; do
+        usage=$(get_df_usage_pct "$target_dir")
+        [ -n "$usage" ] || break
+        [ "$usage" -ge "$warn_pct" ] || break
+
+        sid=$(printf '%s\n' "$sessions" | head -n 1)
+        [ -n "$sid" ] || break
+
+        if [ -n "$keep_line" ] && printf '%s\n' "$sid" | grep -qE "^(${keep_line})$"; then
+            logger -p local0.warning "[$KEY][$tag:$LINENO] retention: only protected sessions remain; cannot delete further"
+            break
+        fi
+
+        logger -p local0.notice "[$KEY][$tag:$LINENO] retention: deleting session $sid"
+        delete_session_in_dir "$target_dir" "$sid"
+
+        # refresh list after deletion
+        sessions=$(list_sessions_in_dir_sorted "$target_dir")
+        [ -n "$sessions" ] || break
+    done
+}
+
+get_dir_size_bytes() {
+    local dir="$1"
+    du -sb "$dir" 2>/dev/null | awk '{print $1}'
+}
+
+enforce_ram_cap_if_needed() {
+    local target_dir="$final_path"
+    local cap_bytes=${RAM_CAP_BYTES:-$RAM_CAP_BYTES_DEFAULT}
+    local protect_n=${PROTECT_RECENT_SESSIONS:-$PROTECT_RECENT_SESSIONS_DEFAULT}
+    local size sid
+    local sessions keep_line
+
+    size=$(get_dir_size_bytes "$target_dir")
+    [ -n "$size" ] || return 0
+    if [ "$size" -le "$cap_bytes" ]; then
+        return 0
+    fi
+
+    logger -p local0.error "[$KEY][$tag:$LINENO] RAM cap: ${size}B > ${cap_bytes}B (dir=$target_dir)"
+
+    sessions=$(list_sessions_in_dir_sorted "$target_dir")
+    [ -n "$sessions" ] || return 0
+    keep_line=$(printf '%s\n' "$sessions" | tail -n "$protect_n" | tr '\n' '|' | sed 's/|$//')
+
+    while :; do
+        size=$(get_dir_size_bytes "$target_dir")
+        [ -n "$size" ] || break
+        [ "$size" -gt "$cap_bytes" ] || break
+
+        sid=$(printf '%s\n' "$sessions" | head -n 1)
+        [ -n "$sid" ] || break
+
+        if [ -n "$keep_line" ] && printf '%s\n' "$sid" | grep -qE "^(${keep_line})$"; then
+            logger -p local0.warning "[$KEY][$tag:$LINENO] RAM cap: only protected sessions remain; cannot delete further"
+            break
+        fi
+
+        logger -p local0.notice "[$KEY][$tag:$LINENO] RAM cap: deleting session $sid"
+        delete_session_in_dir "$target_dir" "$sid"
+
+        sessions=$(list_sessions_in_dir_sorted "$target_dir")
+        [ -n "$sessions" ] || break
+    done
+}
+
 # 완료된 세션의 모든 .part 파일 처리
 ProcessCompletedSessions() {
     local done_file
@@ -182,53 +351,99 @@ ProcessCompletedSessions() {
 
 # Stale .part 파일 정리 (10분 이상 방치된 파일)
 CleanupStalePartFiles() {
-    local stale_timeout=600  # 10분 (초)
-    local current_time=$(date +%s)
-    local file_mtime
-    local age
+    local state_file="${PART_STATE_FILE:-$PART_STATE_FILE_DEFAULT}"
+    local stable_window_sec=${STABLE_WINDOW_SEC:-$STABLE_WINDOW_SEC_DEFAULT}
+    local interval_sec=${MAINTENANCE_INTERVAL_SEC:-$MAINTENANCE_INTERVAL_SEC_DEFAULT}
+    local stable_needed=$(( (stable_window_sec + interval_sec - 1) / interval_sec ))
+    local protect_n=${PROTECT_RECENT_SESSIONS:-$PROTECT_RECENT_SESSIONS_DEFAULT}
+
+    declare -A prev_size
+    declare -A stable_cnt
+    declare -A present
+
+    local line path size cnt
     local removed_count=0
+    local sid base keep_line
+    local recent_sessions
 
-    # tmp_path 정리
-    if [ -d "$tmp_path" ]; then
-        for part_file in "${tmp_path}"/*.part; do
-            [ -f "$part_file" ] || continue
-
-            file_mtime=$(stat -c %Y "$part_file" 2>/dev/null)
-            [ -z "$file_mtime" ] && continue
-
-            age=$((current_time - file_mtime))
-
-            if [ $age -gt $stale_timeout ]; then
-                logger -p local0.warning "[$KEY][$tag:$LINENO] removing stale tmp: $(basename $part_file) (age=${age}s)"
-                rm -f "$part_file"
-                ((removed_count++))
-            fi
-        done
+    if [ -f "$state_file" ]; then
+        while IFS=$'\t' read -r path size cnt; do
+            [ -n "$path" ] || continue
+            prev_size["$path"]="$size"
+            stable_cnt["$path"]="$cnt"
+        done < "$state_file"
     fi
 
-    # sd_tmp_path 정리 (tmp_path와 다를 때만)
-    if [ "$tmp_path" != "$sd_tmp_path" ] && [ -d "$sd_tmp_path" ]; then
-        for part_file in "${sd_tmp_path}"/*.part; do
+    # Build protected recent session list based on current part files in tmp_path
+    if [ -d "$tmp_path" ]; then
+        recent_sessions=$(for f in "$tmp_path"/*.part; do
+            [ -f "$f" ] || continue
+            base=$(basename "$f")
+            sid=$(extract_session_id_from_filename "$base")
+            [ -n "$sid" ] && printf '%s\n' "$sid"
+        done | sort -u)
+    else
+        recent_sessions=""
+    fi
+    keep_line=$(printf '%s\n' "$recent_sessions" | tail -n "$protect_n" | tr '\n' '|' | sed 's/|$//')
+
+    # Scan candidates: tmp_path and (if different) sd_tmp_path
+    for scan_dir in "$tmp_path" "$sd_tmp_path"; do
+        [ -d "$scan_dir" ] || continue
+        for part_file in "$scan_dir"/*.part; do
             [ -f "$part_file" ] || continue
+            present["$part_file"]=1
+            size=$(stat -c %s "$part_file" 2>/dev/null)
+            [ -n "$size" ] || continue
 
-            file_mtime=$(stat -c %Y "$part_file" 2>/dev/null)
-            [ -z "$file_mtime" ] && continue
+            if [ "${prev_size[$part_file]+x}" = "x" ] && [ "${prev_size[$part_file]}" = "$size" ]; then
+                stable_cnt["$part_file"]=$(( ${stable_cnt[$part_file]:-0} + 1 ))
+            else
+                prev_size["$part_file"]="$size"
+                stable_cnt["$part_file"]=0
+            fi
 
-            age=$((current_time - file_mtime))
+            base=$(basename "$part_file")
+            sid=$(extract_session_id_from_filename "$base")
 
-            if [ $age -gt $stale_timeout ]; then
-                # Stage1 완료 후 Stage2 실패한 경우 - 복구 시도
-                logger -p local0.warning "[$KEY][$tag:$LINENO] recovering stale sd_tmp: $(basename $part_file) (age=${age}s)"
-                if MovePartFile "$part_file"; then
-                    logger -p local0.notice "[$KEY][$tag:$LINENO] recovered: $(basename $part_file)"
+            # Skip if session is protected or commit marker exists
+            if [ -n "$sid" ]; then
+                if [ -n "$keep_line" ] && printf '%s\n' "$sid" | grep -qE "^(${keep_line})$"; then
+                    continue
+                fi
+                if [ -f "/tmp/session_${sid}.all_done" ]; then
+                    continue
+                fi
+            fi
+
+            # Stale 판단: size-stable for N maintenance cycles
+            if [ "${stable_cnt[$part_file]:-0}" -ge "$stable_needed" ]; then
+                if [ "$scan_dir" = "$sd_tmp_path" ] && [ "$tmp_path" != "$sd_tmp_path" ]; then
+                    logger -p local0.warning "[$KEY][$tag:$LINENO] stale sd_tmp part: $base (stable_cnt=${stable_cnt[$part_file]})"
+                    if MovePartFile "$part_file"; then
+                        logger -p local0.notice "[$KEY][$tag:$LINENO] recovered stale: $base"
+                    else
+                        logger -p local0.error "[$KEY][$tag:$LINENO] recovery failed, removing: $base"
+                        rm -f "$part_file"
+                    fi
                 else
-                    logger -p local0.error "[$KEY][$tag:$LINENO] recovery failed, removing: $(basename $part_file)"
+                    logger -p local0.warning "[$KEY][$tag:$LINENO] removing stale part: $base (stable_cnt=${stable_cnt[$part_file]})"
                     rm -f "$part_file"
                 fi
+
+                unset prev_size["$part_file"]
+                unset stable_cnt["$part_file"]
                 ((removed_count++))
             fi
         done
-    fi
+    done
+
+    # Rewrite state file (drop entries not present)
+    : > "$state_file"
+    for path in "${!prev_size[@]}"; do
+        [ "${present[$path]+x}" = "x" ] || continue
+        printf '%s\t%s\t%s\n' "$path" "${prev_size[$path]}" "${stable_cnt[$path]:-0}" >> "$state_file"
+    done
 
     if [ $removed_count -gt 0 ]; then
         logger -p local0.notice "[$KEY][$tag:$LINENO] processed $removed_count stale .part files"
@@ -237,21 +452,18 @@ CleanupStalePartFiles() {
 
 # Disk 사용량 체크
 CheckDiskSpace() {
+    # Backward-compatible wrapper.
+    # SD OK: enforce disk watermark retention.
+    # SD BAD: enforce RAM cap retention.
     if [ ! -d "$final_path" ]; then
-        return
+        return 0
     fi
 
-    local usage=$(df "$final_path" | awk 'NR==2 {print $5}' | tr -d '%')
-
-    if [ "$usage" -ge 95 ]; then
-        logger -p local0.emerg "[$KEY][$tag:$LINENO] CRITICAL: disk usage ${usage}% >= 95%"
-        # 가장 오래된 파일 삭제 (file_manager.sh와 중복될 수 있음)
-        return 1
-    elif [ "$usage" -ge 90 ]; then
-        logger -p local0.error "[$KEY][$tag:$LINENO] WARNING: disk usage ${usage}% >= 90%"
-        return 1
+    if is_sd_ok; then
+        enforce_sd_retention_if_needed
+    else
+        enforce_ram_cap_if_needed
     fi
-
     return 0
 }
 
@@ -303,16 +515,17 @@ timestamp=0
 
 GetConfig
 
-if [ -f /dev/shm/sd_mount_flag ] && grep -qE '^(1|2)$' /dev/shm/sd_mount_flag; then
+if is_sd_ok; then
     logger -p local0.info "[$KEY][$tag:$LINENO] sd flag is 1 or 2"
 else
     logger -p local0.err "[$KEY][$tag:$LINENO] invalid sd flag or not exist"
     if [ "$tmp_path" != "/dev/shm" ]; then
-        jq '.VHL_CAM.tmp_path = "/dev/shm"' "$FILE_JSON" > tmp.$$ && mv tmp.$$ "$FILE_JSON"
-        logger -p local0.notice "[$KEY][$tag:$LINENO] fallback tmp_path : $tmp_path -> /dev/shm"
+        logger -p local0.notice "[$KEY][$tag:$LINENO] fallback tmp_path(runtime only): $tmp_path -> /dev/shm"
         tmp_path="/dev/shm"
     fi
 fi
+
+apply_storage_mode_overrides
 
 if [ ! -d "$tmp_path" ]; then
     mkdir -p "$tmp_path"
@@ -580,6 +793,10 @@ do
 
     # === 주기적 정리 작업 (30초마다) ===
     if [ $((timer % 30)) -eq 0 ]; then
+        # Mode can change while running (SD OK <-> BAD)
+        GetConfig
+        apply_storage_mode_overrides
+        mkdir -p "$tmp_path" "$sd_tmp_path" "$final_path" 2>/dev/null
         CleanupStalePartFiles
         CheckDiskSpace
     fi
