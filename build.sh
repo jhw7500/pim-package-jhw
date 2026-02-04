@@ -3,6 +3,18 @@
 BASEDIR=${PWD}
 echo "Script location: ${BASEDIR}"
 
+if [ "$1" == "clean" ]; then
+    echo "clean"
+    rm -rf ord/build
+    rm -rf vcm/build
+    rm -rf vsd/build
+    rm -rf adab/build
+    rm -rf adab_ecat/build
+    rm -rf cism/build
+    rm -rf stm32update/build
+    rm -rf pim_gate/cpp_source/build
+fi
+
 # Cross-compile setup for NXP i.MX8 (same as gstApp)
 HOST_ARCH=$(uname -m)
 if [ "$HOST_ARCH" = "x86_64" ]; then
