@@ -131,16 +131,35 @@ for service in $list; do
     fi
 done
 
-vhl_name=$(jq -r '.VHL_CAM.vhl_name' "$FILE_JSON")
-tmp_path=$(jq -r '.VHL_CAM.tmp_path' "$FILE_JSON")
+vhl_name=$(jq -r '(.VHL_CAM.vhl_name // "VD3001")' "$FILE_JSON")
+tmp_path=$(jq -r '(.VHL_CAM.tmp_path // "/dev/shm")' "$FILE_JSON")
+final_path=$(jq -r '(.VHL_CAM.final_path // "/mnt/sd_cam")' "$FILE_JSON")
 mnt_path="/mnt/sd_cam"
-if [ "$tmp_path" == "$mnt_path" ]; then
-    file_date=$(date "+%Y%m%d_%H%M00")
-    logger -p local0.notice "[$KEY][$tag:$LINENO] rm $mnt_path/${vhl_name}_${file_date}*"
-    rm $mnt_path/${vhl_name}_${file_date}*
+
+# Delete only the current session/minute files to avoid wiping old recordings when paths are equal.
+# Prefer using the same start time marker used by chk_cam_operate.sh.
+START_TIME_FILE="/tmp/start_video_time_chk"
+start_time=$(cat "$START_TIME_FILE" 2>/dev/null | tr -d '\n')
+if [ -n "$start_time" ]; then
+    datetime_min=$(date -d "$start_time" "+%Y%m%d_%H%M" 2>/dev/null)
 else
-    logger -p local0.notice "[$KEY][$tag:$LINENO] rm $tmp_path/${vhl_name}*"
-    rm $tmp_path/${vhl_name}*
+    datetime_min=$(date "+%Y%m%d_%H%M")
+fi
+
+if [ -z "$tmp_path" ] || [ "$tmp_path" = "/" ]; then
+    logger -p local0.error "[$KEY][$tag:$LINENO] invalid tmp_path: '$tmp_path' (skip rm)"
+elif [ -z "$vhl_name" ] || [ "$vhl_name" = "null" ]; then
+    logger -p local0.error "[$KEY][$tag:$LINENO] invalid vhl_name: '$vhl_name' (skip rm)"
+else
+    # If tmp_path is the same as final_path (or SD root), never wipe everything.
+    if [ "$tmp_path" = "$final_path" ] || [ "$tmp_path" = "$mnt_path" ]; then
+        logger -p local0.notice "[$KEY][$tag:$LINENO] rm ${tmp_path}/${vhl_name}_${datetime_min}*"
+        rm -f ${tmp_path}/${vhl_name}_${datetime_min}* 2>/dev/null
+    else
+        # tmp buffer directory: keep behavior but limit to the minute to avoid deleting older sessions.
+        logger -p local0.notice "[$KEY][$tag:$LINENO] rm ${tmp_path}/${vhl_name}_${datetime_min}*"
+        rm -f ${tmp_path}/${vhl_name}_${datetime_min}* 2>/dev/null
+    fi
 fi
 
 logger -p local0.notice "[$KEY][$tag:$LINENO] set kill_flag, reset restart_flag"
@@ -150,4 +169,3 @@ rm /tmp/restart_flag
 #logger -p local0.notice "[$KEY][$tag:$LINENO] kill_test.sh end"
 #/opt/pim/bin/vcm &
 exit 0
-

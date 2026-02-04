@@ -102,17 +102,34 @@ while true; do
                             fsck_cnt=0
 
                             # tmp 디렉터리 생성 및 .part 파일 정리
-                            if [ ! -d "$DIR/tmp" ]; then
-                                mkdir -p "$DIR/tmp"
-                                logger -p local0.notice "[$KEY][$TAG:$LINENO] created $DIR/tmp"
+                            # - Historically this used $DIR/tmp only.
+                            # - Support JSON overrides via VHL_CAM.sd_tmp_path.
+                            sd_tmp_path_cfg=$(jq -r '(.VHL_CAM.sd_tmp_path // "'"$DIR"'/tmp")' "$FILE_JSON" 2>/dev/null)
+                            cleanup_dirs=("$DIR/tmp")
+                            if [ -n "$sd_tmp_path_cfg" ] && [ "$sd_tmp_path_cfg" != "$DIR/tmp" ]; then
+                                case "$sd_tmp_path_cfg" in
+                                    "$DIR"/*)
+                                        cleanup_dirs+=("$sd_tmp_path_cfg")
+                                        ;;
+                                    *)
+                                        logger -p local0.warning "[$KEY][$TAG:$LINENO] sd_tmp_path outside $DIR, skip cleanup: $sd_tmp_path_cfg"
+                                        ;;
+                                esac
                             fi
 
-                            # .part 파일 정리 (이전 마운트에서 남은 미완성 파일)
-                            part_count=$(find "$DIR/tmp" -name "*.part" 2>/dev/null | wc -l)
-                            if [ "$part_count" -gt 0 ]; then
-                                logger -p local0.notice "[$KEY][$TAG:$LINENO] cleaning up $part_count .part files in $DIR/tmp"
-                                find "$DIR/tmp" -name "*.part" -delete 2>/dev/null
-                            fi
+                            for d in "${cleanup_dirs[@]}"; do
+                                if [ ! -d "$d" ]; then
+                                    mkdir -p "$d"
+                                    logger -p local0.notice "[$KEY][$TAG:$LINENO] created $d"
+                                fi
+
+                                # .part 파일 정리 (이전 마운트에서 남은 미완성 파일)
+                                part_count=$(find "$d" -name "*.part" 2>/dev/null | wc -l)
+                                if [ "$part_count" -gt 0 ]; then
+                                    logger -p local0.notice "[$KEY][$TAG:$LINENO] cleaning up $part_count .part files in $d"
+                                    find "$d" -name "*.part" -delete 2>/dev/null
+                                fi
+                            done
 
                             # 세션 완료 마커 정리
                             rm -f /tmp/session_*.all_done 2>/dev/null

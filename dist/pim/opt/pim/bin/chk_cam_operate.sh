@@ -118,6 +118,11 @@ MovePartFile() {
     local filename=$(basename "$part_file")
     local final_name="${filename%.part}"  # .part 제거
     local src_file="$part_file"
+    local part_dir
+    part_dir=$(dirname "$part_file")
+    local tmp_dir="${tmp_path%/}"
+    local sd_tmp_dir="${sd_tmp_path%/}"
+    local final_dir="${final_path%/}"
 
     if [ ! -f "$part_file" ]; then
         logger -p local0.warning "[$KEY][$tag:$LINENO] part file not found: $part_file"
@@ -126,19 +131,21 @@ MovePartFile() {
 
     logger -p local0.info "[$KEY][$tag:$LINENO] processing: $filename"
 
-    # Stage 1: tmp_path → sd_tmp_path (경로가 다를 때만 실행)
-    if [ "$tmp_path" != "$sd_tmp_path" ]; then
+    # Stage 1: tmp_path → sd_tmp_path
+    # - Only run when the input file is actually in tmp_path
+    # - This avoids "cp to self" when recovering a stale .part already in sd_tmp_path
+    if [ "$tmp_dir" != "$sd_tmp_dir" ] && [ "$part_dir" = "$tmp_dir" ]; then
         # cross-filesystem copy
-        if ! cp "$part_file" "${sd_tmp_path}/${filename}"; then
+        if ! cp "$part_file" "${sd_tmp_dir}/${filename}"; then
             logger -p local0.error "[$KEY][$tag:$LINENO] Stage1 cp failed: $filename"
             return 1
         fi
 
         # 파일 flush
-        sync -f "${sd_tmp_path}/${filename}" 2>/dev/null || sync
+        sync -f "${sd_tmp_dir}/${filename}" 2>/dev/null || sync
 
         # 디렉토리 flush
-        sync -f "$sd_tmp_path" 2>/dev/null || sync
+        sync -f "$sd_tmp_dir" 2>/dev/null || sync
 
         # 원본 삭제 (RAM)
         rm -f "$part_file"
@@ -146,11 +153,11 @@ MovePartFile() {
         logger -p local0.info "[$KEY][$tag:$LINENO] Stage1: $filename → sd_tmp"
 
         # Stage 2의 소스는 sd_tmp_path
-        src_file="${sd_tmp_path}/${filename}"
+        src_file="${sd_tmp_dir}/${filename}"
     fi
 
     # Stage 2: sd_tmp_path → final_path (.part 제거)
-    if ! mv "$src_file" "${final_path}/${final_name}"; then
+    if ! mv "$src_file" "${final_dir}/${final_name}"; then
         logger -p local0.error "[$KEY][$tag:$LINENO] Stage2 mv failed: $filename"
         return 1
     fi
@@ -163,13 +170,27 @@ is_sd_ok() {
     [ -f "$SD_MOUNT_FLAG_FILE" ] && grep -qE '^(1|2)$' "$SD_MOUNT_FLAG_FILE"
 }
 
+is_ram_only_mode() {
+    # RAM cap retention must run ONLY in RAM-only mode.
+    # Enter RAM-only mode when SD is not OK or SD writes are force-disabled.
+    local disable_file="${SD_WRITE_DISABLE_FILE:-$SD_WRITE_DISABLE_FILE_DEFAULT}"
+    if ! is_sd_ok; then
+        return 0
+    fi
+    if [ -f "$disable_file" ]; then
+        return 0
+    fi
+    return 1
+}
+
 extract_session_id_from_filename() {
     # Expected patterns:
-    # - <name>_YYYYMMDD_HHMM00-chX.mp4(.part)
-    # - <name>_YYYYMMDD_HHMM00-chX.ts(.part)
+    # - <name>_YYYYMMDD_HHMMSS-chX.mp4(.part)
+    # - <name>_YYYYMMDD_HHMMSS-chX.ts(.part)
     # Return: YYYYMMDD_HHMM
     local base="$1"
-    printf '%s' "$base" | sed -nE 's/.*_([0-9]{8}_[0-9]{4})00.*/\1/p'
+    # Accept both aligned (SS=00) and non-aligned first fragments (SS!=00)
+    printf '%s' "$base" | sed -nE 's/.*_([0-9]{8}_[0-9]{4})[0-9]{2}.*/\1/p'
 }
 
 apply_storage_mode_overrides() {
@@ -179,6 +200,15 @@ apply_storage_mode_overrides() {
     if ! is_sd_ok || [ -f "$disable_file" ]; then
         final_path="${RAM_ONLY_FINAL_PATH:-$RAM_ONLY_FINAL_PATH_DEFAULT}"
         sd_tmp_path="$tmp_path"
+    else
+        # Restore snapshot values loaded at process start.
+        # This avoids depending on live JSON reloads while still allowing SD OK/BAD transitions.
+        if [ -n "$final_path_cfg" ]; then
+            final_path="$final_path_cfg"
+        fi
+        if [ -n "$sd_tmp_path_cfg" ]; then
+            sd_tmp_path="$sd_tmp_path_cfg"
+        fi
     fi
 }
 
@@ -210,8 +240,9 @@ delete_session_in_dir() {
 
     [ -d "$dir" ] || return 0
     # mp4/ts
-    rm -f "$dir"/*"${sid}00"*-ch*.mp4 2>/dev/null
-    rm -f "$dir"/*"${sid}00"*-ch*.ts 2>/dev/null
+    # seconds can be non-00 for the first fragment after restart
+    rm -f "$dir"/*"${sid}"??-ch*.mp4 2>/dev/null
+    rm -f "$dir"/*"${sid}"??-ch*.ts 2>/dev/null
     # subtitle (naming may vary; keep it broad but still tied to sid)
     rm -f "$dir"/*"${sid}"*data*.srt 2>/dev/null
     rm -f "$dir"/*"${sid}"*.srt 2>/dev/null
@@ -341,6 +372,16 @@ ProcessCompletedSessions() {
     local timestamp
     local success_count=0
     local fail_count=0
+    local tmp_dir sd_tmp_dir final_dir
+    tmp_dir="${tmp_path%/}"
+    sd_tmp_dir="${sd_tmp_path%/}"
+    final_dir="${final_path%/}"
+    local scan_dir part_file base
+    local scan_dirs=("$tmp_dir")
+    if [ "$sd_tmp_dir" != "$tmp_dir" ]; then
+        scan_dirs+=("$sd_tmp_dir")
+    fi
+    declare -A processed_base
 
     for done_file in /tmp/session_*.all_done; do
         [ -f "$done_file" ] || continue
@@ -348,24 +389,43 @@ ProcessCompletedSessions() {
         # 타임스탬프 추출 (session_20260127_1430.all_done -> 20260127_1430)
         timestamp=$(basename "$done_file" | sed 's/session_\(.*\)\.all_done/\1/')
 
+        # Reset per marker
+        processed_base=()
+
         logger -p local0.notice "[$KEY][$tag:$LINENO] processing session: $timestamp"
 
         # 해당 타임스탬프의 모든 .part 파일 처리
-        for part_file in "${tmp_path}"/*"${timestamp}"*.part; do
-            [ -f "$part_file" ] || continue
+        # - Scan both tmp_path and sd_tmp_path to handle crash windows (Stage1 done, Stage2 pending)
+        for scan_dir in "${scan_dirs[@]}"; do
+            [ -d "$scan_dir" ] || continue
+            for part_file in "$scan_dir"/*"${timestamp}"*.part; do
+                [ -f "$part_file" ] || continue
 
-            if MovePartFile "$part_file"; then
-                ((success_count++))
-            else
-                ((fail_count++))
-            fi
+                base=$(basename "$part_file")
+                # Only mark as processed on success; if tmp attempt fails, allow sd_tmp attempt.
+                if [ "${processed_base[$base]+x}" = "x" ]; then
+                    continue
+                fi
+
+                if MovePartFile "$part_file"; then
+                    ((success_count++))
+                    processed_base[$base]=1
+                else
+                    ((fail_count++))
+                fi
+            done
         done
 
         # final_path 디렉토리 flush (한 번만)
-        sync -f "$final_path" 2>/dev/null || sync
+        sync -f "$final_dir" 2>/dev/null || sync
 
-        # 완료 마커 제거
-        rm -f "$done_file"
+        # 완료 마커 처리
+        # - Keep marker when failures occurred so we can retry next loop.
+        if [ $fail_count -eq 0 ]; then
+            rm -f "$done_file"
+        else
+            logger -p local0.error "[$KEY][$tag:$LINENO] keeping marker due to failures: $done_file"
+        fi
 
         if [ $fail_count -eq 0 ]; then
             logger -p local0.notice "[$KEY][$tag:$LINENO] session $timestamp completed: $success_count files"
@@ -387,6 +447,21 @@ CleanupStalePartFiles() {
     local stable_needed=$(( (stable_window_sec + interval_sec - 1) / interval_sec ))
     local protect_n=${PROTECT_RECENT_SESSIONS:-$PROTECT_RECENT_SESSIONS_DEFAULT}
 
+     local tmp_dir="${tmp_path%/}"
+     local sd_tmp_dir="${sd_tmp_path%/}"
+     local scan_dirs=("$tmp_dir")
+     if [ "$sd_tmp_dir" != "$tmp_dir" ]; then
+         scan_dirs+=("$sd_tmp_dir")
+     fi
+
+     # gstApp writes real start time (seconds can be non-00) into this file.
+     # File names are always HHMM00, so the first fragment after app start can be shorter.
+     # When that happens, do NOT delete the HHMM00 .part for that minute as "stale".
+     local start_time start_sid start_sec
+     start_time=$(cat /tmp/start_video_time_chk 2>/dev/null | tr -d '\n')
+     start_sid=$(printf '%s' "$start_time" | sed -nE 's/^([0-9]{8}) ([0-9]{2}):([0-9]{2}):([0-9]{2}).*/\1_\2\3/p')
+     start_sec=$(printf '%s' "$start_time" | sed -nE 's/^([0-9]{8}) ([0-9]{2}):([0-9]{2}):([0-9]{2}).*/\4/p')
+
     declare -A prev_size
     declare -A stable_cnt
     declare -A present
@@ -404,21 +479,20 @@ CleanupStalePartFiles() {
         done < "$state_file"
     fi
 
-    # Build protected recent session list based on current part files in tmp_path
-    if [ -d "$tmp_path" ]; then
-        recent_sessions=$(for f in "$tmp_path"/*.part; do
+    # Build protected recent session list based on current part files in tmp_path + sd_tmp_path
+    recent_sessions=$(for scan_dir in "${scan_dirs[@]}"; do
+        [ -d "$scan_dir" ] || continue
+        for f in "$scan_dir"/*.part; do
             [ -f "$f" ] || continue
             base=$(basename "$f")
             sid=$(extract_session_id_from_filename "$base")
             [ -n "$sid" ] && printf '%s\n' "$sid"
-        done | sort -u)
-    else
-        recent_sessions=""
-    fi
+        done
+    done | sort -u)
     keep_line=$(printf '%s\n' "$recent_sessions" | tail -n "$protect_n" | tr '\n' '|' | sed 's/|$//')
 
     # Scan candidates: tmp_path and (if different) sd_tmp_path
-    for scan_dir in "$tmp_path" "$sd_tmp_path"; do
+    for scan_dir in "${scan_dirs[@]}"; do
         [ -d "$scan_dir" ] || continue
         for part_file in "$scan_dir"/*.part; do
             [ -f "$part_file" ] || continue
@@ -448,15 +522,30 @@ CleanupStalePartFiles() {
 
             # Stale 판단: size-stable for N maintenance cycles
             if [ "${stable_cnt[$part_file]:-0}" -ge "$stable_needed" ]; then
-                if [ "$scan_dir" = "$sd_tmp_path" ] && [ "$tmp_path" != "$sd_tmp_path" ]; then
+                if [ "$scan_dir" = "$sd_tmp_dir" ] && [ "$tmp_dir" != "$sd_tmp_dir" ]; then
                     logger -p local0.warning "[$KEY][$tag:$LINENO] stale sd_tmp part: $base (stable_cnt=${stable_cnt[$part_file]})"
                     if MovePartFile "$part_file"; then
                         logger -p local0.notice "[$KEY][$tag:$LINENO] recovered stale: $base"
                     else
-                        logger -p local0.error "[$KEY][$tag:$LINENO] recovery failed, removing: $base"
-                        rm -f "$part_file"
+                        # Do not delete on recovery failure; keep for next retry / manual inspection.
+                        logger -p local0.error "[$KEY][$tag:$LINENO] recovery failed, keeping: $base"
                     fi
                 else
+                    # tmp_path stale cleanup caveat:
+                    # The first fragment after app start/restart can start at non-00 seconds (shorter duration),
+                    # but the file name still uses HHMM00. Do NOT treat that first HHMM00 file as stale.
+                    if [ "$scan_dir" = "$tmp_dir" ]; then
+                        if [ -n "$start_sid" ] && [ -n "$start_sec" ] && [ "$start_sec" != "00" ] && [ -n "$sid" ] && [ "$sid" = "$start_sid" ]; then
+                            logger -p local0.notice "[$KEY][$tag:$LINENO] skip stale delete (first short fragment minute): $base (start_time=$start_time)"
+                            continue
+                        fi
+
+                        if [ -z "$sid" ]; then
+                            logger -p local0.notice "[$KEY][$tag:$LINENO] skip stale delete (unrecognized filename): $base"
+                            continue
+                        fi
+                    fi
+
                     logger -p local0.warning "[$KEY][$tag:$LINENO] removing stale part: $base (stable_cnt=${stable_cnt[$part_file]})"
                     rm -f "$part_file"
                 fi
@@ -492,8 +581,8 @@ CheckDiskSpace() {
         fi
     fi
 
-    # Always enforce RAM cap on the currently active final_path (may be SD or RAM)
-    if [ -d "$final_path" ]; then
+    # Enforce RAM cap ONLY in RAM-only mode
+    if is_ram_only_mode && [ -d "$final_path" ]; then
         enforce_ram_cap_if_needed
     fi
     return 0
@@ -825,8 +914,8 @@ do
 
     # === 주기적 정리 작업 (30초마다) ===
     if [ $((timer % 30)) -eq 0 ]; then
-        # Mode can change while running (SD OK <-> BAD)
-        GetConfig
+        # IMPORTANT: Do NOT reload JSON while running.
+        # We only apply runtime overrides based on SD state (OK/BAD) and flags.
         apply_storage_mode_overrides
         mkdir -p "$tmp_path" "$sd_tmp_path" "$final_path" 2>/dev/null
         CleanupStalePartFiles
