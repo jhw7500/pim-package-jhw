@@ -10,8 +10,8 @@ RAM_ONLY_FINAL_PATH_DEFAULT="/dev/shm/recordings"
 RAM_CAP_BYTES_DEFAULT=1717986918  # 1.6GiB
 
 # Mode A (SD OK): SD retention thresholds
-WARN_PCT_DEFAULT=90
-CRIT_PCT_DEFAULT=95
+WARN_PCT_DEFAULT=95
+CRIT_PCT_DEFAULT=98
 
 # Protect last N sessions from deletion/cleanup
 PROTECT_RECENT_SESSIONS_DEFAULT=2
@@ -20,6 +20,68 @@ PROTECT_RECENT_SESSIONS_DEFAULT=2
 PART_STATE_FILE_DEFAULT="/tmp/chk_cam_operate.part_state"
 STABLE_WINDOW_SEC_DEFAULT=120
 MAINTENANCE_INTERVAL_SEC_DEFAULT=30
+
+BG_FLAG_FILE="/tmp/bg_chk_flag.bin"
+RECOVER_REQ_INIT_CAM="/tmp/recover_req_init_cam"
+
+# If cameras are disconnected, periodically run init_cam.sh to allow recovery
+# once cameras are reconnected. Never reboot in disconnect state.
+DISCONNECT_INIT_CAM_INTERVAL_SEC_DEFAULT=300
+DISCONNECT_INIT_CAM_GRACE_SEC_DEFAULT=60
+DISCONNECT_INIT_CAM_STATE_FILE_DEFAULT="/tmp/chk_cam_operate.disconnect_state"
+
+DISCONNECT_INIT_CAM_INTERVAL_SEC=${DISCONNECT_INIT_CAM_INTERVAL_SEC_DEFAULT}
+DISCONNECT_INIT_CAM_GRACE_SEC=${DISCONNECT_INIT_CAM_GRACE_SEC_DEFAULT}
+DISCONNECT_INIT_CAM_STATE_FILE=${DISCONNECT_INIT_CAM_STATE_FILE_DEFAULT}
+
+get_cam_disconnect_flag() {
+    local v
+    v=$(cat "$BG_FLAG_FILE" 2>/dev/null | tr -d '\n')
+    if [[ ! "$v" =~ ^[0-9]+$ ]]; then
+        echo 0
+        return 0
+    fi
+    echo $((v & 0xf))
+}
+
+modules_loaded() {
+    [ -d "/sys/module/max9296" ] && [ -d "/sys/module/imx8_media_dev" ]
+}
+
+maybe_init_cam_on_disconnect() {
+    local cam_disconnect_flag now first_seen last_init
+
+    cam_disconnect_flag=$(get_cam_disconnect_flag)
+    if (( cam_disconnect_flag == 0 )); then
+        rm -f "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
+        return 1
+    fi
+
+    now=$(date +%s)
+    first_seen=$(cat "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null | awk -F',' '{print $1}')
+    last_init=$(cat "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null | awk -F',' '{print $2}')
+    if [[ ! "$first_seen" =~ ^[0-9]+$ ]]; then
+        first_seen=$now
+    fi
+    if [[ ! "$last_init" =~ ^[0-9]+$ ]]; then
+        last_init=0
+    fi
+
+    if (( (now - first_seen) < DISCONNECT_INIT_CAM_GRACE_SEC )); then
+        printf "%s,%s" "$first_seen" "$last_init" > "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
+        return 0
+    fi
+
+    if (( (now - last_init) >= DISCONNECT_INIT_CAM_INTERVAL_SEC )); then
+        logger -p local0.notice "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag): periodic init_cam.sh"
+        printf "%s,%s" "$first_seen" "$now" > "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
+        /opt/pim/bin/init_cam.sh
+        return 0
+    fi
+
+    printf "%s,%s" "$first_seen" "$last_init" > "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
+    return 0
+}
 
 GetConfig_() {
     IFS=$'\t' read -r \
@@ -116,7 +178,13 @@ fi
 MovePartFile() {
     local part_file="$1"
     local filename=$(basename "$part_file")
-    local final_name="${filename%.part}"  # .part 제거
+    local final_name
+    # .part 확장자가 있으면 제거, 없으면 그대로 유지
+    if [[ "$filename" == *.part ]]; then
+        final_name="${filename%.part}"
+    else
+        final_name="$filename"
+    fi
     local src_file="$part_file"
     local part_dir
     part_dir=$(dirname "$part_file")
@@ -129,7 +197,7 @@ MovePartFile() {
         return 1
     fi
 
-    logger -p local0.info "[$KEY][$tag:$LINENO] processing: $filename"
+    logger -p local0.debug "[$KEY][$tag:$LINENO] processing: $filename"
 
     # Stage 1: tmp_path → sd_tmp_path
     # - Only run when the input file is actually in tmp_path
@@ -150,19 +218,21 @@ MovePartFile() {
         # 원본 삭제 (RAM)
         rm -f "$part_file"
 
-        logger -p local0.info "[$KEY][$tag:$LINENO] Stage1: $filename → sd_tmp"
+        logger -p local0.debug "[$KEY][$tag:$LINENO] Stage1: $filename → sd_tmp"
 
         # Stage 2의 소스는 sd_tmp_path
         src_file="${sd_tmp_dir}/${filename}"
     fi
 
-    # Stage 2: sd_tmp_path → final_path (.part 제거)
-    if ! mv "$src_file" "${final_dir}/${final_name}"; then
+    # Stage 2: sd_tmp_path → final_path (.part 확장자 있으면 제거)
+    if [ "$src_file" = "${final_dir}/${final_name}" ]; then
+        logger -p local0.debug "[$KEY][$tag:$LINENO] Stage2 skip (same path): $final_name"
+    elif ! mv "$src_file" "${final_dir}/${final_name}"; then
         logger -p local0.error "[$KEY][$tag:$LINENO] Stage2 mv failed: $filename"
         return 1
     fi
 
-    logger -p local0.notice "[$KEY][$tag:$LINENO] Complete: $final_name"
+    logger -p local0.info "[$KEY][$tag:$LINENO] Complete: $final_name"
     return 0
 }
 
@@ -212,8 +282,24 @@ apply_storage_mode_overrides() {
     fi
 }
 
+# Cache variables for session list
+_SESSIONS_CACHE_DIR=""
+_SESSIONS_CACHE_TIME=0
+_SESSIONS_CACHE_RESULT=""
+_SESSIONS_CACHE_TTL=${SESSIONS_CACHE_TTL:-10}  # Default 10 seconds TTL
+
 list_sessions_in_dir_sorted() {
     local dir="$1"
+    local now=$(date +%s)
+
+    # Check cache validity
+    if [ "$dir" = "$_SESSIONS_CACHE_DIR" ] && \
+       [ $((now - _SESSIONS_CACHE_TIME)) -lt "$_SESSIONS_CACHE_TTL" ]; then
+        printf '%s\n' "$_SESSIONS_CACHE_RESULT"
+        return
+    fi
+
+    # Cache miss: scan directory and build result
     declare -A _seen
     local f base sid
 
@@ -230,8 +316,16 @@ list_sessions_in_dir_sorted() {
     done
 
     if [ ${#_seen[@]} -gt 0 ]; then
-        printf '%s\n' "${!_seen[@]}" | sort
+        _SESSIONS_CACHE_RESULT=$(printf '%s\n' "${!_seen[@]}" | sort)
+    else
+        _SESSIONS_CACHE_RESULT=""
     fi
+
+    # Update cache metadata
+    _SESSIONS_CACHE_DIR="$dir"
+    _SESSIONS_CACHE_TIME="$now"
+
+    printf '%s\n' "$_SESSIONS_CACHE_RESULT"
 }
 
 delete_session_in_dir() {
@@ -261,6 +355,10 @@ enforce_sd_retention_if_needed() {
     local usage sid
     local sessions keep_line
 
+    # Optimization: df check interval (check every N deletions instead of every loop)
+    local df_check_interval=5
+    local delete_count=0
+
     usage=$(get_df_usage_pct "$target_dir")
     [ -n "$usage" ] || return 0
 
@@ -281,10 +379,6 @@ enforce_sd_retention_if_needed() {
     keep_line=$(printf '%s\n' "$sessions" | tail -n "$protect_n" | tr '\n' '|' | sed 's/|$//')
 
     while :; do
-        usage=$(get_df_usage_pct "$target_dir")
-        [ -n "$usage" ] || break
-        [ "$usage" -ge "$warn_pct" ] || break
-
         sid=$(printf '%s\n' "$sessions" | head -n 1)
         [ -n "$sid" ] || break
 
@@ -295,10 +389,18 @@ enforce_sd_retention_if_needed() {
 
         logger -p local0.notice "[$KEY][$tag:$LINENO] retention: deleting session $sid"
         delete_session_in_dir "$target_dir" "$sid"
+        ((delete_count++))
 
-        # refresh list after deletion
-        sessions=$(list_sessions_in_dir_sorted "$target_dir")
+        # Optimization: update list using tail to skip deleted session (avoids re-scanning)
+        sessions=$(printf '%s\n' "$sessions" | tail -n +2)
         [ -n "$sessions" ] || break
+
+        # Optimization: check df only every N deletions
+        if [ $((delete_count % df_check_interval)) -eq 0 ]; then
+            usage=$(get_df_usage_pct "$target_dir")
+            [ -n "$usage" ] || break
+            [ "$usage" -lt "$warn_pct" ] && break
+        fi
     done
 }
 
@@ -389,6 +491,14 @@ ProcessCompletedSessions() {
         # 타임스탬프 추출 (session_20260127_1430.all_done -> 20260127_1430)
         timestamp=$(basename "$done_file" | sed 's/session_\(.*\)\.all_done/\1/')
 
+        # [보호 로직] 현재 시각(분)과 동일한 세션은 아직 녹화 중일 가능성이 크므로 미룸
+        # 예: 02:10:04에 0210 세션이 완료되었다고 오더라도, 02:10:59까지는 0210 세션을 유지함
+        current_min_ts=$(date '+%Y%m%d_%H%M')
+        if [ "$timestamp" = "$current_min_ts" ]; then
+            # logger -p local0.debug "[$KEY][$tag:$LINENO] postponing current session: $timestamp"
+            continue
+        fi
+
         # Reset per marker
         processed_base=()
 
@@ -398,7 +508,10 @@ ProcessCompletedSessions() {
         # - Scan both tmp_path and sd_tmp_path to handle crash windows (Stage1 done, Stage2 pending)
         for scan_dir in "${scan_dirs[@]}"; do
             [ -d "$scan_dir" ] || continue
-            for part_file in "$scan_dir"/*"${timestamp}"*.part; do
+            for part_file in "$scan_dir"/*"${timestamp}"*.part \
+                             "$scan_dir"/*"${timestamp}"*.mp4 \
+                             "$scan_dir"/*"${timestamp}"*.ts \
+                             "$scan_dir"/*"${timestamp}"*.srt; do
                 [ -f "$part_file" ] || continue
 
                 base=$(basename "$part_file")
@@ -591,8 +704,8 @@ CheckDiskSpace() {
 logger -p local0.emerg "[$KEY][$tag:$LINENO] cam-operate daemon start : Booting"
 #/opt/pim/bin/automnt_sd_for_emmc_boot.sh /mnt/sd_cam &
 modprobe rtc_ds1307
-modprobe max9296
-modprobe imx8-media-dev
+modprobe max9296 || logger -p local0.err "[$KEY][$tag:$LINENO] modprobe max9296 failed"
+modprobe imx8-media-dev || logger -p local0.err "[$KEY][$tag:$LINENO] modprobe imx8-media-dev failed"
 #/opt/pim/bin/start_cam.sh 20
 
 FILE_="/tmp/start_video_time_chk"
@@ -637,11 +750,11 @@ timestamp=0
 GetConfig
 
 if is_sd_ok; then
-    logger -p local0.info "[$KEY][$tag:$LINENO] sd flag is 1 or 2"
+    logger -p local0.notice "[$KEY][$tag:$LINENO] sd flag is 1 or 2"
 else
     logger -p local0.err "[$KEY][$tag:$LINENO] invalid sd flag or not exist"
     if [ "$tmp_path" != "/dev/shm" ]; then
-        logger -p local0.notice "[$KEY][$tag:$LINENO] fallback tmp_path(runtime only): $tmp_path -> /dev/shm"
+        logger -p local0.emerg "[$KEY][$tag:$LINENO] fallback tmp_path(runtime only): $tmp_path -> /dev/shm"
         tmp_path="/dev/shm"
     fi
 fi
@@ -689,6 +802,62 @@ do
         timer=0
     fi
 
+    # Disconnect handling: periodically re-init modules so that when cameras reconnect
+    # we can resume normal file checks. No reboot in disconnect state.
+    if maybe_init_cam_on_disconnect; then
+        timer=0
+        sleep 5
+        continue
+    fi
+
+    # Recovery ownership: handle init_cam requests here.
+    if [ -f "$RECOVER_REQ_INIT_CAM" ]; then
+        cam_disconnect_flag=$(get_cam_disconnect_flag)
+        if (( cam_disconnect_flag == 0x0 )); then
+            logger -p local0.error "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh because recover request"
+            rm -f "$RECOVER_REQ_INIT_CAM"
+            /opt/pim/bin/init_cam.sh
+            timer=0
+            sleep 5
+            continue
+        else
+            logger -p local0.err "[$KEY][$tag:$LINENO] skip recover request because cam is disconnect($cam_disconnect_flag)"
+            # Keep request; periodic disconnect handler will run init_cam.sh.
+        fi
+    fi
+
+    # Driver load failure: retry init_cam, then reboot (unless disconnect).
+    if ! modules_loaded; then
+        cam_disconnect_flag=$(get_cam_disconnect_flag)
+        logger -p local0.error "[$KEY][$tag:$LINENO] driver module not loaded (max9296/imx8_media_dev)"
+        echo "NG" > $FILE_CHECK
+        if (( cam_disconnect_flag == 0x0 )); then
+            ((retry_boot++))
+            retry_total=$(($retry+$retry_boot))
+            if [ "$retry_total" -le 5 ]; then
+                logger -p local0.error "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh because driver load fail ($retry/$retry_boot/$retry_total)"
+                /opt/pim/bin/init_cam.sh
+            else
+                logger -p local0.error "[$KEY][$tag:$LINENO] retry_total $retry_total is over (driver load fail)"
+                if [[ "$file_chk_reboot" == *"$ENABLE_VAL"* ]]; then
+                    logger -p local0.emerg "[$KEY][$tag:$LINENO] rebooting because driver load fail ($retry/$retry_boot/$retry_total)"
+                    sleep 1
+                    reboot
+                else
+                    logger -p local0.notice "[$KEY][$tag:$LINENO] retry count reset because file_check_reboot is not true"
+                    retry=0
+                    retry_boot=0
+                    retry_total=0
+                fi
+            fi
+        else
+            logger -p local0.err "[$KEY][$tag:$LINENO] no retry/reboot because cam is disconnect($cam_disconnect_flag)"
+        fi
+        timer=0
+        sleep 5
+        continue
+    fi
+
     if [[ "$time_rec_en" != *"$ENABLE_VAL"* ]]; then
         sleep 5
         continue
@@ -704,8 +873,10 @@ do
         continue
     fi
 
-    # === 이벤트 기반: 완료된 세션 처리 ===
-    ProcessCompletedSessions
+    # === 이벤트 기반: 완료된 세션 처리 (최적화: all_done 파일 존재 시만 호출) ===
+    if compgen -G '/tmp/session_*.all_done' > /dev/null 2>&1; then
+        ProcessCompletedSessions
+    fi
 
     #if [ -e "$FILE_" ]; then
     startTime=$(cat $FILE_ 2>/dev/null| tr -d '\n' 2>/dev/null)
@@ -726,10 +897,10 @@ do
 			if [[ "$cam_ch0" == *"$ENABLE_VAL"* ]]; then
                 ((check_num++))
                 if [ -f "${tmp_path}/${vhl_name}_${datetime}-ch0.${muxer}" ]; then
-			        logger -p local0.info "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime}-ch0.${muxer} exist"
+			        logger -p local0.debug "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime}-ch0.${muxer} exist"
                     ((file_cnt++))
                 elif compgen -G "${tmp_path}/*${vhl_name}_${datetime_}*ch0*" > /dev/null; then
-                    logger -p local0.info "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*ch0* exist"
+                    logger -p local0.debug "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*ch0* exist"
                     ((file_cnt++))
 	    		else
 		    		logger -p local0.error "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*ch0* not exist"
@@ -742,10 +913,10 @@ do
             if [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]; then
                 ((check_num++))
                 if [ -f "${tmp_path}/${vhl_name}_${datetime}-ch1.${muxer}" ]; then
-                    logger -p local0.info "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime}-ch1.${muxer} exist"
+                    logger -p local0.debug "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime}-ch1.${muxer} exist"
                     ((file_cnt++))
                 elif compgen -G "${tmp_path}/*${vhl_name}_${datetime_}*ch1*" > /dev/null; then
-                    logger -p local0.info "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*ch1* exist"
+                    logger -p local0.debug "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*ch1* exist"
                     ((file_cnt++))
                 else
                     logger -p local0.error "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*ch1* not exist"
@@ -757,10 +928,10 @@ do
             if [[ "$cam_ch2" == *"$ENABLE_VAL"* ]]; then
                 ((check_num++))
                 if [ -f "${tmp_path}/${vhl_name}_${datetime}-ch2.${muxer}" ]; then
-                    logger -p local0.info "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime}-ch2.${muxer} exist"
+                    logger -p local0.debug "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime}-ch2.${muxer} exist"
                     ((file_cnt++))
                 elif compgen -G "${tmp_path}/*${vhl_name}_${datetime_}*ch2*" > /dev/null; then
-                    logger -p local0.info "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*ch2* exist"
+                    logger -p local0.debug "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*ch2* exist"
                     ((file_cnt++))
                 else
                     logger -p local0.error "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*ch2* not exist"
@@ -772,10 +943,10 @@ do
             if [[ "$cam_ch3" == *"$ENABLE_VAL"* ]]; then
                 ((check_num++))
                 if [ -f "${tmp_path}/${vhl_name}_${datetime}-ch3.${muxer}" ]; then
-                    logger -p local0.info "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime}-ch3.${muxer} exist"
+                    logger -p local0.debug "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime}-ch3.${muxer} exist"
                     ((file_cnt++))
                 elif compgen -G "${tmp_path}/*${vhl_name}_${datetime_}*ch3*" > /dev/null; then
-                    logger -p local0.info "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*ch3* exist"
+                    logger -p local0.debug "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*ch3* exist"
                     ((file_cnt++))
                 else
                     logger -p local0.error "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*ch3* not exist"
@@ -787,10 +958,10 @@ do
             if [[ "$srt_en" == *"$ENABLE_VAL"* ]]; then
                 ((check_num++))
                 if [ -f "${tmp_path}/${vhl_name}_${datetime}-data.srt" ]; then
-                    logger -p local0.info "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime}-data.srt exist"
+                    logger -p local0.debug "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime}-data.srt exist"
                     ((file_cnt++))
                 elif compgen -G "${tmp_path}/*${vhl_name}_${datetime_}*data*" > /dev/null; then
-                    logger -p local0.info "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*data* exist"
+                    logger -p local0.debug "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*data* exist"
                     ((file_cnt++))
                 else
                     logger -p local0.error "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*data* not exist"
@@ -817,14 +988,12 @@ do
             #     fi
             # fi
             sync
-			logger -p local0.info "[$KEY][$tag:$LINENO] check_num:$check_num cnt:$file_cnt"
+			logger -p local0.debug "[$KEY][$tag:$LINENO] check_num:$check_num cnt:$file_cnt"
 			if [ "$check_num" -ne "$file_cnt" ]; then
                 logger -p local0.error "[$KEY][$tag:$LINENO] $check_num != $file_cnt file cnt check fail"
                 start_f=0
                 echo "NG" > $FILE_CHECK
-                value=$(cat $FLAG_PATH/bg_chk_flag.bin)
-                value=$(( 0x$(printf '%x' "$value") ))
-                cam_disconnect_flag=$((value&0xf))
+                cam_disconnect_flag=$(get_cam_disconnect_flag)
                 if (( cam_disconnect_flag == 0x0 )); then
                     ((retry++))
                     retry_total=$(($retry+$retry_boot))
@@ -852,7 +1021,7 @@ do
                     logger -p local0.err  "[$KEY][$tag:$LINENO] no retry because cam is disconnect($cam_disconnect_flag)"
                 fi
 			else
-				logger -p local0.notice "[$KEY][$tag:$LINENO] ${muxer},srt file cnt check ok ($retry/$retry_boot/$retry_total)"
+				logger -p local0.info "[$KEY][$tag:$LINENO] ${muxer},srt file cnt check ok ($retry/$retry_boot/$retry_total)"
 				retry=0
                 retry_boot=0
                 retry_total=0
@@ -877,9 +1046,7 @@ do
             fi
 
             echo "NG" > $FILE_CHECK
-            value=$(cat $FLAG_PATH/bg_chk_flag.bin)
-            value=$(( 0x$(printf '%x' "$value") ))
-            cam_disconnect_flag=$((value&0xf))
+            cam_disconnect_flag=$(get_cam_disconnect_flag)
             if (( cam_disconnect_flag == 0x0 )); then
                 ((retry_boot++))
                 retry_total=$(($retry+$retry_boot))

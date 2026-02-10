@@ -27,9 +27,18 @@ rmmod max9296
 sleep 2
 logger -p local0.notice "[RST][$tag:$LINENO] modprobe imx8-media-dev, max9296"
 modprobe max9296
+rc1=$?
 sleep 2
 modprobe imx8-media-dev
+rc2=$?
 sleep 2
+
+if [ "$rc1" -ne 0 ] || [ "$rc2" -ne 0 ]; then
+    logger -p local0.emerg "[RST][$tag:$LINENO] modprobe failed (max9296:$rc1 imx8-media-dev:$rc2)"
+    logger -p local0.notice "[RST][$tag:$LINENO] reset init_cam_flag"
+    rm -f /tmp/init_cam_flag
+    exit 1
+fi
 #PIMCAM -m 0 -c 3 &
 FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' | grep "${JSON_SUFFIX}$" | tail -1 | tr -d '\r\n')
 #cam_ch0=$(jq '.VHL_CAM.i2c2.ch0.enable' "$FILE_JSON")
