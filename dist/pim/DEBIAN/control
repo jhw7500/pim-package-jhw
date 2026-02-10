@@ -1,5 +1,5 @@
 Package: pim-mp
-Version: 0.5.7
+Version: 0.5.7.2
 Replaces: cis
 Breaks: cis
 Section: test
@@ -67,3 +67,5 @@ Description: PIM application
 0.5.5 : gstApp(1.1), sd-mount.service, sc16is7xx_ext
 0.5.6 : disco_react, streamApp for cam rotate add fake-hwclock for rtc fault
 0.5.7 : gstApp(1.2), recovery for sd readonly, dynamic ext4, decrease log, fake-hwclock, journald-snapshot
+0.5.7.1 : realoht demo
+0.5.7.2 : pim_gate sFTP_UDP raw to bmp
