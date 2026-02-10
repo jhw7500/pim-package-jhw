@@ -424,7 +424,8 @@ package_list=('schedule' \
           'numpy' \
           'dataclasses' \
           'typing_extensions' \
-          'scapy' )
+          'scapy' \
+          'pillow' )
 for package in "${package_list[@]}"
 do
   installed_pip=$(echo "$pip_list" | grep -E "${package}\s")
