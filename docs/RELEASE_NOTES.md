@@ -75,9 +75,69 @@ gstApp v1.3 이후 성능 중심 업데이트를 추가 적용했습니다.
               워커 스레드 → 파일 쓰기 (백그라운드)
 ```
 
-#### 6. VCM 경로 외부화
+#### 6. RAW → BMP 병렬 변환 유틸리티
+
+캡처된 RAW 이미지를 BMP로 자동 변환하는 Python 유틸리티를 추가했습니다.
+
+- **병렬 처리**: multiprocessing 기반 4코어 동시 변환
+- **자동 감지**: `/dev/shm/capture/` 디렉토리 감시, RAW 포맷 자동 판별
+- **루프 모드**: `--loop` 옵션으로 지속적 감시 및 변환
+- **Pillow 사전 빌드**: ARM64용 Pillow 10.4.0 wheel 패키지 포함 (`upgrade_file/pip/`)
+
+```bash
+python convert_raw_to_bmp_parallel.py          # 1회 실행
+python convert_raw_to_bmp_parallel.py --loop   # 루프 모드
+```
+
+#### 7. VCM 경로 외부화
 
 하드코딩된 경로를 TVhlConf 설정으로 이동하여 환경별 설정 및 QEMU 테스트를 지원합니다.
+
+#### 8. ORD SD 카드 체크 활성화
+
+- `waitingDisk()`에서 `checkSD()` 호출 활성화 — 디스크 대기 시 SD 카드 상태 확인
+
+#### 9. 런타임 스크립트 강화
+
+프로덕션 안정성 및 복구 전략을 대폭 개선했습니다.
+
+**설정 마이그레이션 스크립트 (`update_edgeconf.sh`)**
+- **ERR trap + 구조화된 로깅**: 실패 시점과 명령을 syslog에 자동 기록
+- **JSON 검증 및 백업**: jq 구문 검증 + `/opt/pim/config/` 자동 백업
+- **레거시 설정 마이그레이션**:
+  - 구 채널 설정(`cam_ch0..3`, `ch0_rotate`) → 신규 i2c 기반 구조 자동 변환
+  - ORD/VCM 헤더 제거 (분리된 설정 파일로 이전)
+- **신규 설정 섹션 추가**:
+  - `queue_tune`: 파이프라인 저지연 타이밍 제어 (main_src_time_ms, enc_src_time_ms, rec_sink_time_ms, cap_src_time_ms)
+  - `rtsp_tune`: RTSP 레이턴시 및 버퍼 튜닝 (factory_latency_ms, appsink_max_buffers, bin_queue_max_time_ms)
+  - `capture.path`, `capture.queue_size`: 캡처 경로 및 큐 크기 설정
+  - 채널별 `ae_on`, `ae_gain`, `bps` 배열 설정
+
+**녹화 파일 관리 (`chk_cam_operate.sh`)**
+- **2단계 파일 이동**: `/dev/shm` (RAM) → `sd_tmp_path` (SD 버퍼) → `final_path` (SD 최종)
+- **스테일 .part 파일 정리**: 120초 동안 크기 변화 없는 .part 파일 자동 복구 또는 삭제
+- **세션 기반 retention**: 최근 N개 세션 보호 정책 (기본값: 2세션)
+- **RAM 전용 모드**: SD 카드 BAD/RO 시 `/dev/shm/recordings`에서 1.6GiB 제한 녹화
+- **SD 임계값 기반 제어**: WARN(95%), CRIT(98%) 임계값, CRIT 도달 시 SD 쓰기 즉시 중단
+- **카메라 연결 해제 복구**: 주기적 `init_cam.sh` 재실행 (300초마다), 재부팅 방지
+- **세션 완료 마커 이벤트 처리**: `.all_done` 마커 기반 .part 커밋 최적화
+
+**카메라 복구 전략 (`start_cam.sh`, `init_cam.sh`, `BG_Check_for_pim.sh`)**
+- **복구 소유권 위임**: `start_cam.sh`에서 `gst_err` 감지 시 `/tmp/recover_req_init_cam` 요청 생성
+- **중앙 복구 로직**: `chk_cam_operate.sh`가 retry/init/reboot 결정 (분산된 로직 제거)
+- **연결 해제 시 재부팅 방지**: BG_Check_for_pim.sh에서 복구 요청 플래그만 설정
+- **모듈 로드 실패 처리**: init_cam.sh에서 modprobe 반환값 검증 및 조기 종료
+
+**SD 카드 마운트 (`automnt_sd_for_emmc_boot.sh`)**
+- **RO 검출 즉시 대응**: H/W RO(`/sys/block/mmcblk1/ro`) 또는 S/W RO 검출 시 즉시 `sd_mount_flag=0` 설정
+- **tmp_path 자동 fallback**: SD 마운트 실패 시 `/dev/shm`으로 자동 전환 및 cam-operate 재시작
+- **sd_tmp_path 지원**: JSON 설정 경로 기반 정리 디렉토리 생성
+- **부트 시 .part 파일 정리**: 이전 마운트의 미완성 파일 자동 삭제
+- **ext4 커밋 주기 조정**: `commit=60` 옵션으로 쓰기 주기 최적화
+
+**카메라 수동 제어 스크립트**
+- **AE (Auto Exposure) 제어**: `cam_ae_on.sh`, `cam_ae_off.sh` — i2c 직접 명령 (0x50 0x02 0x02 0x99/0x00)
+- **수동 파라미터 설정**: `cam_manual_gain.sh`, `cam_manual_exp_time.sh`, `cam_manual_iso.sh` — 16진수 변환 및 i2c 전송
 
 ---
 
@@ -184,6 +244,7 @@ v0.5.7에 포함되었던 v1.6에서 5개 릴리즈를 거쳐 v2.0으로 업데�
 | gstApp | subdev 매핑 오류 | V4L2 subdev 노드 매핑 수정 |
 | gstApp | 메모리 누수 | main.cpp, videoBin.cpp 할당 해제 누락 수정 |
 | gstApp | 소켓 클린업 | tcpServer 소켓 자원 누수 수정 |
+| ORD | SD 체크 누락 | `waitingDisk()`에서 `checkSD()` 활성화 |
 | ORD | msgq 오버플로 | 수신자 다운 시 msgq full 안전 처리 |
 | ORD | OPS JSON 처리 | parsed offset 전송으로 수정 |
 | VCM | 댕글링 포인터 | TOpsData 메모리 접근 오류 수정 |
@@ -221,8 +282,9 @@ x86_64 호스트에서 타겟(Ubuntu 20.04 ARM64, GLIBC 2.31)과 동일한 환�
 ./docker/build.sh clean        # 클린
 ```
 
-#### 설치 스크립트
+#### 설치 및 배포 스크립트
 - `install_deb.sh` 추가: 패키지 설치 자동화
+- `test/rsync_pim.sh` 추가: 빌드 결과물(pim.deb)을 타겟으로 rsync 전송
 
 #### 카메라 제어 스크립트
 - `cam_ae_on.sh`, `cam_ae_off.sh`: 자동 노출 on/off
@@ -367,13 +429,15 @@ v4l2-ctl -d /dev/v4l-subdev2 --list-ctrls
 
 | 구분 | 수치 |
 |------|------|
-| **총 커밋** | 약 125개 (gstApp 72 + ORD 26 + VCM 20 + MAX9296 3 + 통합 15) |
+| **총 커밋** | 약 140개 (gstApp 72 + ORD 27 + VCM 20 + MAX9296 3 + 통합 30) |
 | **보안 개선** | 28개 항목 |
 | **스레드 안전성** | 8개 항목 |
 | **성능 개선** | 14개 항목 (gstApp v1.4 +7) |
 | **커널 패닉 수정** | 3건 (MAX9296 v2.0) |
-| **버그 수정** | 15개 항목 |
-| **인프라 개선** | 12개 항목 (빌드, 스크립트, 복구) |
+| **버그 수정** | 16개 항목 |
+| **신규 유틸리티** | raw2bmp 병렬 변환, rsync 헬퍼 |
+| **런타임 스크립트** | 10개 개선 (설정 마이그레이션, 녹화 관리, 복구 전략, SD 마운트, 카메라 제어) |
+| **인프라 개선** | 14개 항목 (Docker, 빌드, 스크립트, 복구) |
 | **문서** | 13개 파일 |
 
 ---

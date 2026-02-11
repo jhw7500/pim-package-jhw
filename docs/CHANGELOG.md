@@ -20,14 +20,28 @@
 - [MEDIUM] soft lockup: `msleep_interruptible()` 전환
 - probe 실패 경로 리소스 누수 수정
 
+### RAW → BMP 병렬 변환 유틸리티
+- `convert_raw_to_bmp_parallel.py` (441줄): multiprocessing 기반 4코어 병렬 변환
+- Pillow 10.4.0 ARM64 wheel 패키지 포함 (`upgrade_file/pip/`)
+- 루프 모드, 자동 포맷 감지, syslog 로깅
+
+### ORD v4.8.1
+- `waitingDisk()`에서 `checkSD()` 활성화 — 디스크 대기 시 SD 카드 상태 확인
+
+### 런타임 스크립트 강화
+- **설정 마이그레이션** (`update_edgeconf.sh`): ERR trap + JSON 검증 + 백업, queue_tune/rtsp_tune 섹션 추가, 레거시 설정 자동 변환
+- **녹화 파일 관리** (`chk_cam_operate.sh`): 2단계 파일 이동, 스테일 .part 정리, 세션 기반 retention, RAM 전용 모드, SD 임계값 제어, 카메라 연결 해제 복구
+- **복구 전략**: 복구 소유권 위임 (start_cam.sh → chk_cam_operate.sh), 연결 해제 시 재부팅 방지, 모듈 로드 실패 조기 종료
+- **SD 카드 마운트** (`automnt_sd_for_emmc_boot.sh`): RO 검출 즉시 대응, tmp_path 자동 fallback, sd_tmp_path 지원, 부트 시 .part 정리, ext4 커밋 주기 조정
+- **카메라 수동 제어**: AE on/off, 수동 gain/exp_time/iso 스크립트 (i2c 직접 명령)
+
 ### 빌드/배포 인프라
 - **Docker 빌드 환경** (`docker/`): Ubuntu 20.04 ARM64 + QEMU로 타겟 호환 바이너리 생성 (GLIBC 2.31)
   - `Dockerfile`, `build-image.sh`, `build.sh`, `.dockerignore`, `README.md`
 - build.sh 전면 재설계: 선택적 모듈 빌드/클린 지원
 - install_deb.sh: 패키지 설치 자동화
-- 카메라 제어 스크립트 5종 추가 (AE, Gain, ISO, Exp Time)
+- `test/rsync_pim.sh`: 빌드 결과물 rsync 배포 스크립트
 - fake-hwclock 강화: RTC 재시도, 커널 로그, 드라이버 확인
-- 복구 메커니즘: chk_cam_operate, automnt_sd, kill_test 개선
 - 설정 업데이트: edgeconf_pim_base.json, ord_vcm_conf.json
 
 ---
@@ -186,7 +200,8 @@
 | **VCM** | 20개 | SRT 5개, 스레드 5개, 성능 1개 |
 | **gstApp** | 7개 (v1.4) | 저지연 튜닝, 오브젝트 풀링, 셧다운 |
 | **MAX9296** | 3개 (v2.0) | 커널 패닉 3건, probe 누수 수정 |
-| **인프라** | 15개 | 빌드, 스크립트, 복구, 설정 |
+| **런타임 스크립트** | 10개 | 설정 마이그레이션, 녹화 관리, 복구 전략 |
+| **인프라** | 15개 | 빌드, Docker, fake-hwclock, 배포 |
 | **문서** | 2개 | V4L2 가이드, 세션 라이프사이클 |
 | **합계** | 23개 | 서브모듈 56개 커밋 통합 |
 
