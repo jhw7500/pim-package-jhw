@@ -411,6 +411,7 @@ git submodule update --init --recursive
 
 - **Sisyphus AI**: ORD/VCM 보안 및 안정성 개선 (대부분의 커밋)
 - **Claude Sonnet 4.5**: 문서화 및 통합
+- **Gemini**: gstApp 성능 최적화 계획 수립 및 구현, 큐 튜닝, 동기화 로직 고도화
 - **hwjo**: 프로젝트 유지보수 및 통합
 
 ---
