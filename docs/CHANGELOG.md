@@ -8,6 +8,7 @@
 
 ### gstApp v1.4 (PR #21, #22)
 - 파이프라인 큐 저지연 튜닝 (100~200ms) 및 컴팩트 기본값 적용
+- **전 채널 키프레임 동시 동기화**: `force-keyunit` 제어로 채널 간 분할 시차 최소화 (ms 수준)
 - FragmentClosedEvent 오브젝트 풀링
 - 고빈도 버스 메시지 필터링 (main.cpp -200줄/+42줄)
 - 시간 기반 큐 사이징, `queue_tune` JSON 설정

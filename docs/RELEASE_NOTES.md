@@ -31,7 +31,7 @@ gstApp, ORD, VCM 3개 애플리케이션의 보안 취약점을 전수 점검하
 - **타이머 정밀도 향상**: 1초 → 500ms 주기로 단축
 - **스마트 분할 보호**: 최소 분할 간격 5초, 최대 드리프트 허용치 30초
 - **Snap-back 복구**: 00초 정각으로의 자동 복구 (유예 기간 58초)
-- **키프레임 동기화**: encoderBin에 키프레임 강제 삽입, 분할 시점 재생 호환성 보장
+- **전 채널 키프레임 동시 동기화**: 정각 분할 시점에 모든 인코더(encoderBin)에 `force-keyunit` 이벤트를 즉시 전송하여, 채널 간 분할 시점 편차(Skew)를 수 밀리초(ms) 이내로 최소화하고 실시간 멀티채널 재생 동기화를 실현했습니다.
 - **fragment-closed 워커 스레드**: splitmuxsink 이벤트 처리를 별도 스레드로 오프로드
 - **VCM 동기화 개선**: `.srt_done` 플래그 기반 세션 완료 협업, 시작 신호 감지 개선
 - **녹화 통계 로깅**: fragment-opened 시점에 이전 세션 통계(파일명, 크기, 지속시간) 출력
@@ -449,13 +449,44 @@ v0.5.8 (보안 + 녹화 동기화 + V4L2 + 드라이버) ← 현재
 
 ---
 
+### 🔗 프로젝트 문서 맵 (Documentation Index)
+
+프로젝트의 상세 설계 및 운영 정보를 담고 있는 문서 가이드입니다.
+
+#### 1. 메인 통합 문서 (`docs/`)
+- [`RELEASE_NOTES.md`](./RELEASE_NOTES.md): **[현재 문서]** 전체 프로젝트 릴리즈 요약 및 주요 변경 사항
+- [`CHANGELOG.md`](./CHANGELOG.md): 커밋 단위의 상세 변경 이력 및 기여자 정보
+- [`session-lifecycle.md`](./session-lifecycle.md): 녹화 세션의 생성부터 소멸까지의 상태 전이 및 파일 관리 로직
+- [`docker-build.md`](./docker-build.md): Docker 기반의 ARM64 크로스 빌드 환경 구축 및 사용 가이드
+- [`cpu-usage-analysis.md`](./cpu-usage-analysis.md): 최적화 전후의 CPU 점유율 비교 및 병목 지점 분석 보고서
+
+#### 2. gstApp 전문 문서 (`docs/gstApp/`)
+- [`PERFORMANCE_OPTIMIZATION_PLAN.md`](./gstApp/PERFORMANCE_OPTIMIZATION_PLAN.md): 큐 튜닝, 객체 풀링 등 단계별 성능 개선 로드맵
+- [`RECORDING_SYNC_PLAN.md`](./gstApp/RECORDING_SYNC_PLAN.md): 영상-자막 정각 분할 및 키프레임 동기화 설계 메커니즘
+- [`CAPTURE_OPTIMIZATIONS.md`](./gstApp/CAPTURE_OPTIMIZATIONS.md): Valve 엘리먼트 기반 캡처 파이프라인 최적화 상세
+- [`SPLITMUXSINK.md`](./gstApp/SPLITMUXSINK.md): GStreamer splitmuxsink 플러그인의 기술적 특성 및 속성 가이드
+- [`SECURITY-NOTES.md`](./gstApp/SECURITY-NOTES.md): 보안 패치 내역 및 향후 보안 강화 계획
+
+#### 3. ORD 서브모듈 문서 (`ord/docs/`)
+- [`ord/RELEASE_NOTES.md`](../ord/RELEASE_NOTES.md): ORD 모듈 전용 릴리즈 노트
+- [`ord/docs/VERIFICATION_GUIDE_ORD.md`](../ord/docs/VERIFICATION_GUIDE_ORD.md): ORD 기능 검증 시나리오 및 테스트 절차
+- [`ord/docs/edgeconf_pim.json`](../ord/docs/edgeconf_pim.json): 시스템 통합 설정(JSON) 전체 스키마 예제
+- [`ord/docs/ord_vcm_conf.json`](../ord/docs/ord_vcm_conf.json): ORD/VCM 운영 파라미터 설정 가이드
+
+#### 4. VCM 서브모듈 문서 (`vcm/docs/`)
+- [`vcm/RELEASE_NOTES.md`](../vcm/RELEASE_NOTES.md): VCM 모듈 전용 릴리즈 노트
+- [`vcm/docs/VERIFICATION_GUIDE_VCM.md`](../vcm/docs/VERIFICATION_GUIDE_VCM.md): 자막 생성 및 동기화 기능 검증 가이드
+
+#### 5. 하드웨어 및 드라이버 문서 (`docs/max9296/`)
+- [`max9296/V4L2_CTRL_GUIDE.md`](./max9296/V4L2_CTRL_GUIDE.md): MAX9296 GMSL2 및 ISP 제어를 위한 V4L2 커스텀 컨트롤 가이드
+- [`max9296/RELEASE_NOTES.md`](./max9296/RELEASE_NOTES.md): 커널 드라이버 안정화 및 패치 내역 (v2.0)
+
 ### 기여자
 
 - **hwjo**: 프로젝트 유지보수, V4L2 통합, 녹화 동기화 설계
 - **Sisyphus AI**: ORD/VCM 보안 및 안정성 개선
-- **Claude**: gstApp 보안 패치, 문서화, CI/CD 자동화
+- **Claude**: gstApp 보안 패치, MAX9296 드라이버 안정화(커널 패닉 수정), 런타임 스크립트(복구 전략 및 마이그레이션) 강화, 문서화 및 CI/CD 자동화
 - **Gemini**: gstApp 성능 최적화(객체 풀링, 큐 튜닝, 캐싱) 및 동기화 로직 고도화
-- **GLM**: 기술 자문 및 시스템 아키텍처 검토
 - **GLM**: 기술 자문 및 시스템 아키텍처 검토
 
 ---
