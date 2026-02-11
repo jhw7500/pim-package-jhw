@@ -7,7 +7,7 @@
 ## 📌 최신 변경사항 (2026-02-11)
 
 ### gstApp v1.4 (PR #21, #22)
-- 파이프라인 큐 저지연 튜닝 (100~200ms)
+- 파이프라인 큐 저지연 튜닝 (100~200ms) 및 컴팩트 기본값 적용
 - FragmentClosedEvent 오브젝트 풀링
 - 고빈도 버스 메시지 필터링 (main.cpp -200줄/+42줄)
 - 시간 기반 큐 사이징, `queue_tune` JSON 설정
@@ -33,6 +33,7 @@
 - **녹화 파일 관리** (`chk_cam_operate.sh`): 2단계 파일 이동, 스테일 .part 정리, 세션 기반 retention, RAM 전용 모드, SD 임계값 제어, 카메라 연결 해제 복구
 - **복구 전략**: 복구 소유권 위임 (start_cam.sh → chk_cam_operate.sh), 연결 해제 시 재부팅 방지, 모듈 로드 실패 조기 종료
 - **SD 카드 마운트** (`automnt_sd_for_emmc_boot.sh`): RO 검출 즉시 대응, tmp_path 자동 fallback, sd_tmp_path 지원, 부트 시 .part 정리, ext4 커밋 주기 조정
+- **RTC 시간 복구** (fake-hwclock.sh): RTC 방전 시 fake-hwclock 기반 시간 복구 및 RTC 재동기화 로직 추가
 - **카메라 수동 제어**: AE on/off, 수동 gain/exp_time/iso 스크립트 (i2c 직접 명령)
 
 ### 빌드/배포 인프라
@@ -412,6 +413,7 @@ git submodule update --init --recursive
 - **Sisyphus AI**: ORD/VCM 보안 및 안정성 개선 (대부분의 커밋)
 - **Claude Sonnet 4.5**: 문서화 및 통합
 - **Gemini**: gstApp 성능 최적화 계획 수립 및 구현, 큐 튜닝, 동기화 로직 고도화
+- **GLM**: 기술 자문 및 시스템 아키텍처 검토
 - **hwjo**: 프로젝트 유지보수 및 통합
 
 ---

@@ -53,7 +53,7 @@ gstApp v1.3 이후 성능 중심 업데이트를 추가 적용했습니다.
 - **큐 저지연 튜닝**: `max-size-time` 300~500ms → 100~200ms, `max-size-buffers` 3~5프레임
 - **오브젝트 풀링**: FragmentClosedEvent 풀 도입으로 힙 할당 반복 제거
 - **버스 메시지 필터링**: 고빈도 QOS/TAG 메시지 필터링 (main.cpp -200줄/+42줄)
-- **시간 기반 큐 사이징**: FPS별 자동 큐 크기 계산, `queue_tune` JSON 설정 지원
+- **시간 기반 큐 사이징**: FPS별 자동 큐 크기 계산, `queue_tune` JSON 설정 지원 및 컴팩트 기본값 적용 (100~300ms)
 - **안전한 파일 쓰기**: `O_TRUNC` 제거, `ftruncate` + 파일 잠금
 - **그레이스풀 셧다운**: SIGTERM 핸들러로 kill_test.sh 시 안전 종료
 - **Mutex 범위 최소화**: I/O 및 문자열 연산을 Mutex 밖으로 이동
@@ -111,7 +111,6 @@ python convert_raw_to_bmp_parallel.py --loop   # 루프 모드
   - `queue_tune`: 파이프라인 저지연 타이밍 제어 (main_src_time_ms, enc_src_time_ms, rec_sink_time_ms, cap_src_time_ms)
   - `rtsp_tune`: RTSP 레이턴시 및 버퍼 튜닝 (factory_latency_ms, appsink_max_buffers, bin_queue_max_time_ms)
   - `capture.path`, `capture.queue_size`: 캡처 경로 및 큐 크기 설정
-  - 채널별 `ae_on`, `ae_gain`, `bps` 배열 설정
 
 **녹화 파일 관리 (`chk_cam_operate.sh`)**
 - **2단계 파일 이동**: `/dev/shm` (RAM) → `sd_tmp_path` (SD 버퍼) → `final_path` (SD 최종)
@@ -222,7 +221,6 @@ v0.5.7에 포함되었던 v1.6에서 5개 릴리즈를 거쳐 v2.0으로 업데�
 
 #### v1.8
 - 죽은 코드(`#if 0` 블록) 11개 완전 제거
-- `max9286_set_ctrl_pixelrate` → `max9296_set_ctrl_pixelrate` 오타 수정
 - FSYNC 기반 FPS 제어 메커니즘 문서화
 - 코드 스타일 정리 및 로직 개선
 
@@ -297,6 +295,7 @@ x86_64 호스트에서 타겟(Ubuntu 20.04 ARM64, GLIBC 2.31)과 동일한 환�
 - 커널 로그 듀얼 출력 옵션 (`LOG_TO_KERNEL`)
 - RTC 드라이버 존재 확인 (`/dev/rtc0`)
 - syslog 레벨별 커널 로그 매핑
+- **RTC 방전 대응**: RTC 초기화 감지 시 fake-hwclock 기반 시간 복구 및 RTC 재동기화 (`hwclock -w`) 로직 추가
 
 #### 복구 메커니즘 개선
 - `chk_cam_operate.sh`: 카메라 동작 감시 강화, 임시/part 파일 관리 개선
@@ -464,6 +463,8 @@ v0.5.8 (보안 + 녹화 동기화 + V4L2 + 드라이버) ← 현재
 - **Sisyphus AI**: ORD/VCM 보안 및 안정성 개선
 - **Claude**: gstApp 보안 패치, 문서화, CI/CD 자동화
 - **Gemini**: gstApp 성능 최적화(객체 풀링, 큐 튜닝, 캐싱) 및 동기화 로직 고도화
+- **GLM**: 기술 자문 및 시스템 아키텍처 검토
+- **GLM**: 기술 자문 및 시스템 아키텍처 검토
 
 ---
 
