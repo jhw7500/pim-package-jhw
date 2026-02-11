@@ -1,5 +1,17 @@
 #!/bin/bash
 
+# Minimize locale warnings on minimal rootfs
+if LC_ALL=C locale -a 2>/dev/null | grep -qi '^ko_KR\.utf8$'; then
+  export LANG=ko_KR.UTF-8
+  export LC_ALL=ko_KR.UTF-8
+elif LC_ALL=C locale -a 2>/dev/null | grep -qi '^C\.utf8$'; then
+  export LANG=C.UTF-8
+  export LC_ALL=C.UTF-8
+else
+  export LANG=C
+  export LC_ALL=C
+fi
+
 ############################################################
 # postrm script main
 ############################################################

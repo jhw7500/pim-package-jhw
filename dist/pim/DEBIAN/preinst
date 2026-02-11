@@ -1,5 +1,17 @@
 #!/bin/bash
 
+# Minimize locale warnings on minimal rootfs
+if LC_ALL=C locale -a 2>/dev/null | grep -qi '^ko_KR\.utf8$'; then
+  export LANG=ko_KR.UTF-8
+  export LC_ALL=ko_KR.UTF-8
+elif LC_ALL=C locale -a 2>/dev/null | grep -qi '^C\.utf8$'; then
+  export LANG=C.UTF-8
+  export LC_ALL=C.UTF-8
+else
+  export LANG=C
+  export LC_ALL=C
+fi
+
 ############################################################
 # preinst script main
 ############################################################
@@ -81,9 +93,9 @@ systemctl stop sd-mount
 #timedatectl set-timezone Asia/Seoul
 
 case "$1" in
-install)
+install|upgrade)
   echo "preinst install ($model)"
-  log "postinst configure ($model) start"
+  log "preinst $1 ($model) start"
 #  systemctl stop rsyslog
 #  git config --global user.name "hwjo" && git config --global user.email "hwjo@cantops.biz"
 #  /root/SOMBASE_TEST/mfg60n-aarch64-9.32.0.6.sh install
@@ -93,12 +105,12 @@ install)
 
 abort-upgrade|abort-remove|abort-deconfigure)
   echo "preinst upgrade ($model)"
-  log "postinst $1 ($model) ignore"
+  log "preinst $1 ($model) ignore"
 #  systemctl stop rsyslog
   ;;
 
 *)
   echo "Unrecognized preinst argument '$1'"
-  log "postinst unknown argument: $1"
+  log "preinst unknown argument: $1"
 
 esac
