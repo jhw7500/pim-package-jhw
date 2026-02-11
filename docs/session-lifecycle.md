@@ -250,7 +250,7 @@ fi
 ### 8.3 디스크/RAM 임계치 관리
 
 - **SD Retention**: `enforce_sd_retention_if_needed` 함수
-  - 경고(90%), 위기(95%) 임계치에 따라 오래된 세션 삭제
+  - 경고(95%), 위기(98%) 임계치에 따라 오래된 세션 삭제 (기본값: `WARN_PCT_DEFAULT=95`, `CRIT_PCT_DEFAULT=98`)
 - **RAM Cap**: `enforce_ram_cap_if_needed` 함수
   - RAM-only 모드에서 1.6GiB 초과 시 오래된 세션 삭제
 
