@@ -1,10 +1,36 @@
 # PIM Package Changelog
 
-2026년 2월 이후 **8개 커밋**에서 다음과 같은 개선사항이 적용되었습니다.
+2026년 2월 이후 **23개 커밋**에서 다음과 같은 개선사항이 적용되었습니다.
 
 ---
 
-## 📌 주요 변경사항 요약
+## 📌 최신 변경사항 (2026-02-11)
+
+### gstApp v1.4 (PR #21, #22)
+- 파이프라인 큐 저지연 튜닝 (100~200ms)
+- FragmentClosedEvent 오브젝트 풀링
+- 고빈도 버스 메시지 필터링 (main.cpp -200줄/+42줄)
+- 시간 기반 큐 사이징, `queue_tune` JSON 설정
+- SIGTERM 핸들러 (그레이스풀 셧다운)
+- Mutex 범위 최소화, 안전한 파일 쓰기
+
+### MAX9296 v2.0 (커널 패닉 3건 수정)
+- [CRITICAL] kthread_stop UAF: `get_task_struct()`/`put_task_struct()` 참조 관리
+- [HIGH] 듀얼 모드 peer UAF: 4-phase remove 재설계
+- [MEDIUM] soft lockup: `msleep_interruptible()` 전환
+- probe 실패 경로 리소스 누수 수정
+
+### 빌드/배포 인프라
+- build.sh 전면 재설계: 선택적 모듈 빌드/클린 지원
+- install_deb.sh: 패키지 설치 자동화
+- 카메라 제어 스크립트 5종 추가 (AE, Gain, ISO, Exp Time)
+- fake-hwclock 강화: RTC 재시도, 커널 로그, 드라이버 확인
+- 복구 메커니즘: chk_cam_operate, automnt_sd, kill_test 개선
+- 설정 업데이트: edgeconf_pim_base.json, ord_vcm_conf.json
+
+---
+
+## 📌 이전 변경사항 요약
 
 ### 1. **서브모듈 업데이트**
 
@@ -156,11 +182,11 @@
 |---------|---------|--------------|
 | **ORD** | 26개 | 보안 10개, 메모리 5개, 스레드 3개 |
 | **VCM** | 20개 | SRT 5개, 스레드 5개, 성능 1개 |
-| **문서** | 2개 | V4L2 가이드 추가 |
-| **빌드** | 1개 | clean 옵션 추가 |
-| **녹화** | 1개 | 임시 파일 처리 강화 |
-| **gstApp** | 1개 | 바이너리 업데이트 |
-| **합계** | 8개 | 서브모듈 46개 커밋 통합 |
+| **gstApp** | 7개 (v1.4) | 저지연 튜닝, 오브젝트 풀링, 셧다운 |
+| **MAX9296** | 3개 (v2.0) | 커널 패닉 3건, probe 누수 수정 |
+| **인프라** | 15개 | 빌드, 스크립트, 복구, 설정 |
+| **문서** | 2개 | V4L2 가이드, 세션 라이프사이클 |
+| **합계** | 23개 | 서브모듈 56개 커밋 통합 |
 
 ---
 
@@ -289,8 +315,9 @@ dist/pim/
 |---------|------|------|------|
 | **ORD** | 4.8 | ✅ 프로덕션 | 보안 강화, 메모리 안전 |
 | **VCM** | 4.3 | ✅ 프로덕션 | SRT 강화, 성능 개선 |
-| **gstApp** | 최신 | ✅ 프로덕션 | 바이너리 업데이트 |
-| **문서** | - | ✅ 완료 | V4L2 가이드 추가 |
+| **gstApp** | v1.4 | ✅ 프로덕션 | 저지연 최적화, 오브젝트 풀링 |
+| **MAX9296** | v2.0 | ✅ 프로덕션 | 커널 패닉 3건 수정, 9.8/10 |
+| **문서** | - | ✅ 완료 | V4L2 가이드, 세션 라이프사이클 |
 
 ---
 
@@ -348,10 +375,16 @@ git submodule update --init --recursive
 
 ## 🔗 관련 문서
 
-- **ORD**: `ord/RELEASE_NOTES.md`, `ord/CHANGELOG.md`
-- **VCM**: `vcm/RELEASE_NOTES.md`, `vcm/CHANGELOG.md`
-- **V4L2**: `dist/pim/opt/pim/docs/V4L2_CTRL_GUIDE.md`
-- **설정**: `ord/docs/edgeconf_pim.json`, `ord/docs/ord_vcm_conf.json`
+### 통합 문서
+- [`RELEASE_NOTES.md`](./RELEASE_NOTES.md) — PIM Package v0.5.8 통합 릴리즈 노트
+- [`session-lifecycle.md`](./session-lifecycle.md) — 세션 라이프사이클 관리
+
+### 서브 프로젝트 문서
+- **gstApp**: [`RELEASE_NOTES_v1.4.md`](./gstApp/RELEASE_NOTES_v1.4.md) | [`RELEASE_NOTES_v1.3.md`](./gstApp/RELEASE_NOTES_v1.3.md) | [`RECORDING_SYNC_PLAN.md`](./gstApp/RECORDING_SYNC_PLAN.md) | [`PERFORMANCE_OPTIMIZATION_PLAN.md`](./gstApp/PERFORMANCE_OPTIMIZATION_PLAN.md)
+- **ORD**: [`RELEASE_NOTES.md`](../ord/RELEASE_NOTES.md) | [`VERIFICATION_GUIDE_ORD.md`](../ord/docs/VERIFICATION_GUIDE_ORD.md) | [`edgeconf_pim.json`](../ord/docs/edgeconf_pim.json)
+- **VCM**: [`VERIFICATION_GUIDE_VCM.md`](../vcm/docs/VERIFICATION_GUIDE_VCM.md)
+- **MAX9296**: [`RELEASE_NOTES.md`](./max9296/RELEASE_NOTES.md) | [`CHANGELOG.md`](./max9296/CHANGELOG.md) | [`V4L2_CTRL_GUIDE.md`](./max9296/V4L2_CTRL_GUIDE.md)
+- **설정 예제**: [`edgeconf_pim.json`](../ord/docs/edgeconf_pim.json) | [`ord_vcm_conf.json`](../ord/docs/ord_vcm_conf.json)
 
 ---
 
@@ -365,4 +398,4 @@ git submodule update --init --recursive
 
 ---
 
-**Full Integration**: ORD v4.8 (26 commits) + VCM v4.3 (20 commits) + 통합 개선 (8 commits)
+**Full Integration**: ORD v4.8 (26) + VCM v4.3 (20) + gstApp v1.4 (7) + MAX9296 v2.0 (3) + 인프라 (15) = 총 23 + 서브모듈 56 커밋
