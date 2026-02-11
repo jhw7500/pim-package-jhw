@@ -421,7 +421,6 @@ package_list=('schedule' \
           'jsonpath-ng' \
           'redis' \
           'paho-mqtt' \
-          'numpy' \
           'dataclasses' \
           'typing_extensions' \
           'scapy' \
@@ -436,6 +435,32 @@ do
     echo '{"PROGRESS":'"$prog_per"',"MSG":"pip installed '"$package"'"}'
   fi
 done
+
+# Install numpy from wheel file
+package="numpy"
+package_ver="1.24.4"
+installed_pip=$(echo "$pip_list" | grep -E "${package}\s")
+installed_package_ver=$(echo "$installed_pip" | awk '{print $2}')
+
+if [[ -n "${installed_pip}" && "${installed_package_ver}" == "${package_ver}" ]]; then
+  echo '{"PROGRESS":'"$prog_per"',"MSG":"pip installed '"$package"'=='"$package_ver"'"}'
+else
+  echo '{"PROGRESS":'"$prog_per"',"MSG":"pip install '"$package"'=='"$package_ver"'"}'
+  pip install numpy-1.24.4-cp38-cp38-manylinux_2_17_aarch64.manylinux2014_aarch64.whl > /dev/null 2> /dev/null
+fi
+
+# Install pillow from wheel file
+package="pillow"
+package_ver="10.4.0"
+installed_pip=$(echo "$pip_list" | grep -E "${package}\s")
+installed_package_ver=$(echo "$installed_pip" | awk '{print $2}')
+
+if [[ -n "${installed_pip}" && "${installed_package_ver}" == "${package_ver}" ]]; then
+  echo '{"PROGRESS":'"$prog_per"',"MSG":"pip installed '"$package"'=='"$package_ver"'"}'
+else
+  echo '{"PROGRESS":'"$prog_per"',"MSG":"pip install '"$package"'=='"$package_ver"'"}'
+  pip install pillow-10.4.0-cp38-cp38-manylinux_2_17_aarch64.manylinux2014_aarch64.whl > /dev/null 2> /dev/null
+fi
 
 package="aioredis"
 package_ver="1.3.1"

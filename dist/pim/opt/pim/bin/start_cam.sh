@@ -23,14 +23,17 @@ StartCam() {
     start_cmd="$1 -d $delay -m $3 &"
 
     if ! CheckApp "$1"; then
+        # Recovery ownership: do not run init_cam.sh here.
+        # Let chk_cam_operate.sh handle retry/init/reboot decisions.
         if [ -f /tmp/gst_err ]; then
-            logger -p local0.err "[$key][$tag:$LINENO] init_cam.sh because gst_err"
-            /opt/pim/bin/init_cam.sh
-        else
-            logger -p local0.emerg "[$key][$tag:$LINENO] cam app cmd : $start_cmd"
-            rm /tmp/start_video_time
-            eval "$start_cmd"
+            logger -p local0.err "[$key][$tag:$LINENO] request init_cam because gst_err"
+            touch /tmp/recover_req_init_cam
+            rm -f /tmp/gst_err
         fi
+
+        logger -p local0.emerg "[$key][$tag:$LINENO] cam app cmd : $start_cmd"
+        rm /tmp/start_video_time
+        eval "$start_cmd"
     else
         logger -p local0.notice "[$key][$tag:$LINENO] alreay start $1"
     fi
@@ -134,4 +137,3 @@ fi
 #logger -p local0.notice "[$key][$tag:$LINENO] $app -d $delay -m $iomode &"
 StartCam $app $delay $iomode $cap_en
 exit 0
-

@@ -168,20 +168,30 @@
         "vhl_name": "VD3001",
         "log_level": 5,
         "debug_level": 0,
-        "app": "streamApp",
+        "app": "gstApp",
         "id": "user",
         "muxer": "mp4",
         "tmp_path": "/dev/shm",
+        "sd_tmp_path": "/mnt/sd_cam/tmp",
+        "final_path": "/mnt/sd_cam",
         "capture" : {
             "enable": false,
             "delay": 0,
-            "timeout": 500,
+            "timeout": 1000,
             "record": false,
             "rtsp": false,
             "encoder": "turbo",
             "quality": 85,
-            "response": true
+            "response": true,
+            "path": "/dev/shm/capture",
+            "queue_size": 30
         },
+    	"rtsp_tune": {
+      	    "rtsp_factory_latency_ms": 100,
+      	    "rtsp_appsink_max_buffers": 2,
+      	    "rtsp_factory_queue_max_buffers": 2,
+      	    "rtsp_bin_queue_max_time_ms": 50
+    	},
         "i2c2": {
             "exp_time": 10000,
             "ch0": {

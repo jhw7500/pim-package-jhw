@@ -142,8 +142,11 @@ while true; do
                 #logger -p local0.emerg "[CHK][$tag:$LINENO] reboot because cam disconnect"
                 #sleep 1
                 #reboot
-                logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh"
-                /opt/pim/bin/init_cam.sh
+                # Recovery ownership: request init_cam; chk_cam_operate.sh performs retry/init/reboot.
+                if [ ! -f /tmp/recover_req_init_cam ]; then
+                    logger -p local0.error  "[CHK][$tag:$LINENO] request init_cam because cam disconnect"
+                    touch /tmp/recover_req_init_cam
+                fi
         fi
     else
         i=0

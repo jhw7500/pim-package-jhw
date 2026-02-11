@@ -5,6 +5,24 @@
 tag=$(basename "$0")
 KEY=RST
 
+BG_FLAG_FILE="/tmp/bg_chk_flag.bin"
+
+get_cam_disconnect_flag() {
+    local v
+    v=$(cat "$BG_FLAG_FILE" 2>/dev/null | tr -d '\n')
+    if [[ ! "$v" =~ ^[0-9]+$ ]]; then
+        echo 0
+        return 0
+    fi
+    echo $((v & 0xf))
+}
+
+is_cam_disconnected() {
+    local f
+    f=$(get_cam_disconnect_flag)
+    (( f != 0 ))
+}
+
 #logger -p local0.notice "[$KEY][$tag:$LINENO] kill_test.sh start"
 
 if [ -f /tmp/restart_flag ]; then
@@ -32,8 +50,8 @@ list="BG_Check_for_pim.sh vcm"
 JSON_PREFIX=edgeconf_
 JOSN_SUFFIX=.json
 FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' | grep "${JSON_SUFFIX}$" | tail -1 | tr -d '\r\n')
-#list+=" gstApp streamApp PIMCAM"
-#:<<'END'
+list+=" gstApp streamApp PIMCAM"
+:<<'END'
 app=$(jq -r '.VHL_CAM.app' "$FILE_JSON")
 cap_en=$(jq -r '.VHL_CAM.capture.enable' "$FILE_JSON")
 if [ "$cap_en" == "true" ]; then
@@ -48,7 +66,7 @@ else
     list+=" streamApp PIMCAM gstApp"
     #exit 0
 fi
-#END
+END
 
 logger -p local0.info "[$KEY][$tag:$LINENO] service : $list"
 :<<'END'
@@ -86,6 +104,10 @@ for service in $list; do
             pid=$(ps -ef |grep $service |grep -v grep |awk '{print $2}')
             if [ -n "$pid" ]; then
                 if [ "$cnt" -ge "$rebootcnt" ]; then
+                    if is_cam_disconnected; then
+                        logger -p local0.emerg "[$KEY][$tag:$LINENO] skip reboot because cam is disconnect"
+                        break
+                    fi
                     logger -p local0.emerg "[$KEY][$tag:$LINENO] reboot because doesn't kill"
                     sleep 1
                     #creboot

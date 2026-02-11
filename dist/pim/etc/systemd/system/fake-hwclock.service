@@ -10,6 +10,7 @@ Type=oneshot
 RemainAfterExit=yes
 ExecStart=/opt/pim/bin/fake-hwclock.sh load
 ExecStop=/opt/pim/bin/fake-hwclock.sh save
+Environment="LOG_TO_KERNEL=1"
 
 [Install]
 WantedBy=sysinit.target
