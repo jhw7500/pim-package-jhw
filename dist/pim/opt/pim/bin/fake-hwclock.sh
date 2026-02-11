@@ -155,8 +155,20 @@ case "$1" in
 
             # Critical: Resurrect RTC with restored system time
             if hwclock -w 2>/dev/null; then
-                NEW_RTC=$(hwclock -r 2>/dev/null || echo "read-failed")
-                log_msg notice "[$KEY][$tag:$LINENO] RTC synchronized: $NEW_RTC"
+                # Verification loop: Wait for RTC to stabilize and become readable
+                NEW_RTC="read-failed"
+                for i in 1 2 3; do
+                    sleep 0.2
+                    NEW_RTC=$(hwclock -r 2>/dev/null || echo "read-failed")
+                    if [ "$NEW_RTC" != "read-failed" ]; then
+                        log_msg notice "[$KEY][$tag:$LINENO] RTC Resurrected: Successfully initialized and now readable ($NEW_RTC)"
+                        break
+                    fi
+                done
+                
+                if [ "$NEW_RTC" == "read-failed" ]; then
+                    log_msg warn "[$KEY][$tag:$LINENO] RTC synchronized but verification read failed. It might take a moment to stabilize."
+                fi
             else
                 log_msg err "[$KEY][$tag:$LINENO] Failed to write to RTC (hwclock -w)"
             fi
