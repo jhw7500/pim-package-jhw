@@ -28,13 +28,16 @@
 ### ORD v4.8.1
 - `waitingDisk()`에서 `checkSD()` 활성화 — 디스크 대기 시 SD 카드 상태 확인
 
-### 런타임 스크립트 강화
-- **설정 마이그레이션** (`update_edgeconf.sh`): ERR trap + JSON 검증 + 백업, queue_tune/rtsp_tune 섹션 추가, 레거시 설정 자동 변환
-- **녹화 파일 관리** (`chk_cam_operate.sh`): 2단계 파일 이동, 스테일 .part 정리, 세션 기반 retention, RAM 전용 모드, SD 임계값 제어, 카메라 연결 해제 복구
-- **복구 전략**: 복구 소유권 위임 (start_cam.sh → chk_cam_operate.sh), 연결 해제 시 재부팅 방지, 모듈 로드 실패 조기 종료
-- **SD 카드 마운트** (`automnt_sd_for_emmc_boot.sh`): RO 검출 즉시 대응, tmp_path 자동 fallback, sd_tmp_path 지원, 부트 시 .part 정리, ext4 커밋 주기 조정
-- **RTC 시간 복구** (fake-hwclock.sh): RTC 방전 시 fake-hwclock 기반 시간 복구 및 RTC 재동기화 로직 추가
-- **카메라 수동 제어**: AE on/off, 수동 gain/exp_time/iso 스크립트 (i2c 직접 명령)
+### 시스템 신뢰성 및 복구 전략 강화
+- **무중단 카메라 복구**: 연결 해제 시 앱 재시작 대신 **300초 주기 `init_cam.sh` 실행**으로 하드웨어 복구 시도 (chk_cam_operate.sh)
+- **RTC 시간 자동 복구**: RTC 방전 감지 시 fake-hwclock 기반 시간 복구 및 **RTC 강제 재가동(`hwclock -w`)** (fake-hwclock.sh)
+- **그레이스풀 셧다운**: SIGTERM 신호 수신 시 파이프라인 안전 종료(EOS) 및 파일 마감 (gstApp)
+
+### 런타임 스크립트 및 설정 개선
+- **설정 마이그레이션** (`update_edgeconf.sh`): JSON 검증 + 자동 백업, `queue_tune`/`rtsp_tune` 자동 마이그레이션
+- **녹화 파일 관리** (`chk_cam_operate.sh`): 2단계 파일 이동, 스테일 .part 정리, 세션 기반 보관 정책
+- **SD 카드 마운트** (`automnt_sd_for_emmc_boot.sh`): Read-Only 즉시 대응 및 RAM 모드 폴백
+- **카메라 수동 제어**: AE On/Off 및 수동 노출/게인 제어 스크립트 추가
 
 ### 빌드/배포 인프라
 - **Docker 빌드 환경** (`docker/`): Ubuntu 20.04 ARM64 + QEMU로 타겟 호환 바이너리 생성 (GLIBC 2.31)
