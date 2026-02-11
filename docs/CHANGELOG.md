@@ -21,6 +21,8 @@
 - probe 실패 경로 리소스 누수 수정
 
 ### 빌드/배포 인프라
+- **Docker 빌드 환경** (`docker/`): Ubuntu 20.04 ARM64 + QEMU로 타겟 호환 바이너리 생성 (GLIBC 2.31)
+  - `Dockerfile`, `build-image.sh`, `build.sh`, `.dockerignore`, `README.md`
 - build.sh 전면 재설계: 선택적 모듈 빌드/클린 지원
 - install_deb.sh: 패키지 설치 자동화
 - 카메라 제어 스크립트 5종 추가 (AE, Gain, ISO, Exp Time)

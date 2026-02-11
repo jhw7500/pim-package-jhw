@@ -203,6 +203,24 @@ v0.5.7에 포함되었던 v1.6에서 5개 릴리즈를 거쳐 v2.0으로 업데�
 - **진행 표시**: 각 모듈 빌드 시작/완료 로그 출력
 - **에러 안내**: 잘못된 모듈명 입력 시 사용 가능한 모듈 목록 표시
 
+#### Docker 빌드 환경 (`docker/`)
+x86_64 호스트에서 타겟(Ubuntu 20.04 ARM64, GLIBC 2.31)과 동일한 환경으로 빌드합니다.
+
+- **QEMU ARM64 에뮬레이션**: x86_64에서 ARM64 네이티브 빌드 실행
+- **Dockerfile**: Ubuntu 20.04 ARM64 + build-essential, cmake, json-c, hiredis 등
+- **`docker/build-image.sh`**: 도커 이미지 빌드 (최초 1회)
+- **`docker/build.sh`**: 컨테이너 내 빌드 실행 (선택적 모듈 빌드 지원)
+- **바이너리 호환성 검증**: 빌드 후 `file`, `readelf` 자동 확인
+- **GLIBC 호환성 해결**: SDK(2.33) → Docker(2.31)로 전환하여 타겟 실행 보장
+
+```bash
+# 사용법
+./docker/build-image.sh        # 이미지 빌드 (최초 1회)
+./docker/build.sh              # 전체 빌드
+./docker/build.sh ord          # 개별 모듈 빌드
+./docker/build.sh clean        # 클린
+```
+
 #### 설치 스크립트
 - `install_deb.sh` 추가: 패키지 설치 자동화
 
@@ -243,6 +261,7 @@ v0.5.7에 포함되었던 v1.6에서 5개 릴리즈를 거쳐 v2.0으로 업데�
 |------|------|
 | [`RELEASE_NOTES.md`](./RELEASE_NOTES.md) | PIM Package v0.5.8 통합 릴리즈 노트 (이 문서) |
 | [`CHANGELOG.md`](./CHANGELOG.md) | PIM Package 변경사항 상세 |
+| [`docker-build.md`](./docker-build.md) | Docker 빌드 환경 가이드 |
 | [`session-lifecycle.md`](./session-lifecycle.md) | 세션 라이프사이클 관리 |
 | [`RELEASE_NOTES_version_0.5.4-0.5.7.md`](./RELEASE_NOTES_version_0.5.4-0.5.7.md) | 이전 버전 릴리즈 노트 |
 
