@@ -3,6 +3,18 @@
 tag=$(basename "$0")
 KEY=RST
 
+BG_FLAG_FILE="/tmp/bg_chk_flag.bin"
+
+get_cam_disconnect_flag() {
+    local v
+    v=$(cat "$BG_FLAG_FILE" 2>/dev/null | tr -d '\n')
+    if [[ ! "$v" =~ ^[0-9]+$ ]]; then
+        echo 0
+        return 0
+    fi
+    echo $((v & 0xf))
+}
+
 logger -p local0.info "[$KEY][$tag:$LINENO] restart_app.sh start"
 
 list="vcm ord"
@@ -71,10 +83,17 @@ while [ 1 ]; do
         sleep 1
     done
 
-    if [ "$cam_disable" -eq 1 ]; then
-        sleep 3
-        continue
-    fi
+	if [ "$cam_disable" -eq 1 ]; then
+		sleep 3
+		continue
+	fi
+
+	cam_disconnect_flag=$(get_cam_disconnect_flag)
+	if (( cam_disconnect_flag != 0 )); then
+		logger -p local0.notice "[$KEY][$tag:$LINENO] skip $app restart because cam disconnect($cam_disconnect_flag)"
+		sleep 3
+		continue
+	fi
 
     pid=$(ps -ef |grep "$app" |grep -v grep |awk '{print $2}')
     if [ -z "$pid" ]; then
@@ -90,4 +109,3 @@ done
 logger -p local0.notice "[$KEY][$tag:$LINENO] restart_app.sh end"
 
 exit 0
-

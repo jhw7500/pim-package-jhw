@@ -1,11 +1,41 @@
 #!/usr/bin/env bash
 tag=$(basename "$0")
 KEY=PKG
+
+set -Ee -o pipefail
+
+err_report() {
+    local ec=$?
+    local line=${BASH_LINENO[0]:-0}
+    local cmd=${BASH_COMMAND}
+    trap - ERR
+    echo "[$KEY][$tag:$line] update failed (exit=$ec): $cmd" >&2
+    logger -p local0.err "[$KEY][$tag:$line] update failed (exit=$ec): $cmd"
+    exit "$ec"
+}
+
+trap err_report ERR
 #FILE_JSON="/home/user/edgeconf_pim.json"
 JSON_PREFIX=edgeconf_
 JOSN_SUFFIX=.json
-FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' | grep "${JSON_SUFFIX}$" | tail -1 | tr -d '\r\n')
-cp "$FILE_JSON" "/opt/pim/config/${FILE_JSON##*/}.backup"
+FILE_JSON=$(ls -1t /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} 2>/dev/null | head -n 1 | tr -d '\r\n')
+
+if [ -z "$FILE_JSON" ] || [ ! -f "$FILE_JSON" ]; then
+    logger -p local0.err "[$KEY][$tag:$LINENO] edgeconf json not found under /root/shared_v (${JSON_PREFIX}*${JSON_SUFFIX})"
+    exit 1
+fi
+
+if [ -d /opt/pim/config ]; then
+    cp "$FILE_JSON" "/opt/pim/config/${FILE_JSON##*/}.backup"
+else
+    logger -p local0.err "[$KEY][$tag:$LINENO] missing /opt/pim/config"
+fi
+
+if ! jq -e . "$FILE_JSON" > /dev/null 2>&1; then
+    logger -p local0.err "[$KEY][$tag:$LINENO] invalid JSON: $FILE_JSON"
+    echo "[$KEY][$tag:$LINENO] invalid JSON: $FILE_JSON" >&2
+    exit 1
+fi
 #updated_json=$(jq '(.VHL_CAM.vertical // 0) as $v | if $v == 0 then .VHL_CAM.vertical = 0 else . end' "$FILE_JSON")
 #UPDATE_JSON=$(jq '(.VHL_CAM.vertical_flip // 0) as $v | (.VHL_CAM.horizontal_flip // 0) as $h | .VHL_CAM.vertical_flip = $v | .VHL_CAM.horizontal_flip = $h' "$FILE_JSON")
 
@@ -101,10 +131,11 @@ echo "bps=$bps, ch0=${ch0_en},$ch0_rotate, ch1=$ch1_en,$ch1_rotate ch2=$ch2_en,$
 echo "update log, debug, app, id, fps"
 jq '.VHL_CAM.log_level |= if . == null then 5 else . end | 
 .VHL_CAM.debug_level |= if . == null then 0 else . end | 
-.VHL_CAM.app |= if . == null then "streamApp" else . end |
 .VHL_CAM.id |= if . == null then "user" else . end |
 .VHL_CAM.fps |= if . == null then 15 else . end |
-.VHL_CAM.muxer |= if . == null then "mp4" else . end' "$FILE_JSON" > tmp.$$ && mv tmp.$$ "$FILE_JSON"
+.VHL_CAM.muxer |= if . == null then "mp4" else . end |
+.VHL_CAM.app = "gstApp"
+' "$FILE_JSON" > tmp.$$ && mv tmp.$$ "$FILE_JSON"
 
 
 key_name=0
@@ -143,7 +174,22 @@ jq --argjson key0 "$capture_en" --argjson key1 0 --argjson key2 200 '.VHL_CAM.ca
 | .VHL_CAM.capture |= (if .rtsp == null then .rtsp = false else . end)
 | .VHL_CAM.capture |= (if .encoder == null then .encoder = "turbo" else . end)
 | .VHL_CAM.capture |= (if .quality == null then .quality = 85 else . end)
-| .VHL_CAM.capture |= (if .response == null then .response = true else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+| .VHL_CAM.capture |= (if .response == null then .response = true else . end)
+| .VHL_CAM.capture |= (if .path == null then .path = "/dev/shm/capture" else . end)
+| .VHL_CAM.capture |= (if .queue_size == null then .queue_size = 30 else . end)
+' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+
+jq '.VHL_CAM.queue_tune |= (if .main_src_time_ms == null then .main_src_time_ms = 100 else . end)
+| .VHL_CAM.queue_tune |= (if .enc_src_time_ms == null then .enc_src_time_ms = 100 else . end)
+| .VHL_CAM.queue_tune |= (if .rec_sink_time_ms == null then .rec_sink_time_ms = 300 else . end)
+| .VHL_CAM.queue_tune |= (if .cap_src_time_ms == null then .cap_src_time_ms = 500 else . end)
+' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+
+jq '.VHL_CAM.rtsp_tune |= (if .rtsp_factory_latency_ms == null then .rtsp_factory_latency_ms = 100 else . end)
+| .VHL_CAM.rtsp_tune |= (if .rtsp_appsink_max_buffers == null then .rtsp_appsink_max_buffers = 2 else . end)
+| .VHL_CAM.rtsp_tune |= (if .rtsp_factory_queue_max_buffers == null then .rtsp_factory_queue_max_buffers = 2 else . end)
+| .VHL_CAM.rtsp_tune |= (if .rtsp_bin_queue_max_time_ms == null then .rtsp_bin_queue_max_time_ms = 50 else . end)
+' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
 jq 'del (.VHL_CAM.capture.turbojpeg)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
@@ -164,7 +210,10 @@ jq '.VHL_CAM |= (if .ch0 == null then . else del(.ch0) end)
 | .VHL_CAM |= (if .ch3 == null then . else del(.ch3) end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
 echo "check path"
-jq '.VHL_CAM.tmp_path |= (if . == null then "/dev/shm" else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+jq '.VHL_CAM.tmp_path |= (. // "/dev/shm")
+| .VHL_CAM.sd_tmp_path |= (. // "/mnt/sd_cam/tmp")
+| .VHL_CAM.final_path |= (. // "/mnt/sd_cam")
+' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
 echo "update new channel config"
 #echo "check ch0"

@@ -1,5 +1,5 @@
 Package: pim-mp
-Version: 0.5.7.2
+Version: 0.5.8
 Replaces: cis
 Breaks: cis
 Section: test
@@ -69,3 +69,4 @@ Description: PIM application
 0.5.7 : gstApp(1.2), recovery for sd readonly, dynamic ext4, decrease log, fake-hwclock, journald-snapshot
 0.5.7.1 : realoht demo
 0.5.7.2 : pim_gate sFTP_UDP raw to bmp
+0.5.8 : gstApp(1.4), ord(4.8.1), vcm(4.3), max9296(2.0), runtime scripts
