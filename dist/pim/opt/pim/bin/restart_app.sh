@@ -58,53 +58,84 @@ if [[ "$cam_ch0" != *"$ENABLE_VAL"* ]] && [[ "$cam_ch1" != *"$ENABLE_VAL"* ]] &&
     cam_disable=1
 fi
 
+fail_cnt=0
 while [ 1 ]; do
-    if [ -f /tmp/init_cam_flag ] || [ -f /tmp/restart_flag ]; then
-        sleep 3
-        continue
+if [ -f /tmp/init_cam_flag ] || [ -f /tmp/restart_flag ]; then
+sleep 3
+    continue
     fi
 
-    for service in $list; do
-        if [ ! -z "$service" ]; then
-            #pgrep $service >/dev/null; status=$?
-            #sleep 1
-            pid=$(ps -ef |grep "$service" |grep -v grep |awk '{print $2}')
-            if [ ! -n "$pid" ]; then
-                #echo "no" >/dev/null
-                #sleep 0.5
-                logger -p local0.info "[$KEY][$tag:$LINENO] $service start"
-                #if [ "$service" == "ord" ]; then
-                #    systemctl start ord-operate
-                #else
-                    $service &
-                #fi
+for service in $list; do
+if [ ! -z "$service" ]; then
+pid=$(ps -ef |grep "$service" |grep -v grep |awk '{print $2}')
+if [ ! -n "$pid" ]; then
+    logger -p local0.info "[$KEY][$tag:$LINENO] $service start"
+$service &
+fi
+fi
+sleep 1
+done
+
+if [ "$cam_disable" -eq 1 ]; then
+sleep 3
+    continue
+fi
+
+    cam_disconnect_flag=$(get_cam_disconnect_flag)
+        if (( cam_disconnect_flag != 0 )); then
+        logger -p local0.notice "[$KEY][$tag:$LINENO] skip $app restart because cam disconnect($cam_disconnect_flag)"
+# [안전장치] 카메라 유실 시 복구 요청 생성 후 대기
+if [ ! -f /tmp/recover_req_init_cam ]; then
+            touch /tmp/recover_req_init_cam
+                fi
+        sleep 10
+        continue
+fi
+
+pid=$(ps -ef |grep "$app" |grep -v grep |awk '{print $2}')
+if [ -z "$pid" ]; then
+# [추가] start_cam.sh 실행 전 하드웨어 존재 여부 직접 재확인
+# BG_Check가 재시작 중이더라도 직접 노드를 체크하여 무한 루프 방지
+        can_start=0
+        for node_idx in 3 4; do # csi0_video, csi1_video 기본값
+            if [ -e "/dev/video$node_idx" ]; then
+                # 노드가 있다면 v4l2-ctl로 응답 확인 (선택 사항이나 권장)
+                if v4l2-ctl -d "/dev/video$node_idx" --get-ctrl=ae_on >/dev/null 2>&1; then
+                    can_start=1
+                    break
+                fi
             fi
+        done
+
+        if [ "$can_start" -eq 0 ]; then
+            logger -p local0.err "[$KEY][$tag:$LINENO] skip $app start: No responding camera hardware found."
+            if [ ! -f /tmp/recover_req_init_cam ]; then
+                touch /tmp/recover_req_init_cam
+            fi
+            sleep 10
+            continue
         fi
-        sleep 1
-    done
 
-	if [ "$cam_disable" -eq 1 ]; then
-		sleep 3
-		continue
-	fi
+        ((fail_cnt++))
+        if [ "$fail_cnt" -gt 5 ]; then
+        logger -p local0.err "[$KEY][$tag:$LINENO] $app consecutive fail limit ($fail_cnt). Requesting hardware reset..."
+    if [ ! -f /tmp/recover_req_init_cam ]; then
+        touch /tmp/recover_req_init_cam
+    fi
+    sleep 30
+    fail_cnt=0
+        continue
+        fi
 
-	cam_disconnect_flag=$(get_cam_disconnect_flag)
-	if (( cam_disconnect_flag != 0 )); then
-		logger -p local0.notice "[$KEY][$tag:$LINENO] skip $app restart because cam disconnect($cam_disconnect_flag)"
-		sleep 3
-		continue
-	fi
-
-    pid=$(ps -ef |grep "$app" |grep -v grep |awk '{print $2}')
-    if [ -z "$pid" ]; then
-        logger -p local0.info "[$KEY][$tag:$LINENO] $app killed"
-        killall -s KILL PIMCAM
-        #killall -s KILL BG_Check_for_pim.sh
+        logger -p local0.info "[$KEY][$tag:$LINENO] $app killed (fail_cnt:$fail_cnt)"
+        killall -s KILL PIMCAM 2>/dev/null
         logger -p local0.info "[$KEY][$tag:$LINENO] start_cam.sh"
         /opt/pim/bin/start_cam.sh
+    else
+        fail_cnt=0
     fi
 
-	sleep 3
+        sleep 3
 done
 logger -p local0.notice "[$KEY][$tag:$LINENO] restart_app.sh end"
 
