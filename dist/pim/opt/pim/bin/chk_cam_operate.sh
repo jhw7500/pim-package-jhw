@@ -1084,10 +1084,10 @@ do
                 #if [ "$retry_boot" -le 1 ]; then
                 #    logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/kill_test.sh ($retry/$retry_boot/$retry_total)"
                 #    /opt/pim/bin/kill_test.sh
-                if [ "$retry_total" -le 3 ]; then
+                if [ "$retry_total" -le 2 ]; then
                     logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/kill_test.sh ($retry/$retry_boot/$retry_total)"
                     /opt/pim/bin/kill_test.sh
-                elif [ "$retry_total" -le 5 ]; then
+                elif [ "$retry_total" -le 4 ]; then
                     logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh ($retry/$retry_boot/$retry_total)"
                     /opt/pim/bin/init_cam.sh
                 else
