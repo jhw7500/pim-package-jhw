@@ -1,11 +1,10 @@
 #!/bin/bash
+source /opt/pim/lib/cam_state.sh
+
 tag=$(basename "$0")
 key=RST
-#0:auto, 3:userptr, 4:dma
 iomode=4
 delay=5
-#app=PIMCAM
-#app=gstApp
 
 CheckApp() {
 local pid=$(ps -ef |grep $1 |grep -v grep |awk '{print $2}')
@@ -33,6 +32,8 @@ StartCam() {
 
         date +%s > /tmp/pim_cam_start_ts 2>/dev/null
         printf "%s" "$delay" > /tmp/pim_cam_start_delay 2>/dev/null
+        cam_state_init
+        cam_record_start
 
         logger -p local0.emerg "[$key][$tag:$LINENO] cam app cmd : $start_cmd"
         rm /tmp/start_video_time

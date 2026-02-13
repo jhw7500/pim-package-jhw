@@ -1,12 +1,10 @@
 #!/bin/bash
+source /opt/pim/lib/cam_state.sh
 
 tag=$(basename "$0")
-#killall -s KILL restart_app.sh
-#/opt/pim/bin/kill_test.sh
-#systemctl stop cam-operate
-#pkill chk_cam_operate.sh
 
-rm /tmp/gst_err
+rm -f /tmp/gst_err
+rm -f /tmp/bg_cam_err_streak
 if [ -f /tmp/init_cam_flag ]; then
     logger -p local0.notice "[RST][$tag:$LINENO] exit because already module reset..."
     exit 0
@@ -15,6 +13,8 @@ fi
 logger -p local0.notice "[RST][$tag:$LINENO] set init_cam_flag"
 touch /tmp/init_cam_flag
 date +%s > /tmp/last_init_cam_ts 2>/dev/null
+cam_state_init
+cam_record_init
 /opt/pim/bin/kill_test.sh
 
 #sleep 3
@@ -76,7 +76,8 @@ fi
 
 logger -p local0.notice "[RST][$tag:$LINENO] reset init_cam_flag and clear recovery requests"
 rm -f /tmp/init_cam_flag
-rm -f /tmp/recover_req_init_cam # [추가] 중복 복구 방지를 위해 기존 요청 플래그 삭제
+rm -f /tmp/recover_req_init_cam
+cam_clear_recovery
 /opt/pim/bin/start_cam.sh $rst_time
 
 #/opt/pim/bin/restart_app.sh &

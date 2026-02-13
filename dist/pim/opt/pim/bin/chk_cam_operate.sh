@@ -1,4 +1,6 @@
 #!/bin/bash
+source /opt/pim/lib/cam_state.sh
+
 tag=$(basename "$0")
 KEY=RST
 
@@ -51,6 +53,11 @@ get_cam_disconnect_flag() {
     echo $((v & 0xf))
 }
 
+cam_is_disconnected_unified() {
+    local state=$(cam_get_state)
+    [ "$state" = "degraded" ] || [ "$state" = "recovering" ]
+}
+
 modules_loaded() {
     [ -d "/sys/module/max9296" ] && [ -d "/sys/module/imx8_media_dev" ]
 }
@@ -70,12 +77,12 @@ maybe_init_cam_on_disconnect() {
     local cam_disconnect_flag now first_seen last_init
 
     cam_disconnect_flag=$(get_cam_disconnect_flag)
-    if (( cam_disconnect_flag == 0 )); then
+    if (( cam_disconnect_flag == 0 )) && ! cam_is_disconnected_unified; then
         rm -f "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
         return 1
     fi
 
-    if in_init_cooldown; then
+    if in_init_cooldown || cam_in_init_cooldown "$init_cooldown_sec"; then
         return 0
     fi
 
@@ -837,16 +844,19 @@ do
         continue
     fi
 
-    # Recovery ownership: handle init_cam requests here.
+    cam_state_init
+
     if [ -f "$RECOVER_REQ_INIT_CAM" ]; then
         cam_disconnect_flag=$(get_cam_disconnect_flag)
-        if (( cam_disconnect_flag == 0 )); then
+        if (( cam_disconnect_flag == 0 )) && ! cam_is_disconnected_unified; then
             rm -f "$RECOVER_REQ_INIT_CAM"
-        elif in_init_cooldown; then
+            cam_clear_recovery
+        elif in_init_cooldown || cam_in_init_cooldown "$init_cooldown_sec"; then
             :
         else
             logger -p local0.error "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh because recover request"
             rm -f "$RECOVER_REQ_INIT_CAM"
+            cam_clear_recovery
             /opt/pim/bin/init_cam.sh
             timer=0
             sleep 5
@@ -859,11 +869,12 @@ do
         cam_disconnect_flag=$(get_cam_disconnect_flag)
         logger -p local0.error "[$KEY][$tag:$LINENO] driver module not loaded (max9296/imx8_media_dev)"
         echo "NG" > $FILE_CHECK
-        if (( cam_disconnect_flag == 0x0 )); then
+        if (( cam_disconnect_flag == 0x0 )) && ! cam_is_disconnected_unified; then
             ((retry_boot++))
             retry_total=$(($retry+$retry_boot))
             if [ "$retry_total" -le 5 ]; then
                 logger -p local0.error "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh because driver load fail ($retry/$retry_boot/$retry_total)"
+                cam_request_recovery "driver_load_fail"
                 /opt/pim/bin/init_cam.sh
             else
                 logger -p local0.error "[$KEY][$tag:$LINENO] retry_total $retry_total is over (driver load fail)"
@@ -1022,7 +1033,7 @@ do
                 start_f=0
                 echo "NG" > $FILE_CHECK
                 cam_disconnect_flag=$(get_cam_disconnect_flag)
-                if (( cam_disconnect_flag == 0x0 )); then
+                if (( cam_disconnect_flag == 0x0 )) && ! cam_is_disconnected_unified; then
                     ((retry++))
                     retry_total=$(($retry+$retry_boot))
                     if [ "$retry_total" -le 3 ]; then
@@ -1030,6 +1041,7 @@ do
                         /opt/pim/bin/kill_test.sh
                     elif [ "$retry_total" -le 5 ]; then
                         logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh ($retry/$retry_boot/$retry_total)"
+                        cam_request_recovery "file_check_fail"
                         /opt/pim/bin/init_cam.sh
                     else
                         logger -p local0.error "[$KEY][$tag:$LINENO] retry total $retry_total is over"
@@ -1047,7 +1059,7 @@ do
                     fi
                 else
                     logger -p local0.err  "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag): /opt/pim/bin/init_cam.sh"
-                    if ! in_init_cooldown; then
+                    if ! in_init_cooldown && ! cam_in_init_cooldown "$init_cooldown_sec"; then
                         /opt/pim/bin/init_cam.sh
                     fi
                 fi
@@ -1078,24 +1090,21 @@ do
 
             echo "NG" > $FILE_CHECK
             cam_disconnect_flag=$(get_cam_disconnect_flag)
-            if (( cam_disconnect_flag == 0x0 )); then
+            if (( cam_disconnect_flag == 0x0 )) && ! cam_is_disconnected_unified; then
                 ((retry_boot++))
                 retry_total=$(($retry+$retry_boot))
-                #if [ "$retry_boot" -le 1 ]; then
-                #    logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/kill_test.sh ($retry/$retry_boot/$retry_total)"
-                #    /opt/pim/bin/kill_test.sh
                 if [ "$retry_total" -le 2 ]; then
                     logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/kill_test.sh ($retry/$retry_boot/$retry_total)"
                     /opt/pim/bin/kill_test.sh
                 elif [ "$retry_total" -le 4 ]; then
                     logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh ($retry/$retry_boot/$retry_total)"
+                    cam_request_recovery "startup_fail"
                     /opt/pim/bin/init_cam.sh
                 else
                     logger -p local0.error "[$KEY][$tag:$LINENO] retry_total $retry_total is over"
                     if [[ "$file_chk_reboot" == *"$ENABLE_VAL"* ]]; then
                         logger -p local0.emerg "[$KEY][$tag:$LINENO] rebooting because all file not create ($retry/$retry_boot/$retry_total)"
                         sleep 1
-                        #creboot
                         reboot
                     else
                         logger -p local0.notice "[$KEY][$tag:$LINENO] retry count reset because file_check_reboot is not true"
@@ -1106,7 +1115,7 @@ do
                 fi
             else
                 logger -p local0.err  "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag): /opt/pim/bin/init_cam.sh"
-                if ! in_init_cooldown; then
+                if ! in_init_cooldown && ! cam_in_init_cooldown "$init_cooldown_sec"; then
                     /opt/pim/bin/init_cam.sh
                 fi
             fi
