@@ -73,7 +73,7 @@ cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
 		if [[ "$cam01_res" == *"$SUCCESS_VAL"*  ]]; then
 			logger -p local0.debug "[CHK][$tag:$LINENO] CAM0 CAM1 OK"
 		else
-            logger -p local0.err "[CHK][$tag:$LINENO] CAM01 CONNECT ERR : $cam01_res"
+            #logger -p local0.err "[CHK][$tag:$LINENO] CAM01 CONNECT ERR : $cam01_res"
 			for i in {1..5}; do
 				i2ctransfer -f -y -a 2 w3@0x48 0x00 0x10 0x31
 				#sleep 3
@@ -138,7 +138,7 @@ cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
 		if [[ "$cam23_res" == *"$SUCCESS_VAL"*  ]]; then
 			logger -p local0.debug "[CHK][$tag:$LINENO] CAM2 CAM3 OK"
 		else
-            logger -p local0.error "[CHK][$tag:$LINENO] CAM23 CONNECT ERR : $cam23_res"
+            #logger -p local0.error "[CHK][$tag:$LINENO] CAM23 CONNECT ERR : $cam23_res"
 			for i in {1..5}; do	
 				i2ctransfer -f -y -a 1 w3@0x48 0x00 0x10 0x31
 				#sleep 3
