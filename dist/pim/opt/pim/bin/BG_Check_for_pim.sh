@@ -1,4 +1,6 @@
 #!/bin/bash
+source /opt/pim/lib/cam_state.sh
+
 FLAG_PATH="/tmp"
 tag=$(basename "$0")
 result=0
@@ -94,6 +96,8 @@ if [[ -n "$1" ]]; then
     delay=$1
 fi
 
+cam_state_init
+
 function CLEAR_CHK_LOG() {
 	touch $FLAG_PATH/bg_chk_flag.bin
 	rm ${FLAG_PATH}/err_* 2>/dev/null
@@ -153,6 +157,21 @@ streak_set() {
 	printf "%s" "$1" > "$CAM_ERR_STREAK_FILE" 2>/dev/null
 }
 
+update_cam_state_from_errors() {
+	if [ -f "${FLAG_PATH}/err_cam0.log" ]; then
+		cam_channel_error 0
+	fi
+	if [ -f "${FLAG_PATH}/err_cam1.log" ]; then
+		cam_channel_error 1
+	fi
+	if [ -f "${FLAG_PATH}/err_cam2.log" ]; then
+		cam_channel_error 2
+	fi
+	if [ -f "${FLAG_PATH}/err_cam3.log" ]; then
+		cam_channel_error 3
+	fi
+}
+
 CLEAR_CHK_LOG
 sleep $delay
 logger -p local0.notice "[CHK][$tag:$LINENO] BG check loop start(ch0:$cam_ch0, ch1:$cam_ch1, ch2:$cam_ch2, ch3:$cam_ch3)"
@@ -185,6 +204,9 @@ while true; do
     if in_startup_grace || in_init_cooldown || stream_active "$stream_active_window_sec"; then
         rm ${FLAG_PATH}/err_cam* 2>/dev/null
 		streak_set 0
+		cam_reset_streak
+    else
+        update_cam_state_from_errors
     fi
     #make result cmd
     #echo "make flag"
@@ -195,6 +217,7 @@ while true; do
     if [ -f /tmp/init_cam_flag ] || [ -f /tmp/restart_flag ]; then
         i=0
 		streak_set 0
+		cam_reset_streak
         continue
     fi
 
@@ -202,11 +225,13 @@ while true; do
 	if [ -f "${FLAG_PATH}"/err_cam0.log ] || [ -f "${FLAG_PATH}"/err_cam1.log ] || [ -f "${FLAG_PATH}"/err_cam2.log ]  || [ -f "${FLAG_PATH}"/err_cam3.log ] ; then
 		streak=$((streak + 1))
 		streak_set "$streak"
+		cam_inc_streak
 		logger -p local0.emerg "[CHK][$tag:$LINENO] cam disconnect : $streak"
 		if [ "$streak" -ge 2 ]; then
 			if [ ! -f /tmp/recover_req_init_cam ]; then
 				logger -p local0.error  "[CHK][$tag:$LINENO] request init_cam because cam disconnect"
 				printf "%s\n" "$(date +%s) cam_disconnect_streak=$streak" > /tmp/recover_req_init_cam
+				cam_request_recovery "cam_disconnect"
 			fi
 		fi
 	else
