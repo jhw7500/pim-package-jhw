@@ -12,12 +12,16 @@ FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' 
 #cam_ch2=$(jq '.VHL_CAM.i2c1.ch2.enable' "$FILE_JSON")
 #cam_ch3=$(jq '.VHL_CAM.i2c1.ch3.enable' "$FILE_JSON")
 IFS=$'\t' read -r \
-    cam_ch0 cam_ch1 cam_ch2 cam_ch3 < <(
+    cam_ch0 cam_ch1 cam_ch2 cam_ch3 vhl_name tmp_path muxer delay < <(
     jq -r '[
         (.VHL_CAM.i2c2.ch0.enable // false),
         (.VHL_CAM.i2c2.ch1.enable // false),
         (.VHL_CAM.i2c1.ch2.enable // false),
-        (.VHL_CAM.i2c1.ch3.enable // false)
+        (.VHL_CAM.i2c1.ch3.enable // false),
+        (.VHL_CAM.vhl_name // "VD3001"),
+        (.VHL_CAM.tmp_path // "/dev/shm"),
+        (.VHL_CAM.muxer // "mp4"),
+        (.VHL_CAM.delay // 5)
     ] | @tsv' "$FILE_JSON"
 )
 unset IFS
@@ -43,6 +47,39 @@ else
     cam_ch3=0
 fi
 cam_ch_bit=$((cam_ch3<<3|cam_ch2<<2|cam_ch1<<1|cam_ch0))
+
+now_ts() { date +%s; }
+read_ts() { [ -f "$1" ] && cat "$1" 2>/dev/null | tr -d '\n' || echo 0; }
+
+stream_active() {
+    local win now newest ts f
+    win=${1:-10}
+    now=$(now_ts)
+    newest=0
+    shopt -s nullglob
+    for f in "${tmp_path}/${vhl_name}"_*"-ch"*."${muxer}".part; do
+        ts=$(stat -c %Y "$f" 2>/dev/null || echo 0)
+        [ "$ts" -gt "$newest" ] && newest="$ts"
+    done
+    shopt -u nullglob
+    [ "$newest" -gt 0 ] && [ $((now - newest)) -le "$win" ]
+}
+
+in_startup_grace() {
+    local start_ts start_delay now grace
+    now=$(now_ts)
+    start_ts=$(read_ts "/tmp/pim_cam_start_ts")
+    start_delay=$(read_ts "/tmp/pim_cam_start_delay")
+    grace=$((start_delay + 10))
+    [ "$start_ts" -gt 0 ] && [ $((now - start_ts)) -lt "$grace" ]
+}
+
+in_init_cooldown() {
+    local now last
+    now=$(now_ts)
+    last=$(read_ts "/tmp/last_init_cam_ts")
+    [ "$last" -gt 0 ] && [ $((now - last)) -lt 40 ]
+}
 
 if [[ -n "$1" ]]; then
     delay=$1
@@ -121,6 +158,10 @@ while true; do
     #cam connect check
     #echo "cam"
     /opt/pim/bin/chk_cam_connect.sh $cam_ch_bit 2>/dev/null
+
+    if in_startup_grace || in_init_cooldown || stream_active 10; then
+        rm ${FLAG_PATH}/err_cam* 2>/dev/null
+    fi
     #make result cmd
     #echo "make flag"
     MAKE_RESULT_FLAG
