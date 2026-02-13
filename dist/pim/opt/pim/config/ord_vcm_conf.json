@@ -39,6 +39,9 @@
    },
    "ETC" : {
       "file_check_delay" : 10,
-      "file_check_reboot" : true
+      "file_check_reboot" : true,
+      "startup_grace_extra_sec" : 10,
+      "init_cooldown_sec" : 40,
+      "stream_active_window_sec" : 10
    }
 }

@@ -67,7 +67,10 @@ jq '.VCM.file_time_check |= if . == null then true else . end |
 
 echo "ETC check"
 jq '.ETC.file_check_delay |= if . == null then 10 else . end |
-.ETC.file_check_reboot |= if . == null then true else . end' "$FILE_JSON" > tmp.$$ && mv tmp.$$ "$FILE_JSON"
+ .ETC.file_check_reboot |= if . == null then true else . end |
+ .ETC.startup_grace_extra_sec |= if . == null then 10 else . end |
+ .ETC.init_cooldown_sec |= if . == null then 40 else . end |
+ .ETC.stream_active_window_sec |= if . == null then 10 else . end' "$FILE_JSON" > tmp.$$ && mv tmp.$$ "$FILE_JSON"
 
 
 sync
