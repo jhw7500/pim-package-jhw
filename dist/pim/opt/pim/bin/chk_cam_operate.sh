@@ -91,7 +91,7 @@ maybe_init_cam_on_disconnect() {
 
     if (( (now - first_seen) < DISCONNECT_INIT_CAM_GRACE_SEC )); then
         printf "%s,%s" "$first_seen" "$last_init" > "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
-        return 0
+        return 1
     fi
 
     if (( (now - last_init) >= DISCONNECT_INIT_CAM_INTERVAL_SEC )); then
@@ -102,7 +102,7 @@ maybe_init_cam_on_disconnect() {
     fi
 
     printf "%s,%s" "$first_seen" "$last_init" > "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
-    return 0
+    return 1
 }
 
 GetConfig_() {
@@ -845,28 +845,12 @@ do
         elif in_init_cooldown; then
             :
         else
-            if compgen -G "${tmp_path}/${vhl_name}_*-ch*.${muxer}.part" > /dev/null 2>&1; then
-                newest=$(ls -t ${tmp_path}/${vhl_name}_*-ch*.${muxer}.part 2>/dev/null | head -n 1)
-                newest_ts=$(stat -c %Y "$newest" 2>/dev/null || echo 0)
-                now_ts=$(date +%s)
-                if [ "$newest_ts" -gt 0 ] && [ $((now_ts - newest_ts)) -le "$stream_active_window_sec" ]; then
-                    rm -f "$RECOVER_REQ_INIT_CAM"
-                else
-                    logger -p local0.error "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh because recover request"
-                    rm -f "$RECOVER_REQ_INIT_CAM"
-                    /opt/pim/bin/init_cam.sh
-                    timer=0
-                    sleep 5
-                    continue
-                fi
-            else
-                logger -p local0.error "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh because recover request"
-                rm -f "$RECOVER_REQ_INIT_CAM"
-                /opt/pim/bin/init_cam.sh
-                timer=0
-                sleep 5
-                continue
-            fi
+            logger -p local0.error "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh because recover request"
+            rm -f "$RECOVER_REQ_INIT_CAM"
+            /opt/pim/bin/init_cam.sh
+            timer=0
+            sleep 5
+            continue
         fi
     fi
 
