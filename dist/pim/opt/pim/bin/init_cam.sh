@@ -68,13 +68,14 @@ fi
 #echo "csi1_en:$csi1_en, csi2_en:$csi2_en"
 
 if [[ "$csi1_en" -eq 1 ]] && [[ "$csi2_en" -eq 1 ]]; then
-    rst_time=25
+    rst_time=22
 else
-    rst_time=15
+    rst_time=11
 fi
 
-logger -p local0.notice "[RST][$tag:$LINENO] reset init_cam_flag"
-rm /tmp/init_cam_flag
+logger -p local0.notice "[RST][$tag:$LINENO] reset init_cam_flag and clear recovery requests"
+rm -f /tmp/init_cam_flag
+rm -f /tmp/recover_req_init_cam # [추가] 중복 복구 방지를 위해 기존 요청 플래그 삭제
 /opt/pim/bin/start_cam.sh $rst_time
 
 #/opt/pim/bin/restart_app.sh &

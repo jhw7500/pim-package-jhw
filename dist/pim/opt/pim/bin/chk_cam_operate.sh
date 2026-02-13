@@ -26,7 +26,7 @@ RECOVER_REQ_INIT_CAM="/tmp/recover_req_init_cam"
 
 # If cameras are disconnected, periodically run init_cam.sh to allow recovery
 # once cameras are reconnected. Never reboot in disconnect state.
-DISCONNECT_INIT_CAM_INTERVAL_SEC_DEFAULT=300
+DISCONNECT_INIT_CAM_INTERVAL_SEC_DEFAULT=180
 DISCONNECT_INIT_CAM_GRACE_SEC_DEFAULT=60
 DISCONNECT_INIT_CAM_STATE_FILE_DEFAULT="/tmp/chk_cam_operate.disconnect_state"
 
@@ -718,6 +718,7 @@ DISABLE_VAL="false"
 retry=0
 retry_boot=0
 retry_total=0
+last_init_ts=0
 #touch $FILE_
 
 JSON_PREFIX=edgeconf_
@@ -812,17 +813,25 @@ do
 
     # Recovery ownership: handle init_cam requests here.
     if [ -f "$RECOVER_REQ_INIT_CAM" ]; then
-        cam_disconnect_flag=$(get_cam_disconnect_flag)
-        if (( cam_disconnect_flag == 0x0 )); then
-            logger -p local0.error "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh because recover request"
+        # [추가] 잦은 재초기화 방지: 마지막 초기화 후 30초 이내는 무시
+        now_ts=$(date +%s)
+        elapsed_since_init=$((now_ts - last_init_ts))
+        if [ "$elapsed_since_init" -lt 30 ]; then
+            logger -p local0.notice "[$KEY][$tag:$LINENO] ignoring recover request (last init was only ${elapsed_since_init}s ago)"
             rm -f "$RECOVER_REQ_INIT_CAM"
-            /opt/pim/bin/init_cam.sh
-            timer=0
-            sleep 5
-            continue
         else
-            logger -p local0.err "[$KEY][$tag:$LINENO] skip recover request because cam is disconnect($cam_disconnect_flag)"
-            # Keep request; periodic disconnect handler will run init_cam.sh.
+            cam_disconnect_flag=$(get_cam_disconnect_flag)
+            if (( cam_disconnect_flag == 0x0 )); then
+                logger -p local0.error "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh because recover request"
+                rm -f "$RECOVER_REQ_INIT_CAM"
+                last_init_ts=$(date +%s) # 업데이트
+                /opt/pim/bin/init_cam.sh
+                timer=0
+                sleep 5
+                continue
+            else
+                logger -p local0.err "[$KEY][$tag:$LINENO] skip recover request because cam is disconnect($cam_disconnect_flag)"
+            fi
         fi
     fi
 
