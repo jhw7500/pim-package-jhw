@@ -84,10 +84,6 @@ fi
     cam_disconnect_flag=$(get_cam_disconnect_flag)
         if (( cam_disconnect_flag != 0 )); then
         logger -p local0.notice "[$KEY][$tag:$LINENO] skip $app restart because cam disconnect($cam_disconnect_flag)"
-# [안전장치] 카메라 유실 시 복구 요청 생성 후 대기
-if [ ! -f /tmp/recover_req_init_cam ]; then
-            touch /tmp/recover_req_init_cam
-                fi
         sleep 10
         continue
 fi
@@ -109,9 +105,6 @@ if [ -z "$pid" ]; then
 
         if [ "$can_start" -eq 0 ]; then
             logger -p local0.err "[$KEY][$tag:$LINENO] skip $app start: No responding camera hardware found."
-            if [ ! -f /tmp/recover_req_init_cam ]; then
-                touch /tmp/recover_req_init_cam
-            fi
             sleep 10
             continue
         fi
@@ -119,9 +112,6 @@ if [ -z "$pid" ]; then
         ((fail_cnt++))
         if [ "$fail_cnt" -gt 5 ]; then
         logger -p local0.err "[$KEY][$tag:$LINENO] $app consecutive fail limit ($fail_cnt). Requesting hardware reset..."
-    if [ ! -f /tmp/recover_req_init_cam ]; then
-        touch /tmp/recover_req_init_cam
-    fi
     sleep 30
     fail_cnt=0
         continue

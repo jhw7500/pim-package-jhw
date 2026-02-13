@@ -23,6 +23,9 @@ MAINTENANCE_INTERVAL_SEC_DEFAULT=30
 
 BG_FLAG_FILE="/tmp/bg_chk_flag.bin"
 RECOVER_REQ_INIT_CAM="/tmp/recover_req_init_cam"
+LAST_INIT_TS_FILE="/tmp/last_init_cam_ts"
+START_TS_FILE="/tmp/pim_cam_start_ts"
+START_DELAY_FILE="/tmp/pim_cam_start_delay"
 
 # If cameras are disconnected, periodically run init_cam.sh to allow recovery
 # once cameras are reconnected. Never reboot in disconnect state.
@@ -48,6 +51,17 @@ modules_loaded() {
     [ -d "/sys/module/max9296" ] && [ -d "/sys/module/imx8_media_dev" ]
 }
 
+read_ts() {
+    [ -f "$1" ] && cat "$1" 2>/dev/null | tr -d '\n' || echo 0
+}
+
+in_init_cooldown() {
+    local now last
+    now=$(date +%s)
+    last=$(read_ts "$LAST_INIT_TS_FILE")
+    [ "$last" -gt 0 ] && [ $((now - last)) -lt 40 ]
+}
+
 maybe_init_cam_on_disconnect() {
     local cam_disconnect_flag now first_seen last_init
 
@@ -55,6 +69,10 @@ maybe_init_cam_on_disconnect() {
     if (( cam_disconnect_flag == 0 )); then
         rm -f "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
         return 1
+    fi
+
+    if in_init_cooldown; then
+        return 0
     fi
 
     now=$(date +%s)
@@ -813,24 +831,33 @@ do
 
     # Recovery ownership: handle init_cam requests here.
     if [ -f "$RECOVER_REQ_INIT_CAM" ]; then
-        # [추가] 잦은 재초기화 방지: 마지막 초기화 후 30초 이내는 무시
-        now_ts=$(date +%s)
-        elapsed_since_init=$((now_ts - last_init_ts))
-        if [ "$elapsed_since_init" -lt 30 ]; then
-            logger -p local0.notice "[$KEY][$tag:$LINENO] ignoring recover request (last init was only ${elapsed_since_init}s ago)"
+        cam_disconnect_flag=$(get_cam_disconnect_flag)
+        if (( cam_disconnect_flag == 0 )); then
             rm -f "$RECOVER_REQ_INIT_CAM"
+        elif in_init_cooldown; then
+            :
         else
-            cam_disconnect_flag=$(get_cam_disconnect_flag)
-            if (( cam_disconnect_flag == 0x0 )); then
+            if compgen -G "${tmp_path}/${vhl_name}_*-ch*.${muxer}.part" > /dev/null 2>&1; then
+                newest=$(ls -t ${tmp_path}/${vhl_name}_*-ch*.${muxer}.part 2>/dev/null | head -n 1)
+                newest_ts=$(stat -c %Y "$newest" 2>/dev/null || echo 0)
+                now_ts=$(date +%s)
+                if [ "$newest_ts" -gt 0 ] && [ $((now_ts - newest_ts)) -le 10 ]; then
+                    rm -f "$RECOVER_REQ_INIT_CAM"
+                else
+                    logger -p local0.error "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh because recover request"
+                    rm -f "$RECOVER_REQ_INIT_CAM"
+                    /opt/pim/bin/init_cam.sh
+                    timer=0
+                    sleep 5
+                    continue
+                fi
+            else
                 logger -p local0.error "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh because recover request"
                 rm -f "$RECOVER_REQ_INIT_CAM"
-                last_init_ts=$(date +%s) # 업데이트
                 /opt/pim/bin/init_cam.sh
                 timer=0
                 sleep 5
                 continue
-            else
-                logger -p local0.err "[$KEY][$tag:$LINENO] skip recover request because cam is disconnect($cam_disconnect_flag)"
             fi
         fi
     fi
