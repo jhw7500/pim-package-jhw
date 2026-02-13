@@ -12,7 +12,7 @@ FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' 
 #cam_ch2=$(jq '.VHL_CAM.i2c1.ch2.enable' "$FILE_JSON")
 #cam_ch3=$(jq '.VHL_CAM.i2c1.ch3.enable' "$FILE_JSON")
 IFS=$'\t' read -r \
-    cam_ch0 cam_ch1 cam_ch2 cam_ch3 vhl_name tmp_path muxer delay < <(
+    cam_ch0 cam_ch1 cam_ch2 cam_ch3 vhl_name tmp_path muxer < <(
     jq -r '[
         (.VHL_CAM.i2c2.ch0.enable // false),
         (.VHL_CAM.i2c2.ch1.enable // false),
@@ -20,8 +20,7 @@ IFS=$'\t' read -r \
         (.VHL_CAM.i2c1.ch3.enable // false),
         (.VHL_CAM.vhl_name // "VD3001"),
         (.VHL_CAM.tmp_path // "/dev/shm"),
-        (.VHL_CAM.muxer // "mp4"),
-        (.VHL_CAM.delay // 5)
+        (.VHL_CAM.muxer // "mp4")
     ] | @tsv' "$FILE_JSON"
 )
 unset IFS
@@ -48,6 +47,15 @@ else
 fi
 cam_ch_bit=$((cam_ch3<<3|cam_ch2<<2|cam_ch1<<1|cam_ch0))
 
+ORD_VCM_JSON="/root/shared_v/ord_vcm_conf.json"
+if [ ! -f "$ORD_VCM_JSON" ]; then
+    ORD_VCM_JSON="/tmp/shared_v/ord_vcm_conf.json"
+fi
+
+startup_grace_extra_sec=$(jq -r '(.ETC.startup_grace_extra_sec // 10)' "$ORD_VCM_JSON" 2>/dev/null || echo 10)
+init_cooldown_sec=$(jq -r '(.ETC.init_cooldown_sec // 40)' "$ORD_VCM_JSON" 2>/dev/null || echo 40)
+stream_active_window_sec=$(jq -r '(.ETC.stream_active_window_sec // 10)' "$ORD_VCM_JSON" 2>/dev/null || echo 10)
+
 now_ts() { date +%s; }
 read_ts() { [ -f "$1" ] && cat "$1" 2>/dev/null | tr -d '\n' || echo 0; }
 
@@ -70,7 +78,7 @@ in_startup_grace() {
     now=$(now_ts)
     start_ts=$(read_ts "/tmp/pim_cam_start_ts")
     start_delay=$(read_ts "/tmp/pim_cam_start_delay")
-    grace=$((start_delay + 10))
+    grace=$((start_delay + startup_grace_extra_sec))
     [ "$start_ts" -gt 0 ] && [ $((now - start_ts)) -lt "$grace" ]
 }
 
@@ -78,7 +86,7 @@ in_init_cooldown() {
     local now last
     now=$(now_ts)
     last=$(read_ts "/tmp/last_init_cam_ts")
-    [ "$last" -gt 0 ] && [ $((now - last)) -lt 40 ]
+    [ "$last" -gt 0 ] && [ $((now - last)) -lt "$init_cooldown_sec" ]
 }
 
 if [[ -n "$1" ]]; then
@@ -159,7 +167,7 @@ while true; do
     #echo "cam"
     /opt/pim/bin/chk_cam_connect.sh $cam_ch_bit 2>/dev/null
 
-    if in_startup_grace || in_init_cooldown || stream_active 10; then
+    if in_startup_grace || in_init_cooldown || stream_active "$stream_active_window_sec"; then
         rm ${FLAG_PATH}/err_cam* 2>/dev/null
     fi
     #make result cmd

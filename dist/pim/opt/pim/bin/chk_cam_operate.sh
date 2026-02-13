@@ -27,6 +27,10 @@ LAST_INIT_TS_FILE="/tmp/last_init_cam_ts"
 START_TS_FILE="/tmp/pim_cam_start_ts"
 START_DELAY_FILE="/tmp/pim_cam_start_delay"
 
+startup_grace_extra_sec=10
+init_cooldown_sec=40
+stream_active_window_sec=10
+
 # If cameras are disconnected, periodically run init_cam.sh to allow recovery
 # once cameras are reconnected. Never reboot in disconnect state.
 DISCONNECT_INIT_CAM_INTERVAL_SEC_DEFAULT=180
@@ -59,7 +63,7 @@ in_init_cooldown() {
     local now last
     now=$(date +%s)
     last=$(read_ts "$LAST_INIT_TS_FILE")
-    [ "$last" -gt 0 ] && [ $((now - last)) -lt 40 ]
+    [ "$last" -gt 0 ] && [ $((now - last)) -lt "$init_cooldown_sec" ]
 }
 
 maybe_init_cam_on_disconnect() {
@@ -103,12 +107,16 @@ maybe_init_cam_on_disconnect() {
 
 GetConfig_() {
     IFS=$'\t' read -r \
-        srt_en file_chk_reboot time_rec_en file_check_delay < <(
+        srt_en file_chk_reboot time_rec_en file_check_delay \
+        startup_grace_extra_sec init_cooldown_sec stream_active_window_sec < <(
         jq -r '[
             (.VCM.srt_enable // false),
             (.ETC.file_check_reboot // false),
             (.VCM.file_time_check // false),
-            (.ETC.file_check_delay // 10)
+            (.ETC.file_check_delay // 10),
+            (.ETC.startup_grace_extra_sec // 10),
+            (.ETC.init_cooldown_sec // 40),
+            (.ETC.stream_active_window_sec // 10)
         ] | @tsv' "$FILE_JSON_"
     )
     unset IFS
@@ -841,7 +849,7 @@ do
                 newest=$(ls -t ${tmp_path}/${vhl_name}_*-ch*.${muxer}.part 2>/dev/null | head -n 1)
                 newest_ts=$(stat -c %Y "$newest" 2>/dev/null || echo 0)
                 now_ts=$(date +%s)
-                if [ "$newest_ts" -gt 0 ] && [ $((now_ts - newest_ts)) -le 10 ]; then
+                if [ "$newest_ts" -gt 0 ] && [ $((now_ts - newest_ts)) -le "$stream_active_window_sec" ]; then
                     rm -f "$RECOVER_REQ_INIT_CAM"
                 else
                     logger -p local0.error "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh because recover request"
@@ -1054,7 +1062,10 @@ do
                         fi
                     fi
                 else
-                    logger -p local0.err  "[$KEY][$tag:$LINENO] no retry because cam is disconnect($cam_disconnect_flag)"
+                    logger -p local0.err  "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag): /opt/pim/bin/init_cam.sh"
+                    if ! in_init_cooldown; then
+                        /opt/pim/bin/init_cam.sh
+                    fi
                 fi
 			else
 				logger -p local0.info "[$KEY][$tag:$LINENO] ${muxer},srt file cnt check ok ($retry/$retry_boot/$retry_total)"
@@ -1110,7 +1121,10 @@ do
                     fi
                 fi
             else
-                logger -p local0.err  "[$KEY][$tag:$LINENO] no retry because cam is disconnect($cam_disconnect_flag)"
+                logger -p local0.err  "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag): /opt/pim/bin/init_cam.sh"
+                if ! in_init_cooldown; then
+                    /opt/pim/bin/init_cam.sh
+                fi
             fi
 	    fi
     fi
