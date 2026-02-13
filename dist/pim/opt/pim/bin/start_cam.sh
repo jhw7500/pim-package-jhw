@@ -31,6 +31,9 @@ StartCam() {
             rm -f /tmp/gst_err
         fi
 
+        date +%s > /tmp/pim_cam_start_ts 2>/dev/null
+        printf "%s" "$delay" > /tmp/pim_cam_start_delay 2>/dev/null
+
         logger -p local0.emerg "[$key][$tag:$LINENO] cam app cmd : $start_cmd"
         rm /tmp/start_video_time
         eval "$start_cmd"

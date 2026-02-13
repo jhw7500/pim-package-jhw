@@ -14,6 +14,7 @@ fi
 
 logger -p local0.notice "[RST][$tag:$LINENO] set init_cam_flag"
 touch /tmp/init_cam_flag
+date +%s > /tmp/last_init_cam_ts 2>/dev/null
 /opt/pim/bin/kill_test.sh
 
 #sleep 3
