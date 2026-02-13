@@ -4,6 +4,7 @@ tag=$(basename "$0")
 result=0
 delay=25
 i=0
+CAM_ERR_STREAK_FILE="/tmp/bg_cam_err_streak"
 JSON_PREFIX=edgeconf_
 JOSN_SUFFIX=.json
 FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' | grep "${JSON_SUFFIX}$" | tail -1 | tr -d '\r\n')
@@ -138,6 +139,20 @@ function MAKE_RESULT_FLAG() {
 	printf "%d" $result > ${FLAG_PATH}/bg_chk_flag.bin
 }
 
+streak_get() {
+	local v
+	v=$(cat "$CAM_ERR_STREAK_FILE" 2>/dev/null | tr -d '\n')
+	if [[ ! "$v" =~ ^[0-9]+$ ]]; then
+		echo 0
+		return 0
+	fi
+	echo "$v"
+}
+
+streak_set() {
+	printf "%s" "$1" > "$CAM_ERR_STREAK_FILE" 2>/dev/null
+}
+
 CLEAR_CHK_LOG
 sleep $delay
 logger -p local0.notice "[CHK][$tag:$LINENO] BG check loop start(ch0:$cam_ch0, ch1:$cam_ch1, ch2:$cam_ch2, ch3:$cam_ch3)"
@@ -169,6 +184,7 @@ while true; do
 
     if in_startup_grace || in_init_cooldown || stream_active "$stream_active_window_sec"; then
         rm ${FLAG_PATH}/err_cam* 2>/dev/null
+		streak_set 0
     fi
     #make result cmd
     #echo "make flag"
@@ -178,27 +194,23 @@ while true; do
 
     if [ -f /tmp/init_cam_flag ] || [ -f /tmp/restart_flag ]; then
         i=0
+		streak_set 0
         continue
     fi
 
-    if [ -f "${FLAG_PATH}"/err_cam0.log ] || [ -f "${FLAG_PATH}"/err_cam1.log ] || [ -f "${FLAG_PATH}"/err_cam2.log ]  || [ -f "${FLAG_PATH}"/err_cam3.log ] ; then
-        #echo "cam_err"
-        #err_file=$(ls ${FLAG_PATH}/err_cam*)
-        ((i++))
-        logger -p local0.emerg "[CHK][$tag:$LINENO] cam disconnect : $i"
-        #creboot
-        if [ "$i" -gt 1 ]; then
-                #logger -p local0.emerg "[CHK][$tag:$LINENO] reboot because cam disconnect"
-                #sleep 1
-                #reboot
-                # Recovery ownership: request init_cam; chk_cam_operate.sh performs retry/init/reboot.
-                if [ ! -f /tmp/recover_req_init_cam ]; then
-                    logger -p local0.error  "[CHK][$tag:$LINENO] request init_cam because cam disconnect"
-                    touch /tmp/recover_req_init_cam
-                fi
-        fi
-    else
-        i=0
-    fi
+	streak=$(streak_get)
+	if [ -f "${FLAG_PATH}"/err_cam0.log ] || [ -f "${FLAG_PATH}"/err_cam1.log ] || [ -f "${FLAG_PATH}"/err_cam2.log ]  || [ -f "${FLAG_PATH}"/err_cam3.log ] ; then
+		streak=$((streak + 1))
+		streak_set "$streak"
+		logger -p local0.emerg "[CHK][$tag:$LINENO] cam disconnect : $streak"
+		if [ "$streak" -ge 2 ]; then
+			if [ ! -f /tmp/recover_req_init_cam ]; then
+				logger -p local0.error  "[CHK][$tag:$LINENO] request init_cam because cam disconnect"
+				printf "%s\n" "$(date +%s) cam_disconnect_streak=$streak" > /tmp/recover_req_init_cam
+			fi
+		fi
+	else
+		streak_set 0
+	fi
 
 done
