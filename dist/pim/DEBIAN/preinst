@@ -1,16 +1,8 @@
 #!/bin/bash
 
-# Minimize locale warnings on minimal rootfs
-if LC_ALL=C locale -a 2>/dev/null | grep -qi '^ko_KR\.utf8$'; then
-  export LANG=ko_KR.UTF-8
-  export LC_ALL=ko_KR.UTF-8
-elif LC_ALL=C locale -a 2>/dev/null | grep -qi '^C\.utf8$'; then
-  export LANG=C.UTF-8
-  export LC_ALL=C.UTF-8
-else
-  export LANG=C
-  export LC_ALL=C
-fi
+# Force locale to C.UTF-8
+export LANG=C.UTF-8
+export LC_ALL=C.UTF-8
 
 ############################################################
 # preinst script main
@@ -26,62 +18,20 @@ KEY=PKG
 
 log() { logger -s -p local0.notice "[$KEY][$tag:$LINENO] $*"; }
 
-ensure_locale_ko_kr_utf8() {
-  local TARGET="ko_KR.UTF-8"
+ensure_default_locale_c_utf8() {
+  local TARGET="C.UTF-8"
 
-  log "ensure locale: $TARGET"
+  log "set default locale to $TARGET"
 
-  # 이미 있으면 종료
-  if locale -a 2>/dev/null | grep -qi '^ko_KR\.utf8$'; then
-    log "locale already exists: $TARGET"
-    return 0
-  fi
-
-  # locale-gen 있으면 생성 시도
-  if command -v locale-gen >/dev/null 2>&1; then
-    log "locale-gen found. generating $TARGET"
-
-    # /etc/locale.gen에서 주석 해제(있을 때만)
-    if [ -f /etc/locale.gen ]; then
-      sed -i 's/^# *ko_KR.UTF-8 UTF-8/ko_KR.UTF-8 UTF-8/' /etc/locale.gen || true
-      grep -q '^ko_KR.UTF-8 UTF-8' /etc/locale.gen || echo 'ko_KR.UTF-8 UTF-8' >> /etc/locale.gen
-    fi
-
-    locale-gen ko_KR.UTF-8 || true
+  if command -v update-locale >/dev/null 2>&1; then
+    update-locale LANG=$TARGET LC_ALL=$TARGET || true
   else
-    log "locale-gen not found. fallback to C.UTF-8 if available"
-
-    # 임베디드/최소 rootfs 대응: C.UTF-8 있으면 그걸로 고정
-    if locale -a 2>/dev/null | grep -qi '^C\.utf8$'; then
-      if command -v update-locale >/dev/null 2>&1; then
-        update-locale LANG=C.UTF-8 LC_ALL=C.UTF-8 || true
-      else
-        echo "LANG=C.UTF-8"  > /etc/default/locale
-        echo "LC_ALL=C.UTF-8" >> /etc/default/locale
-      fi
-      log "set default locale to C.UTF-8 (fallback)"
-      return 0
-    fi
-
-    log "no locale-gen and no C.UTF-8; skip locale setup"
-    return 0
-  fi
-
-  # 생성 확인 + 기본값 적용
-  if locale -a 2>/dev/null | grep -qi '^ko_KR\.utf8$'; then
-    if command -v update-locale >/dev/null 2>&1; then
-      update-locale LANG=$TARGET LC_ALL=$TARGET || true
-    else
-      echo "LANG=$TARGET"  > /etc/default/locale
-      echo "LC_ALL=$TARGET" >> /etc/default/locale
-    fi
-    log "set default locale to $TARGET"
-  else
-    log "locale generation attempted but ko_KR.utf8 still missing"
+    echo "LANG=$TARGET"  > /etc/default/locale
+    echo "LC_ALL=$TARGET" >> /etc/default/locale
   fi
 }
 
-ensure_locale_ko_kr_utf8
+ensure_default_locale_c_utf8
 
 #echo "install $PACKAGE_NAME-$(dpkg-query -W -f='${Version}' $PACKAGE_NAME)"
 logger -s -p local0.notice "[$KEY][$tag:$LINENO] install $PACKAGE_NAME-$(dpkg-query -W -f='${Version}' $PACKAGE_NAME) start"
