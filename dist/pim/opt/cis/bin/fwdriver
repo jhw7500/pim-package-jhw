@@ -85,7 +85,7 @@ status() {
         pid=`ps -ef | grep 'adab' | grep -v 'grep' | grep -v '/usr/local/bin/adab' | awk '{print $2}'`
         if [ -z "$pid" ]
         then
-            local error=`cat /tmp/adab_status 2> /dev/null | grep ERROR | cut -d':' -f2 | tr -d '\r\n'`
+            local error=`cat /dev/shm/adab_status 2> /dev/null | grep ERROR | cut -d':' -f2 | tr -d '\r\n'`
             if [ -z "$error" -o "$error" == " " -o "$error" == "" -o "$error" == "0" ]; then
 	            mode="stop"
             else
@@ -106,8 +106,8 @@ status() {
     fi
 
     #gyro
-    if [ -f '/tmp/gyro' ]; then
-        gyro=`cat /tmp/gyro`
+    if [ -f '/dev/shm/gyro' ]; then
+        gyro=`cat /dev/shm/gyro`
     else
         gyro='    "x":"0",
     "y":"0",
@@ -128,8 +128,8 @@ status() {
         fi
     fi
     #etc_sen
-    if [ -f '/tmp/etc_sen' ]; then
-        etc_sen=`cat /tmp/etc_sen`
+    if [ -f '/dev/shm/etc_sen' ]; then
+        etc_sen=`cat /dev/shm/etc_sen`
     else
         etc_sen='    "power_voltage":0,
     "power_current":0,

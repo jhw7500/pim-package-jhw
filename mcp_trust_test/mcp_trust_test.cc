@@ -19,7 +19,7 @@
 #include <chrono>
 #include <sys/stat.h>
 
-#define ETC_SEN_PATH "/tmp/etc_sen"
+#define ETC_SEN_PATH "/dev/shm/etc_sen"
 
 std::string run_command(const std::string& cmd)
 {

@@ -71,7 +71,7 @@ reload() {
 }
 
 gyrocal() {
-    STATE_FILE="/tmp/gyrocal_state"
+    STATE_FILE="/dev/shm/gyrocal_state"
     echo 2 > $STATE_FILE
     echo "gyrocal" > /var/run/adab.pipe
 

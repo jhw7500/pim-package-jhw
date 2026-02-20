@@ -79,7 +79,7 @@ function GetCpuTemp() {
 }
 
 function GetAdabError() {
-	if [ ! -f "/tmp/adab_status" ]; then
+	if [ ! -f "/dev/shm/adab_status" ]; then
 		_adab_err="0,0,0,0"
 	else
 		local error=""
@@ -87,10 +87,10 @@ function GetAdabError() {
 		local adc_error=""
 		local gyro_error=""
 		
-		error=`cat /tmp/adab_status | grep ERROR | cut -d':' -f2 | tr -d '\r\n'`
-		time_error=`cat /tmp/adab_status | grep data_time_err | cut -d':' -f2 | tr -d '\r\n'`
-		adc_error=`cat /tmp/adab_status | grep data_adc_err | cut -d':' -f2 | tr -d '\r\n'`
-		gyro_error=`cat /tmp/adab_status | grep data_gyro_err | cut -d':' -f2 | tr -d '\r\n'`
+		error=`cat /dev/shm/adab_status | grep ERROR | cut -d':' -f2 | tr -d '\r\n'`
+		time_error=`cat /dev/shm/adab_status | grep data_time_err | cut -d':' -f2 | tr -d '\r\n'`
+		adc_error=`cat /dev/shm/adab_status | grep data_adc_err | cut -d':' -f2 | tr -d '\r\n'`
+		gyro_error=`cat /dev/shm/adab_status | grep data_gyro_err | cut -d':' -f2 | tr -d '\r\n'`
 		
 		_adab_err="$error,$time_error,$adc_error,$gyro_error"
 	fi

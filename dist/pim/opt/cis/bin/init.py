@@ -55,13 +55,12 @@ def set_global_conf(conf_path):
         f.close()
 
 def get_global_conf():
-    global_conf_path = ""
-    try:
-        with open("/tmp/global_edgeconf_path", "r") as f :
-            global_conf_path = f.readline()
-    except:
-        return ""
-    return global_conf_path
+    json_path = search_conf(r"/root/shared_v/edgeconf_*.json")
+    if json_path == False :
+        json_path = search_conf(r"/root/shared_v/backup_edgeconf_*.json")
+        if json_path == False :
+            json_path = "/etc/defaultconf.json"
+    return json_path
 
 def copy_backup_conf(conf_path):
     conf = {}
