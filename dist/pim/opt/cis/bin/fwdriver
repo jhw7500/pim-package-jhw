@@ -65,49 +65,49 @@ status() {
     local ant=""
     local etc_sen=""
 
-    local mainboard_type=$(python3 /opt/cis/bin/getconfval.py mainboard_type | tr -d '\r\n')
-    
+    local mainboard_type=$(awk -F'"' '/mainboard_type/ {print $4}' /etc/cts/model_info.json)
     if [ "${mainboard_type}" == "plus" ]; then
-        cisver=`dpkg -l pim-mp | grep 'pim-mp' | awk '{print $3}'`
+        cisver=$(dpkg -s pim-mp 2> /dev/null | grep 'Version:' | awk  '{print $2}')
+
     else
-        cisver=`dpkg -l cis | grep 'cis' | awk '{print $3}'`
+        cisver=$(dpkg -s cis 2> /dev/null | grep 'Version:' | awk  '{print $2}')
     fi
 
-    mcuver=`cat /tmp/dbver 2> /dev/null`
-    osver=`cat /etc/issue | awk '{print $1, $2, $3}' | sed 's/[[:blank:]]*$//'`
-    board=$(python3 /opt/cis/bin/getconfval.py daughterboard_type | tr -d '\r\n')
+    if [ -r /tmp/dbver ]; then
+        IFS= read -r mcuver < /tmp/dbver
+    fi
+    
+    osver=$(awk -F= '/^PRETTY_NAME=/{gsub(/"/,"",$2); print $2}' /etc/os-release)
+    board=$(awk -F'"' '/daughterboard_type/ {print $4}' /etc/cts/model_info.json)
+
     #mode
     if [ -f '/tmp/fwupgrade.lock' ]; then
         mode="upgrading"
     elif [ -f '/tmp/edgeconf.lock' ]; then
         mode="setting"
     else
-        pid=`ps -ef | grep 'adab' | grep -v 'grep' | grep -v '/usr/local/bin/adab' | awk '{print $2}'`
-        if [ -z "$pid" ]
-        then
-            local error=`cat /dev/shm/adab_status 2> /dev/null | grep ERROR | cut -d':' -f2 | tr -d '\r\n'`
+        if pidof adab >/dev/null 2>&1; then
+            mode="run"
+        else
+            local error=$(cat /dev/shm/adab_status 2> /dev/null | grep ERROR | cut -d':' -f2 | tr -d '\r\n')
             if [ -z "$error" -o "$error" == " " -o "$error" == "" -o "$error" == "0" ]; then
 	            mode="stop"
             else
 	            mode="error"
             fi
-        else
-            mode="run"
         fi
     fi
 
-    #cism
-    pid=`ps -ef | grep 'cism' | grep -v 'grep' | grep -v '/usr/local/bin/cism' | awk '{print $2}'`
-    if [ -z "$pid" ]
-    then
-        cism="stop"
-    else
+    if pidof cism >/dev/null 2>&1; then
         cism="run"
+    else
+        cism="stop"
     fi
 
     #gyro
     if [ -f '/dev/shm/gyro' ]; then
-        gyro=`cat /dev/shm/gyro`
+        #gyro=`cat /dev/shm/gyro`
+        gyro=$(cat /dev/shm/gyro)
     else
         gyro='    "x":"0",
     "y":"0",
@@ -115,7 +115,7 @@ status() {
     fi
     
     #ant
-    local antval=`cat /sys/module/lrdmwl/parameters/SISO_mode 2> /dev/null`
+    local antval=$(cat /sys/module/lrdmwl/parameters/SISO_mode 2> /dev/null)
     if [ -z "$antval" -o "$antval" == " " -o "$antval" == "" ]; then
         ant="2"
     else
@@ -129,7 +129,7 @@ status() {
     fi
     #etc_sen
     if [ -f '/dev/shm/etc_sen' ]; then
-        etc_sen=`cat /dev/shm/etc_sen`
+        etc_sen=$(cat /dev/shm/etc_sen)
     else
         etc_sen='    "power_voltage":0,
     "power_current":0,
