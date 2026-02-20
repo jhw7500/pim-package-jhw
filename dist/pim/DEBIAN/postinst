@@ -107,7 +107,9 @@ cpchk() {
   rm -f /usr/lib/libpiwriter*
   ln -s /usr/local/lib/libpiwriter.so.0  /usr/lib/libpiwriter.so.0
   ln -s /usr/local/lib/libpiwriter.so.0  /usr/lib/libpiwriter.so
+  rm -f /usr/local/bin/killcam
   ln -s /opt/pim/bin/kill_test.sh /usr/local/bin/killcam
+  rm -f /usr/local/bin/startcam
   ln -s /opt/pim/bin/start_cam.sh /usr/local/bin/startcam
 
   ## cis
@@ -441,13 +443,10 @@ fi
 
   if [ "$model" == "cis-a2" ] || [ "$model" == "cis-a4" ] || [ "$model" == "cis-c2" ]; then
         echo "sea_app is installed"
-        /opt/pim/bin/change_line.sh "    #/opt/pim/bin/chk_voltage.sh 2>/dev/null" "/opt/pim/bin/chk_voltage.sh" /opt/pim/bin/BG_Check_for_pim.sh
         /opt/pim/bin/change_line.sh "    #/opt/pim/bin/led_ctrl.sh 2>/dev/null" "/opt/pim/bin/led_ctrl.sh" /opt/pim/bin/BG_Check_for_pim.sh
-        #/opt/pim/bin/comment_line.sh "/opt/pim/bin/chk_voltage.sh" /opt/pim/bin/BG_Check_for_pim.sh
         #/opt/pim/bin/comment_line.sh "/opt/pim/bin/led_ctrl.sh 2>/dev/null" /opt/pim/bin/BG_Check_for_pim.sh
     else
         echo "sea_app is not installed"
-        /opt/pim/bin/change_line.sh "    /opt/pim/bin/chk_voltage.sh 2>/dev/null" "/opt/pim/bin/chk_voltage.sh" /opt/pim/bin/BG_Check_for_pim.sh
         /opt/pim/bin/change_line.sh "    /opt/pim/bin/led_ctrl.sh 2>/dev/null" "/opt/pim/bin/led_ctrl.sh" /opt/pim/bin/BG_Check_for_pim.sh
     fi
 

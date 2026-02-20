@@ -28,12 +28,12 @@ if [ "$1" == "clean" ]; then
                 rm -rf ${BASEDIR}/pim_gate/cpp_source/build
                 rm -rf ${BASEDIR}/pim_gate/release
                 ;;
-            ord|vsd|vcm|adab|adab_ecat|cism|stm32update)
+            ord|vsd|vcm|adab|adab_ecat|cism|stm32update|mcp_trust_test)
                 rm -rf ${BASEDIR}/${CLEAN_TARGET}/build
                 ;;
             *)
                 echo "Unknown module: ${CLEAN_TARGET}"
-                echo "Available modules: ord, vsd, vcm, adab, adab_ecat, cism, stm32update, pim_gate"
+                echo "Available modules: ord, vsd, vcm, adab, adab_ecat, cism, stm32update, mcp_trust_test, pim_gate"
                 exit 1
                 ;;
         esac
@@ -46,6 +46,7 @@ if [ "$1" == "clean" ]; then
         rm -rf ${BASEDIR}/adab_ecat/build
         rm -rf ${BASEDIR}/cism/build
         rm -rf ${BASEDIR}/stm32update/build
+        rm -rf ${BASEDIR}/mcp_trust_test/build
         rm -rf ${BASEDIR}/pim_gate/cpp_source/build
         rm -rf ${BASEDIR}/pim_gate/release
     fi
@@ -208,6 +209,20 @@ if should_build "stm32update"; then
     fi
 fi
 
+# Build mcp_trust_test
+if should_build "mcp_trust_test"; then
+    echo "Building stm32umcp_trust_testpdate..."
+    if [ ! -d ${BASEDIR}/mcp_trust_test/build ]; then
+        mkdir ${BASEDIR}/mcp_trust_test/build
+    fi
+    cd ${BASEDIR}/mcp_trust_test/build
+    ${CMAKE} ${CMAKE_TOOLCHAIN_ARG} ..
+    make
+    if [ $? != 0 ]; then
+        echo "mcp_trust_test compile error"
+        exit 1
+    fi
+fi
 
 cd ${BASEDIR}
 
@@ -222,6 +237,7 @@ if [ -z "$TARGET_MODULE" ]; then
     cp ${BASEDIR}/adab_ecat/build/adab_ecat ${BASEDIR}/release/pim/opt/cis/bin/adab_ecat
     cp ${BASEDIR}/cism/build/cism ${BASEDIR}/release/pim/opt/cis/bin/
     cp ${BASEDIR}/stm32update/build/stm32update ${BASEDIR}/release/pim/opt/cis/bin/
+    cp ${BASEDIR}/mcp_trust_test/build/mcp_trust_test ${BASEDIR}/release/pim/opt/pim/bin/
     cp -R ${BASEDIR}/test ${BASEDIR}/release/pim/opt/pim/bin/
 
     # build pim_gate
