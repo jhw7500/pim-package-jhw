@@ -2,6 +2,11 @@
 _root_path="/var/log/cantops"
 _dev_wlan=$(python3 /opt/cis/bin/getconfval.py dev_wlan | tr -d '\r\n')
 prevmac="none"
+_poll_sec="${WIFI_LOG_POLL_SEC:-1}"
+
+case "$_poll_sec" in
+    ''|*[!0-9.]* ) _poll_sec="1" ;;
+esac
 
 function LogWrite() {
 	logger -p local1.info "WiFiLOG|$1"
@@ -76,7 +81,7 @@ function LogWrite_WiFiSignalPol() {
 	local noise=`echo $str | cut -d' ' -f3 | cut -d'=' -f2`
 	local snr
 	
-	if [ -n ${noise} ]; then
+	if [ -n "$noise" ]; then
 		noise=`echo $noise | tr -d '-'`
 		snr=`expr $rssi + $noise`
 		LogWrite "RSSI ${rssi} NOISE -${noise} SNR ${snr}"
@@ -135,5 +140,5 @@ while true; do
         LogWrite_WiFiSignalPol;
         LogWrite_WiFiInfo;
     fi
-    sleep 0.1
+    sleep "$_poll_sec"
 done

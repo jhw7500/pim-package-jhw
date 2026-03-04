@@ -3,8 +3,14 @@ tag=$(basename "$0")
 KEY="CPU"
 #list=$1
 JSON_PREFIX=edgeconf_
-JOSN_SUFFIX=.json
-FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' | grep "${JSON_SUFFIX}$" | tail -1 | tr -d '\r\n')
+JSON_SUFFIX=.json
+FILE_JSON=""
+for f in /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX}; do
+    [ -e "$f" ] || continue
+    if [ -z "$FILE_JSON" ] || [ "$f" -nt "$FILE_JSON" ]; then
+        FILE_JSON="$f"
+    fi
+done
 logger -p local0.notice "[$key][$tag:$LINENO] json_file : $FILE_JSON"
 app=$(jq -r '.VHL_CAM.app' "$FILE_JSON")
 
