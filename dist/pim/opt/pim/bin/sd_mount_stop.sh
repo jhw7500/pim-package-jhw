@@ -4,8 +4,14 @@ KEY="MNT"
 DIR="/mnt/sd_cam"
 DEVICE="/dev/mmcblk1p1"
 JSON_PREFIX="edgeconf_"
-JOSN_SUFFIX=".json"
-FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' | grep "${JSON_SUFFIX}$" | tail -1 | tr -d '\r\n')
+JSON_SUFFIX=".json"
+FILE_JSON=""
+for f in /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX}; do
+    [ -e "$f" ] || continue
+    if [ -z "$FILE_JSON" ] || [ "$f" -nt "$FILE_JSON" ]; then
+        FILE_JSON="$f"
+    fi
+done
 tmp_path=$(jq -r '.VHL_CAM.tmp_path' "$FILE_JSON")
 if [ "$tmp_path" == "$DIR" ]; then
     daemon_name=cam-operate
@@ -42,5 +48,3 @@ else
     logger -p local0.emerg "[$KEY][$TAG:$LINENO] $DEVICE cannot unmounted"
     exit 1
 fi
-
-
