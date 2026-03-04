@@ -55,7 +55,7 @@ class PIMHealthGuardian:
     def _load_all_configs(self):
         conf = {
             'edge': {}, 'ord': {}, 'sd_path': '/mnt/sd_cam', 'sd_dev': 'mmcblk1',
-            'v4l_map': {'csi0': 4, 'csi1': 3}, 'tmp_path': '/dev/shm', 'oht_name': 'VD3001'
+            'v4l_map': {'csi0': 2, 'csi1': 3}, 'tmp_path': '/dev/shm', 'oht_name': 'VD3001'
         }
         try:
             files = sorted(glob.glob(f"{EDGE_CONF_DIR}/edgeconf_*.json"))
@@ -68,8 +68,8 @@ class PIMHealthGuardian:
                     conf['oht_name'] = cam.get('vhl_name', 'VD3001')
                     v_map = cam.get('v4l_map', cam.get('device_map', {}))
                     if v_map:
-                        conf['v4l_map']['csi0'] = v_map.get('csi0_video', 4)
-                        conf['v4l_map']['csi1'] = v_map.get('csi1_video', 3)
+                        conf['v4l_map']['csi0'] = v_map.get('csi0_subdev', v_map.get('csi0_video', 2))
+                        conf['v4l_map']['csi1'] = v_map.get('csi1_subdev', v_map.get('csi1_video', 3))
             with open('/proc/mounts', 'r') as f:
                 for line in f:
                     if conf['sd_path'] in line:
@@ -238,15 +238,19 @@ class PIMHealthGuardian:
 
     def check_cams(self):
         active_count = 0
-        # Active Check: query device via v4l2-ctl
-        if (self.cam_en_bitmask & 0x03):
-            node = f"/dev/video{self.conf['v4l_map']['csi0']}"
-            res = subprocess.run(f"v4l2-ctl -d {node} --get-ctrl=ae_on", shell=True, capture_output=True)
-            if res.returncode == 0: active_count += bin(self.cam_en_bitmask & 0x03).count('1')
-        if (self.cam_en_bitmask & 0x0C):
-            node = f"/dev/video{self.conf['v4l_map']['csi1']}"
-            res = subprocess.run(f"v4l2-ctl -d {node} --get-ctrl=ae_on", shell=True, capture_output=True)
-            if res.returncode == 0: active_count += bin(self.cam_en_bitmask & 0x0C).count('1')
+        csi0 = f"/dev/v4l-subdev{self.conf['v4l_map']['csi0']}"
+        csi1 = f"/dev/v4l-subdev{self.conf['v4l_map']['csi1']}"
+        checks = [
+            (0x01, csi0, 'ae_on_ch0'),
+            (0x02, csi0, 'ae_on_ch1'),
+            (0x04, csi1, 'ae_on_ch2'),
+            (0x08, csi1, 'ae_on_ch3'),
+        ]
+        for bit, node, ctrl in checks:
+            if self.cam_en_bitmask & bit:
+                res = subprocess.run(f"v4l2-ctl -d {node} --get-ctrl={ctrl}", shell=True, capture_output=True)
+                if res.returncode == 0:
+                    active_count += 1
         return f"{active_count}/{self.expected_cam_count}"
 
     def get_recent_error(self):

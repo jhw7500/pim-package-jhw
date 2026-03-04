@@ -17,8 +17,14 @@ err_report() {
 trap err_report ERR
 #FILE_JSON="/home/user/edgeconf_pim.json"
 JSON_PREFIX=edgeconf_
-JOSN_SUFFIX=.json
-FILE_JSON=$(ls -1t /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} 2>/dev/null | head -n 1 | tr -d '\r\n')
+JSON_SUFFIX=.json
+FILE_JSON=""
+for f in /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX}; do
+    [ -e "$f" ] || continue
+    if [ -z "$FILE_JSON" ] || [ "$f" -nt "$FILE_JSON" ]; then
+        FILE_JSON="$f"
+    fi
+done
 
 if [ -z "$FILE_JSON" ] || [ ! -f "$FILE_JSON" ]; then
     logger -p local0.err "[$KEY][$tag:$LINENO] edgeconf json not found under /root/shared_v (${JSON_PREFIX}*${JSON_SUFFIX})"

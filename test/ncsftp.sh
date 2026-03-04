@@ -19,8 +19,14 @@ transfer_check=""
 FILE_CHECK=/tmp/file_check
 
 JSON_PREFIX=edgeconf_
-JOSN_SUFFIX=.json
-FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} |grep -v '/$' | tail -1 |tr -d '\r\n')
+JSON_SUFFIX=.json
+FILE_JSON=""
+for f in /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX}; do
+    [ -e "$f" ] || continue
+    if [ -z "$FILE_JSON" ] || [ "$f" -nt "$FILE_JSON" ]; then
+        FILE_JSON="$f"
+    fi
+done
 rec_time=$(cat $FILE_JSON | grep recording_time | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')
 logger -p local0.notice "[$KEY][$tag:$LINENO] ip:$FTP_SERVER, id:$USERNAME, pwd:$PASSWORD, remote_dir:$REMOTE_DIR, json:$FILE_JSON, rec_time:$rec_time"
 

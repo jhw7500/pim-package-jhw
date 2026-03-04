@@ -1,8 +1,14 @@
 #!/bin/bash
 tag=$(basename "$0")
 JSON_PREFIX=edgeconf_
-JOSN_SUFFIX=.json
-FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} |grep -v '/$' | tail -1 |tr -d '\r\n')
+JSON_SUFFIX=.json
+FILE_JSON=""
+for f in /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX}; do
+    [ -e "$f" ] || continue
+    if [ -z "$FILE_JSON" ] || [ "$f" -nt "$FILE_JSON" ]; then
+        FILE_JSON="$f"
+    fi
+done
 vhl_name=$(jq -r '.VHL_CAM.vhl_name' "$FILE_JSON")
 file_dir="/mnt/sd_cam"
 file_date=""
