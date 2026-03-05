@@ -32,7 +32,7 @@ start() {
     if [ -d "$APP_CONF_FILE" ]; then
         rm -rf "$APP_CONF_FILE"
     fi
-    if [ ! -e "$APP_CONF_FILET" ]; then
+    if [ ! -e "$APP_CONF_FILE" ]; then
         echo "{}" > "$APP_CONF_FILE"
     fi
 
