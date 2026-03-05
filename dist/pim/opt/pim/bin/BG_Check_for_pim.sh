@@ -201,7 +201,7 @@ while true; do
     #echo "cam"
     /opt/pim/bin/chk_cam_connect.sh $cam_ch_bit 2>/dev/null
 
-    if in_startup_grace || in_init_cooldown || stream_active "$stream_active_window_sec"; then
+    if in_startup_grace || in_init_cooldown; then
         rm ${FLAG_PATH}/err_cam* 2>/dev/null
 		streak_set 0
 		cam_reset_streak
@@ -226,7 +226,7 @@ while true; do
 		streak=$((streak + 1))
 		streak_set "$streak"
 		cam_inc_streak
-		logger -p local0.emerg "[CHK][$tag:$LINENO] cam disconnect : $streak"
+		logger -p local0.crit "[CHK][$tag:$LINENO] cam disconnect : $streak"
 		if [ "$streak" -ge 2 ]; then
 			if [ ! -f /tmp/recover_req_init_cam ]; then
 				logger -p local0.error  "[CHK][$tag:$LINENO] request init_cam because cam disconnect"

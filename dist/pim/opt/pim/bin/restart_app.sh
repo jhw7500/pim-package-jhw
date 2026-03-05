@@ -83,7 +83,12 @@ fi
 
     cam_disconnect_flag=$(get_cam_disconnect_flag)
         if (( cam_disconnect_flag != 0 )); then
-        logger -p local0.notice "[$KEY][$tag:$LINENO] skip $app restart because cam disconnect($cam_disconnect_flag)"
+        dc_chs=""
+        (( cam_disconnect_flag & 1 )) && dc_chs="${dc_chs}ch0 "
+        (( cam_disconnect_flag & 2 )) && dc_chs="${dc_chs}ch1 "
+        (( cam_disconnect_flag & 4 )) && dc_chs="${dc_chs}ch2 "
+        (( cam_disconnect_flag & 8 )) && dc_chs="${dc_chs}ch3 "
+        logger -p local0.notice "[$KEY][$tag:$LINENO] skip $app restart because cam disconnect(${dc_chs% })"
         sleep 10
         continue
 fi
