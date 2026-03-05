@@ -424,7 +424,8 @@ package_list=('schedule' \
           'dataclasses' \
           'typing_extensions' \
           'scapy' \
-          'pillow' )
+          'pillow' \
+          'aiohttp' )
 for package in "${package_list[@]}"
 do
   installed_pip=$(echo "$pip_list" | grep -E "${package}\s")

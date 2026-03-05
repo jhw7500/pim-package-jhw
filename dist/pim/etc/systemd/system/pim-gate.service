@@ -1,0 +1,30 @@
+[Unit]
+Description=PIM Gate Service (Python)
+After=network-online.target  docker.service redis-server.service
+Wants=network-online.target
+Requires=docker.service redis-server.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root
+Environment=PYTHONUNBUFFERED=1
+Environment=TZ=Asia/Seoul
+
+ExecStartPre=/usr/local/bin/ctsiotbe start
+ExecStart=/usr/bin/python3 /opt/pim_gate/bin/main.py
+ExecStartPost=/usr/local/bin/ctsiotbe_event start
+
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=1
+RestartPreventExitStatus=100
+KillSignal=SIGTERM
+TimeoutStopSec=20
+OOMPolicy=continue
+
+ExecStopPost=/usr/local/bin/ctsiotbe stop
+ExecStopPost=/usr/local/bin/ctsiotbe_event stop
+
+[Install]
+WantedBy=multi-user.target

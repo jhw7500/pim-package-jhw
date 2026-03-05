@@ -1,10 +1,21 @@
 #!/bin/bash
 IMAGENAME="192.168.10.10:48136/ctsiotbe"
-
-EVENT_STORAGE_LIMIT_MB=$(python3 /opt/pim_gate/bin/v1/pimconf.py pimconf.record_event_max_mb | tr -d '\r\n')
-EVENT_CLEANUP_BATCH_SIZE=${EVENT_CLEANUP_BATCH_SIZE:-10}
-
 start() {
+    CFG_FILE="/root/shared_v/ctsiotbe.json"
+    ctsiotbe_enable=$(/usr/bin/jq -r '.ctsiotbe_enable // empty' "$CFG_FILE" 2>/dev/null)
+    if [ -z "$ctsiotbe_enable" ]; then
+        ctsiotbe_enable="false"
+    fi
+    if [ "$ctsiotbe_enable" != "true" ]; then
+        echo "ctsiotbe_enable=$ctsiotbe_enable"
+        exit 0
+    fi
+    if ! docker image inspect "$IMAGENAME" >/dev/null 2>&1; then
+        echo "Docker image not found: $IMAGENAME"
+        exit 0
+    fi
+    EVENT_STORAGE_LIMIT_MB=$(/usr/bin/python3 /opt/pim_gate/bin/v1/pimconf.py pimconf.record_event_max_mb | tr -d '\r\n')
+    EVENT_CLEANUP_BATCH_SIZE=${EVENT_CLEANUP_BATCH_SIZE:-10}
     logger -p local2.info "CTSIOTBE|storage limit ${EVENT_STORAGE_LIMIT_MB} MB"
     mkdir -p /mnt/sd_cam/event
     docker rm -f ctsiotbe 2>/dev/null
@@ -18,6 +29,8 @@ start() {
 }
 
 stop() {
+    st=$(/usr/bin/docker inspect -f "{{.State.Running}}" ctsiotbe 2>/dev/null || true)
+    [ "$st" != "true" ] && exit 0
     docker stop ctsiotbe
     docker rm -f ctsiotbe 2>/dev/null
 }

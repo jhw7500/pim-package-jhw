@@ -40,21 +40,6 @@ start() {
         fi
         
         disco_react start
-        iot_app=$(python3 /opt/cis/bin/getconfval.py iot_app)
-        
-        if [[ ${iot_app} == "pim_gate" ]]; then
-            pim_gate start
-
-            ctsiotbe_enable=$(python3 /opt/cis/bin/getconfval.py ctsiotbe_enable)
-            if [[ ${ctsiotbe_enable} == "True" ]]; then
-                ctsiotbe start
-            fi
-
-            evtmod_enable=$(python3 /opt/cis/bin/getconfval.py evtmod_enable)
-            if [[ ${evtmod_enable} == "True" ]]; then
-                ctsiotbe_event start
-            fi
-        fi
 
         longrun service_start
     else
@@ -63,18 +48,8 @@ start() {
 }
 
 stop() {
-    ctsiotbe_enable=$(python3 /opt/cis/bin/getconfval.py ctsiotbe_enable)
-    if [[ ${ctsiotbe_enable} == "True" ]]; then
-        ctsiotbe stop
-    fi
-    evtmod_enable=$(python3 /opt/cis/bin/getconfval.py evtmod_enable)
-    if [[ ${evtmod_enable} == "True" ]]; then
-        ctsiotbe_event stop
-    fi
-    
     fwdriver stop
     disco_react stop
-    pim_gate stop
     cism stop
     dbmon stop
     wifim stop

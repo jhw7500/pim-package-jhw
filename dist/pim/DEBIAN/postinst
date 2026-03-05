@@ -253,13 +253,12 @@ customctl() {
   customctl enable sd-mount
   customctl enable fake-hwclock
 
-  ctsiotbe_enable=$(python3 /opt/cis/bin/getconfval.py ctsiotbe_enable)
-  if [ "$model" == "cis-a2" ] || [ "$model" == "cis-a4" ] || [ "$model" == "cis-c2" ] || [ ${ctsiotbe_enable} == "True" ]; then
-    customctl enable docker
-    customctl enable docker.socket
+  customctl enable docker
+  customctl enable docker.socket
+  if [[ "$model" == pim-* ]]; then
+    customctl enable pim-gate
   else
-    customctl disable docker
-    customctl disable docker.socket
+    customctl disable pim-gate
   fi
 
   echo "check directory"
