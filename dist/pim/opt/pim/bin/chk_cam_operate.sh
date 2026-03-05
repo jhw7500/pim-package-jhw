@@ -715,8 +715,68 @@ CleanupStalePartFiles() {
     fi
 }
 
+BackfillRamRecordingsToSd() {
+    local ram_final_dir="${RAM_ONLY_FINAL_PATH:-$RAM_ONLY_FINAL_PATH_DEFAULT}"
+    local sd_final_dir="${final_path_cfg%/}"
+    local moved_count=0
+    local skipped_count=0
+    local fail_count=0
+    local now_ts mtime
+    local src dst base src_size dst_size
+
+    if [ -z "$sd_final_dir" ] || [ "$sd_final_dir" = "$ram_final_dir" ]; then
+        return 0
+    fi
+
+    [ -d "$ram_final_dir" ] || return 0
+    if [ ! -d "$sd_final_dir" ]; then
+        mkdir -p "$sd_final_dir" || return 1
+    fi
+
+    now_ts=$(date +%s)
+    for src in "$ram_final_dir"/*.mp4 "$ram_final_dir"/*.ts "$ram_final_dir"/*.srt; do
+        [ -f "$src" ] || continue
+
+        mtime=$(stat -c %Y "$src" 2>/dev/null || echo 0)
+        if [ "$mtime" -gt 0 ] && [ $((now_ts - mtime)) -lt 10 ]; then
+            continue
+        fi
+
+        base=$(basename "$src")
+        dst="$sd_final_dir/$base"
+
+        if [ -e "$dst" ]; then
+            src_size=$(stat -c %s "$src" 2>/dev/null || echo "")
+            dst_size=$(stat -c %s "$dst" 2>/dev/null || echo "")
+            if [ -n "$src_size" ] && [ "$src_size" = "$dst_size" ]; then
+                rm -f "$src"
+                ((skipped_count++))
+                continue
+            fi
+            dst="${sd_final_dir}/${base}.ramdup.$(date +%s)"
+        fi
+
+        if mv "$src" "$dst"; then
+            ((moved_count++))
+        else
+            ((fail_count++))
+        fi
+    done
+
+    if [ "$moved_count" -gt 0 ] || [ "$skipped_count" -gt 0 ] || [ "$fail_count" -gt 0 ]; then
+        logger -p local0.notice "[$KEY][$tag:$LINENO] ram backlog backfill: moved=$moved_count skipped=$skipped_count failed=$fail_count ($ram_final_dir -> $sd_final_dir)"
+        sync -f "$sd_final_dir" 2>/dev/null || sync
+    fi
+
+    [ "$fail_count" -eq 0 ]
+}
+
 # Disk 사용량 체크
 CheckDiskSpace() {
+    if ! is_ram_only_mode; then
+        BackfillRamRecordingsToSd
+    fi
+
     # SD OK: enforce retention against SD final path from config.
     if is_sd_ok; then
         if [ -n "$final_path_cfg" ] && [ -d "$final_path_cfg" ]; then
