@@ -1,0 +1,28 @@
+# Build directories
+*/build/
+*/obj/
+release/
+upgrade_file/
+
+# Git
+.git/
+.gitignore
+
+# Temporary files
+*.o
+*.a
+*.so
+*.log
+*.tar
+*.deb
+*.zip
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Docker files (don't include in build context)
+docker/
