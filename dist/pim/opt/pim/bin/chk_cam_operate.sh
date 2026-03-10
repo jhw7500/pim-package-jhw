@@ -112,6 +112,39 @@ maybe_init_cam_on_disconnect() {
     return 1
 }
 
+force_edgeconf_app_to_gstapp() {
+    local cfg="$1"
+    local cur_app=""
+    local tmpf=""
+
+    if [ -z "$cfg" ] || [ ! -f "$cfg" ]; then
+        logger -p local0.err "[$KEY][$tag:$LINENO] edgeconf file not found for app force: $cfg"
+        return 1
+    fi
+
+    cur_app=$(jq -r '(.VHL_CAM.app // "")' "$cfg" 2>/dev/null | tr -d '\n')
+    if [ "$cur_app" = "gstApp" ]; then
+        return 0
+    fi
+
+    tmpf=$(mktemp "${cfg}.tmp.XXXXXX" 2>/dev/null)
+    if [ -z "$tmpf" ]; then
+        logger -p local0.err "[$KEY][$tag:$LINENO] mktemp failed for app force: $cfg"
+        return 1
+    fi
+
+    if jq '.VHL_CAM.app = "gstApp"' "$cfg" > "$tmpf" 2>/dev/null; then
+        if mv -f "$tmpf" "$cfg"; then
+            logger -p local0.notice "[$KEY][$tag:$LINENO] forced .VHL_CAM.app to gstApp (was:${cur_app:-unset})"
+            return 0
+        fi
+    fi
+
+    rm -f "$tmpf" 2>/dev/null
+    logger -p local0.err "[$KEY][$tag:$LINENO] failed to force .VHL_CAM.app to gstApp"
+    return 1
+}
+
 GetConfig_() {
     IFS=$'\t' read -r \
         srt_en file_chk_reboot time_rec_en file_check_delay \
@@ -817,6 +850,8 @@ last_init_ts=0
 JSON_PREFIX=edgeconf_
 JOSN_SUFFIX=.json
 FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' | grep "${JSON_SUFFIX}$" | tail -1 | tr -d '\r\n')
+force_edgeconf_app_to_gstapp "$FILE_JSON" || true
+
 timer=0
 mnt_path="/mnt/sd_cam"
 tmp_path="/tmp"
