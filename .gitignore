@@ -11,3 +11,5 @@ test/gstApp
 test/streamApp
 test/PIMCAM
 tmp/
+.serena/
+__pycache__/

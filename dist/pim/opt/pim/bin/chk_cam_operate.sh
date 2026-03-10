@@ -1217,8 +1217,8 @@ do
 	    fi
     fi
 
-    # === 주기적 정리 작업 (30초마다) ===
-    if [ $((timer % 30)) -eq 0 ]; then
+    # === 주기적 정리 작업 (60초마다) ===
+    if [ $((timer % 60)) -eq 0 ]; then
         # IMPORTANT: Do NOT reload JSON while running.
         # We only apply runtime overrides based on SD state (OK/BAD) and flags.
         apply_storage_mode_overrides
@@ -1227,7 +1227,7 @@ do
         CheckDiskSpace
     fi
 
-	sleep 2
+    sleep 2
     ((timer+=2))
     #GetConfig
     #logger -p local0.notice "[$KEY][$tag:$LINENO] timer:$timer"
