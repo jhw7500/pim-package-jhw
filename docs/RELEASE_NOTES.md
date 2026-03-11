@@ -106,13 +106,18 @@ RTC 배터리 방전으로 인해 시스템 시각이 초기화되는 상황에 
 - **RTC 재활성화 (Resurrect)**: 복구된 시간을 RTC 하드웨어에 다시 기록(`hwclock -w`)하여, 방전되었던 RTC가 다시 정상적인 시간 흐름을 가질 수 있도록 강제로 재가동시킵니다.
 - **부팅 안정성**: 유효한 시간 소스가 없을 경우 2026년 1월 1일(Safe Epoch)로 강제 설정하여 로그 및 파일 생성 오류를 방지합니다.
 
-#### 10. 무중단 카메라 복구 전략 (chk_cam_operate.sh)
+#### 10. 무중단 카메라 복구 전략 (드라이버 + gstApp + 쉘 스크립트)
 
-카메라 연결 해제 등 하드웨어 장애 시 시스템 전체의 가용성을 유지하기 위한 전략을 재설계했습니다.
+카메라 연결 해제 시 정상 채널의 녹화를 유지하면서 주기적 복구를 시도하는 3단계 감지/보호 체계입니다.
 
-- **주기적 하드웨어 재초기화**: 카메라 연결이 끊긴 경우, 앱을 무한 재시작하거나 시스템을 재부팅하는 대신 **300초 주기로 `init_cam.sh`를 실행**하여 하드웨어 복구를 시도합니다.
-- **불필요한 재부팅 방지**: 복구 권한을 `chk_cam_operate.sh`로 집중하여, 일시적인 드라이버 오류로 인한 재부팅 루프를 차단하고 시스템 가동 시간을 극대화했습니다.
-- **복구 요청 플래그**: `gst_err` 감지 시 즉시 복구 요청을 생성하여 관리 스크립트가 상황에 맞는 복구 시나리오를 선택하도록 유도합니다.
+- **드라이버 sysfs disconnect 감지**: MAX9296 `max9296_load_regs()`에서 시리얼라이저 I2C 실패를 채널 비트마스크로 추적하여 `link_status` sysfs에 노출합니다.
+- **gstApp 파이프라인 보호**: PAUSE→PLAY 전환 시 `link_status` sysfs를 읽어 disconnect된 CSI의 watchdog를 비활성화하고, `splitCheck()`에서 disconnect 채널을 스킵하여 정상 채널만 녹화합니다.
+- **BG_Check 드라이버 연동**: sysfs 비트마스크 기반으로 disconnect된 채널에 `err_cam{N}.log`를 즉시 생성하고, `chk_cam_connect.sh` I2C 폴링을 스킵합니다.
+- **주기적 복구 (periodic-only)**: `maybe_init_cam_on_disconnect()`가 JSON 설정 가능한 간격(기본 180초)으로 `init_cam.sh`를 실행합니다. streak/파일검사/recover_req 경로 및 "all file not create" 경로에서는 드라이버 disconnect 시 init_cam을 트리거하지 않습니다.
+- **JSON 설정**: `disconnect_init_interval_sec` (기본 180초), `disconnect_init_grace_sec` (기본 60초)를 `ord_vcm_conf.json`에서 관리합니다.
+- **disconnect 판단 통일**: `cam_is_disconnected_unified` ("recovering" 상태 기반 오탐) 의존성을 제거하고, `drv_disc`(sysfs) + `cam_disconnect_flag`(err_cam) 기반 판단으로 통일했습니다.
+- **BG_Check cooldown 중 err_cam 보존**: cooldown 중 driver disconnect로 생성된 err_cam 파일을 삭제하지 않고 보존하여, disconnect 상태 추적의 정확성을 확보했습니다.
+- **disconnect 상태 파일 리셋/갱신 로깅**: `DISCONNECT_INIT_CAM_STATE_FILE` 삭제 시 로그를 출력하고, "all file not create" disconnect 경로에서 `last_init` 시각을 갱신하여 periodic init_cam 간격 추적 정확성을 향상했습니다.
 
 #### 11. 런타임 스크립트 강화
 

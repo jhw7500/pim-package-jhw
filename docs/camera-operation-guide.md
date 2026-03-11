@@ -1,6 +1,6 @@
 # PIM 카메라 동작 시나리오 가이드
 
-> **버전**: v0.5.8 | **최종 갱신**: 2026-03-04
+> **버전**: v0.5.9-dev | **최종 갱신**: 2026-03-10
 > **대상**: pim-package (`/opt/pim/bin/`) 카메라 서브시스템
 
 ---
@@ -90,7 +90,7 @@
 
 | 파일 | 용도 |
 |------|------|
-| `cam_state.sh` | 카메라 상태 머신 (healthy/degraded/recovering/failed), streak 카운터, 복구 요청 관리 |
+| `cam_state.sh` | 카메라 상태 머신 (healthy/degraded/recovering/failed), streak 카운터 |
 
 ---
 
@@ -203,9 +203,15 @@ gstApp 녹화 중
 ```
 파일 0개 감지 (timer >= rst_time)
   |
-  +-- [retry_total <= 1] kill_test.sh
-  +-- [retry_total 2~3] init_cam.sh
-  +-- [retry_total > 3] reboot (file_chk_reboot=true일 때만)
+  +-- cam_disconnect_flag == 0 (정상)
+  |     +-- [retry_total <= 1] kill_test.sh
+  |     +-- [retry_total 2~3] init_cam.sh
+  |     +-- [retry_total > 3] reboot (file_chk_reboot=true일 때만)
+  |
+  +-- cam_disconnect 감지
+        +-- drv_disc != 0 (드라이버 disconnect) → init_cam 스킵
+        |     (주기적 복구 maybe_init_cam_on_disconnect()에 위임)
+        +-- drv_disc == 0 (소프트웨어 레벨) → init_cam.sh 실행
 ```
 
 | 단계 | 조건 | 소요 시간 |
@@ -241,23 +247,38 @@ gstApp 비정상 종료
 
 ### 4.4 카메라 물리적 분리 -> 재연결
 
-> 카메라 케이블 분리 시. 드라이버/앱이 정상 동작 중이므로 I2C 체크가 유효하며,
-> 이 상태에서는 reboot하지 않고 주기적 복구를 시도한다.
+> 카메라 케이블 분리 시, **3단계 감지 체계**로 disconnect를 인지하고,
+> 정상 채널의 녹화를 유지하면서 주기적 복구를 시도한다. reboot하지 않는다.
 
 ```
-카메라 케이블 분리
+카메라 케이블 분리 (부팅 전 또는 운영 중)
   |
-  +-- BG_Check_for_pim.sh (1초 주기)
-  |     +-- chk_cam_connect.sh -> I2C 통신 실패
-  |         (드라이버 로드 + 앱 실행 상태이므로 I2C 체크 유효)
-  |     +-- /tmp/err_cam{N}.log 생성
-  |     +-- streak 카운트 증가
-  |     +-- streak >= 2: cam_state -> "degraded"
-  |                      /tmp/recover_req_init_cam 생성
+  +-- [1단계] MAX9296 드라이버 (초기 감지)
+  |     +-- max9296_load_regs()에서 시리얼라이저 I2C 실패 감지
+  |     +-- sysfs link_status 비트마스크 설정
+  |           /sys/bus/i2c/devices/2-0048/link_status  (ch0/ch1)
+  |           /sys/bus/i2c/devices/1-0048/link_status  (ch2/ch3)
+  |     +-- 값: 0=정상, 1=ch0, 2=ch1, 3=둘다, -1=미확인
   |
-  +-- chk_cam_operate.sh: maybe_init_cam_on_disconnect()
-  |     +-- 60초 간격으로 init_cam.sh 실행
-  |     +-- grace 20초 (첫 감지 후 바로 init 안 함)
+  +-- [2단계] gstApp (파이프라인 보호)
+  |     +-- PAUSE→PLAY 전환 시 delay 후 link_status sysfs 읽기
+  |     +-- disconnect된 CSI의 watchdog 비활성화 (timeout=0)
+  |     +-- splitCheck()에서 disconnect 채널 스킵
+  |           → 정상 채널만 split/녹화 계속
+  |
+  +-- [3단계] BG_Check_for_pim.sh (1초 주기)
+  |     +-- check_driver_disconnect(): sysfs 비트마스크 읽기
+  |     +-- disconnect 감지 시:
+  |     |     +-- err_cam{N}.log 직접 생성 (DRIVER_DISCONNECT)
+  |     |     +-- chk_cam_connect.sh 실행 스킵
+  |     +-- disconnect 미감지 시:
+  |           +-- chk_cam_connect.sh 실행 (런타임 I2C 모니터링)
+  |
+  +-- [복구] chk_cam_operate.sh: maybe_init_cam_on_disconnect()
+  |     +-- 주기적 init_cam 실행 (periodic-only 방식)
+  |     +-- grace 기간: disconnect_init_grace_sec (기본 60초, JSON 설정)
+  |     +-- 반복 간격: disconnect_init_interval_sec (기본 180초, JSON 설정)
+  |     +-- 파일 검사 실패/recover_req 경로는 drv_disc 시 스킵
   |     +-- 모듈 rmmod -> modprobe -> start_cam
   |
   +-- 카메라 재연결 시
@@ -265,10 +286,24 @@ gstApp 비정상 종료
         +-- cam_state -> "healthy", streak -> 0
         +-- 정상 스트리밍 재개
 
-감지 시간: ~2초 (BG_Check 1초 + streak 판단)
-복구 주기: 60초 간격 재시도
-재연결 후 복구: 최대 60초 대기 + init_cam ~15초 + app_delay
+감지 시간: 즉시 (드라이버 sysfs, s_stream 시점)
+복구 주기: disconnect_init_interval_sec (기본 180초, JSON 설정 가능)
+재연결 후 복구: 최대 180초 대기 + init_cam ~15초 + app_delay
 ```
+
+**JSON 설정 (`ord_vcm_conf.json` → ETC 섹션):**
+
+| 키 | 기본값 | 설명 |
+|---|--------|------|
+| `disconnect_init_interval_sec` | 180 | 주기적 init_cam 반복 간격 (초) |
+| `disconnect_init_grace_sec` | 60 | 첫 disconnect 감지 후 유예 기간 (초) |
+
+**disconnect 상태에서 차단되는 복구 경로:**
+- 파일 검사 실패 → init_cam (drv_disc 시 스킵)
+- recover_req_init_cam → init_cam (drv_disc 시 스킵)
+- BG_Check streak → 로그/카운트만, init_cam 트리거 안 함
+
+**유일한 복구 경로:** `maybe_init_cam_on_disconnect()` (periodic)
 
 ### 4.5 드라이버 로드 실패
 
@@ -510,7 +545,7 @@ init_cam.sh 호출 시 (모듈 재로드 전)
 | 파일 검사 실패 (일부) | file_check_delay 후 | kill_test x3 | init_cam x2 | retry > 5 | 유효 (앱 실행 중) |
 | 시작 실패 (파일 0개) | rst_time(25/35초) 후 | kill_test x1 | init_cam x2 | retry > 3 | 유효 (앱 실행 중) |
 | gst_err | restart_app 3초 주기 | init_cam | - | recovery 5회 초과 | 유효 |
-| 카메라 분리 | BG_Check 2초 (streak>=2) | init_cam 60초 간격 | 계속 재시도 | **안 함** | 유효 (드라이버+앱 정상) |
+| 카메라 분리 | 즉시 (드라이버 sysfs) | init_cam 180초 간격 (JSON 설정) | 계속 재시도 | **안 함** | 유효 (드라이버 sysfs + I2C fallback) |
 | 드라이버 로드 실패 | 메인 루프 5초 주기 | init_cam x5 | - | retry > 5 | **불가** (이전 flag 있으면 skip) |
 | kill 불가 | kill_test 내 1초 주기 | SIGKILL (15초) | - | **30초 후 무조건** | **불가** (무조건 reboot) |
 | SD 용량 95% | 30초 주기 | 오래된 세션 삭제 | - | - | - |
@@ -527,7 +562,7 @@ init_cam.sh 호출 시 (모듈 재로드 전)
 | 드라이버 로드 실패 -> reboot | **2~3분** (콜드부팅 시) | **2~3분** (콜드부팅 시) |
 | kill 불가 -> reboot | **30초** (무조건) | **30초** (무조건) |
 | gst_err -> 스트림 재개 | 30~85초 | 45~100초 |
-| 카메라 분리 -> 재연결 복구 | 최대 60초 + 27~37초 | 최대 60초 + 37~47초 |
+| 카메라 분리 -> 재연결 복구 | 최대 180초 + 27~37초 | 최대 180초 + 37~47초 |
 
 ---
 
@@ -564,7 +599,7 @@ init_cam.sh 호출 시 (모듈 재로드 전)
 | `/tmp/err_cpu_temp.log` | CPU 온도 초과 | 타임스탬프 |
 | `/tmp/err_voltage.log` | 전압 이상 | 타임스탬프 |
 | `/tmp/bg_cam_err_streak` | 카메라 에러 연속 횟수 | 정수 |
-| `/tmp/recover_req_init_cam` | init_cam 복구 요청 | "epoch 사유" |
+| `/tmp/recover_req_init_cam` | init_cam 복구 요청 (drv_disc 시 스킵) | "epoch 사유" |
 
 **bg_chk_flag.bin 비트맵:**
 
@@ -640,12 +675,17 @@ init_cam.sh 호출 시 (모듈 재로드 전)
 | 규칙 | 설명 |
 |------|------|
 | 카메라 연결 체크 전제조건 | 드라이버 로드 + 앱 실행 시에만 I2C 체크 유효 |
-| 카메라 분리 시 reboot 금지 | 파일 검사 실패, gst_err 등에서 `cam_disconnect_flag` 체크 |
+| 드라이버 sysfs disconnect 감지 | MAX9296 `link_status` sysfs로 초기 disconnect 즉시 감지, chk_cam_connect.sh 스킵 |
+| gstApp disconnect 보호 | link_status sysfs로 watchdog 비활성화 + splitCheck에서 disconnect 채널 스킵 |
+| 카메라 분리 시 reboot 금지 | 파일 검사 실패, recover_req 등에서 `drv_disc` 체크, streak은 로그만 |
+| 복구 경로 단일화 (periodic-only) | `maybe_init_cam_on_disconnect()`만 init_cam 트리거, streak/파일검사/recover_req 경로 차단 |
+| disconnect 복구 주기 JSON 설정 | `disconnect_init_interval_sec` (기본 180초), `disconnect_init_grace_sec` (기본 60초) |
 | 드라이버 미로드 시 복구 한계 | modprobe 실패 = 카메라 미연결일 수 있으나 SW 오류와 구분 불가. 이전 disconnect flag 없으면 reboot 루프 가능 (`file_chk_reboot=false`로 방지) |
 | kill 불가 시 무조건 reboot | 앱이 죽지 않으면 카메라 상태 판단 불가 → 30초 후 무조건 reboot |
 | file_chk_reboot 설정 | `false`이면 retry 카운터만 리셋, reboot 안 함 |
 | init cooldown 40초 | 중복 init_cam 호출 차단 |
 | 최근 2세션 보호 | 디스크 정리 시 최신 2개 세션은 삭제 안 함 |
 | startup grace | 부팅/재시작 직후 파일 검사 실패 무시 |
-| 쿨다운 중 에러 무시 | BG_Check에서 grace/cooldown 중 카메라 에러 로그 삭제 |
+| 쿨다운 중 에러 무시 | BG_Check에서 grace/cooldown 중 카메라 에러 로그 삭제 (단, driver disconnect로 생성된 err_cam은 보존) |
+| disconnect 판단 통일 | `cam_is_disconnected_unified` ("recovering" 상태 기반) 오탐 방지를 위해 제거. `drv_disc`(sysfs) + `cam_disconnect_flag`(err_cam) 기반 판단으로 통일 |
 | SD fallback 이중 구조 | automnt가 `tmp_path` JSON 수정, chk_cam_operate가 `final_path` 런타임 override |

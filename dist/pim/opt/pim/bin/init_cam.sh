@@ -16,7 +16,7 @@ cleanup_recording_orphans() {
     for f in "$dir"/*.mp4 "$dir"/*.ts "$dir"/*.srt \
              "$dir"/*.mp4.part "$dir"/*.ts.part "$dir"/*.srt.part; do
         [ -f "$f" ] || continue
-        logger -p local0.notice "[$key][$tag:$LINENO] orphan rm: $(basename "$f")"
+        logger -p local0.debug "[$key][$tag:$LINENO] orphan rm: $(basename "$f")"
         rm -f "$f"
         count=$((count + 1))
     done
@@ -84,14 +84,13 @@ rmmod max9296
 #rmmod imx8-media-dev
 #rmmod max9296
 
-sleep 2
+sleep 0.2
 logger -p local0.notice "[RST][$tag:$LINENO] modprobe imx8-media-dev, max9296"
 modprobe max9296
+sleep 0.1
 rc1=$?
-sleep 2
 modprobe imx8-media-dev
 rc2=$?
-sleep 2
 
 if [ "$rc1" -ne 0 ] || [ "$rc2" -ne 0 ]; then
     logger -p local0.emerg "[RST][$tag:$LINENO] modprobe failed (max9296:$rc1 imx8-media-dev:$rc2)"

@@ -679,8 +679,15 @@ class PIMHealthGuardian:
         files = glob.glob(pattern)
         if not files:
             return "NO_FILES", 0
-        latest_mtime = max([os.path.getmtime(f) for f in files])
-        idle_sec = int(time.time() - latest_mtime)
+        mtimes = []
+        for f in files:
+            try:
+                mtimes.append(os.path.getmtime(f))
+            except FileNotFoundError:
+                continue
+        if not mtimes:
+            return "NO_FILES", 0
+        idle_sec = int(time.time() - max(mtimes))
         return ("OK" if idle_sec < 10 else "FROZEN"), idle_sec
 
     def check_zombies(self) -> int:

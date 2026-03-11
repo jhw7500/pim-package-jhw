@@ -19,12 +19,12 @@ size=$(du -sb "$DIR" | awk '{print $1}')
 if (( cnt > MAX_CNT )); then
     logger -p local0.notice "[$KEY][$tag:$LINENO] journald file cnt : $cnt > $MAX_CNT"
     del=$((cnt - MAX_CNT))
-    find "$DIR" -mindepth 1 -maxdepth 1 -type d -printf '%T+ %p\n' | sort | head -n $del | cut -d' ' -f2- | xargs -r rm -rf --
+    find "$DIR" -mindepth 1 -maxdepth 1 -type d | sort | head -n $del | xargs -r rm -rf --
 fi
 
 size=$(du -sb "$DIR" | awk '{print $1}')
 if (( size > MAX_SIZE )); then
     logger -p local0.notice "[$KEY][$tag:$LINENO] journald file size : $size > $MAX_SIZE"
-    find "$DIR" -mindepth 1 -maxdepth 1 -type d -printf '%T+ %p\n' | sort | head -n 1 | cut -d' ' -f2- | xargs -r rm -rf --
+    find "$DIR" -mindepth 1 -maxdepth 1 -type d | sort | head -n 1 | xargs -r rm -rf --
 fi
 

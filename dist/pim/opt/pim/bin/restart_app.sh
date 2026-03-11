@@ -145,7 +145,7 @@ fi
         (( cam_disconnect_flag & 2 )) && dc_chs="${dc_chs}ch1 "
         (( cam_disconnect_flag & 4 )) && dc_chs="${dc_chs}ch2 "
         (( cam_disconnect_flag & 8 )) && dc_chs="${dc_chs}ch3 "
-        logger -p local0.notice "[$KEY][$tag:$LINENO] skip $app restart because cam disconnect(${dc_chs% })"
+        logger -p local0.info "[$KEY][$tag:$LINENO] skip $app restart because cam disconnect(${dc_chs% })"
         sleep 10
         continue
 fi

@@ -30,8 +30,7 @@ START_TS_FILE="/tmp/pim_cam_start_ts"
 START_DELAY_FILE="/tmp/pim_cam_start_delay"
 
 startup_grace_extra_sec=10
-init_cooldown_sec=40
-stream_active_window_sec=10
+init_cooldown_sec=30
 
 # If cameras are disconnected, periodically run init_cam.sh to allow recovery
 # once cameras are reconnected. Never reboot in disconnect state.
@@ -39,9 +38,21 @@ DISCONNECT_INIT_CAM_INTERVAL_SEC_DEFAULT=180
 DISCONNECT_INIT_CAM_GRACE_SEC_DEFAULT=60
 DISCONNECT_INIT_CAM_STATE_FILE_DEFAULT="/tmp/chk_cam_operate.disconnect_state"
 
-DISCONNECT_INIT_CAM_INTERVAL_SEC=${DISCONNECT_INIT_CAM_INTERVAL_SEC_DEFAULT}
-DISCONNECT_INIT_CAM_GRACE_SEC=${DISCONNECT_INIT_CAM_GRACE_SEC_DEFAULT}
 DISCONNECT_INIT_CAM_STATE_FILE=${DISCONNECT_INIT_CAM_STATE_FILE_DEFAULT}
+
+SYSFS_LINK_I2C2="/sys/bus/i2c/devices/2-0048/link_status"
+SYSFS_LINK_I2C1="/sys/bus/i2c/devices/1-0048/link_status"
+
+# 드라이버 sysfs에서 disconnect 비트마스크 읽기
+# bit0=ch0, bit1=ch1, bit2=ch2, bit3=ch3
+read_driver_disconnect() {
+    local m2 m1
+    m2=$(cat "$SYSFS_LINK_I2C2" 2>/dev/null | tr -d '\n')
+    m1=$(cat "$SYSFS_LINK_I2C1" 2>/dev/null | tr -d '\n')
+    [ -z "$m2" ] || [ "$m2" -lt 0 ] 2>/dev/null && m2=0
+    [ -z "$m1" ] || [ "$m1" -lt 0 ] 2>/dev/null && m1=0
+    echo $((m2 | m1))
+}
 
 get_cam_disconnect_flag() {
     local v
@@ -77,8 +88,16 @@ maybe_init_cam_on_disconnect() {
     local cam_disconnect_flag now first_seen last_init
 
     cam_disconnect_flag=$(get_cam_disconnect_flag)
-    if (( cam_disconnect_flag == 0 )) && ! cam_is_disconnected_unified; then
-        rm -f "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
+    local drv_disc
+    drv_disc=$(read_driver_disconnect)
+    if (( cam_disconnect_flag == 0 )) && (( drv_disc == 0 )); then
+        # init_cam 직후 cooldown 중에는 sysfs가 아직 -1(→0)이므로 상태 파일 보존
+        if ! in_init_cooldown && ! cam_in_init_cooldown "$init_cooldown_sec"; then
+            if [ -f "$DISCONNECT_INIT_CAM_STATE_FILE" ]; then
+                logger -p local0.notice "[$KEY][$tag:$LINENO] disconnect state cleared (flag=$cam_disconnect_flag drv=$drv_disc)"
+            fi
+            rm -f "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
+        fi
         return 1
     fi
 
@@ -102,7 +121,7 @@ maybe_init_cam_on_disconnect() {
     fi
 
     if (( (now - last_init) >= DISCONNECT_INIT_CAM_INTERVAL_SEC )); then
-        logger -p local0.notice "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag): periodic init_cam.sh"
+        logger -p local0.notice "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag): periodic init_cam.sh (interval=${DISCONNECT_INIT_CAM_INTERVAL_SEC}s)"
         printf "%s,%s" "$first_seen" "$now" > "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
         /opt/pim/bin/init_cam.sh
         return 0
@@ -148,7 +167,8 @@ force_edgeconf_app_to_gstapp() {
 GetConfig_() {
     IFS=$'\t' read -r \
         srt_en file_chk_reboot time_rec_en file_check_delay \
-        startup_grace_extra_sec init_cooldown_sec stream_active_window_sec < <(
+        startup_grace_extra_sec init_cooldown_sec \
+        DISCONNECT_INIT_CAM_INTERVAL_SEC DISCONNECT_INIT_CAM_GRACE_SEC < <(
         jq -r '[
             (.VCM.srt_enable // false),
             (.ETC.file_check_reboot // false),
@@ -156,7 +176,8 @@ GetConfig_() {
             (.ETC.file_check_delay // 10),
             (.ETC.startup_grace_extra_sec // 10),
             (.ETC.init_cooldown_sec // 40),
-            (.ETC.stream_active_window_sec // 10)
+            (.ETC.disconnect_init_interval_sec // 180),
+            (.ETC.disconnect_init_grace_sec // 60)
         ] | @tsv' "$FILE_JSON_"
     )
     unset IFS
@@ -191,24 +212,6 @@ GetConfig() {
     final_path_cfg="$final_path"
     sd_tmp_path_cfg="$sd_tmp_path"
 
-:<<'END'
-    app=$(jq '.VHL_CAM.app' "$FILE_JSON")
-    cam_ch0=$(jq '.VHL_CAM.i2c2.ch0.enable' "$FILE_JSON")
-    cam_ch1=$(jq '.VHL_CAM.i2c2.ch1.enable' "$FILE_JSON")
-    cam_ch2=$(jq '.VHL_CAM.i2c1.ch2.enable' "$FILE_JSON")
-    cam_ch3=$(jq '.VHL_CAM.i2c1.ch3.enable' "$FILE_JSON")
-    srt_en=$(jq '.VCM.srt_enable' "$FILE_JSON_")
-    file_chk_reboot=$(jq '.ETC.file_check_reboot' "$FILE_JSON_")
-    time_rec_en=$(jq '.VCM.file_time_check' "$FILE_JSON_")
-    file_check_delay=$(jq '.ETC.file_check_delay' "$FILE_JSON_")
-    vhl_name=$(jq -r '.VHL_CAM.vhl_name' "$FILE_JSON")
-    rec_min=$(jq '.VHL_CAM.recording_time' "$FILE_JSON")
-    cap_en=$(jq '.VHL_CAM.capture.enable' "$FILE_JSON")
-    cap_record_en=$(jq '.VHL_CAM.capture.record' "$FILE_JSON")
-    cap_rtsp_en=$(jq '.VHL_CAM.capture.rtsp' "$FILE_JSON")
-    tmp_path=$(jq -r '.VHL_CAM.tmp_path' "$FILE_JSON")
-    muxer=$(jq -r '.VHL_CAM.muxer' "$FILE_JSON")
-END
     rec_time=$((rec_min*60))
     #rst_time=$((rec_time+90))
     #rst_time=20
@@ -725,7 +728,7 @@ CleanupStalePartFiles() {
                         fi
                     fi
 
-                    logger -p local0.warning "[$KEY][$tag:$LINENO] removing stale part: $base (stable_cnt=${stable_cnt[$part_file]})"
+                    logger -p local0.info "[$KEY][$tag:$LINENO] removing stale part: $base (stable_cnt=${stable_cnt[$part_file]})"
                     rm -f "$part_file"
                 fi
 
@@ -943,7 +946,12 @@ do
 
     if [ -f "$RECOVER_REQ_INIT_CAM" ]; then
         cam_disconnect_flag=$(get_cam_disconnect_flag)
-        if (( cam_disconnect_flag == 0 )) && ! cam_is_disconnected_unified; then
+        drv_disc_now=$(read_driver_disconnect)
+        if (( cam_disconnect_flag == 0 )) && (( drv_disc_now == 0 )); then
+            rm -f "$RECOVER_REQ_INIT_CAM"
+            cam_clear_recovery
+        elif [ "$drv_disc_now" -ne 0 ]; then
+            logger -p local0.notice "[$KEY][$tag:$LINENO] skip recover_req init_cam: driver disconnect(0x$(printf '%x' $drv_disc_now))"
             rm -f "$RECOVER_REQ_INIT_CAM"
             cam_clear_recovery
         elif in_init_cooldown || cam_in_init_cooldown "$init_cooldown_sec"; then
@@ -964,7 +972,7 @@ do
         cam_disconnect_flag=$(get_cam_disconnect_flag)
         logger -p local0.error "[$KEY][$tag:$LINENO] driver module not loaded (max9296/imx8_media_dev)"
         echo "NG" > $FILE_CHECK
-        if (( cam_disconnect_flag == 0x0 )) && ! cam_is_disconnected_unified; then
+        if (( cam_disconnect_flag == 0x0 )); then
             ((retry_boot++))
             retry_total=$(($retry+$retry_boot))
             if [ "$retry_total" -le 5 ]; then
@@ -1028,7 +1036,8 @@ do
 			cat /dev/null > $FILE_
 			datetime=$(date -d "$startTime" "+%Y%m%d_%H%M%S")
             datetime_=$(date -d "$startTime" "+%Y%m%d_%H%M")
-			if [[ "$cam_ch0" == *"$ENABLE_VAL"* ]]; then
+            drv_disc=$(read_driver_disconnect)
+			if [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] && [ $(( (drv_disc >> 0) & 1 )) -eq 0 ]; then
                 ((check_num++))
                 if [ -f "${tmp_path}/${vhl_name}_${datetime}-ch0.${muxer}" ]; then
 			        logger -p local0.debug "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime}-ch0.${muxer} exist"
@@ -1044,7 +1053,7 @@ do
 			fi
 
 
-            if [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]; then
+            if [[ "$cam_ch1" == *"$ENABLE_VAL"* ]] && [ $(( (drv_disc >> 1) & 1 )) -eq 0 ]; then
                 ((check_num++))
                 if [ -f "${tmp_path}/${vhl_name}_${datetime}-ch1.${muxer}" ]; then
                     logger -p local0.debug "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime}-ch1.${muxer} exist"
@@ -1059,7 +1068,7 @@ do
                 fi
             fi
 
-            if [[ "$cam_ch2" == *"$ENABLE_VAL"* ]]; then
+            if [[ "$cam_ch2" == *"$ENABLE_VAL"* ]] && [ $(( (drv_disc >> 2) & 1 )) -eq 0 ]; then
                 ((check_num++))
                 if [ -f "${tmp_path}/${vhl_name}_${datetime}-ch2.${muxer}" ]; then
                     logger -p local0.debug "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime}-ch2.${muxer} exist"
@@ -1074,7 +1083,7 @@ do
                 fi
             fi
 
-            if [[ "$cam_ch3" == *"$ENABLE_VAL"* ]]; then
+            if [[ "$cam_ch3" == *"$ENABLE_VAL"* ]] && [ $(( (drv_disc >> 3) & 1 )) -eq 0 ]; then
                 ((check_num++))
                 if [ -f "${tmp_path}/${vhl_name}_${datetime}-ch3.${muxer}" ]; then
                     logger -p local0.debug "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime}-ch3.${muxer} exist"
@@ -1128,7 +1137,9 @@ do
                 start_f=0
                 echo "NG" > $FILE_CHECK
                 cam_disconnect_flag=$(get_cam_disconnect_flag)
-                if (( cam_disconnect_flag == 0x0 )) && ! cam_is_disconnected_unified; then
+                if in_init_cooldown || cam_in_init_cooldown "$init_cooldown_sec"; then
+                    logger -p local0.notice "[$KEY][$tag:$LINENO] skip retry: in init cooldown ($retry/$retry_boot/$retry_total)"
+                elif (( cam_disconnect_flag == 0x0 )); then
                     ((retry++))
                     retry_total=$(($retry+$retry_boot))
                     if [ "$retry_total" -le 3 ]; then
@@ -1153,9 +1164,14 @@ do
                         fi
                     fi
                 else
-                    logger -p local0.err  "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag): /opt/pim/bin/init_cam.sh"
-                    if ! in_init_cooldown && ! cam_in_init_cooldown "$init_cooldown_sec"; then
-                        /opt/pim/bin/init_cam.sh
+                    drv_disc_now=$(read_driver_disconnect)
+                    if [ "$drv_disc_now" -ne 0 ]; then
+                        logger -p local0.notice "[$KEY][$tag:$LINENO] skip init_cam: driver disconnect(0x$(printf '%x' $drv_disc_now)), file check fail expected"
+                    else
+                        logger -p local0.err  "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag): /opt/pim/bin/init_cam.sh"
+                        if ! in_init_cooldown && ! cam_in_init_cooldown "$init_cooldown_sec"; then
+                            /opt/pim/bin/init_cam.sh
+                        fi
                     fi
                 fi
 			else
@@ -1185,7 +1201,9 @@ do
 
             echo "NG" > $FILE_CHECK
             cam_disconnect_flag=$(get_cam_disconnect_flag)
-            if (( cam_disconnect_flag == 0x0 )) && ! cam_is_disconnected_unified; then
+            if in_init_cooldown || cam_in_init_cooldown "$init_cooldown_sec"; then
+                logger -p local0.notice "[$KEY][$tag:$LINENO] skip retry_boot: in init cooldown ($retry/$retry_boot/$retry_total)"
+            elif (( cam_disconnect_flag == 0x0 )); then
                 ((retry_boot++))
                 retry_total=$(($retry+$retry_boot))
                 if [ "$retry_total" -le 2 ]; then
@@ -1209,9 +1227,22 @@ do
                     fi
                 fi
             else
-                logger -p local0.err  "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag): /opt/pim/bin/init_cam.sh"
-                if ! in_init_cooldown && ! cam_in_init_cooldown "$init_cooldown_sec"; then
-                    /opt/pim/bin/init_cam.sh
+                local drv_disc
+                drv_disc=$(read_driver_disconnect)
+                if (( drv_disc != 0 )); then
+                    logger -p local0.notice "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag) drv_disc=$drv_disc: skip init_cam (periodic handles recovery)"
+                else
+                    logger -p local0.err  "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag): /opt/pim/bin/init_cam.sh"
+                    if ! in_init_cooldown && ! cam_in_init_cooldown "$init_cooldown_sec"; then
+                        # periodic init_cam 간격 추적을 위해 last_init 갱신
+                        local now_ts
+                        now_ts=$(date +%s)
+                        local first_seen_val
+                        first_seen_val=$(cat "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null | awk -F',' '{print $1}')
+                        [[ ! "$first_seen_val" =~ ^[0-9]+$ ]] && first_seen_val=$now_ts
+                        printf "%s,%s" "$first_seen_val" "$now_ts" > "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
+                        /opt/pim/bin/init_cam.sh
+                    fi
                 fi
             fi
 	    fi

@@ -184,6 +184,8 @@ else
     fi
 fi
 
+rm -f "$START_TIME_FILE" 2>/dev/null
+
 logger -p local0.notice "[$KEY][$tag:$LINENO] set kill_flag, reset restart_flag"
 touch /tmp/kill_flag
 rm /tmp/restart_flag
