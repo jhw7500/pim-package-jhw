@@ -11,6 +11,9 @@ daemon_name=""
 status=""
 mnt_flag="/dev/shm/sd_mount_flag"
 fsck_cnt=0
+reinsert_fail_cnt=0
+REINSERT_FAIL_MAX=5
+REINSERT_BACKOFF_SEC=60
 LOCKFILE="/tmp/automnt_sd_for_emmc_boot.lock"
 exec 200>"$LOCKFILE"
 flock -n 200 || exit 1
@@ -120,7 +123,15 @@ while true; do
                             mount -t exfat -o noatime,nodiratime "$DEVICE" "$DIR"
                             ;;
                         *)
-                            logger -p local0.emerg "[$KEY][$TAG:$LINENO] $DEVICE fstype is undefined : $FSTYPE"
+                            logger -p local0.crit "[$KEY][$TAG:$LINENO] $DEVICE fstype is undefined : $FSTYPE"
+                            ((reinsert_fail_cnt++))
+                            if [ $reinsert_fail_cnt -ge $REINSERT_FAIL_MAX ]; then
+                                logger -p local0.emerg "[$KEY][$TAG:$LINENO] $DEVICE fstype detection failed $reinsert_fail_cnt times. SD card may be damaged. Waiting ${REINSERT_BACKOFF_SEC}s before retry."
+                                fallback_to_shm "$FILE_JSON"
+                                mnt_state=2
+                                sleep $REINSERT_BACKOFF_SEC
+                                continue
+                            fi
                             mount "$DEVICE" "$DIR"
                             ;;
                     esac
@@ -140,6 +151,7 @@ while true; do
                             mnt_state=1
                             mnt_cnt=0
                             fsck_cnt=0
+                            reinsert_fail_cnt=0
 
                             sd_tmp_path_cfg=$(jq -r '(.VHL_CAM.sd_tmp_path // "'"$DIR"'/tmp")' "$FILE_JSON" 2>/dev/null)
                             cleanup_dirs=("$DIR/tmp")
@@ -245,7 +257,7 @@ while true; do
                         echo '0' > "$mnt_flag"
                         ((fsck_cnt++))
                         if [ $fsck_cnt -gt 3 ]; then
-                            logger -p local0.emerg "[$KEY][$TAG:$LINENO] $DEVICE mount error"
+                            logger -p local0.crit "[$KEY][$TAG:$LINENO] $DEVICE mount error"
                             fallback_to_shm "$FILE_JSON"
                             fsck_cnt=0
                             mnt_state=2
@@ -257,10 +269,21 @@ while true; do
         2)
             # SD absent, fallback 완료 — 재삽입만 감시
             if [ -d /sys/bus/mmc/devices/mmc1:*/block/mmcblk1/mmcblk1p1 ]; then
-                logger -p local0.notice "[$KEY][$TAG:$LINENO] SD card re-inserted, attempting mount"
-                mnt_cnt=0
-                fsck_cnt=0
-                mnt_state=0
+                if [ $reinsert_fail_cnt -ge $REINSERT_FAIL_MAX ]; then
+                    # fstype 감지 연속 실패: SD 물리적 제거 확인 후에만 리셋
+                    logger -p local0.notice "[$KEY][$TAG:$LINENO] SD present but fstype failed ${reinsert_fail_cnt}x. Waiting for physical re-insert."
+                else
+                    logger -p local0.notice "[$KEY][$TAG:$LINENO] SD card re-inserted, attempting mount"
+                    mnt_cnt=0
+                    fsck_cnt=0
+                    mnt_state=0
+                fi
+            else
+                # SD 물리적으로 제거됨 — 카운터 리셋
+                if [ $reinsert_fail_cnt -gt 0 ]; then
+                    logger -p local0.notice "[$KEY][$TAG:$LINENO] SD card physically removed. Resetting failure counter."
+                    reinsert_fail_cnt=0
+                fi
             fi
         ;;
     esac

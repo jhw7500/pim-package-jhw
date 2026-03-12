@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import os
+import sys
+import select
 import time
 import subprocess
 import logging
@@ -7,7 +9,7 @@ import argparse
 import json
 import glob
 import re
-from typing import Dict, List, Mapping, Optional, Tuple, TypedDict, cast
+from typing import Callable, Dict, List, Mapping, Optional, Tuple, TypedDict, cast
 from datetime import datetime
 
 # Constants & Paths
@@ -73,6 +75,19 @@ GUARD_BIT_HB_FROZEN = 1 << 9
 GUARD_BIT_SD_RO = 1 << 10
 GUARD_BIT_CPU_HOT = 1 << 11
 GUARD_BIT_VOLT_ERR = 1 << 12
+
+RECOVERY_PROMPT_TIMEOUT_SEC = 30
+SD_DEV_PARTITION = "/dev/mmcblk1p1"
+SD_MOUNT_PATH = "/mnt/sd_cam"
+SD_MOUNT_SERVICE = "sd-mount"
+FSCK_TOOLS: Dict[str, List[str]] = {
+    "ext4": ["fsck.ext4", "-y"],
+    "ext3": ["fsck.ext3", "-y"],
+    "ext2": ["fsck.ext2", "-y"],
+    "vfat": ["fsck.vfat", "-a"],
+    "exfat": ["fsck.exfat"],
+}
+BIN_DIR = "/opt/pim/bin"
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(LOG_KEY)
@@ -158,6 +173,240 @@ class PIMHealthGuardian:
         self.ram_delta_warn_last_log_ts: float = 0.0
         self.prev_tmp_used_bytes: Optional[int] = None
         self.prev_tmp_ts: Optional[float] = None
+
+        self._recovery_skipped: Dict[str, bool] = {}
+        self._recovery_prev_anomaly: Dict[str, bool] = {}
+
+    # ── Interactive Recovery ───────────────────────────────────────────
+
+    def _prompt_recovery(
+        self,
+        event_key: str,
+        message: str,
+        action_fn: Callable[[], bool],
+    ) -> bool:
+        is_anomaly_now = True
+        was_anomaly_before = self._recovery_prev_anomaly.get(event_key, False)
+        self._recovery_prev_anomaly[event_key] = is_anomaly_now
+
+        if not was_anomaly_before:
+            self._recovery_skipped[event_key] = False
+
+        if self._recovery_skipped.get(event_key, False):
+            return False
+
+        print("\n========================================")
+        print(f"[RECOVERY] {message}")
+        sys.stdout.write(f"(y/n, {RECOVERY_PROMPT_TIMEOUT_SEC}s timeout): ")
+        sys.stdout.flush()
+
+        ready, _, _ = select.select(
+            [sys.stdin], [], [], RECOVERY_PROMPT_TIMEOUT_SEC
+        )
+        if ready:
+            answer = sys.stdin.readline().strip().lower()
+        else:
+            answer = ""
+            print("")
+
+        if answer == "y":
+            print("")
+            ok = action_fn()
+            if ok:
+                print(
+                    f"[RECOVERY] === {event_key} recovery completed successfully ==="
+                )
+            else:
+                print(
+                    f"[RECOVERY] === {event_key} recovery FAILED. Manual intervention may be required. ==="
+                )
+            print("========================================\n")
+            return ok
+        else:
+            if not ready:
+                print(f"[RECOVERY] Timeout. Skipping {event_key} recovery.")
+            else:
+                print(f"[RECOVERY] Skipped {event_key} recovery.")
+            print("========================================\n")
+            self._recovery_skipped[event_key] = True
+            return False
+
+    def _run_recovery_step(
+        self,
+        step: int,
+        total: int,
+        desc: str,
+        cmd: List[str],
+        allow_fail: bool = False,
+    ) -> bool:
+        sys.stdout.write(f"[RECOVERY] [{step}/{total}] {desc}...")
+        sys.stdout.flush()
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=120
+            )
+            if result.returncode == 0 or allow_fail:
+                print(f" OK" if result.returncode == 0 else f" WARN (exit code {result.returncode})")
+                if result.stdout.strip():
+                    for line in result.stdout.strip().splitlines():
+                        print(f"  {line}")
+                return True
+            else:
+                print(f" FAILED (exit code {result.returncode})")
+                if result.stderr.strip():
+                    for line in result.stderr.strip().splitlines():
+                        print(f"  {line}")
+                if result.stdout.strip():
+                    for line in result.stdout.strip().splitlines():
+                        print(f"  {line}")
+                return False
+        except subprocess.TimeoutExpired:
+            print(" FAILED (timeout)")
+            return False
+        except Exception as e:
+            print(f" FAILED ({e})")
+            return False
+
+    def _detect_sd_fstype(self) -> Optional[str]:
+        for cmd in (
+            ["blkid", "-o", "value", "-s", "TYPE", SD_DEV_PARTITION],
+            ["lsblk", "-no", "FSTYPE", SD_DEV_PARTITION],
+        ):
+            try:
+                result = subprocess.run(
+                    cmd, capture_output=True, text=True, timeout=10,
+                )
+                fs = result.stdout.strip()
+                if fs:
+                    return fs
+            except:
+                pass
+        return None
+
+    def _recover_sd_ro(self) -> bool:
+        total = 7
+        step = 0
+
+        step += 1
+        if not self._run_recovery_step(
+            step, total, "Stopping camera pipeline",
+            [f"{BIN_DIR}/kill_test.sh"],
+        ):
+            return False
+
+        step += 1
+        self._run_recovery_step(
+            step, total, f"Stopping {SD_MOUNT_SERVICE} service",
+            ["systemctl", "stop", SD_MOUNT_SERVICE],
+            allow_fail=True,
+        )
+
+        step += 1
+        if not self._run_recovery_step(
+            step, total, f"Unmounting {SD_MOUNT_PATH}",
+            ["umount", SD_MOUNT_PATH],
+        ):
+            self._run_recovery_step(
+                step, total, f"Force unmounting {SD_MOUNT_PATH}",
+                ["umount", "-f", SD_MOUNT_PATH],
+            )
+
+        step += 1
+        fs_type = self._detect_sd_fstype()
+        if fs_type:
+            print(f"[RECOVERY] [{step}/{total}] Detected filesystem: {fs_type}")
+        else:
+            print(f"[RECOVERY] [{step}/{total}] Filesystem type: UNKNOWN (blkid/lsblk failed)")
+            print(f"[RECOVERY] Cannot run fsck without knowing filesystem type.")
+            print(f"[RECOVERY] SD card may be physically damaged or partition table corrupted.")
+            self._run_recovery_step(
+                total - 1, total, f"Starting {SD_MOUNT_SERVICE} service",
+                ["systemctl", "start", SD_MOUNT_SERVICE],
+                allow_fail=True,
+            )
+            self._run_recovery_step(
+                total, total, "Starting camera pipeline",
+                [f"{BIN_DIR}/start_cam.sh"],
+                allow_fail=True,
+            )
+            return False
+
+        step += 1
+        fsck_cmd = FSCK_TOOLS.get(fs_type, ["fsck", "-y"])
+        full_cmd = list(fsck_cmd) + [SD_DEV_PARTITION]
+        sys.stdout.write(
+            f"[RECOVERY] [{step}/{total}] Running {' '.join(full_cmd)}..."
+        )
+        sys.stdout.flush()
+        try:
+            result = subprocess.run(
+                full_cmd, capture_output=True, text=True, timeout=300
+            )
+            if result.stdout.strip():
+                print("")
+                for line in result.stdout.strip().splitlines():
+                    print(f"  {line}")
+            if result.returncode in (0, 1):
+                print(f"[RECOVERY] [{step}/{total}] Filesystem check... OK")
+                fsck_ok = True
+            else:
+                print(
+                    f"[RECOVERY] [{step}/{total}] Filesystem check... FAILED (exit code {result.returncode})"
+                )
+                fsck_ok = False
+        except subprocess.TimeoutExpired:
+            print(f"\n[RECOVERY] [{step}/{total}] Filesystem check... FAILED (timeout)")
+            fsck_ok = False
+        except Exception as e:
+            print(f"\n[RECOVERY] [{step}/{total}] Filesystem check... FAILED ({e})")
+            fsck_ok = False
+
+        step += 1
+        self._run_recovery_step(
+            step, total, f"Starting {SD_MOUNT_SERVICE} service",
+            ["systemctl", "start", SD_MOUNT_SERVICE],
+            allow_fail=True,
+        )
+
+        step += 1
+        self._run_recovery_step(
+            step, total, "Starting camera pipeline",
+            [f"{BIN_DIR}/start_cam.sh"],
+            allow_fail=True,
+        )
+
+        return fsck_ok
+
+    def _recover_cam_disconnect(self) -> bool:
+        total = 1
+        return self._run_recovery_step(
+            1, total, "Running init_cam to reload driver",
+            [f"{BIN_DIR}/init_cam.sh"],
+        )
+
+    def _recover_hb_frozen(self) -> bool:
+        total = 2
+        step = 0
+
+        step += 1
+        if not self._run_recovery_step(
+            step, total, "Stopping camera pipeline",
+            [f"{BIN_DIR}/kill_test.sh"],
+        ):
+            return False
+
+        step += 1
+        return self._run_recovery_step(
+            step, total, "Starting camera pipeline",
+            [f"{BIN_DIR}/start_cam.sh"],
+        )
+
+    def _clear_recovery_state(self, event_key: str) -> None:
+        if self._recovery_prev_anomaly.get(event_key, False):
+            self._recovery_prev_anomaly[event_key] = False
+            self._recovery_skipped[event_key] = False
+
+    # ── Utility ────────────────────────────────────────────────────────
 
     def _safe_read_int_file(self, path: str, default: int = 0) -> int:
         try:
@@ -1034,7 +1283,7 @@ class PIMHealthGuardian:
         return (time.time() - self.start_time) < STARTUP_GRACE_EXTRA_SEC
 
     def start(self) -> None:
-        syslog("notice", f"PIM Health Guardian 9.2 (Active-Cam) started")
+        syslog("notice", f"PIM Health Guardian 10.0 (Interactive-Recovery) started")
         try:
             while True:
                 v, v_s, temp, _la, _lb, rtc_ok = self.get_hw_metrics()
@@ -1267,6 +1516,35 @@ class PIMHealthGuardian:
                         )
                 else:
                     self.error_count = 0
+
+                # ── Interactive recovery prompts ──
+                if sd_d["mode"] == "RO" and sd_d["mounted"]:
+                    self._prompt_recovery(
+                        "sd_ro",
+                        "SD card became read-only. Run filesystem check and remount?",
+                        self._recover_sd_ro,
+                    )
+                else:
+                    self._clear_recovery_state("sd_ro")
+
+                if bg_cam_mask_en != 0 and not in_startup_grace:
+                    self._prompt_recovery(
+                        "cam_disconnect",
+                        f"Camera channel(s) [{bg_cam_channels_str}] disconnected. Run init_cam to reload driver?",
+                        self._recover_cam_disconnect,
+                    )
+                else:
+                    self._clear_recovery_state("cam_disconnect")
+
+                if hb_s == "FROZEN" and not in_startup_grace:
+                    self._prompt_recovery(
+                        "hb_frozen",
+                        "Pipeline heartbeat frozen. Restart camera pipeline?",
+                        self._recover_hb_frozen,
+                    )
+                else:
+                    self._clear_recovery_state("hb_frozen")
+
                 time.sleep(self.interval)
         except KeyboardInterrupt:
             syslog("notice", "Guardian stopped")
