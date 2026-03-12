@@ -175,9 +175,9 @@
         "sd_tmp_path": "/mnt/sd_cam/tmp",
         "final_path": "/mnt/sd_cam",
         "queue_tune": {
-            "main_src_time_ms": 100,
-      	    "enc_src_time_ms": 100,
-            "rec_sink_time_ms": 300,
+            "main_src_time_ms": 300,
+      	    "enc_src_time_ms": 300,
+            "rec_sink_time_ms": 500,
             "cap_src_time_ms": 500
         },
         "capture" : {
@@ -193,10 +193,10 @@
             "queue_size": 30
         },
     	"rtsp_tune": {
-      	    "rtsp_factory_latency_ms": 100,
-      	    "rtsp_appsink_max_buffers": 2,
-      	    "rtsp_factory_queue_max_buffers": 2,
-      	    "rtsp_bin_queue_max_time_ms": 50
+      	    "rtsp_factory_latency_ms": 200,
+      	    "rtsp_appsink_max_buffers": 3,
+      	    "rtsp_factory_queue_max_buffers": 3,
+      	    "rtsp_bin_queue_max_time_ms": 100
     	},
         "i2c2": {
             "exp_time": 10000,

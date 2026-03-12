@@ -34,21 +34,19 @@
 - **주기적 복구 (periodic-only)**: `maybe_init_cam_on_disconnect()` — JSON 설정 가능 간격(기본 180초)으로 `init_cam.sh` 실행
 - **disconnect 판단 통일**: `cam_is_disconnected_unified` (recovering 상태 기반 오탐) 제거 → `drv_disc`(sysfs) + `cam_disconnect_flag`(err_cam) 기반
 - **cooldown 중 err_cam 보존**: driver disconnect로 생성된 err_cam 파일을 BG_Check cooldown 중 삭제하지 않음
-- **JSON 설정**: `disconnect_init_interval_sec`(180s), `disconnect_init_grace_sec`(60s)
+- **JSON 설정** (`ord_vcm_conf.json` ETC 섹션):
+  - `disconnect_init_interval_sec`(180s) — disconnect 시 init_cam 주기적 복구 간격
+  - `disconnect_init_grace_sec`(60s) — init_cam 실행 후 재감지 유예 시간
+  - `startup_grace_extra_sec`(10s) — gstApp 시작 후 에러 무시 추가 유예 시간
+  - `init_cooldown_sec`(40s) — init_cam 실행 후 재실행 대기 시간
 
-#### 2. MCP4018 디지털 포텐셔미터 V4L2 제어 (MAX9296 v2.1)
-
-- per-channel V4L2 커스텀 컨트롤(`V4L2_CID_USER_MCP4018_WIPER_CH0/CH1`) 추가
-- 0~127 범위 와이퍼 설정, 채널별 독립 제어
-- ctrl_cache 기반 중복 I2C write 방지
-
-#### 3. RTSP appsrc caps 동적 전파 (gstApp v1.5)
+#### 2. RTSP appsrc caps 동적 전파 (gstApp v1.5)
 
 - appsrc caps를 실제 비디오 caps에서 동적 추출하여 설정
 - RTSP 클라이언트 연결 시 caps 불일치로 인한 스트림 실패 해결
 - media_configure 콜백에서 caps 전파 안정화
 
-#### 4. pim_guardian 리팩터링 (v9.2 → v10.0)
+#### 3. pim_guardian 리팩터링 (v9.2 → v10.0)
 
 Python 기반 시스템 모니터링 데몬을 전면 리팩터링하여 타입 안전성과 모니터링 범위를 대폭 강화했습니다.
 
@@ -64,16 +62,21 @@ Python 기반 시스템 모니터링 데몬을 전면 리팩터링하여 타입 
 - **복구 요청**: `--recovery` 플래그 활성 시 `recover_req_init_cam` 파일 생성으로 init_cam 트리거
 - **symlink 기반 프로젝트 연결**: `/opt/pim/bin/pim_guardian` symlink 지원
 
-#### 5. edgeconf app 강제 전환
+#### 4. edgeconf app 강제 전환
 
 - `force_edgeconf_app_to_gstapp()` 함수 추가
 - edgeconf JSON의 `.VHL_CAM.app`이 gstApp이 아닌 경우 자동 전환
 - jq + 임시 파일 기반 안전한 JSON 수정
 
-#### 6. SD 재삽입 시 RAM 녹화 복구
+#### 5. SD 재삽입 시 RAM 녹화 복구
 
 - SD 카드 재삽입 시 RAM(`/dev/shm`)에 저장된 녹화 파일을 SD로 자동 복구(backfill)
 - 녹화 중단 없이 데이터 보존
+
+#### 6. automnt_sd 안정성 강화
+
+- **fstype 감지 실패 무한루프 방지**: `reinsert_fail_cnt` 백오프 메커니즘 도입, 5회 연속 실패 시 60초 대기 후 재시도 + `/dev/shm` fallback
+- **tmp_path fallback/restore**: SD 미삽입 또는 마운트 실패 시 `tmp_path`를 `/dev/shm`으로 자동 전환, SD 재삽입 시 이전 경로로 자동 복구
 
 ---
 
@@ -85,6 +88,7 @@ Python 기반 시스템 모니터링 데몬을 전면 리팩터링하여 타입 
 - **BG_Check cooldown 중 err_cam 삭제**: driver disconnect err_cam이 cooldown 중 삭제되어 disconnect 상태 추적 손실 → 수정
 - **recover_req disconnect 경로**: driver disconnect 시 불필요한 init_cam 트리거 → drv_disc 체크 추가
 - **disconnect streak 유실**: cam_disconnect_flag 기반 streak이 cooldown 리셋으로 소실 → 보존 로직 추가
+- **chk_voltage.sh 에러 로그 오동작**: 파일명 `err_volt.log` → `err_voltage.log` 수정 (BG_Check 감지 불가 문제), 에러 메시지 `CPU TEMP ERR` → `VOLTAGE ERR` 수정
 
 ---
 
@@ -205,20 +209,7 @@ RTC 배터리 방전으로 인해 시스템 시각이 초기화되는 상황에 
 - **RTC 재활성화 (Resurrect)**: 복구된 시간을 RTC 하드웨어에 다시 기록(`hwclock -w`)하여, 방전되었던 RTC가 다시 정상적인 시간 흐름을 가질 수 있도록 강제로 재가동시킵니다.
 - **부팅 안정성**: 유효한 시간 소스가 없을 경우 2026년 1월 1일(Safe Epoch)로 강제 설정하여 로그 및 파일 생성 오류를 방지합니다.
 
-#### 10. 무중단 카메라 복구 전략 (드라이버 + gstApp + 쉘 스크립트)
-
-카메라 연결 해제 시 정상 채널의 녹화를 유지하면서 주기적 복구를 시도하는 3단계 감지/보호 체계입니다.
-
-- **드라이버 sysfs disconnect 감지**: MAX9296 `max9296_load_regs()`에서 시리얼라이저 I2C 실패를 채널 비트마스크로 추적하여 `link_status` sysfs에 노출합니다.
-- **gstApp 파이프라인 보호**: PAUSE→PLAY 전환 시 `link_status` sysfs를 읽어 disconnect된 CSI의 watchdog를 비활성화하고, `splitCheck()`에서 disconnect 채널을 스킵하여 정상 채널만 녹화합니다.
-- **BG_Check 드라이버 연동**: sysfs 비트마스크 기반으로 disconnect된 채널에 `err_cam{N}.log`를 즉시 생성하고, `chk_cam_connect.sh` I2C 폴링을 스킵합니다.
-- **주기적 복구 (periodic-only)**: `maybe_init_cam_on_disconnect()`가 JSON 설정 가능한 간격(기본 180초)으로 `init_cam.sh`를 실행합니다. streak/파일검사/recover_req 경로 및 "all file not create" 경로에서는 드라이버 disconnect 시 init_cam을 트리거하지 않습니다.
-- **JSON 설정**: `disconnect_init_interval_sec` (기본 180초), `disconnect_init_grace_sec` (기본 60초)를 `ord_vcm_conf.json`에서 관리합니다.
-- **disconnect 판단 통일**: `cam_is_disconnected_unified` ("recovering" 상태 기반 오탐) 의존성을 제거하고, `drv_disc`(sysfs) + `cam_disconnect_flag`(err_cam) 기반 판단으로 통일했습니다.
-- **BG_Check cooldown 중 err_cam 보존**: cooldown 중 driver disconnect로 생성된 err_cam 파일을 삭제하지 않고 보존하여, disconnect 상태 추적의 정확성을 확보했습니다.
-- **disconnect 상태 파일 리셋/갱신 로깅**: `DISCONNECT_INIT_CAM_STATE_FILE` 삭제 시 로그를 출력하고, "all file not create" disconnect 경로에서 `last_init` 시각을 갱신하여 periodic init_cam 간격 추적 정확성을 향상했습니다.
-
-#### 11. 런타임 스크립트 강화
+#### 10. 런타임 스크립트 강화
 
 프로덕션 안정성을 위한 기타 스크립트 개선 사항입니다.
 
@@ -233,6 +224,17 @@ RTC 배터리 방전으로 인해 시스템 시각이 초기화되는 상황에 
 
 **카메라 수동 제어 스크립트**
 - AE On/Off 및 Gain/Exp_time/ISO 수동 설정을 위한 전용 도구 세트 추가.
+
+**JSON 설정 추가 (`edgeconf_pim.json`)**
+- **`queue_tune` 섹션 신규**: `main_src_time_ms`(300), `enc_src_time_ms`(300), `rec_sink_time_ms`(500), `cap_src_time_ms`(500) — 파이프라인 큐 지연 튜닝
+- **`rtsp_tune` 섹션 신규**: `rtsp_factory_latency_ms`(200), `rtsp_appsink_max_buffers`(3), `rtsp_factory_queue_max_buffers`(3), `rtsp_bin_queue_max_time_ms`(100) — RTSP 스트리밍 튜닝
+- **`capture` 확장**: `response`(true), `path`("/dev/shm/capture"), `queue_size`(30) 추가
+- **per-channel V4L2 설정**: `chN.ae_on`(true), `chN.ae_gain`(256), `chN.bps`([bps, 2048]) 채널별 제어
+- **경로 설정**: `sd_tmp_path`("/mnt/sd_cam/tmp"), `final_path`("/mnt/sd_cam")
+- **muxer**: 녹화 컨테이너 포맷 설정 (`"mp4"` 기본값)
+
+**JSON 설정 추가 (`ord_vcm_conf.json`)**
+- `ORD.err_send_period`(180) — 에러 전송 주기(초)
 
 ---
 
