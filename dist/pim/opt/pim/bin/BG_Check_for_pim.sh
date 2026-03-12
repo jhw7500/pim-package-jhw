@@ -214,7 +214,7 @@ while true; do
     /opt/pim/bin/chk_voltage.sh 2>/dev/null
     #cam connect check
     #echo "cam"
-    local drv_disconnect=0
+    drv_disconnect=0
     if check_driver_disconnect; then
         drv_disconnect=1
         logger -p local0.notice "[CHK][$tag:$LINENO] driver detected disconnect, skip chk_cam_connect"

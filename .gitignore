@@ -13,3 +13,5 @@ test/PIMCAM
 tmp/
 .serena/
 __pycache__/
+mcp_trust_test/build
+docs/plans
