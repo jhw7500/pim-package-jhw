@@ -233,6 +233,12 @@ if [ -z "$TARGET_MODULE" ]; then
     cp ${BASEDIR}/vsd/build/vsd ${BASEDIR}/dist/pim/usr/local/bin/
     cp ${BASEDIR}/vcm/build/vcm ${BASEDIR}/dist/pim/usr/local/bin/
     cp -R ${BASEDIR}/dist ${BASEDIR}/release
+
+    # Copy documentation to release package
+    mkdir -p ${BASEDIR}/release/pim/opt/pim/docs
+    cp ${BASEDIR}/docs/max9296/V4L2_CTRL_GUIDE.md ${BASEDIR}/release/pim/opt/pim/docs/
+    cp ${BASEDIR}/docs/pim-guardian-runbook.md ${BASEDIR}/release/pim/opt/pim/docs/
+
     cp ${BASEDIR}/adab/build/adab ${BASEDIR}/release/pim/opt/cis/bin/adab_adc
     cp ${BASEDIR}/adab_ecat/build/adab_ecat ${BASEDIR}/release/pim/opt/cis/bin/adab_ecat
     cp ${BASEDIR}/cism/build/cism ${BASEDIR}/release/pim/opt/cis/bin/

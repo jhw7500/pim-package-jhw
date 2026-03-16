@@ -4,39 +4,28 @@ tag=$(basename "$0")
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 I2C_READ="$SCRIPT_DIR/i2cread.sh"
 I2C_WRITE="$SCRIPT_DIR/i2cwrite.sh"
+CHANNEL_HELPER="$SCRIPT_DIR/cam_channel_resolve.sh"
 
 show_help() {
-    echo "Usage: $tag [channel] [sensor_reg] [ap1302_addr] [port]"
-    echo "  channel    : default 0"
-    echo "  sensor_reg : default 0x3000"
-    echo "  ap1302_addr: optional override (default: 0x3c)"
+    echo "Usage: $tag <channel> <sensor_reg> [port]"
+    echo "  channel    : 0, 1, 2, or 3"
+    echo "  sensor_reg : target sensor register (example: 0x3000)"
     echo "  port       : 0=primary (default), 1=secondary"
     echo
     echo "Reads a downstream sensor register through AP1302 DMA SIP access."
-    echo "DMA access defaults to AP1302 main address 0x3c."
+    echo "Bus and AP1302 address are auto-resolved from channel + edgeconf/i2cdetect."
     echo "The script first reads SENSOR_SIP, derives sensor ID / width flags,"
     echo "then programs DMA_SRC/DMA_DST/DMA_SIZE/DMA_CTRL and reads back DMA_DST."
     echo
     echo "Examples:"
-    echo "  $tag"
     echo "  $tag 0 0x3000"
-    echo "  $tag 0 0x3000 0x3c"
-    echo "  $tag 0 0x3000 0x3c 1"
+    echo "  $tag 0 0x3000 0"
+    echo "  $tag 3 0x3000 1"
 }
 
 die() {
     echo "[$tag] $*" >&2
     exit 1
-}
-
-get_bus_and_ap() {
-    case "$1" in
-        0) BUS=2; AP_ADDR=0x11 ;;
-        1) BUS=2; AP_ADDR=0x12 ;;
-        2) BUS=1; AP_ADDR=0x11 ;;
-        3) BUS=1; AP_ADDR=0x12 ;;
-        *) die "invalid channel: $1 (expected 0..3)" ;;
-    esac
 }
 
 sleep_us() {
@@ -125,16 +114,15 @@ fi
 
 [[ -x "$I2C_READ" ]] || die "missing helper: $I2C_READ"
 [[ -x "$I2C_WRITE" ]] || die "missing helper: $I2C_WRITE"
+[[ -f "$CHANNEL_HELPER" ]] || die "missing helper: $CHANNEL_HELPER"
+
+source "$CHANNEL_HELPER"
 
 CHANNEL=${1:-0}
 SENSOR_REG=${2:-0x3000}
-PORT=${4:-0}
+PORT=${3:-0}
 
-get_bus_and_ap "$CHANNEL"
-AP_ADDR=0x3c
-if [[ -n "${3:-}" ]]; then
-    AP_ADDR=${3,,}
-fi
+resolve_channel_context "$CHANNEL"
 
 case "$PORT" in
     0)
@@ -158,7 +146,7 @@ ADDR_16=$(( (SIP_RAW & 0x0100) ? 1 : 0 ))
 DATA_16=$(( (SIP_RAW & 0x0200) ? 1 : 0 ))
 DATA_SIZE=$(( DATA_16 ? 2 : 1 ))
 
-echo "[$tag] channel=$CHANNEL bus=$BUS ap1302=$AP_ADDR port=$PORT sensor_reg=$(format_hex "$((SENSOR_REG))" 4)"
+echo "[$tag] channel=$CHANNEL i2c_line=$BUS ap1302=$AP_ADDR mode=$MODE source=$RESOLVE_SOURCE port=$PORT sensor_reg=$(format_hex "$((SENSOR_REG))" 4)"
 echo "[$tag] sensor_sip_reg=$(format_hex "$((SIP_REG))" 4) raw=$(format_hex "$SIP_RAW" 8) sensor_id=$(format_hex "$SENSOR_ID" 2) addr_16=$ADDR_16 data_16=$DATA_16 data_size=$DATA_SIZE"
 
 ERR0=$(read_reg_u32 0x0014 2) || die "failed to read SIPM_ERR_0"

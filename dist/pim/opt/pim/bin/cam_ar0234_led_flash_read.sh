@@ -3,22 +3,21 @@
 tag=$(basename "$0")
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 VERIFY_SCRIPT="$SCRIPT_DIR/cam_ap1302_dma_verify.sh"
+CHANNEL_HELPER="$SCRIPT_DIR/cam_channel_resolve.sh"
 FLASH_REG=0x3270
 FLASH_MASK=0x01ff
 
 show_help() {
-    echo "Usage: $tag [channel] [ap1302_addr] [port]"
-    echo "  channel    : default 0"
-    echo "  ap1302_addr: optional override"
+    echo "Usage: $tag <channel> [port]"
+    echo "  channel    : 0, 1, 2, or 3"
     echo "  port       : default 0"
     echo
     echo "Reads AR0234 LED_FLASH_CONTROL (0x3270) through AP1302 DMA access."
     echo "Prints raw value plus decoded enable/delay fields."
     echo
     echo "Examples:"
-    echo "  $tag"
     echo "  $tag 0"
-    echo "  $tag 0 0x3c 0"
+    echo "  $tag 3 0"
 }
 
 die() {
@@ -35,26 +34,25 @@ parse_value() {
     printf "%s\n" "$value"
 }
 
-if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+if [[ "$1" == "--help" || "$1" == "-h" || -z "$1" ]]; then
     show_help
     exit 0
 fi
 
 [[ -x "$VERIFY_SCRIPT" ]] || die "missing helper: $VERIFY_SCRIPT"
+[[ -f "$CHANNEL_HELPER" ]] || die "missing helper: $CHANNEL_HELPER"
 
-CHANNEL=${1:-0}
-AP_ADDR=${2:-}
-PORT=${3:-0}
+source "$CHANNEL_HELPER"
 
-echo "[$tag] channel=$CHANNEL ap1302=${AP_ADDR:-default} port=$PORT reg=$FLASH_REG"
+CHANNEL=$1
+PORT=${2:-0}
 
-if [[ -n "$AP_ADDR" ]]; then
-    OUTPUT=$("$VERIFY_SCRIPT" "$CHANNEL" "$FLASH_REG" "" "$AP_ADDR" "$PORT" 2>&1) ||
-        die "read failed"
-else
-    OUTPUT=$("$VERIFY_SCRIPT" "$CHANNEL" "$FLASH_REG" 2>&1) ||
-        die "read failed"
-fi
+resolve_channel_context "$CHANNEL"
+
+echo "[$tag] channel=$CHANNEL i2c_line=$BUS ap1302=$AP_ADDR mode=$MODE source=$RESOLVE_SOURCE port=$PORT reg=$FLASH_REG"
+
+OUTPUT=$("$VERIFY_SCRIPT" "$CHANNEL" "$FLASH_REG" "" "$PORT" 2>&1) ||
+    die "read failed"
 
 RAW_HEX=$(parse_value "$OUTPUT") || die "failed to parse read value"
 RAW=$((RAW_HEX))

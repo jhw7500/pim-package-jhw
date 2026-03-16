@@ -3,19 +3,18 @@
 tag=$(basename "$0")
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 VERIFY_SCRIPT="$SCRIPT_DIR/cam_ap1302_dma_verify.sh"
+CHANNEL_HELPER="$SCRIPT_DIR/cam_channel_resolve.sh"
 
 show_help() {
-    echo "Usage: $tag [channel] [ap1302_addr] [port]"
-    echo "  channel    : default 0"
-    echo "  ap1302_addr: optional override"
+    echo "Usage: $tag <channel> [port]"
+    echo "  channel    : 0, 1, 2, or 3"
     echo "  port       : default 0"
     echo
     echo "Dumps AR0234 clock / serial-format related registers through AP1302 DMA access."
     echo
     echo "Examples:"
-    echo "  $tag"
     echo "  $tag 0"
-    echo "  $tag 0 0x3c 0"
+    echo "  $tag 3 0"
 }
 
 die() {
@@ -27,31 +26,30 @@ read_value() {
     local reg=$1
     local output value
 
-    if [[ -n "$AP_ADDR" ]]; then
-        output=$("$VERIFY_SCRIPT" "$CHANNEL" "$reg" "" "$AP_ADDR" "$PORT" 2>&1) ||
-            die "read failed for reg=$reg"
-    else
-        output=$("$VERIFY_SCRIPT" "$CHANNEL" "$reg" 2>&1) ||
-            die "read failed for reg=$reg"
-    fi
+    output=$("$VERIFY_SCRIPT" "$CHANNEL" "$reg" "" "$PORT" 2>&1) ||
+        die "read failed for reg=$reg"
 
     value=$(printf "%s\n" "$output" | grep 'read-before' | sed -E 's/.*value=(0x[0-9a-fA-F]+).*/\1/' | tail -n 1)
     [[ -n "$value" ]] || die "failed to parse value for reg=$reg"
     printf "%s\n" "$value"
 }
 
-if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+if [[ "$1" == "--help" || "$1" == "-h" || -z "$1" ]]; then
     show_help
     exit 0
 fi
 
 [[ -x "$VERIFY_SCRIPT" ]] || die "missing helper: $VERIFY_SCRIPT"
+[[ -f "$CHANNEL_HELPER" ]] || die "missing helper: $CHANNEL_HELPER"
 
-CHANNEL=${1:-0}
-AP_ADDR=${2:-}
-PORT=${3:-0}
+source "$CHANNEL_HELPER"
 
-echo "[$tag] channel=$CHANNEL ap1302=${AP_ADDR:-default} port=$PORT"
+CHANNEL=$1
+PORT=${2:-0}
+
+resolve_channel_context "$CHANNEL"
+
+echo "[$tag] channel=$CHANNEL i2c_line=$BUS ap1302=$AP_ADDR mode=$MODE source=$RESOLVE_SOURCE port=$PORT"
 
 printf "%-24s %-8s %s\n" "NAME" "REG" "VALUE"
 printf "%-24s %-8s %s\n" "SERIAL_FORMAT" "0x31ae" "$(read_value 0x31ae)"

@@ -4,38 +4,28 @@ tag=$(basename "$0")
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 I2C_READ="$SCRIPT_DIR/i2cread.sh"
 I2C_WRITE="$SCRIPT_DIR/i2cwrite.sh"
+CHANNEL_HELPER="$SCRIPT_DIR/cam_channel_resolve.sh"
 
 show_help() {
-    echo "Usage: $tag [channel] [sensor_reg] [value_hex] [ap1302_addr] [port]"
-    echo "  channel    : default 0"
-    echo "  sensor_reg : default 0x3000"
+    echo "Usage: $tag <channel> <sensor_reg> [value_hex] [port]"
+    echo "  channel    : 0, 1, 2, or 3"
+    echo "  sensor_reg : target sensor register (example: 0x3000)"
     echo "  value_hex  : optional; if omitted, read only"
-    echo "  ap1302_addr: optional override (default: 0x3c)"
     echo "  port       : 0=primary (default), 1=secondary"
     echo
     echo "Reads or writes a downstream sensor register through AP1302 DMA SIP access."
-    echo "DMA access defaults to AP1302 main address 0x3c."
+    echo "Bus and AP1302 address are auto-resolved from channel + edgeconf/i2cdetect."
     echo "It derives sensor ID / width flags from SENSOR_SIP, then uses DMA for read/write."
     echo
     echo "Examples:"
     echo "  $tag 0 0x3000"
     echo "  $tag 0 0x3070 0x0001"
-    echo "  $tag 0 0x3270 0x0103 0x3c"
+    echo "  $tag 1 0x3270 0x0103"
 }
 
 die() {
     echo "[$tag] $*" >&2
     exit 1
-}
-
-get_bus_and_ap() {
-    case "$1" in
-        0) BUS=2; AP_ADDR=0x11 ;;
-        1) BUS=2; AP_ADDR=0x12 ;;
-        2) BUS=1; AP_ADDR=0x11 ;;
-        3) BUS=1; AP_ADDR=0x12 ;;
-        *) die "invalid channel: $1 (expected 0..3)" ;;
-    esac
 }
 
 sleep_us() {
@@ -186,24 +176,23 @@ dma_write_sensor_reg() {
     wait_dma_idle || die "DMA write did not return idle ctrl=$(format_hex "$DMA_CTRL_LAST" 4)"
 }
 
-if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+if [[ "$1" == "--help" || "$1" == "-h" || -z "$1" || -z "$2" ]]; then
     show_help
     exit 0
 fi
 
 [[ -x "$I2C_READ" ]] || die "missing helper: $I2C_READ"
 [[ -x "$I2C_WRITE" ]] || die "missing helper: $I2C_WRITE"
+[[ -f "$CHANNEL_HELPER" ]] || die "missing helper: $CHANNEL_HELPER"
 
-CHANNEL=${1:-0}
-SENSOR_REG_RAW=${2:-0x3000}
+source "$CHANNEL_HELPER"
+
+CHANNEL=$1
+SENSOR_REG_RAW=$2
 VALUE_RAW=${3:-}
-PORT=${5:-0}
+PORT=${4:-0}
 
-get_bus_and_ap "$CHANNEL"
-AP_ADDR=0x3c
-if [[ -n "${4:-}" ]]; then
-    AP_ADDR=${4,,}
-fi
+resolve_channel_context "$CHANNEL"
 
 SENSOR_REG=$((SENSOR_REG_RAW)) || die "invalid sensor_reg: $SENSOR_REG_RAW"
 if [[ -n "$VALUE_RAW" ]]; then
@@ -212,7 +201,7 @@ fi
 
 load_sensor_sip
 
-echo "[$tag] channel=$CHANNEL bus=$BUS ap1302=$AP_ADDR port=$PORT sensor_reg=$(format_hex "$SENSOR_REG" 4)"
+echo "[$tag] channel=$CHANNEL i2c_line=$BUS ap1302=$AP_ADDR mode=$MODE source=$RESOLVE_SOURCE port=$PORT sensor_reg=$(format_hex "$SENSOR_REG" 4)"
 echo "[$tag] sensor_sip_reg=$(format_hex "$SIP_REG" 4) raw=$(format_hex "$SIP_RAW" 8) sensor_id=$(format_hex "$SENSOR_ID" 2) addr_16=$ADDR_16 data_16=$DATA_16 data_size=$DATA_SIZE"
 
 ERR0=$(read_reg_u32 0x0014 2) || die "failed to read SIPM_ERR_0"

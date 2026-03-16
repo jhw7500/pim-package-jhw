@@ -3,14 +3,14 @@
 tag=$(basename "$0")
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 VERIFY_SCRIPT="$SCRIPT_DIR/cam_ap1302_dma_verify.sh"
+CHANNEL_HELPER="$SCRIPT_DIR/cam_channel_resolve.sh"
 FLASH_REG=0x3270
 FLASH_MASK=0x01ff
 
 show_help() {
-    echo "Usage: $tag <value_hex> [channel] [ap1302_addr] [port]"
+    echo "Usage: $tag <channel> <value_hex> [port]"
+    echo "  channel    : 0, 1, 2, or 3"
     echo "  value_hex  : target LED_FLASH_CONTROL value (example: 0x0103)"
-    echo "  channel    : default 0"
-    echo "  ap1302_addr: optional override"
     echo "  port       : default 0"
     echo
     echo "1) Reads current AR0234 LED_FLASH_CONTROL (0x3270)"
@@ -18,9 +18,9 @@ show_help() {
     echo "3) Verifies enable/delay fields with mask 0x01ff"
     echo
     echo "Examples:"
-    echo "  $tag 0x0100"
-    echo "  $tag 0x0103 0"
-    echo "  $tag 0x0000 0 0x3c 0"
+    echo "  $tag 0 0x0100"
+    echo "  $tag 0 0x0103"
+    echo "  $tag 3 0x0000 0"
 }
 
 die() {
@@ -50,28 +50,28 @@ decode_value() {
         "$hex" "$masked" "$enable" "$delay" "$extra"
 }
 
-if [[ "$1" == "--help" || "$1" == "-h" || -z "$1" ]]; then
+if [[ "$1" == "--help" || "$1" == "-h" || -z "$1" || -z "$2" ]]; then
     show_help
     exit 0
 fi
 
 [[ -x "$VERIFY_SCRIPT" ]] || die "missing helper: $VERIFY_SCRIPT"
+[[ -f "$CHANNEL_HELPER" ]] || die "missing helper: $CHANNEL_HELPER"
 
-VALUE_HEX=$1
-CHANNEL=${2:-0}
-AP_ADDR=${3:-}
-PORT=${4:-0}
+source "$CHANNEL_HELPER"
+
+CHANNEL=$1
+VALUE_HEX=$2
+PORT=${3:-0}
+
+resolve_channel_context "$CHANNEL"
 
 VALUE=$((VALUE_HEX)) || die "invalid value_hex: $VALUE_HEX"
 EXPECTED=$(( VALUE & FLASH_MASK ))
 
-echo "[$tag] channel=$CHANNEL ap1302=${AP_ADDR:-default} port=$PORT reg=$FLASH_REG target=$VALUE_HEX"
+echo "[$tag] channel=$CHANNEL i2c_line=$BUS ap1302=$AP_ADDR mode=$MODE source=$RESOLVE_SOURCE port=$PORT reg=$FLASH_REG target=$VALUE_HEX"
 
-if [[ -n "$AP_ADDR" ]]; then
-    OUTPUT=$("$VERIFY_SCRIPT" "$CHANNEL" "$FLASH_REG" "$VALUE_HEX" "$AP_ADDR" "$PORT" 2>&1)
-else
-    OUTPUT=$("$VERIFY_SCRIPT" "$CHANNEL" "$FLASH_REG" "$VALUE_HEX" 2>&1)
-fi
+OUTPUT=$("$VERIFY_SCRIPT" "$CHANNEL" "$FLASH_REG" "$VALUE_HEX" "$PORT" 2>&1)
 
 BEFORE_HEX=$(parse_value "$OUTPUT" 'read-before') || die "failed to parse read-before"
 AFTER_HEX=$(parse_value "$OUTPUT" 'read-after') || die "failed to parse read-after"

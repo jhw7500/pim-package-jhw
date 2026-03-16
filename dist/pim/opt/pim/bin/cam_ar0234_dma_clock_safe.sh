@@ -4,6 +4,7 @@ tag=$(basename "$0")
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 DUMP_SCRIPT="$SCRIPT_DIR/cam_ar0234_dma_clock_dump.sh"
 VERIFY_SCRIPT="$SCRIPT_DIR/cam_ap1302_dma_verify.sh"
+CHANNEL_HELPER="$SCRIPT_DIR/cam_channel_resolve.sh"
 
 DEFAULT_BACKUP_FILE="/tmp/ar0234_clock_regs_backup.txt"
 REG_LIST=(0x31ae 0x302a 0x302c 0x302e 0x3030 0x3036 0x3038 0x30ba)
@@ -12,17 +13,17 @@ show_help() {
     echo "Usage: $tag <backup|set|restore> [args]"
     echo
     echo "Commands:"
-    echo "  backup [channel] [ap1302_addr] [port] [file]"
-    echo "  set <reg_hex> <value_hex> [channel] [ap1302_addr] [port] [file]"
-    echo "  restore [channel] [ap1302_addr] [port] [file]"
+    echo "  backup <channel> [port] [file]"
+    echo "  set <channel> <reg_hex> <value_hex> [port] [file]"
+    echo "  restore <channel> [port] [file]"
     echo
     echo "Default backup file: $DEFAULT_BACKUP_FILE"
     echo
     echo "Examples:"
-    echo "  $tag backup"
-    echo "  $tag set 0x3036 0x0008"
-    echo "  $tag restore"
-    echo "  $tag set 0x31ae 0x0204 0 0x3c 0 /tmp/my_clock_backup.txt"
+    echo "  $tag backup 0"
+    echo "  $tag set 0 0x3036 0x0008"
+    echo "  $tag restore 0"
+    echo "  $tag set 3 0x31ae 0x0204 0 /tmp/my_clock_backup.txt"
 }
 
 die() {
@@ -34,13 +35,8 @@ read_value() {
     local reg=$1
     local output value
 
-    if [[ -n "$AP_ADDR" ]]; then
-        output=$("$VERIFY_SCRIPT" "$CHANNEL" "$reg" "" "$AP_ADDR" "$PORT" 2>&1) ||
-            die "read failed for reg=$reg"
-    else
-        output=$("$VERIFY_SCRIPT" "$CHANNEL" "$reg" 2>&1) ||
-            die "read failed for reg=$reg"
-    fi
+    output=$("$VERIFY_SCRIPT" "$CHANNEL" "$reg" "" "$PORT" 2>&1) ||
+        die "read failed for reg=$reg"
 
     value=$(printf "%s\n" "$output" | grep 'read-before' | sed -E 's/.*value=(0x[0-9a-fA-F]+).*/\1/' | tail -n 1)
     [[ -n "$value" ]] || die "failed to parse value for reg=$reg"
@@ -51,11 +47,7 @@ write_value() {
     local reg=$1
     local value=$2
 
-    if [[ -n "$AP_ADDR" ]]; then
-        "$VERIFY_SCRIPT" "$CHANNEL" "$reg" "$value" "$AP_ADDR" "$PORT"
-    else
-        "$VERIFY_SCRIPT" "$CHANNEL" "$reg" "$value"
-    fi
+    "$VERIFY_SCRIPT" "$CHANNEL" "$reg" "$value" "$PORT"
 }
 
 backup_regs() {
@@ -105,26 +97,28 @@ command=${1:-}
 
 case "$command" in
     backup)
-        CHANNEL=${2:-0}
-        AP_ADDR=${3:-}
-        PORT=${4:-0}
-        BACKUP_FILE=${5:-$DEFAULT_BACKUP_FILE}
+        CHANNEL=${2:-}
+        PORT=${3:-0}
+        BACKUP_FILE=${4:-$DEFAULT_BACKUP_FILE}
 
-        echo "[$tag] backup channel=$CHANNEL ap1302=${AP_ADDR:-default} port=$PORT file=$BACKUP_FILE"
+        [[ -n "$CHANNEL" ]] || die "backup requires <channel>"
+        resolve_channel_context "$CHANNEL"
+
+        echo "[$tag] backup channel=$CHANNEL i2c_line=$BUS ap1302=$AP_ADDR mode=$MODE source=$RESOLVE_SOURCE port=$PORT file=$BACKUP_FILE"
         backup_regs
         ;;
 
     set)
-        REG=${2:-}
-        VALUE=${3:-}
-        CHANNEL=${4:-0}
-        AP_ADDR=${5:-}
-        PORT=${6:-0}
-        BACKUP_FILE=${7:-$DEFAULT_BACKUP_FILE}
+        CHANNEL=${2:-}
+        REG=${3:-}
+        VALUE=${4:-}
+        PORT=${5:-0}
+        BACKUP_FILE=${6:-$DEFAULT_BACKUP_FILE}
 
-        [[ -n "$REG" && -n "$VALUE" ]] || die "set requires <reg_hex> <value_hex>"
+        [[ -n "$CHANNEL" && -n "$REG" && -n "$VALUE" ]] || die "set requires <channel> <reg_hex> <value_hex>"
+        resolve_channel_context "$CHANNEL"
 
-        echo "[$tag] set reg=$REG value=$VALUE channel=$CHANNEL ap1302=${AP_ADDR:-default} port=$PORT"
+        echo "[$tag] set channel=$CHANNEL reg=$REG value=$VALUE i2c_line=$BUS ap1302=$AP_ADDR mode=$MODE source=$RESOLVE_SOURCE port=$PORT"
         if [[ ! -f "$BACKUP_FILE" ]]; then
             echo "[$tag] backup file missing, creating: $BACKUP_FILE"
             backup_regs
@@ -134,12 +128,14 @@ case "$command" in
         ;;
 
     restore)
-        CHANNEL=${2:-0}
-        AP_ADDR=${3:-}
-        PORT=${4:-0}
-        BACKUP_FILE=${5:-$DEFAULT_BACKUP_FILE}
+        CHANNEL=${2:-}
+        PORT=${3:-0}
+        BACKUP_FILE=${4:-$DEFAULT_BACKUP_FILE}
 
-        echo "[$tag] restore channel=$CHANNEL ap1302=${AP_ADDR:-default} port=$PORT file=$BACKUP_FILE"
+        [[ -n "$CHANNEL" ]] || die "restore requires <channel>"
+        resolve_channel_context "$CHANNEL"
+
+        echo "[$tag] restore channel=$CHANNEL i2c_line=$BUS ap1302=$AP_ADDR mode=$MODE source=$RESOLVE_SOURCE port=$PORT file=$BACKUP_FILE"
         restore_regs
         ;;
 
