@@ -73,39 +73,43 @@ cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
 		if [[ "$cam01_res" == *"$SUCCESS_VAL"*  ]]; then
 			logger -p local0.debug "[CHK][$tag:$LINENO] CAM0 CAM1 OK"
 		else
-            		#logger -p local0.err "[CHK][$tag:$LINENO] CAM01 CONNECT ERR : $cam01_res"
-			for i in {1..5}; do
+			# Phase 1: read-only retry (no reset write)
+			for r in 1 2 3; do
+				sleep 0.3
+				cam01_res=$(i2ctransfer -f -y -a 2 w2@0x48 0x00 0x13 r1)
+				if [[ "$cam01_res" == *"$SUCCESS_VAL"* ]]; then
+					logger -p local0.info "[CHK][$tag:$LINENO] CAM0 CAM1 OK (read retry $r)"
+					break
+				fi
+			done
+
+			# Phase 2: reset + read (only if read-only retry failed)
+			if [[ "$cam01_res" != *"$SUCCESS_VAL"* ]]; then
+				logger -p local0.error "[CHK][$tag:$LINENO] CAM01 read retry failed, reset : $cam01_res"
 				i2ctransfer -f -y -a 2 w3@0x48 0x00 0x10 0x31
-				#sleep 3
-                		#rm ${FLAG_PATH}/err_cam0.log
-                		#rm ${FLAG_PATH}/err_cam1.log
 				i2ctransfer -f -y -a 2 w3@0x40 0x00 0x10 0x21
 				sleep 1
-
 				cam01_res=$(i2ctransfer -f -y -a 2 w2@0x48 0x00 0x13 r1)
-				
-				if [[ "$cam01_res" == *"$CAM1_ERR"* ]]; then
-					logger -p local0.error "[CHK][$tag:$LINENO] CAM1_ERR : $cam01_res $i"
-					echo "${timestamp} CAM1 ERR" >> ${FLAG_PATH}/err_cam1.log
-					break
-				elif [[ "$cam01_res" == *"$CAM0_ERR"* ]]; then
-					logger -p local0.error "[CHK][$tag:$LINENO] CAM0_ERR : $cam01_res $i"
-					echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log
-					break
-				elif [[ "$cam01_res" == *"$CAM01_ERR"* ]]; then
-					logger -p local0.error "[CHK][$tag:$LINENO] CAM01_ERR : $cam01_res $i"
-					#logger -p local0.error "[CHK][$tag:$LINENO] CAM1_ERR : $cam01_res $i"
-					echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log
-					echo "${timestamp} CAM1 ERR" >> ${FLAG_PATH}/err_cam1.log
-					break
-				else 
-					logger -p local0.error "[CHK][$tag:$LINENO] CAM01_ERR : $cam01_res $i"
-					#logger -p local0.error "[CHK][$tag:$LINENO] CAM1_ERR : $cam01_res $i"
-					echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log
-					echo "${timestamp} CAM1 ERR" >> ${FLAG_PATH}/err_cam1.log
-                    break
-				fi	
-			done
+			fi
+
+			# error classification
+			if [[ "$cam01_res" == *"$SUCCESS_VAL"* ]]; then
+				logger -p local0.info "[CHK][$tag:$LINENO] CAM0 CAM1 recovered after reset"
+			elif [[ "$cam01_res" == *"$CAM1_ERR"* ]]; then
+				logger -p local0.error "[CHK][$tag:$LINENO] CAM1_ERR : $cam01_res"
+				echo "${timestamp} CAM1 ERR" >> ${FLAG_PATH}/err_cam1.log
+			elif [[ "$cam01_res" == *"$CAM0_ERR"* ]]; then
+				logger -p local0.error "[CHK][$tag:$LINENO] CAM0_ERR : $cam01_res"
+				echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log
+			elif [[ "$cam01_res" == *"$CAM01_ERR"* ]]; then
+				logger -p local0.error "[CHK][$tag:$LINENO] CAM01_ERR : $cam01_res"
+				echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log
+				echo "${timestamp} CAM1 ERR" >> ${FLAG_PATH}/err_cam1.log
+			else
+				logger -p local0.error "[CHK][$tag:$LINENO] CAM01_ERR : $cam01_res"
+				echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log
+				echo "${timestamp} CAM1 ERR" >> ${FLAG_PATH}/err_cam1.log
+			fi
 		fi
 	#CAM0 ENABLE ONLY
 	elif [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch1" == *"$DISABLE_VAL"* ]]; then
@@ -138,35 +142,43 @@ cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
 		if [[ "$cam23_res" == *"$SUCCESS_VAL"*  ]]; then
 			logger -p local0.debug "[CHK][$tag:$LINENO] CAM2 CAM3 OK"
 		else
-            		#logger -p local0.error "[CHK][$tag:$LINENO] CAM23 CONNECT ERR : $cam23_res"
-			for i in {1..5}; do	
+			# Phase 1: read-only retry (no reset write)
+			for r in 1 2 3; do
+				sleep 0.3
+				cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
+				if [[ "$cam23_res" == *"$SUCCESS_VAL"* ]]; then
+					logger -p local0.info "[CHK][$tag:$LINENO] CAM2 CAM3 OK (read retry $r)"
+					break
+				fi
+			done
+
+			# Phase 2: reset + read (only if read-only retry failed)
+			if [[ "$cam23_res" != *"$SUCCESS_VAL"* ]]; then
+				logger -p local0.error "[CHK][$tag:$LINENO] CAM23 read retry failed, reset : $cam23_res"
 				i2ctransfer -f -y -a 1 w3@0x48 0x00 0x10 0x31
-				#sleep 3
 				i2ctransfer -f -y -a 1 w3@0x40 0x00 0x10 0x21
 				sleep 1
 				cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
-				if [[ "$cam23_res" == *"$CAM3_ERR"* ]]; then
-					logger -p local0.error "[CHK][$tag:$LINENO] CAM3_ERR : $cam23_res $i"
-					echo "${timestamp} CAM3 ERR" >> ${FLAG_PATH}/err_cam3.log
-					break
-				elif [[ "$cam23_res" == *"$CAM2_ERR"* ]]; then
-					logger -p local0.error "[CHK][$tag:$LINENO] CAM2_ERR : $cam23_res $i"
-					echo "${timestamp} CAM2 ERR" >> ${FLAG_PATH}/err_cam2.log
-					break
-				elif [[ "$cam23_res" == *"$CAM23_ERR"* ]]; then
-					logger -p local0.error "[CHK][$tag:$LINENO] CAM23_ERR : $cam23_res $i"
-					#logger -p local0.error "[CHK][$tag:$LINENO] CAM2_ERR : $cam23_res $i"
-					echo "${timestamp} CAM2 ERR" >> ${FLAG_PATH}/err_cam2.log
-					echo "${timestamp} CAM3 ERR" >> ${FLAG_PATH}/err_cam3.log
-					break
-				else
-					logger -p local0.error "[CHK][$tag:$LINENO] CAM23_ERR : $cam23_res $i"
-					#logger -p local0.error "[CHK][$tag:$LINENO] CAM2_ERR : $cam23_res $i"
-					echo "${timestamp} CAM2 ERR" >> ${FLAG_PATH}/err_cam2.log
-					echo "${timestamp} CAM3 ERR" >> ${FLAG_PATH}/err_cam3.log
-                    break
-				fi
-			done
+			fi
+
+			# error classification
+			if [[ "$cam23_res" == *"$SUCCESS_VAL"* ]]; then
+				logger -p local0.info "[CHK][$tag:$LINENO] CAM2 CAM3 recovered after reset"
+			elif [[ "$cam23_res" == *"$CAM3_ERR"* ]]; then
+				logger -p local0.error "[CHK][$tag:$LINENO] CAM3_ERR : $cam23_res"
+				echo "${timestamp} CAM3 ERR" >> ${FLAG_PATH}/err_cam3.log
+			elif [[ "$cam23_res" == *"$CAM2_ERR"* ]]; then
+				logger -p local0.error "[CHK][$tag:$LINENO] CAM2_ERR : $cam23_res"
+				echo "${timestamp} CAM2 ERR" >> ${FLAG_PATH}/err_cam2.log
+			elif [[ "$cam23_res" == *"$CAM23_ERR"* ]]; then
+				logger -p local0.error "[CHK][$tag:$LINENO] CAM23_ERR : $cam23_res"
+				echo "${timestamp} CAM2 ERR" >> ${FLAG_PATH}/err_cam2.log
+				echo "${timestamp} CAM3 ERR" >> ${FLAG_PATH}/err_cam3.log
+			else
+				logger -p local0.error "[CHK][$tag:$LINENO] CAM23_ERR : $cam23_res"
+				echo "${timestamp} CAM2 ERR" >> ${FLAG_PATH}/err_cam2.log
+				echo "${timestamp} CAM3 ERR" >> ${FLAG_PATH}/err_cam3.log
+			fi
 		fi
 	#CAM2 ENABLE ONLY
 	elif [[ "$cam_ch2" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch3" == *"$DISABLE_VAL"* ]]; then

@@ -254,6 +254,7 @@ while true; do
 		logger -p local0.crit "[CHK][$tag:$LINENO] cam disconnect : $streak"
 	else
 		streak_set 0
+		cam_reset_streak
 	fi
 
 done
