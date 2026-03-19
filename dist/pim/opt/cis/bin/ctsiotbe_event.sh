@@ -21,12 +21,6 @@ start() {
     DEFAULT_ID="UNKNOWN_PIM"
 
     PIM_ID=$(jq -r '.PIM_ID // empty' "$CFG_FILE" 2>/dev/null)
-    if [ -z "$PIM_ID" ]; then
-        PIM_ID="$DEFAULT_ID"
-    fi
-    echo "PIM_ID=$PIM_ID"
-
-
     APP_CONF_FILE="/root/shared_v/event_module/config.json"
     mkdir -p "/root/shared_v/event_module/"
     if [ -d "$APP_CONF_FILE" ]; then
@@ -41,14 +35,25 @@ start() {
     [ -z "$tz" ] && tz="Asia/Seoul"
     echo "timezone: $tz"
     docker rm -f ctsiotbe_event 2>/dev/null
-    docker run --rm -d --name=ctsiotbe_event \
-    --network host \
-    -e TZ="$tz" \
-    -e PIM_ID=$PIM_ID \
-    -v /mnt/sd_cam:/mnt/sd_cam \
-    -v /dev/shm/be_share:/dev/shm/be_share \
-    -v $APP_CONF_FILE:/app/config.json \
-    ${IMAGENAME}
+    if [ -z "$PIM_ID" ]; then
+        docker run --rm -d --name=ctsiotbe_event \
+        --network host \
+        -e TZ="$tz" \
+        -v /mnt/sd_cam:/mnt/sd_cam \
+        -v /dev/shm/be_share:/dev/shm/be_share \
+        -v $APP_CONF_FILE:/app/config.json \
+        ${IMAGENAME}
+    else
+        echo "PIM_ID=$PIM_ID"
+        docker run --rm -d --name=ctsiotbe_event \
+        --network host \
+        -e TZ="$tz" \
+        -e PIM_ID=$PIM_ID \
+        -v /mnt/sd_cam:/mnt/sd_cam \
+        -v /dev/shm/be_share:/dev/shm/be_share \
+        -v $APP_CONF_FILE:/app/config.json \
+        ${IMAGENAME}
+    fi
 }
 
 stop() {
