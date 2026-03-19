@@ -56,25 +56,9 @@ if [ ! -f "$ORD_VCM_JSON" ]; then
 fi
 
 startup_grace_extra_sec=$(jq -r '(.ETC.startup_grace_extra_sec // 10)' "$ORD_VCM_JSON" 2>/dev/null || echo 10)
-init_cooldown_sec=$(jq -r '(.ETC.init_cooldown_sec // 40)' "$ORD_VCM_JSON" 2>/dev/null || echo 40)
-stream_active_window_sec=$(jq -r '(.ETC.stream_active_window_sec // 10)' "$ORD_VCM_JSON" 2>/dev/null || echo 10)
-
+init_cooldown_sec=$(jq -r '(.ETC.init_cooldown_sec // 30)' "$ORD_VCM_JSON" 2>/dev/null || echo 30)
 now_ts() { date +%s; }
 read_ts() { [ -f "$1" ] && cat "$1" 2>/dev/null | tr -d '\n' || echo 0; }
-
-stream_active() {
-    local win now newest ts f
-    win=${1:-10}
-    now=$(now_ts)
-    newest=0
-    shopt -s nullglob
-    for f in "${tmp_path}/${vhl_name}"_*"-ch"*."${muxer}".part; do
-        ts=$(stat -c %Y "$f" 2>/dev/null || echo 0)
-        [ "$ts" -gt "$newest" ] && newest="$ts"
-    done
-    shopt -u nullglob
-    [ "$newest" -gt 0 ] && [ $((now - newest)) -le "$win" ]
-}
 
 in_startup_grace() {
     local start_ts start_delay now grace
@@ -90,6 +74,37 @@ in_init_cooldown() {
     now=$(now_ts)
     last=$(read_ts "/tmp/last_init_cam_ts")
     [ "$last" -gt 0 ] && [ $((now - last)) -lt "$init_cooldown_sec" ]
+}
+
+SYSFS_LINK_I2C2="/sys/bus/i2c/devices/2-0048/link_status"
+SYSFS_LINK_I2C1="/sys/bus/i2c/devices/1-0048/link_status"
+
+# sysfs link_status 비트마스크를 읽어서 disconnect된 채널에 에러 플래그 생성
+# 비트마스크: bit0=ch0, bit1=ch1, bit2=ch2, bit3=ch3 (cam_ch_bit과 동일)
+# sysfs 값: -1=미확인, 0=정상, 1~15=disconnect 비트마스크
+# 리턴: 0=disconnect 없음, 1=하나 이상 disconnect
+check_driver_disconnect() {
+    local mask_i2c2 mask_i2c1 disconnect_mask actual_disconnect
+
+    mask_i2c2=$(cat "$SYSFS_LINK_I2C2" 2>/dev/null | tr -d '\n')
+    mask_i2c1=$(cat "$SYSFS_LINK_I2C1" 2>/dev/null | tr -d '\n')
+    [ -z "$mask_i2c2" ] || [ "$mask_i2c2" -lt 0 ] 2>/dev/null && mask_i2c2=0
+    [ -z "$mask_i2c1" ] || [ "$mask_i2c1" -lt 0 ] 2>/dev/null && mask_i2c1=0
+
+    disconnect_mask=$((mask_i2c2 | mask_i2c1))
+    actual_disconnect=$((disconnect_mask & cam_ch_bit))
+
+    if [ "$actual_disconnect" -ne 0 ]; then
+        for ch in 0 1 2 3; do
+            if [ $(( (actual_disconnect >> ch) & 1 )) -eq 1 ]; then
+                echo "$(date +'%Y-%m-%d %T,%3N') CAM${ch} DRIVER_DISCONNECT" \
+                    > "${FLAG_PATH}/err_cam${ch}.log"
+            fi
+        done
+        return 0
+    fi
+
+    return 1
 }
 
 if [[ -n "$1" ]]; then
@@ -199,10 +214,20 @@ while true; do
     /opt/pim/bin/chk_voltage.sh 2>/dev/null
     #cam connect check
     #echo "cam"
-    /opt/pim/bin/chk_cam_connect.sh $cam_ch_bit 2>/dev/null
+    drv_disconnect=0
+    if check_driver_disconnect; then
+        drv_disconnect=1
+        logger -p local0.notice "[CHK][$tag:$LINENO] driver detected disconnect, skip chk_cam_connect"
+    elif [ ! -f /tmp/start_video_time_chk ]; then
+        logger -p local0.info "[CHK][$tag:$LINENO] skip chk_cam_connect: gstApp not yet playing"
+    else
+        /opt/pim/bin/chk_cam_connect.sh $cam_ch_bit 2>/dev/null
+    fi
 
-    if in_startup_grace || in_init_cooldown || stream_active "$stream_active_window_sec"; then
-        rm ${FLAG_PATH}/err_cam* 2>/dev/null
+    if in_startup_grace || in_init_cooldown; then
+        if [ "$drv_disconnect" -eq 0 ]; then
+            rm ${FLAG_PATH}/err_cam* 2>/dev/null
+        fi
 		streak_set 0
 		cam_reset_streak
     else
@@ -226,14 +251,7 @@ while true; do
 		streak=$((streak + 1))
 		streak_set "$streak"
 		cam_inc_streak
-		logger -p local0.emerg "[CHK][$tag:$LINENO] cam disconnect : $streak"
-		if [ "$streak" -ge 2 ]; then
-			if [ ! -f /tmp/recover_req_init_cam ]; then
-				logger -p local0.error  "[CHK][$tag:$LINENO] request init_cam because cam disconnect"
-				printf "%s\n" "$(date +%s) cam_disconnect_streak=$streak" > /tmp/recover_req_init_cam
-				cam_request_recovery "cam_disconnect"
-			fi
-		fi
+		logger -p local0.crit "[CHK][$tag:$LINENO] cam disconnect : $streak"
 	else
 		streak_set 0
 	fi

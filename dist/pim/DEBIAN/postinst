@@ -456,6 +456,7 @@ fi
   rm -f /usr/local/bin/update_ordvcmconf
   ln -s /opt/pim/bin/update_edgeconf.sh /usr/local/bin/update_edgeconf
   ln -s /opt/pim/bin/update_ordvcmconf.sh /usr/local/bin/update_ordvcmconf
+  ln -s /opt/pim/bin/pim_guardian.py /usr/local/bin/pim_guardian
   update_edgeconf
   update_ordvcmconf
 

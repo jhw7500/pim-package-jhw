@@ -1,8 +1,14 @@
 #!/bin/bash
 
 JSON_PREFIX=edgeconf_
-JOSN_SUFFIX=.json
-TEST_CONFIG_FILE=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' | grep "${JSON_SUFFIX}$" | tail -1 | tr -d '\r\n')
+JSON_SUFFIX=.json
+TEST_CONFIG_FILE=""
+for f in /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX}; do
+    [ -e "$f" ] || continue
+    if [ -z "$TEST_CONFIG_FILE" ] || [ "$f" -nt "$TEST_CONFIG_FILE" ]; then
+        TEST_CONFIG_FILE="$f"
+    fi
+done
 SUCCESS_VAL="true"
 FAIL_VAL="error"
 result=1;

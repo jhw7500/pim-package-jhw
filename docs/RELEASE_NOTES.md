@@ -1,5 +1,108 @@
 # PIM Package Release Notes
 
+## v0.5.9 (2026-02-11 ~ 2026-03-11)
+
+### 핵심
+**카메라 Disconnect Graceful Degradation + 시스템 복구 안정성 강화 + RTSP 안정성 개선**
+
+작성자: hwjo
+
+---
+
+### 컴포넌트 버전
+
+| 컴포넌트 | 이전 (v0.5.8) | 현재 (v0.5.9) | 비고 |
+|---------|--------------|--------------|------|
+| **gstApp** | v1.4 | **v1.5** | disconnect graceful degradation, RTSP 안정성 |
+| **MAX9296 Driver** | v2.0 | **v2.1** | link_status sysfs, MCP4018 지원 |
+| **pim_guardian** | v9.2 | **v10.0** | 대규모 리팩터링, symlink 지원 |
+
+---
+
+### 신규 기능
+
+#### 1. 카메라 Disconnect Graceful Degradation
+
+카메라 연결 해제 시 정상 채널의 녹화를 중단하지 않고, 주기적으로 복구를 시도하는 체계입니다.
+
+- **드라이버 link_status sysfs**: MAX9296 `load_regs()` 시 I2C write 실패를 Link A/B별로 추적, per-channel 비트마스크(bit0~bit3)로 `/sys/bus/i2c/devices/X-0048/link_status`에 노출
+- **gstApp disconnect 채널 보호**: 시작 시 sysfs 읽어 `g_link_disconnect_mask` 설정, `splitCheck`/`splitNow`/`forceKeyframe`에서 disconnect 채널 skip
+- **marker_channel 재선정**: disconnect된 marker_channel을 활성 채널로 자동 재선정하여 `start_video_time_chk` 기록 유지
+- **BG_Check 연동**: driver sysfs 기반 disconnect 감지 시 `chk_cam_connect.sh` I2C 폴링 skip, `err_cam` 파일 직접 생성
+- **gstApp playing 전 에러체크 skip**: `start_video_time_chk` 파일 기반으로 gstApp 재생 시작 전 `chk_cam_connect.sh` 호출 방지
+- **kill_test.sh start_video_time_chk 삭제**: gstApp 종료 시 파일 삭제하여 다음 시작 시 정확한 가드 동작 보장
+- **주기적 복구 (periodic-only)**: `maybe_init_cam_on_disconnect()` — JSON 설정 가능 간격(기본 180초)으로 `init_cam.sh` 실행
+- **disconnect 판단 통일**: `cam_is_disconnected_unified` (recovering 상태 기반 오탐) 제거 → `drv_disc`(sysfs) + `cam_disconnect_flag`(err_cam) 기반
+- **cooldown 중 err_cam 보존**: driver disconnect로 생성된 err_cam 파일을 BG_Check cooldown 중 삭제하지 않음
+- **JSON 설정** (`ord_vcm_conf.json` ETC 섹션):
+  - `disconnect_init_interval_sec`(180s) — disconnect 시 init_cam 주기적 복구 간격
+  - `disconnect_init_grace_sec`(60s) — init_cam 실행 후 재감지 유예 시간
+  - `startup_grace_extra_sec`(10s) — gstApp 시작 후 에러 무시 추가 유예 시간
+  - `init_cooldown_sec`(40s) — init_cam 실행 후 재실행 대기 시간
+
+#### 2. RTSP appsrc caps 동적 전파 (gstApp v1.5)
+
+- appsrc caps를 실제 비디오 caps에서 동적 추출하여 설정
+- RTSP 클라이언트 연결 시 caps 불일치로 인한 스트림 실패 해결
+- media_configure 콜백에서 caps 전파 안정화
+
+#### 3. pim_guardian 리팩터링 (v9.2 → v10.0)
+
+Python 기반 시스템 모니터링 데몬을 전면 리팩터링하여 타입 안전성과 모니터링 범위를 대폭 강화했습니다.
+
+- **타입 시스템 도입**: TypedDict(`IOMetric`, `DiskUsageInfo`, `AppProcInfo`) 기반 구조화된 데이터 모델, 전체 함수 타입 힌트 적용
+- **카메라 상태 통합 판단**: V4L2 subdev 제어 응답(hw), BG_Check 에러 마스크(bg), cam_state.json 상태를 결합한 `cam_effective` 3단계 판단 (`STARTING` → `active/expected` → `UNKNOWN`)
+- **startup grace 로직**: `pim_cam_start_ts` + `pim_cam_start_delay` 기반으로 gstApp 시작 직후 일시적 에러 무시
+- **온도 경고 시스템**: 히스테리시스 기반 (진입 80°C / 해제 75°C), 30초 주기 로깅, peak 추적
+- **RAM delta 모니터링**: `/dev/shm` 사용량 변화율(KB/s) 추적, 16MB/s 초과 시 경고 (해제 8MB/s)
+- **tmp sync 경고**: `start_video_time_chk` 동기화 상태 연속 실패 3회 시 경고
+- **guardian state 파일 출력**: `/tmp/pim_guardian_state.json`에 전체 상태 주기적 기록
+- **에러 이력 수집**: tmp 에러 파일 + journalctl 에러/critical/panic 통합, 180초 윈도우 내 최신 5건 표시
+- **guardian 비트마스크**: `GUARD_BIT_CAM_MISMATCH`(0x100), `HB_FROZEN`(0x200), `SD_RO`(0x400), `CPU_HOT`(0x800), `VOLT_ERR`(0x1000)
+- **복구 요청**: `--recovery` 플래그 활성 시 `recover_req_init_cam` 파일 생성으로 init_cam 트리거
+- **symlink 기반 프로젝트 연결**: `/opt/pim/bin/pim_guardian` symlink 지원
+
+#### 4. edgeconf app 강제 전환
+
+- `force_edgeconf_app_to_gstapp()` 함수 추가
+- edgeconf JSON의 `.VHL_CAM.app`이 gstApp이 아닌 경우 자동 전환
+- jq + 임시 파일 기반 안전한 JSON 수정
+
+#### 5. SD 재삽입 시 RAM 녹화 복구
+
+- SD 카드 재삽입 시 RAM(`/dev/shm`)에 저장된 녹화 파일을 SD로 자동 복구(backfill)
+- 녹화 중단 없이 데이터 보존
+
+#### 6. automnt_sd 안정성 강화
+
+- **fstype 감지 실패 무한루프 방지**: `reinsert_fail_cnt` 백오프 메커니즘 도입, 5회 연속 실패 시 60초 대기 후 재시도 + `/dev/shm` fallback
+- **tmp_path fallback/restore**: SD 미삽입 또는 마운트 실패 시 `tmp_path`를 `/dev/shm`으로 자동 전환, SD 재삽입 시 이전 경로로 자동 복구
+
+---
+
+### 버그 수정
+
+- **cam_is_disconnected_unified 오탐**: init_cam 후 "recovering" 상태가 disconnect로 오판되어 periodic init_cam이 즉시 재발동되는 문제 수정
+- **all file not create false positive**: disconnect 시 marker_channel 미갱신으로 `start_video_time_chk` 미기록 → 수정
+- **periodic init_cam 간격 미준수**: file-count-mismatch/all-file-not-create disconnect 경로에서 `DISCONNECT_INIT_CAM_STATE_FILE` last_init 미갱신 → 수정
+- **BG_Check cooldown 중 err_cam 삭제**: driver disconnect err_cam이 cooldown 중 삭제되어 disconnect 상태 추적 손실 → 수정
+- **recover_req disconnect 경로**: driver disconnect 시 불필요한 init_cam 트리거 → drv_disc 체크 추가
+- **disconnect streak 유실**: cam_disconnect_flag 기반 streak이 cooldown 리셋으로 소실 → 보존 로직 추가
+- **chk_voltage.sh 에러 로그 오동작**: 파일명 `err_volt.log` → `err_voltage.log` 수정 (BG_Check 감지 불가 문제), 에러 메시지 `CPU TEMP ERR` → `VOLTAGE ERR` 수정
+
+---
+
+### 인프라 개선
+
+- **Docker 빌드 환경**: 크로스 컴파일 Docker 환경 추가
+- **문서 정리**: camera-operation-guide 갱신, 테스트 스크립트 재배치
+- **watchdog 타임아웃 확장**: 30s/20s → 300s/300s (disconnect 시나리오 대응)
+- **종료 시퀀스 로그 정리**: NOTICE → INFO 레벨 조정, 중복 로그 제거
+- **locale 설정**: C.UTF-8 기본 설정
+- **pim_gate sFTP_UDP 지원**: 시리얼 명령 enable series 수정
+
+---
+
 ## v0.5.8 (2026-01-09 ~ 2026-02-11)
 
 ### 핵심
@@ -106,15 +209,7 @@ RTC 배터리 방전으로 인해 시스템 시각이 초기화되는 상황에 
 - **RTC 재활성화 (Resurrect)**: 복구된 시간을 RTC 하드웨어에 다시 기록(`hwclock -w`)하여, 방전되었던 RTC가 다시 정상적인 시간 흐름을 가질 수 있도록 강제로 재가동시킵니다.
 - **부팅 안정성**: 유효한 시간 소스가 없을 경우 2026년 1월 1일(Safe Epoch)로 강제 설정하여 로그 및 파일 생성 오류를 방지합니다.
 
-#### 10. 무중단 카메라 복구 전략 (chk_cam_operate.sh)
-
-카메라 연결 해제 등 하드웨어 장애 시 시스템 전체의 가용성을 유지하기 위한 전략을 재설계했습니다.
-
-- **주기적 하드웨어 재초기화**: 카메라 연결이 끊긴 경우, 앱을 무한 재시작하거나 시스템을 재부팅하는 대신 **300초 주기로 `init_cam.sh`를 실행**하여 하드웨어 복구를 시도합니다.
-- **불필요한 재부팅 방지**: 복구 권한을 `chk_cam_operate.sh`로 집중하여, 일시적인 드라이버 오류로 인한 재부팅 루프를 차단하고 시스템 가동 시간을 극대화했습니다.
-- **복구 요청 플래그**: `gst_err` 감지 시 즉시 복구 요청을 생성하여 관리 스크립트가 상황에 맞는 복구 시나리오를 선택하도록 유도합니다.
-
-#### 11. 런타임 스크립트 강화
+#### 10. 런타임 스크립트 강화
 
 프로덕션 안정성을 위한 기타 스크립트 개선 사항입니다.
 
@@ -129,6 +224,17 @@ RTC 배터리 방전으로 인해 시스템 시각이 초기화되는 상황에 
 
 **카메라 수동 제어 스크립트**
 - AE On/Off 및 Gain/Exp_time/ISO 수동 설정을 위한 전용 도구 세트 추가.
+
+**JSON 설정 추가 (`edgeconf_pim.json`)**
+- **`queue_tune` 섹션 신규**: `main_src_time_ms`(300), `enc_src_time_ms`(300), `rec_sink_time_ms`(500), `cap_src_time_ms`(500) — 파이프라인 큐 지연 튜닝
+- **`rtsp_tune` 섹션 신규**: `rtsp_factory_latency_ms`(200), `rtsp_appsink_max_buffers`(3), `rtsp_factory_queue_max_buffers`(3), `rtsp_bin_queue_max_time_ms`(100) — RTSP 스트리밍 튜닝
+- **`capture` 확장**: `response`(true), `path`("/dev/shm/capture"), `queue_size`(30) 추가
+- **per-channel V4L2 설정**: `chN.ae_on`(true), `chN.ae_gain`(256), `chN.bps`([bps, 2048]) 채널별 제어
+- **경로 설정**: `sd_tmp_path`("/mnt/sd_cam/tmp"), `final_path`("/mnt/sd_cam")
+- **muxer**: 녹화 컨테이너 포맷 설정 (`"mp4"` 기본값)
+
+**JSON 설정 추가 (`ord_vcm_conf.json`)**
+- `ORD.err_send_period`(180) — 에러 전송 주기(초)
 
 ---
 

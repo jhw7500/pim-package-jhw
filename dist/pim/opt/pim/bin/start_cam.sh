@@ -35,7 +35,7 @@ StartCam() {
         cam_state_init
         cam_record_start
 
-        logger -p local0.emerg "[$key][$tag:$LINENO] cam app cmd : $start_cmd"
+        logger -p local0.notice "[$key][$tag:$LINENO] cam app cmd : $start_cmd"
         rm /tmp/start_video_time
         eval "$start_cmd"
     else

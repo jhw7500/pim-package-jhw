@@ -17,11 +17,17 @@ err_report() {
 
 trap err_report ERR
 JSON_PREFIX="ord_vcm_"
-JOSN_SUFFIX=".json"
-FILE_JSON=$(ls -1t /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} 2>/dev/null | head -n 1 | tr -d '\r\n')
+JSON_SUFFIX=".json"
+FILE_JSON=""
+for f in /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX}; do
+    [ -e "$f" ] || continue
+    if [ -z "$FILE_JSON" ] || [ "$f" -nt "$FILE_JSON" ]; then
+        FILE_JSON="$f"
+    fi
+done
 
 if [ -z "$FILE_JSON" ] || [ ! -f "$FILE_JSON" ]; then
-    logger -p local0.err "[$KEY][$tag:$LINENO] ord_vcm json not found under /root/shared_v (${JSON_PREFIX}*${JOSN_SUFFIX})"
+logger -p local0.err "[$KEY][$tag:$LINENO] ord_vcm json not found under /root/shared_v (${JSON_PREFIX}*${JSON_SUFFIX})"
     exit 1
 fi
 
@@ -70,7 +76,8 @@ jq '.ETC.file_check_delay |= if . == null then 10 else . end |
  .ETC.file_check_reboot |= if . == null then true else . end |
  .ETC.startup_grace_extra_sec |= if . == null then 10 else . end |
  .ETC.init_cooldown_sec |= if . == null then 40 else . end |
- .ETC.stream_active_window_sec |= if . == null then 10 else . end' "$FILE_JSON" > tmp.$$ && mv tmp.$$ "$FILE_JSON"
+ .ETC.disconnect_init_interval_sec |= if . == null then 180 else . end |
+ .ETC.disconnect_init_grace_sec |= if . == null then 60 else . end' "$FILE_JSON" > tmp.$$ && mv tmp.$$ "$FILE_JSON"
 
 
 sync

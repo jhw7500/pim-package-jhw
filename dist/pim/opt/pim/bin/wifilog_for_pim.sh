@@ -1,6 +1,11 @@
 #!/bin/bash
 _root_path="/mnt/sd_cam/wifilog"
 prevmac="none"
+_poll_sec="${WIFI_LOG_POLL_SEC:-1}"
+
+case "$_poll_sec" in
+    ''|*[!0-9.]* ) _poll_sec="1" ;;
+esac
 
 function LogWrite() {
 	local timestamp=`date +"%Y-%m-%d %T,%3N"`
@@ -76,7 +81,7 @@ function LogWrite_WiFiSignalPol() {
 	local noise=`echo $str | cut -d' ' -f3 | cut -d'=' -f2`
 	local snr
 	
-	if [ -n ${noise} ]; then
+	if [ -n "$noise" ]; then
 		noise=`echo $noise | tr -d '-'`
 		snr=`expr $rssi + $noise`
 		LogWrite "INFO|WiFi|RSSI ${rssi} NOISE -${noise} SNR ${snr}"
@@ -139,5 +144,5 @@ while true; do
         LogWrite_WiFiSignalPol;
         LogWrite_WiFiInfo;
     fi
-    sleep 0.1
+    sleep "$_poll_sec"
 done

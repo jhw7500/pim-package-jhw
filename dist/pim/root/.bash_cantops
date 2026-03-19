@@ -1,4 +1,7 @@
 
+alias ldt='ls -l /dev/shm |tail -n $1'
+alias lrt='ls -l /dev/shm/recording |tail -n $1'
+alias ltt='ls -l /mnt/sd_cam/tmp |tail -n $1'
 alias lmt='ls -l /mnt/sd_cam |tail -n $1'
 alias lmtt='ls -ltr /mnt/sd_cam |tail -n $1'
 alias lmh='ls -l /mnt/sd_cam |head -n $1'

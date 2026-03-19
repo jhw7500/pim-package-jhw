@@ -192,7 +192,7 @@ function LED_CTRL(){
     fi
 	
 	
-    if [ -e ${FLAG_PATH}/err_volt.log ]; then
+    if [ -e ${FLAG_PATH}/err_voltage.log ]; then
         TEST_RESULT=1
         #green off
         echo 0 > /sys/devices/platform/leds/leds/gpio2_led/brightness

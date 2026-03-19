@@ -17,8 +17,14 @@ err_report() {
 trap err_report ERR
 #FILE_JSON="/home/user/edgeconf_pim.json"
 JSON_PREFIX=edgeconf_
-JOSN_SUFFIX=.json
-FILE_JSON=$(ls -1t /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} 2>/dev/null | head -n 1 | tr -d '\r\n')
+JSON_SUFFIX=.json
+FILE_JSON=""
+for f in /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX}; do
+    [ -e "$f" ] || continue
+    if [ -z "$FILE_JSON" ] || [ "$f" -nt "$FILE_JSON" ]; then
+        FILE_JSON="$f"
+    fi
+done
 
 if [ -z "$FILE_JSON" ] || [ ! -f "$FILE_JSON" ]; then
     logger -p local0.err "[$KEY][$tag:$LINENO] edgeconf json not found under /root/shared_v (${JSON_PREFIX}*${JSON_SUFFIX})"
@@ -179,16 +185,16 @@ jq --argjson key0 "$capture_en" --argjson key1 0 --argjson key2 200 '.VHL_CAM.ca
 | .VHL_CAM.capture |= (if .queue_size == null then .queue_size = 30 else . end)
 ' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
-jq '.VHL_CAM.queue_tune |= (if .main_src_time_ms == null then .main_src_time_ms = 100 else . end)
-| .VHL_CAM.queue_tune |= (if .enc_src_time_ms == null then .enc_src_time_ms = 100 else . end)
-| .VHL_CAM.queue_tune |= (if .rec_sink_time_ms == null then .rec_sink_time_ms = 300 else . end)
+jq '.VHL_CAM.queue_tune |= (if .main_src_time_ms == null then .main_src_time_ms = 300 else . end)
+| .VHL_CAM.queue_tune |= (if .enc_src_time_ms == null then .enc_src_time_ms = 300 else . end)
+| .VHL_CAM.queue_tune |= (if .rec_sink_time_ms == null then .rec_sink_time_ms = 500 else . end)
 | .VHL_CAM.queue_tune |= (if .cap_src_time_ms == null then .cap_src_time_ms = 500 else . end)
 ' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
-jq '.VHL_CAM.rtsp_tune |= (if .rtsp_factory_latency_ms == null then .rtsp_factory_latency_ms = 100 else . end)
-| .VHL_CAM.rtsp_tune |= (if .rtsp_appsink_max_buffers == null then .rtsp_appsink_max_buffers = 2 else . end)
-| .VHL_CAM.rtsp_tune |= (if .rtsp_factory_queue_max_buffers == null then .rtsp_factory_queue_max_buffers = 2 else . end)
-| .VHL_CAM.rtsp_tune |= (if .rtsp_bin_queue_max_time_ms == null then .rtsp_bin_queue_max_time_ms = 50 else . end)
+jq '.VHL_CAM.rtsp_tune |= (if .rtsp_factory_latency_ms == null then .rtsp_factory_latency_ms = 200 else . end)
+| .VHL_CAM.rtsp_tune |= (if .rtsp_appsink_max_buffers == null then .rtsp_appsink_max_buffers = 3 else . end)
+| .VHL_CAM.rtsp_tune |= (if .rtsp_factory_queue_max_buffers == null then .rtsp_factory_queue_max_buffers = 3 else . end)
+| .VHL_CAM.rtsp_tune |= (if .rtsp_bin_queue_max_time_ms == null then .rtsp_bin_queue_max_time_ms = 100 else . end)
 ' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
 jq 'del (.VHL_CAM.capture.turbojpeg)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
