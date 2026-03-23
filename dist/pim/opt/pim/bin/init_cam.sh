@@ -13,7 +13,7 @@ cleanup_recording_orphans() {
     [ -d "$dir" ] || return 0
     local count=0
     local f
-    for f in "$dir"/*.mp4 "$dir"/*.ts "$dir"/*.srt \
+    for f in "$dir"/*.mp4 "$dir"/*.ts "$dir"/*.srt "$dir"/*-vib.bin \
              "$dir"/*.mp4.part "$dir"/*.ts.part "$dir"/*.srt.part; do
         [ -f "$f" ] || continue
         logger -p local0.debug "[$key][$tag:$LINENO] orphan rm: $(basename "$f")"
