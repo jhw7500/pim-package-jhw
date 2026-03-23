@@ -4,6 +4,43 @@ STATE_FILE="/tmp/cam_state.json"
 RECOVERY_FILE="/tmp/cam_recovery.json"
 LOCK_FILE="/tmp/cam_op_lock"
 
+cam_recording_schema_ready() {
+    jq -e '
+      .recording != null and
+      .recording.start_video_time_actual != null and
+      .recording.start_video_time != null and
+      .recording.start_video_time_chk != null and
+      .recording.start_video_time_cpy != null and
+      .recording.start_video_time_vib != null
+    ' "$STATE_FILE" > /dev/null 2>&1
+}
+
+cam_recording_sync_schema() {
+    local tmp="${STATE_FILE}.tmp.$$"
+
+    if cam_recording_schema_ready; then
+        return 0
+    fi
+
+    jq '
+      .recording |= (. // {}) |
+      .recording.start_video_time_actual |= (. // "") |
+      .recording.start_video_time |= (. // "") |
+      .recording.start_video_time_chk |= (. // "") |
+      .recording.start_video_time_cpy |= (. // "") |
+      .recording.start_video_time_vib |= (. // "")
+    ' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+}
+
+cam_recording_set() {
+    local key="$1"
+    local value="$2"
+    local tmp="${STATE_FILE}.tmp.$$"
+
+    cam_state_init
+    jq --arg key "$key" --arg value "$value" '.recording[$key] = $value' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+}
+
 cam_state_init() {
     if [ ! -f "$STATE_FILE" ]; then
         cat > "$STATE_FILE" << 'EOF'
@@ -13,6 +50,13 @@ cam_state_init() {
   "streak": 0,
   "last_init_ts": 0,
   "last_start_ts": 0,
+  "recording": {
+    "start_video_time_actual": "",
+    "start_video_time": "",
+    "start_video_time_chk": "",
+    "start_video_time_cpy": "",
+    "start_video_time_vib": ""
+  },
   "channels": {
     "ch0": {"error": false, "last_ok": 0},
     "ch1": {"error": false, "last_ok": 0},
@@ -22,6 +66,8 @@ cam_state_init() {
 }
 EOF
     fi
+
+    cam_recording_sync_schema
 }
 
 cam_state_get() {
@@ -175,6 +221,7 @@ cam_record_init() {
 
 cam_record_start() {
     cam_state_set '.last_start_ts' "$(date +%s)"
+    cam_recording_set 'start_video_time_actual' ''
 }
 
 cam_reset_state() {
