@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 import os
 import sys
 import select
@@ -200,9 +201,7 @@ class PIMHealthGuardian:
         sys.stdout.write(f"(y/n, {RECOVERY_PROMPT_TIMEOUT_SEC}s timeout): ")
         sys.stdout.flush()
 
-        ready, _, _ = select.select(
-            [sys.stdin], [], [], RECOVERY_PROMPT_TIMEOUT_SEC
-        )
+        ready, _, _ = select.select([sys.stdin], [], [], RECOVERY_PROMPT_TIMEOUT_SEC)
         if ready:
             answer = sys.stdin.readline().strip().lower()
         else:
@@ -213,9 +212,7 @@ class PIMHealthGuardian:
             print("")
             ok = action_fn()
             if ok:
-                print(
-                    f"[RECOVERY] === {event_key} recovery completed successfully ==="
-                )
+                print(f"[RECOVERY] === {event_key} recovery completed successfully ===")
             else:
                 print(
                     f"[RECOVERY] === {event_key} recovery FAILED. Manual intervention may be required. ==="
@@ -242,11 +239,13 @@ class PIMHealthGuardian:
         sys.stdout.write(f"[RECOVERY] [{step}/{total}] {desc}...")
         sys.stdout.flush()
         try:
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=120
-            )
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
             if result.returncode == 0 or allow_fail:
-                print(f" OK" if result.returncode == 0 else f" WARN (exit code {result.returncode})")
+                print(
+                    f" OK"
+                    if result.returncode == 0
+                    else f" WARN (exit code {result.returncode})"
+                )
                 if result.stdout.strip():
                     for line in result.stdout.strip().splitlines():
                         print(f"  {line}")
@@ -274,7 +273,10 @@ class PIMHealthGuardian:
         ):
             try:
                 result = subprocess.run(
-                    cmd, capture_output=True, text=True, timeout=10,
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
                 )
                 fs = result.stdout.strip()
                 if fs:
@@ -289,25 +291,33 @@ class PIMHealthGuardian:
 
         step += 1
         if not self._run_recovery_step(
-            step, total, "Stopping camera pipeline",
+            step,
+            total,
+            "Stopping camera pipeline",
             [f"{BIN_DIR}/kill_test.sh"],
         ):
             return False
 
         step += 1
         self._run_recovery_step(
-            step, total, f"Stopping {SD_MOUNT_SERVICE} service",
+            step,
+            total,
+            f"Stopping {SD_MOUNT_SERVICE} service",
             ["systemctl", "stop", SD_MOUNT_SERVICE],
             allow_fail=True,
         )
 
         step += 1
         if not self._run_recovery_step(
-            step, total, f"Unmounting {SD_MOUNT_PATH}",
+            step,
+            total,
+            f"Unmounting {SD_MOUNT_PATH}",
             ["umount", SD_MOUNT_PATH],
         ):
             self._run_recovery_step(
-                step, total, f"Force unmounting {SD_MOUNT_PATH}",
+                step,
+                total,
+                f"Force unmounting {SD_MOUNT_PATH}",
                 ["umount", "-f", SD_MOUNT_PATH],
             )
 
@@ -316,16 +326,24 @@ class PIMHealthGuardian:
         if fs_type:
             print(f"[RECOVERY] [{step}/{total}] Detected filesystem: {fs_type}")
         else:
-            print(f"[RECOVERY] [{step}/{total}] Filesystem type: UNKNOWN (blkid/lsblk failed)")
+            print(
+                f"[RECOVERY] [{step}/{total}] Filesystem type: UNKNOWN (blkid/lsblk failed)"
+            )
             print(f"[RECOVERY] Cannot run fsck without knowing filesystem type.")
-            print(f"[RECOVERY] SD card may be physically damaged or partition table corrupted.")
+            print(
+                f"[RECOVERY] SD card may be physically damaged or partition table corrupted."
+            )
             self._run_recovery_step(
-                total - 1, total, f"Starting {SD_MOUNT_SERVICE} service",
+                total - 1,
+                total,
+                f"Starting {SD_MOUNT_SERVICE} service",
                 ["systemctl", "start", SD_MOUNT_SERVICE],
                 allow_fail=True,
             )
             self._run_recovery_step(
-                total, total, "Starting camera pipeline",
+                total,
+                total,
+                "Starting camera pipeline",
                 [f"{BIN_DIR}/start_cam.sh"],
                 allow_fail=True,
             )
@@ -334,43 +352,86 @@ class PIMHealthGuardian:
         step += 1
         fsck_cmd = FSCK_TOOLS.get(fs_type, ["fsck", "-y"])
         full_cmd = list(fsck_cmd) + [SD_DEV_PARTITION]
-        sys.stdout.write(
-            f"[RECOVERY] [{step}/{total}] Running {' '.join(full_cmd)}..."
-        )
+        fsck_timeout = getattr(self.args, "fsck_timeout", 1800)
+        timeout_str = "no limit" if fsck_timeout == 0 else f"{fsck_timeout}s"
+        print(f"[RECOVERY] [{step}/{total}] Running {' '.join(full_cmd)} (timeout {timeout_str})")
         sys.stdout.flush()
         try:
-            result = subprocess.run(
-                full_cmd, capture_output=True, text=True, timeout=300
+            proc = subprocess.Popen(
+                full_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
             )
-            if result.stdout.strip():
-                print("")
-                for line in result.stdout.strip().splitlines():
-                    print(f"  {line}")
-            if result.returncode in (0, 1):
-                print(f"[RECOVERY] [{step}/{total}] Filesystem check... OK")
+            start_ts = time.monotonic()
+            last_heartbeat = start_ts
+            buf = b""
+            while True:
+                elapsed = int(time.monotonic() - start_ts)
+                if fsck_timeout > 0 and elapsed >= fsck_timeout:
+                    proc.kill()
+                    proc.wait()
+                    raise subprocess.TimeoutExpired(full_cmd, fsck_timeout)
+                ready, _, _ = select.select([proc.stdout], [], [], 1.0)
+                if ready:
+                    chunk = os.read(proc.stdout.fileno(), 4096)
+                    if not chunk:
+                        break
+                    buf += chunk
+                    while b"\n" in buf:
+                        line, buf = buf.split(b"\n", 1)
+                        text = line.decode("utf-8", errors="replace").rstrip()
+                        if text:
+                            print(f"  {text}")
+                            sys.stdout.flush()
+                    last_heartbeat = time.monotonic()
+                else:
+                    if proc.poll() is not None:
+                        break
+                    now = time.monotonic()
+                    if now - last_heartbeat >= 10:
+                        print(f"[RECOVERY] [{step}/{total}] fsck in progress... ({elapsed}s elapsed)")
+                        sys.stdout.flush()
+                        last_heartbeat = now
+            if buf.strip():
+                print(f"  {buf.decode('utf-8', errors='replace').rstrip()}")
+            returncode = proc.wait()
+            elapsed = int(time.monotonic() - start_ts)
+            if returncode in (0, 1):
+                print(f"[RECOVERY] [{step}/{total}] Filesystem check... OK ({elapsed}s)")
                 fsck_ok = True
             else:
                 print(
-                    f"[RECOVERY] [{step}/{total}] Filesystem check... FAILED (exit code {result.returncode})"
+                    f"[RECOVERY] [{step}/{total}] Filesystem check... FAILED (exit code {returncode}, {elapsed}s)"
                 )
                 fsck_ok = False
         except subprocess.TimeoutExpired:
-            print(f"\n[RECOVERY] [{step}/{total}] Filesystem check... FAILED (timeout)")
+            print(f"[RECOVERY] [{step}/{total}] Filesystem check... FAILED (timeout {fsck_timeout}s)")
             fsck_ok = False
         except Exception as e:
-            print(f"\n[RECOVERY] [{step}/{total}] Filesystem check... FAILED ({e})")
+            print(f"[RECOVERY] [{step}/{total}] Filesystem check... FAILED ({e})")
             fsck_ok = False
+
+        # Signal automnt_sd_for_emmc_boot.sh to exit RO fallback state
+        if fsck_ok:
+            try:
+                with open("/tmp/sd_ro_recovered", "w") as f:
+                    f.write("1\n")
+                print(f"[RECOVERY] [{step}/{total}] RO recovery flag set for automnt")
+            except Exception as e:
+                print(f"[RECOVERY] [{step}/{total}] Failed to set recovery flag: {e}")
 
         step += 1
         self._run_recovery_step(
-            step, total, f"Starting {SD_MOUNT_SERVICE} service",
+            step,
+            total,
+            f"Starting {SD_MOUNT_SERVICE} service",
             ["systemctl", "start", SD_MOUNT_SERVICE],
             allow_fail=True,
         )
 
         step += 1
         self._run_recovery_step(
-            step, total, "Starting camera pipeline",
+            step,
+            total,
+            "Starting camera pipeline",
             [f"{BIN_DIR}/start_cam.sh"],
             allow_fail=True,
         )
@@ -380,7 +441,9 @@ class PIMHealthGuardian:
     def _recover_cam_disconnect(self) -> bool:
         total = 1
         return self._run_recovery_step(
-            1, total, "Running init_cam to reload driver",
+            1,
+            total,
+            "Running init_cam to reload driver",
             [f"{BIN_DIR}/init_cam.sh"],
         )
 
@@ -390,14 +453,18 @@ class PIMHealthGuardian:
 
         step += 1
         if not self._run_recovery_step(
-            step, total, "Stopping camera pipeline",
+            step,
+            total,
+            "Stopping camera pipeline",
             [f"{BIN_DIR}/kill_test.sh"],
         ):
             return False
 
         step += 1
         return self._run_recovery_step(
-            step, total, "Starting camera pipeline",
+            step,
+            total,
+            "Starting camera pipeline",
             [f"{BIN_DIR}/start_cam.sh"],
         )
 
@@ -592,6 +659,13 @@ class PIMHealthGuardian:
         start_ts = self._safe_read_int_file(TMP_START_TS, 0)
         start_delay = self._safe_read_int_file(TMP_START_DELAY, 0)
         err_sdcard_age = self._safe_file_mtime_age(TMP_ERR_SDCARD_LOG)
+        cam_state_recording: Dict[str, str] = {
+            "start_video_time_actual": "",
+            "start_video_time": "",
+            "start_video_time_chk": "",
+            "start_video_time_cpy": "",
+            "start_video_time_vib": "",
+        }
 
         vhl_cache = self._safe_read_text_file(TMP_VHL_CACHE, "")
         vhl_cache_src = self._safe_read_text_file(TMP_VHL_CACHE_SRC, "")
@@ -615,6 +689,20 @@ class PIMHealthGuardian:
 
         start_time_chk = self._safe_read_text_file(TMP_START_VIDEO_TIME_CHK, "")
         start_time_cpy = self._safe_read_text_file(TMP_START_VIDEO_TIME_CPY, "")
+        try:
+            if os.path.exists(TMP_CAM_STATE_JSON):
+                with open(TMP_CAM_STATE_JSON, "r") as f:
+                    cam_state_raw = cast(object, json.load(f))
+                cam_state_data = self._as_dict(cam_state_raw)
+                if cam_state_data:
+                    recording_raw = cam_state_data.get("recording")
+                    recording_data = self._as_dict(recording_raw)
+                    for key in cam_state_recording:
+                        value = recording_data.get(key, "")
+                        if isinstance(value, str):
+                            cam_state_recording[key] = value
+        except:
+            pass
         if start_time_chk and start_time_cpy:
             start_time_sync = start_time_chk == start_time_cpy
         else:
@@ -650,6 +738,7 @@ class PIMHealthGuardian:
             "done_delta": video_done_cnt - srt_done_cnt,
             "start_video_time_chk": start_time_chk,
             "start_video_time_cpy": start_time_cpy,
+            "cam_state_recording": cam_state_recording,
             "start_time_sync": start_time_sync,
             "session_debug_last": session_debug_last,
         }
@@ -1518,7 +1607,8 @@ class PIMHealthGuardian:
                     self.error_count = 0
 
                 # ── Interactive recovery prompts ──
-                if sd_d["mode"] == "RO" and sd_d["mounted"]:
+                sd_ro_fallback = not sd_d["mounted"] and os.path.exists("/dev/shm/sd_mount_flag") and open("/dev/shm/sd_mount_flag").read().strip() == "0"
+                if (sd_d["mode"] == "RO" and sd_d["mounted"]) or sd_ro_fallback:
                     self._prompt_recovery(
                         "sd_ro",
                         "SD card became read-only. Run filesystem check and remount?",
@@ -1559,6 +1649,10 @@ if __name__ == "__main__":
     )
     _ = p.add_argument(
         "--error-list-max", type=int, default=TMP_RECENT_ERROR_LIST_MAX_ITEMS
+    )
+    _ = p.add_argument(
+        "--fsck-timeout", type=int, default=0,
+        help="fsck timeout in seconds (0 = no timeout, default: 0)"
     )
     args = p.parse_args()
     PIMHealthGuardian(args).start()

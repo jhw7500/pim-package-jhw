@@ -401,11 +401,12 @@ delete_session_in_dir() {
     local dir="$1"
     local sid="$2"
 
-    [ -d "$dir" ] || return 0
+    [ -d "$dir" ] || return 1
     # mp4/ts
     # seconds can be non-00 for the first fragment after restart
     rm -f "$dir"/*"${sid}"??-ch*.mp4 2>/dev/null
     rm -f "$dir"/*"${sid}"??-ch*.ts 2>/dev/null
+    rm -f "$dir"/*"${sid}"??-vib.bin 2>/dev/null
     # subtitle (naming may vary; keep it broad but still tied to sid)
     rm -f "$dir"/*"${sid}"*data*.srt 2>/dev/null
     rm -f "$dir"/*"${sid}"*.srt 2>/dev/null
@@ -423,6 +424,13 @@ enforce_sd_retention_if_needed() {
     local protect_n=${PROTECT_RECENT_SESSIONS:-$PROTECT_RECENT_SESSIONS_DEFAULT}
     local usage sid
     local sessions keep_line
+
+    # Skip retention if filesystem is read-only
+    if ! touch "$target_dir/.retention_rw_test" 2>/dev/null; then
+        logger -p local0.error "[$KEY][$tag:$LINENO] retention: skip (filesystem read-only: $target_dir)"
+        return 1
+    fi
+    rm -f "$target_dir/.retention_rw_test" 2>/dev/null
 
     # Optimization: df check interval (check every N deletions instead of every loop)
     local df_check_interval=5
@@ -580,7 +588,8 @@ ProcessCompletedSessions() {
             for part_file in "$scan_dir"/*"${timestamp}"*.part \
                              "$scan_dir"/*"${timestamp}"*.mp4 \
                              "$scan_dir"/*"${timestamp}"*.ts \
-                             "$scan_dir"/*"${timestamp}"*.srt; do
+                             "$scan_dir"/*"${timestamp}"*.srt \
+                             "$scan_dir"/*"${timestamp}"*-vib.bin; do
                 [ -f "$part_file" ] || continue
 
                 base=$(basename "$part_file")
@@ -601,8 +610,6 @@ ProcessCompletedSessions() {
         # final_path 디렉토리 flush (한 번만)
         sync -f "$final_dir" 2>/dev/null || sync
 
-        # 완료 마커 처리
-        # - Keep marker when failures occurred so we can retry next loop.
         if [ $fail_count -eq 0 ]; then
             rm -f "$done_file"
         else
@@ -770,7 +777,7 @@ BackfillRamRecordingsToSd() {
     fi
 
     now_ts=$(date +%s)
-    for src in "$ram_final_dir"/*.mp4 "$ram_final_dir"/*.ts "$ram_final_dir"/*.srt; do
+    for src in "$ram_final_dir"/*.mp4 "$ram_final_dir"/*.ts "$ram_final_dir"/*.srt "$ram_final_dir"/*-vib.bin; do
         [ -f "$src" ] || continue
 
         mtime=$(stat -c %Y "$src" 2>/dev/null || echo 0)
@@ -1098,21 +1105,6 @@ do
                 fi
             fi
 
-            if [[ "$srt_en" == *"$ENABLE_VAL"* ]]; then
-                ((check_num++))
-                if [ -f "${tmp_path}/${vhl_name}_${datetime}-data.srt" ]; then
-                    logger -p local0.debug "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime}-data.srt exist"
-                    ((file_cnt++))
-                elif compgen -G "${tmp_path}/*${vhl_name}_${datetime_}*data*" > /dev/null; then
-                    logger -p local0.debug "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*data* exist"
-                    ((file_cnt++))
-                else
-                    logger -p local0.error "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*data* not exist"
-                    #((file_cnt--))
-                    #((file_time_err++))
-                fi
-            fi
-
             # === 기존 1분 이동 로직: .part 기반 로직으로 대체됨 ===
             # if [ "$mnt_path" != "$tmp_path" ]; then
             #     if [ -f /dev/shm/sd_mount_flag ] && grep -qE '^(1|2)$' /dev/shm/sd_mount_flag; then
@@ -1170,6 +1162,13 @@ do
                     else
                         logger -p local0.err  "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag): /opt/pim/bin/init_cam.sh"
                         if ! in_init_cooldown && ! cam_in_init_cooldown "$init_cooldown_sec"; then
+                            # periodic init_cam 간격 추적을 위해 last_init 갱신
+                            local now_ts
+                            now_ts=$(date +%s)
+                            local first_seen_val
+                            first_seen_val=$(cat "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null | awk -F',' '{print $1}')
+                            [[ ! "$first_seen_val" =~ ^[0-9]+$ ]] && first_seen_val=$now_ts
+                            printf "%s,%s" "$first_seen_val" "$now_ts" > "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
                             /opt/pim/bin/init_cam.sh
                         fi
                     fi

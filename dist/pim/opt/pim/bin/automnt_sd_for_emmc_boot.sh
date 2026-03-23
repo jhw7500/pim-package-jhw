@@ -12,11 +12,25 @@ status=""
 mnt_flag="/dev/shm/sd_mount_flag"
 fsck_cnt=0
 reinsert_fail_cnt=0
+ro_wait_cnt=0
+ro_fallback=0
+RO_RECOVERY_FLAG="/tmp/sd_ro_recovered"
 REINSERT_FAIL_MAX=5
 REINSERT_BACKOFF_SEC=60
 LOCKFILE="/tmp/automnt_sd_for_emmc_boot.lock"
 exec 200>"$LOCKFILE"
 flock -n 200 || exit 1
+
+# SD가 read-only 상태인지 확인 (H/W 또는 S/W)
+is_sd_ro() {
+    if [ "$(cat /sys/block/mmcblk1/ro 2>/dev/null)" = "1" ]; then
+        return 0
+    fi
+    if awk -v dev="$DEVICE" '$1 == dev && $4 ~ /^ro/ {found=1} END {exit !found}' /proc/mounts 2>/dev/null; then
+        return 0
+    fi
+    return 1
+}
 
 # 공통 함수: tmp_path를 /dev/shm으로 fallback
 fallback_to_shm() {
@@ -193,25 +207,29 @@ while true; do
                             # /dev/shm으로 전환된 설정을 다시 SD 경로로 복구
                             restore_to_sd "$FILE_JSON"
                         else
-                            logger -p local0.err "[$KEY][$TAG:$LINENO] mounted not r/w"
-                            mnt_state=1
+                            logger -p local0.crit "[$KEY][$TAG:$LINENO] mounted as read-only, immediate fallback"
+                            echo '0' > "$mnt_flag"
+                            umount -l "$DIR" 2>/dev/null
+                            fallback_to_shm "$FILE_JSON"
+                            ro_fallback=1
+                            mnt_state=2
                         fi
                     else
                         logger -p local0.err "[$KEY][$TAG:$LINENO] sd mount failed, fallback to /dev/shm"
+                        echo '0' > "$mnt_flag"
                         fallback_to_shm "$FILE_JSON"
-                        mnt_state=1
+                        mnt_state=2
                     fi
                 elif [ "$mnt_dev" != "$DEVICE" ]; then
                     logger -p local0.err "[$KEY][$TAG:$LINENO] mnt_dev : $mnt_dev != $DEVICE"
                     mnt_state=1
-                elif [ "$(cat /sys/block/mmcblk1/ro)" = "1" ]; then
-                    logger -p local0.error "[$KEY][$TAG:$LINENO] mmcblk1 h/w read only"
+                elif is_sd_ro; then
+                    logger -p local0.crit "[$KEY][$TAG:$LINENO] $DEVICE read-only (pre-mount), immediate fallback"
                     echo '0' > "$mnt_flag"
-                    mnt_state=1
-                elif awk -v dev="$DEVICE" '$1 == dev && $4 ~ /^ro/ {found=1} END {exit !found}' /proc/mounts; then
-                    logger -p local0.error "[$KEY][$TAG:$LINENO] mmcblk1 s/w read only"
-                    echo '0' > "$mnt_flag"
-                    mnt_state=1
+                    umount -l "$DIR" 2>/dev/null
+                    fallback_to_shm "$FILE_JSON"
+                    ro_fallback=1
+                    mnt_state=2
                 else
                     mnt_state=1
                 fi
@@ -227,7 +245,6 @@ while true; do
                 if [ $mnt_cnt -gt 3 ]; then
                     echo '0' > "$mnt_flag"
                     logger -p local0.emerg "[$KEY][$TAG:$LINENO] please insert sd card!!"
-                    # 점유 프로세스에 SIGTERM 전송 (SIGKILL 대신, 로그인 쉘 보호)
                     sd_pids=$(fuser -m "$DIR" 2>/dev/null)
                     if [ -n "$sd_pids" ]; then
                         logger -p local0.warning "[$KEY][$TAG:$LINENO] processes using $DIR:$sd_pids"
@@ -239,51 +256,77 @@ while true; do
                     mnt_cnt=0
                     mnt_state=2
                 fi
+            elif is_sd_ro; then
+                # RO는 자연 복구되지 않음 — 즉시 fallback
+                echo '0' > "$mnt_flag"
+                if [ "$(cat /sys/block/mmcblk1/ro 2>/dev/null)" = "1" ]; then
+                    logger -p local0.crit "[$KEY][$TAG:$LINENO] $DEVICE H/W read-only detected, immediate fallback"
+                else
+                    logger -p local0.crit "[$KEY][$TAG:$LINENO] $DEVICE S/W read-only detected, immediate fallback"
+                fi
+                umount -l "$DIR" 2>/dev/null
+                fallback_to_shm "$FILE_JSON"
+                mnt_cnt=0
+                fsck_cnt=0
+                ro_fallback=1
+                mnt_state=2
             else
                 mnt_dev=$(awk -v dir="$DIR" '$2 == dir {print $1}' /proc/mounts)
-                if [ "$mnt_dev" != "$DEVICE" ] || [ "$(cat /sys/block/mmcblk1/ro)" = "1" ] || awk -v dev="$DEVICE" '$1 == dev && $4 ~ /^ro/ {found=1} END {exit !found}' /proc/mounts; then
+                if [ "$mnt_dev" != "$DEVICE" ]; then
                     ((mnt_cnt++))
                     echo '0' > "$mnt_flag"
-
-                    if [ "$(cat /sys/block/mmcblk1/ro)" = "1" ]; then
-                        logger -p local0.error "[$KEY][$TAG:$LINENO] $DEVICE is in H/W read-only mode(mnt_cnt:$mnt_cnt/fsck_cnt:$fsck_cnt)"
-                    fi
-
-                    if awk -v dev="$DEVICE" '$1 == dev && $4 ~ /^ro/ {found=1} END {exit !found}' /proc/mounts; then
-                        logger -p local0.error "[$KEY][$TAG:$LINENO] $DEVICE is in S/W read-only mode(mnt_cnt:$mnt_cnt/fsck_cnt:$fsck_cnt)"
-                    fi
-
+                    logger -p local0.error "[$KEY][$TAG:$LINENO] mnt_dev mismatch: $mnt_dev != $DEVICE (mnt_cnt:$mnt_cnt)"
                     if [ $mnt_cnt -gt 3 ]; then
-                        echo '0' > "$mnt_flag"
-                        ((fsck_cnt++))
-                        if [ $fsck_cnt -gt 3 ]; then
-                            logger -p local0.crit "[$KEY][$TAG:$LINENO] $DEVICE mount error"
-                            fallback_to_shm "$FILE_JSON"
-                            fsck_cnt=0
-                            mnt_state=2
-                        fi
+                        fallback_to_shm "$FILE_JSON"
+                        mnt_cnt=0
+                        mnt_state=2
                     fi
+                else
+                    mnt_cnt=0
                 fi
             fi
         ;;
         2)
-            # SD absent, fallback 완료 — 재삽입만 감시
+            # SD absent 또는 RO fallback 완료 — 재삽입/복구만 감시
             if [ -d /sys/bus/mmc/devices/mmc1:*/block/mmcblk1/mmcblk1p1 ]; then
                 if [ $reinsert_fail_cnt -ge $REINSERT_FAIL_MAX ]; then
-                    # fstype 감지 연속 실패: SD 물리적 제거 확인 후에만 리셋
                     logger -p local0.notice "[$KEY][$TAG:$LINENO] SD present but fstype failed ${reinsert_fail_cnt}x. Waiting for physical re-insert."
+                elif [ "$ro_fallback" -eq 1 ]; then
+                    # RO fallback 상태 — umount 후 /proc/mounts에 없으므로 is_sd_ro 사용 불가
+                    # pim_guardian fsck 완료 시 RO_RECOVERY_FLAG 파일 생성으로 복구 신호
+                    if [ -f "$RO_RECOVERY_FLAG" ]; then
+                        logger -p local0.notice "[$KEY][$TAG:$LINENO] RO recovery flag detected, attempting mount"
+                        rm -f "$RO_RECOVERY_FLAG"
+                        ro_fallback=0
+                        ro_wait_cnt=0
+                        mnt_cnt=0
+                        fsck_cnt=0
+                        mnt_state=0
+                    else
+                        if [ $((ro_wait_cnt % 20)) -eq 0 ]; then
+                            logger -p local0.notice "[$KEY][$TAG:$LINENO] SD read-only fallback active, waiting for recovery (pim_guardian fsck) [${ro_wait_cnt}]"
+                        fi
+                        ((ro_wait_cnt++))
+                    fi
                 else
-                    logger -p local0.notice "[$KEY][$TAG:$LINENO] SD card re-inserted, attempting mount"
+                    logger -p local0.notice "[$KEY][$TAG:$LINENO] SD card available and writable, attempting mount"
                     mnt_cnt=0
                     fsck_cnt=0
+                    ro_wait_cnt=0
                     mnt_state=0
                 fi
             else
-                # SD 물리적으로 제거됨 — 카운터 리셋
+                # SD 물리적으로 제거됨 — RO 플래그 리셋 (재삽입 시 clean 시작)
                 if [ $reinsert_fail_cnt -gt 0 ]; then
                     logger -p local0.notice "[$KEY][$TAG:$LINENO] SD card physically removed. Resetting failure counter."
                     reinsert_fail_cnt=0
                 fi
+                if [ "$ro_fallback" -eq 1 ]; then
+                    logger -p local0.notice "[$KEY][$TAG:$LINENO] SD card physically removed. Clearing RO fallback."
+                    ro_fallback=0
+                    rm -f "$RO_RECOVERY_FLAG"
+                fi
+                ro_wait_cnt=0
             fi
         ;;
     esac
