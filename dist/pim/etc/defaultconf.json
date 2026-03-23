@@ -28,7 +28,10 @@
             "method": "static",
             "address": "199.10.100.21",
             "netmask": "255.255.255.0",
-			"gateway":	""
+			"gateway":	"",
+			"ping_check_enable": true,
+			"client_ip_addr": "199.10.100.20",
+			"ping_max_fail_count": 2
         }
     },
     "SENSORS": {

@@ -16,10 +16,8 @@ err_report() {
 
 trap err_report ERR
 #FILE_JSON="/home/user/edgeconf_pim.json"
-JSON_PREFIX=edgeconf_
-JSON_SUFFIX=.json
 FILE_JSON=""
-for f in /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX}; do
+for f in /root/shared_v/edgeconf_*.json /root/shared_v/backup_edgeconf_*.json; do
     [ -e "$f" ] || continue
     if [ -z "$FILE_JSON" ] || [ "$f" -nt "$FILE_JSON" ]; then
         FILE_JSON="$f"
@@ -27,7 +25,7 @@ for f in /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX}; do
 done
 
 if [ -z "$FILE_JSON" ] || [ ! -f "$FILE_JSON" ]; then
-    logger -p local0.err "[$KEY][$tag:$LINENO] edgeconf json not found under /root/shared_v (${JSON_PREFIX}*${JSON_SUFFIX})"
+    logger -p local0.err "[$KEY][$tag:$LINENO] edgeconf json not found under /root/shared_v (edgeconf_*.json or backup_edgeconf_*.json)"
     exit 1
 fi
 
@@ -219,6 +217,29 @@ echo "check path"
 jq '.VHL_CAM.tmp_path |= (. // "/dev/shm")
 | .VHL_CAM.sd_tmp_path |= (. // "/mnt/sd_cam/tmp")
 | .VHL_CAM.final_path |= (. // "/mnt/sd_cam")
+' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+
+echo "check ETH1 health config"
+jq '
+  .NETWORK |= (. // {})
+  | .NETWORK.ETH1 |= (. // {})
+  | .NETWORK.ETH1 |= (
+      if (.client_ip_addr != null and .client_ip_addr != "") then .
+      elif (.ping_test_ip_addr != null and .ping_test_ip_addr != "") then .client_ip_addr = .ping_test_ip_addr
+      else .client_ip_addr = "199.10.100.20"
+      end
+    )
+  | .NETWORK.ETH1 |= (
+      if .ping_check_enable != null then .
+      else .ping_check_enable = true
+      end
+    )
+  | .NETWORK.ETH1 |= (
+      if .ping_max_fail_count != null then .
+      else .ping_max_fail_count = 2
+      end
+    )
+  | .NETWORK.ETH1 |= del(.ping_test_ip_addr)
 ' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
 echo "update new channel config"
