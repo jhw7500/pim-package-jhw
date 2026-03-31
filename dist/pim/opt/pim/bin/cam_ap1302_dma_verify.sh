@@ -89,6 +89,21 @@ write_reg() {
     "$I2C_WRITE" "$BUS" "$AP_ADDR" "$reg" "$formatted" 0 >/dev/null || return 1
 }
 
+reset_dma() {
+    echo "[$tag] DMA stuck (ctrl=$(format_hex "$DMA_CTRL_LAST" 4)), attempting reset..." >&2
+    write_reg 0x60ac 0x0000 2 2>/dev/null
+    sleep 0.1
+    local ctrl
+    ctrl=$(read_reg_u32 0x60ac 2) || return 1
+    DMA_CTRL_LAST=$ctrl
+    if (( (ctrl & 0x7) == 0 )); then
+        echo "[$tag] DMA reset successful (ctrl=$(format_hex "$ctrl" 4))" >&2
+        return 0
+    fi
+    echo "[$tag] DMA reset failed (ctrl=$(format_hex "$ctrl" 4))" >&2
+    return 1
+}
+
 wait_dma_idle() {
     local count=${DMA_POLL_COUNT:-20}
     local delay_us=${DMA_POLL_DELAY_US:-5000}
@@ -104,7 +119,7 @@ wait_dma_idle() {
     done
 
     DMA_CTRL_LAST=$ctrl
-    return 1
+    reset_dma
 }
 
 load_sensor_sip() {
