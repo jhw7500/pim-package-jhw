@@ -74,7 +74,7 @@ nohup /opt/pim/bin/bgscan_polling.sh 1>/dev/null 2>&1 &
 
 #bg check
 #/opt/pim/bin/BG_Check_for_pim.sh & 2>/dev/null
-iw wlp1s0 set power_save off
+/opt/pim/bin/wifi_power_save_off.sh &
 /opt/pim/bin/chk_disk_io.sh &
 
 #logger -p local0.notice "[$KEY][$tag:$LINENO] rc.local finish"
