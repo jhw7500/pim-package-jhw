@@ -26,7 +26,7 @@ MAINTENANCE_INTERVAL_SEC_DEFAULT=30
 BG_FLAG_FILE="/tmp/bg_chk_flag.bin"
 RECOVER_REQ_INIT_CAM="/tmp/recover_req_init_cam"
 LAST_INIT_TS_FILE="/tmp/last_init_cam_ts"
-START_TS_FILE="/tmp/pim_cam_start_ts"
+START_TS_FILE="/tmp/cam_state/last_start_ts"
 START_DELAY_FILE="/tmp/pim_cam_start_delay"
 
 startup_grace_extra_sec=10

@@ -3,16 +3,16 @@ set -e
 
 echo "=== Camera State System Integration Test ==="
 
-rm -f /tmp/cam_state.json /tmp/cam_recovery.json /tmp/cam_op_lock
+rm -rf /tmp/cam_state /tmp/cam_recovery.json /tmp/cam_op_lock
 
 source /home/jhw/ai/opencode/projects/pim-package/dist/pim/opt/pim/lib/cam_state.sh
 
 echo "Test 1: State initialization"
 cam_state_init
-if [ -f /tmp/cam_state.json ]; then
-    echo "  PASS: State file created"
+if [ -d /tmp/cam_state ]; then
+    echo "  PASS: State directory created"
 else
-    echo "  FAIL: State file not created"
+    echo "  FAIL: State directory not created"
     exit 1
 fi
 
@@ -27,7 +27,7 @@ fi
 
 echo "Test 3: Streak increment"
 cam_inc_streak
-streak=$(cam_state_get '.streak')
+streak=$(cam_state_get streak)
 if [ "$streak" -eq 1 ]; then
     echo "  PASS: Streak incremented to 1"
 else
@@ -38,7 +38,7 @@ fi
 echo "Test 4: State transition to degraded"
 cam_inc_streak
 state=$(cam_get_state)
-streak=$(cam_state_get '.streak')
+streak=$(cam_state_get streak)
 if [ "$state" = "degraded" ] && [ "$streak" -eq 2 ]; then
     echo "  PASS: State transitioned to degraded after streak >= 2"
 else
@@ -49,7 +49,7 @@ fi
 echo "Test 5: Streak reset"
 cam_reset_streak
 state=$(cam_get_state)
-streak=$(cam_state_get '.streak')
+streak=$(cam_state_get streak)
 if [ "$state" = "healthy" ] && [ "$streak" -eq 0 ]; then
     echo "  PASS: Streak reset, state back to healthy"
 else
@@ -60,9 +60,9 @@ fi
 echo "Test 6: Channel error recording"
 cam_channel_error 0
 cam_channel_error 2
-ch0_error=$(cam_state_get '.channels.ch0.error')
-ch1_error=$(cam_state_get '.channels.ch1.error')
-ch2_error=$(cam_state_get '.channels.ch2.error')
+ch0_error=$(cam_state_get channels/ch0_error)
+ch1_error=$(cam_state_get channels/ch1_error)
+ch2_error=$(cam_state_get channels/ch2_error)
 if [ "$ch0_error" = "true" ] && [ "$ch1_error" = "false" ] && [ "$ch2_error" = "true" ]; then
     echo "  PASS: Channel errors recorded correctly"
 else
@@ -80,7 +80,7 @@ fi
 
 echo "Test 8: Channel clear"
 cam_channel_clear 0
-ch0_error=$(cam_state_get '.channels.ch0.error')
+ch0_error=$(cam_state_get channels/ch0_error)
 if [ "$ch0_error" = "false" ]; then
     echo "  PASS: Channel 0 error cleared"
 else
@@ -160,7 +160,7 @@ fi
 echo "Test 16: Record init"
 cam_record_init
 state=$(cam_get_state)
-init_ts=$(cam_state_get '.last_init_ts')
+init_ts=$(cam_state_get last_init_ts)
 if [ "$state" = "recovering" ] && [ "$init_ts" -gt 0 ]; then
     echo "  PASS: Init recorded with state recovering"
 else
@@ -171,7 +171,7 @@ fi
 echo "Test 17: Record start"
 sleep 1
 cam_record_start
-start_ts=$(cam_state_get '.last_start_ts')
+start_ts=$(cam_state_get last_start_ts)
 if [ "$start_ts" -gt "$init_ts" ]; then
     echo "  PASS: Start recorded with newer timestamp"
 else
@@ -190,7 +190,7 @@ fi
 echo "Test 19: Full state reset"
 cam_reset_state
 state=$(cam_get_state)
-streak=$(cam_state_get '.streak')
+streak=$(cam_state_get streak)
 if [ "$state" = "healthy" ] && [ "$streak" -eq 0 ]; then
     echo "  PASS: State fully reset to healthy"
 else

@@ -30,7 +30,7 @@ StartCam() {
             rm -f /tmp/gst_err
         fi
 
-        date +%s > /tmp/pim_cam_start_ts 2>/dev/null
+        date +%s > /tmp/cam_state/last_start_ts 2>/dev/null
         printf "%s" "$delay" > /tmp/pim_cam_start_delay 2>/dev/null
         cam_state_init
         cam_record_start

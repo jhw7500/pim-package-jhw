@@ -63,7 +63,7 @@ cleanup_shm_overflow() {
 }
 
 rm -f /tmp/gst_err
-rm -f /tmp/bg_cam_err_streak
+printf '0' > /tmp/cam_state/streak 2>/dev/null
 if [ -f /tmp/init_cam_flag ]; then
     logger -p local0.notice "[RST][$tag:$LINENO] exit because already module reset..."
     exit 0

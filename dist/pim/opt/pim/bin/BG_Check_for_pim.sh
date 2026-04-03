@@ -6,7 +6,7 @@ tag=$(basename "$0")
 result=0
 delay=25
 i=0
-CAM_ERR_STREAK_FILE="/tmp/bg_cam_err_streak"
+# bg_cam_err_streak는 cam_state/streak로 통합됨
 JSON_PREFIX=edgeconf_
 JOSN_SUFFIX=.json
 FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' | grep "${JSON_SUFFIX}$" | tail -1 | tr -d '\r\n')
@@ -63,7 +63,7 @@ read_ts() { [ -f "$1" ] && cat "$1" 2>/dev/null | tr -d '\n' || echo 0; }
 in_startup_grace() {
     local start_ts start_delay now grace
     now=$(now_ts)
-    start_ts=$(read_ts "/tmp/pim_cam_start_ts")
+    start_ts=$(read_ts "/tmp/cam_state/last_start_ts")
     start_delay=$(read_ts "/tmp/pim_cam_start_delay")
     grace=$((start_delay + startup_grace_extra_sec))
     [ "$start_ts" -gt 0 ] && [ $((now - start_ts)) -lt "$grace" ]
@@ -160,7 +160,7 @@ function MAKE_RESULT_FLAG() {
 
 streak_get() {
 	local v
-	v=$(cat "$CAM_ERR_STREAK_FILE" 2>/dev/null | tr -d '\n')
+	v=$(cat /tmp/cam_state/streak 2>/dev/null | tr -d '\n')
 	if [[ ! "$v" =~ ^[0-9]+$ ]]; then
 		echo 0
 		return 0
@@ -169,7 +169,7 @@ streak_get() {
 }
 
 streak_set() {
-	printf "%s" "$1" > "$CAM_ERR_STREAK_FILE" 2>/dev/null
+	printf "%s" "$1" > /tmp/cam_state/streak 2>/dev/null
 }
 
 update_cam_state_from_errors() {

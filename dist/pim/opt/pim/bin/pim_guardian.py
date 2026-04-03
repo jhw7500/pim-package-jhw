@@ -26,14 +26,14 @@ THERMAL_ZONE1 = "/sys/devices/virtual/thermal/thermal_zone1/temp"
 CPU_FREQ_BASE = "/sys/devices/system/cpu/cpu{}/cpufreq/cpuinfo_cur_freq"
 MCP_TRUST_TOOL = "/opt/pim/bin/mcp_trust_test"
 
-TMP_BG_CAM_ERR_STREAK = "/tmp/bg_cam_err_streak"
-TMP_CAM_STATE_JSON = "/tmp/cam_state.json"
+TMP_BG_CAM_ERR_STREAK = "/tmp/cam_state/streak"
+TMP_CAM_STATE_DIR = "/tmp/cam_state"
 TMP_PART_STATE = "/tmp/chk_cam_operate.part_state"
 TMP_CHK_MMC_VAR = "/tmp/chk_mmc_var"
 TMP_ERR_SDCARD_LOG = "/tmp/err_sdcard.log"
 TMP_FILE_CHECK = "/tmp/file_check"
 TMP_START_DELAY = "/tmp/pim_cam_start_delay"
-TMP_START_TS = "/tmp/pim_cam_start_ts"
+TMP_START_TS = "/tmp/cam_state/last_start_ts"
 TMP_VHL_CACHE = "/tmp/pim_vhl_name.cache"
 TMP_VHL_CACHE_SRC = "/tmp/pim_vhl_name.cache.src"
 TMP_SESSION_DEBUG_LOG = "/tmp/session_debug.log"
@@ -618,26 +618,15 @@ class PIMHealthGuardian:
     def _read_cam_state(self) -> Tuple[str, int]:
         state = "unknown"
         streak = 0
-        try:
-            if os.path.exists(TMP_CAM_STATE_JSON):
-                with open(TMP_CAM_STATE_JSON, "r") as f:
-                    data_raw = cast(object, json.load(f))
-                data = self._as_dict(data_raw)
-                if data:
-                    s = data.get("state")
-                    if isinstance(s, str) and s:
-                        state = s
-                    streak = self._to_int(data.get("streak", streak), streak)
-        except:
-            pass
 
-        shadow_state = self._safe_read_text_file("/tmp/cam_state.state", "")
-        if shadow_state:
-            state = shadow_state
-        shadow_streak_text = self._safe_read_text_file("/tmp/cam_state.streak", "")
-        if shadow_streak_text:
+        # 파일 기반 디렉토리 우선
+        dir_state = self._safe_read_text_file(os.path.join(TMP_CAM_STATE_DIR, "state"), "")
+        dir_streak = self._safe_read_text_file(os.path.join(TMP_CAM_STATE_DIR, "streak"), "")
+        if dir_state:
+            state = dir_state
+        if dir_streak:
             try:
-                streak = int(shadow_streak_text)
+                streak = int(dir_streak)
             except:
                 pass
 
@@ -689,20 +678,12 @@ class PIMHealthGuardian:
 
         start_time_chk = self._safe_read_text_file(TMP_START_VIDEO_TIME_CHK, "")
         start_time_cpy = self._safe_read_text_file(TMP_START_VIDEO_TIME_CPY, "")
-        try:
-            if os.path.exists(TMP_CAM_STATE_JSON):
-                with open(TMP_CAM_STATE_JSON, "r") as f:
-                    cam_state_raw = cast(object, json.load(f))
-                cam_state_data = self._as_dict(cam_state_raw)
-                if cam_state_data:
-                    recording_raw = cam_state_data.get("recording")
-                    recording_data = self._as_dict(recording_raw)
-                    for key in cam_state_recording:
-                        value = recording_data.get(key, "")
-                        if isinstance(value, str):
-                            cam_state_recording[key] = value
-        except:
-            pass
+        # 파일 기반 디렉토리에서 recording 값 읽기
+        rec_dir = os.path.join(TMP_CAM_STATE_DIR, "recording")
+        for key in cam_state_recording:
+            value = self._safe_read_text_file(os.path.join(rec_dir, key), "")
+            if value:
+                cam_state_recording[key] = value
         if start_time_chk and start_time_cpy:
             start_time_sync = start_time_chk == start_time_cpy
         else:
@@ -723,7 +704,7 @@ class PIMHealthGuardian:
             "file_check": file_check,
             "file_check_age_sec": file_check_age,
             "chk_mmc_var": chk_mmc_var,
-            "cam_state_json_exists": os.path.exists(TMP_CAM_STATE_JSON),
+            "cam_state_json_exists": os.path.isdir(TMP_CAM_STATE_DIR),
             "part_state_lines": part_state_lines,
             "err_sdcard_age_sec": err_sdcard_age,
             "pim_cam_start_ts": start_ts,
