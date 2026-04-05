@@ -1,14 +1,3 @@
-[submodule "vsd"]
-	path = vsd
-	url = http://192.168.10.2:31406/mhkim/vsd.git
-[submodule "ord"]
-	path = ord
-	url = http://192.168.10.2:31406/hwjo/ord.git
-	ignore = dirty
-[submodule "vcm"]
-	path = vcm
-	url = http://192.168.10.2:31406/hwjo/_vcm.git
-	ignore = dirty
 [submodule "adab"]
 	path = adab
 	url = http://192.168.10.2:31406/cantops-iot-solution/adab.git

@@ -1,0 +1,252 @@
+{
+  "NETWORK": {
+    "used": "ETH0",
+    "WLAN0": {
+      "security": "PSK",
+      "ssid": "jhw",
+      "identity": "c0ee40c518fc",
+      "passwd": "12345678",
+      "method": "static",
+      "address": "192.168.0.5",
+      "netmask": "255.255.255.0",
+      "gateway": "",
+      "bgscan": "simple:3:-65:30",
+      "chmask": false,
+      "mask_freq": [
+        5745,
+        5765
+      ]
+    },
+    "ETH0": {
+      "method": "static",
+      "address": "192.168.214.4",
+      "netmask": "255.255.255.0",
+      "gateway": "192.168.214.1"
+    },
+    "ETH1": {
+      "method": "static",
+      "address": "192.168.0.4",
+      "netmask": "255.255.255.0",
+      "gateway": "",
+      "ping_check_enable": true,
+      "client_ip_addr": "192.168.0.1",
+      "ping_max_fail_count": 2
+    }
+  },
+  "SENSORS": {
+    "ACC": {
+      "use": true,
+      "samplerate": 1000,
+      "scale": 1000,
+      "targetX": "x",
+      "targetY": "y",
+      "targetZ": "z",
+      "offset": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "use_filter": false,
+      "ntaps": 101,
+      "cutoff": 499,
+      "decimation": 1,
+      "dataframe": "ACC"
+    },
+    "ADC": {
+      "use": true,
+      "version": "",
+      "fpga_version": "",
+      "deviceid": [
+        0,
+        0
+      ],
+      "samplerate": 1000,
+      "cnv_unit": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "use_filter": false,
+      "ntaps": 51,
+      "cutoff": 499,
+      "decimation": 20,
+      "dataframe": "ADC"
+    },
+    "ETHERCAT": {
+      "use": false,
+      "samplerate": 1000,
+      "version": "",
+      "deviceid": [
+        "RX",
+        "TX"
+      ],
+      "direction": "BOTH",
+      "wcnt": 15,
+      "PDO_len": 518,
+      "#motx_type": [
+        "datatype",
+        "startidx",
+        "endidx",
+        "gain"
+      ],
+      "mot1_sp": [
+        "<i",
+        125,
+        129,
+        0.00732421875
+      ],
+      "mot1_tq": [
+        "<h",
+        123,
+        125,
+        0.1
+      ],
+      "mot2_sp": [
+        "<i",
+        106,
+        110,
+        0.00732421875
+      ],
+      "mot2_tq": [
+        "<h",
+        104,
+        106,
+        0.1
+      ],
+      "mot3_sp": [
+        "<i",
+        144,
+        148,
+        -0.00732421875
+      ],
+      "mot3_tq": [
+        "<h",
+        142,
+        144,
+        -0.1
+      ],
+      "mot4_sp": [
+        "<i",
+        163,
+        167,
+        0.00732421875
+      ],
+      "mot4_tq": [
+        "<h",
+        161,
+        163,
+        0.1
+      ],
+      "use_filter": false,
+      "ntaps": 101,
+      "cutoff": 499,
+      "decimation": 1,
+      "dataframe": "ETHERCAT"
+    }
+  },
+  "VHL_CAM": {
+    "cam_width": 1920,
+    "cam_height": 1080,
+    "event_auto_remove": true,
+    "event_storage_size": 10,
+    "floor": "NONAME",
+    "fps": 15,
+    "line": "NONAME",
+    "recording_time": 1,
+    "vhl_name": "VD3001",
+    "log_level": 6,
+    "debug_level": 0,
+    "app": "gstApp",
+    "id": "user",
+    "muxer": "mp4",
+    "tmp_path": "/dev/shm",
+    "sd_tmp_path": "/mnt/sd_cam/tmp",
+    "final_path": "/mnt/sd_cam",
+    "capture": {
+      "enable": false,
+      "delay": 0,
+      "timeout": 1000,
+      "record": false,
+      "rtsp": true,
+      "encoder": "raw",
+      "quality": 85,
+      "response": true,
+      "path": "/dev/shm/capture",
+      "queue_size": 30
+    },
+    "rtsp_tune": {
+      "rtsp_factory_latency_ms": 100,
+      "rtsp_appsink_max_buffers": 2,
+      "rtsp_factory_queue_max_buffers": 2,
+      "rtsp_bin_queue_max_time_ms": 50
+    },
+    "i2c2": {
+      "exp_time": 11000,
+      "ch0": {
+        "enable": true,
+        "vflip": false,
+        "hflip": false,
+        "ae_on": true,
+        "ae_gain": 256,
+        "bps": [
+          2048,
+          2048
+        ]
+      },
+      "ch1": {
+        "enable": true,
+        "vflip": false,
+        "hflip": false,
+        "ae_on": false,
+        "ae_gain": 1000,
+        "bps": [
+          2048,
+          2048
+        ]
+      }
+    },
+    "i2c1": {
+      "exp_time": 5000,
+      "ch2": {
+        "enable": true,
+        "vflip": true,
+        "hflip": false,
+        "ae_on": true,
+        "ae_gain": 128,
+        "bps": [
+          2048,
+          2048
+        ]
+      },
+      "ch3": {
+        "enable": true,
+        "vflip": false,
+        "hflip": true,
+        "ae_on": true,
+        "ae_gain": 10000,
+        "bps": [
+          2048,
+          2048
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,3 @@
+  sudo touch /var/run/vsd.pipe
+  sudo chmod 666 /var/run/vsd.pipe
+
