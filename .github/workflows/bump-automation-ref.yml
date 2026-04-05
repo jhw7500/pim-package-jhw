@@ -3,6 +3,7 @@ name: Bump automation workflow refs
 on:
   push:
     branches:
+      - main
       - master
     paths:
       - '.github/workflow-config.yml'
@@ -54,7 +55,8 @@ jobs:
 
       - name: Stop if automation_ref unchanged
         if: steps.ref.outputs.changed != 'true'
-        run: echo "automation_ref unchanged; nothing to bump."
+        run: |
+          echo "automation_ref unchanged; nothing to bump."
 
       - name: Rewrite workflow refs
         if: steps.ref.outputs.changed == 'true'

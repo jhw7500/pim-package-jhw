@@ -1,4 +1,4 @@
-name: Gemini Manual Issue Triage
+name: '🧹 Gemini Manual Issue Triage'
 
 on:
   workflow_dispatch:
