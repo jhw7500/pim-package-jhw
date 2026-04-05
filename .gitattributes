@@ -6,3 +6,7 @@
 
 dist/pim/root/SOMBASE_TEST/mfg60n-aarch64-9.32.0.6.sh binary
 dist/pim/opt/cis/firmware/*.hex binary
+# Git LFS - binary tracking
+*.ko filter=lfs diff=lfs merge=lfs -text
+dist/**/*.bin filter=lfs diff=lfs merge=lfs -text
+dist/bin/gstApp* filter=lfs diff=lfs merge=lfs -text
