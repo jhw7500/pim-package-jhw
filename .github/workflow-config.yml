@@ -1,0 +1,41 @@
+# GitHub Actions Workflow Configuration
+#
+# This file controls enable/disable toggles for shared workflows.
+# Workflows default to enabled if this file is missing.
+
+# Shared workflow version pin for jhw7500/automation.
+automation_ref: v1.28
+
+workflows:
+  # Repo-specific
+  shellcheck:
+    enabled: true
+    description: "Shell script static analysis"
+
+  commitlint:
+    enabled: true
+    description: "Conventional commits enforcement"
+
+  # Shared Claude workflows
+  claude:
+    enabled: true
+    description: "Claude AI integration (@claude mention)"
+
+  claude-code-review:
+    enabled: true
+    auto: true
+    description: "Claude automatic PR review"
+
+  # Shared Gemini workflows
+  gemini-dispatch:
+    enabled: true
+    description: "Central dispatcher for Gemini commands"
+
+  gemini-auto-review:
+    enabled: true
+    auto: true
+    description: "Automatic PR review with Gemini"
+
+  gemini-scheduled-triage:
+    enabled: false
+    description: "Scheduled issue triage (disabled by default)"
