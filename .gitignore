@@ -16,3 +16,6 @@ __pycache__/
 mcp_trust_test/build
 docs/plans
 docs/superpowers
+
+# Tool directories
+.omc/
