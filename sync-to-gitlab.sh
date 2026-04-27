@@ -22,7 +22,7 @@ declare -A SUBMODULE_MAP=(
 )
 
 # pim 본체 동기화 대상 디렉토리 (서브모듈 외)
-PIM_DIRS=("dist" "patch" "upgrade_file" "tools" "release")
+PIM_DIRS=("dist" "patch" "upgrade_file" "tools" "release" "docker")
 PIM_FILES=("build.sh")
 
 DRY_RUN=false
