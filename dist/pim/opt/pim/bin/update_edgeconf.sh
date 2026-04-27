@@ -249,6 +249,7 @@ jq --argjson key0 "$ch0_en" --argjson key1 "$ch0_rotate" --argjson key2 "$bps" '
 | .VHL_CAM.i2c2.ch0 |= (if .hflip == null then .hflip = $key1 else . end)
 | .VHL_CAM.i2c2.ch0 |= (if .ae_on == null then .ae_on = true else . end)
 | .VHL_CAM.i2c2.ch0 |= (if .ae_gain == null then .ae_gain = 256 else . end)
+| .VHL_CAM.i2c2.ch0 |= (if .awb == null then .awb = "auto" else . end)
 | .VHL_CAM.i2c2.ch0 |= (if .bps == null then .bps = [$key2,2048] else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
 #echo "check ch1"
@@ -257,6 +258,7 @@ jq --argjson key0 "$ch1_en" --argjson key1 "$ch1_rotate" --argjson key2 "$bps" '
 | .VHL_CAM.i2c2.ch1 |= (if .hflip == null then .hflip = $key1 else . end)
 | .VHL_CAM.i2c2.ch1 |= (if .ae_on == null then .ae_on = true else . end)
 | .VHL_CAM.i2c2.ch1 |= (if .ae_gain == null then .ae_gain = 256 else . end)
+| .VHL_CAM.i2c2.ch1 |= (if .awb == null then .awb = "auto" else . end)
 | .VHL_CAM.i2c2.ch1 |= (if .bps == null then .bps = [$key2,2048] else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
 #echo "check ch2"
@@ -265,6 +267,7 @@ jq --argjson key0 "$ch2_en" --argjson key1 "$ch2_rotate" --argjson key2 "$bps" '
 | .VHL_CAM.i2c1.ch2 |= (if .hflip == null then .hflip = $key1 else . end)
 | .VHL_CAM.i2c1.ch2 |= (if .ae_on == null then .ae_on = true else . end)
 | .VHL_CAM.i2c1.ch2 |= (if .ae_gain == null then .ae_gain = 256 else . end)
+| .VHL_CAM.i2c1.ch2 |= (if .awb == null then .awb = "auto" else . end)
 | .VHL_CAM.i2c1.ch2 |= (if .bps == null then .bps = [$key2,2048] else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
 #echo "check ch3"
@@ -273,7 +276,34 @@ jq --argjson key0 "$ch3_en" --argjson key1 "$ch3_rotate" --argjson key2 "$bps" '
 | .VHL_CAM.i2c1.ch3 |= (if .hflip == null then .hflip = $key1 else . end)
 | .VHL_CAM.i2c1.ch3 |= (if .ae_on == null then .ae_on = true else . end)
 | .VHL_CAM.i2c1.ch3 |= (if .ae_gain == null then .ae_gain = 256 else . end)
+| .VHL_CAM.i2c1.ch3 |= (if .awb == null then .awb = "auto" else . end)
 | .VHL_CAM.i2c1.ch3 |= (if .bps == null then .bps = [$key2,2048] else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+
+echo "check led_flash per channel"
+# Legacy cleanup: drop experimental 'subdev' draft (replaced by led_flash)
+jq 'del(.VHL_CAM.i2c2.ch0.subdev, .VHL_CAM.i2c2.ch1.subdev, .VHL_CAM.i2c1.ch2.subdev, .VHL_CAM.i2c1.ch3.subdev)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+
+# led_flash: integrated LED control applied via V4L2 ioctl (max9296 driver)
+#   enable      : bool. gates mcp4018_power_chX (MAX9295 MFP4 GPIO) + led_flash_chX bit8 (AR0234 R0x3270)
+#   wiper       : int  0..127 (MCP4018 digital pot; 63 = mid-scale default)
+#   flash_delay : int  0..255 (AR0234 R0x3270 bit7:0 DELAY field)
+jq '.VHL_CAM.i2c2.ch0.led_flash |= (. // {})
+| .VHL_CAM.i2c2.ch0.led_flash |= (if .enable      == null then .enable      = false else . end)
+| .VHL_CAM.i2c2.ch0.led_flash |= (if .wiper       == null then .wiper       = 63    else . end)
+| .VHL_CAM.i2c2.ch0.led_flash |= (if .flash_delay == null then .flash_delay = 0     else . end)
+| .VHL_CAM.i2c2.ch1.led_flash |= (. // {})
+| .VHL_CAM.i2c2.ch1.led_flash |= (if .enable      == null then .enable      = false else . end)
+| .VHL_CAM.i2c2.ch1.led_flash |= (if .wiper       == null then .wiper       = 63    else . end)
+| .VHL_CAM.i2c2.ch1.led_flash |= (if .flash_delay == null then .flash_delay = 0     else . end)
+| .VHL_CAM.i2c1.ch2.led_flash |= (. // {})
+| .VHL_CAM.i2c1.ch2.led_flash |= (if .enable      == null then .enable      = false else . end)
+| .VHL_CAM.i2c1.ch2.led_flash |= (if .wiper       == null then .wiper       = 63    else . end)
+| .VHL_CAM.i2c1.ch2.led_flash |= (if .flash_delay == null then .flash_delay = 0     else . end)
+| .VHL_CAM.i2c1.ch3.led_flash |= (. // {})
+| .VHL_CAM.i2c1.ch3.led_flash |= (if .enable      == null then .enable      = false else . end)
+| .VHL_CAM.i2c1.ch3.led_flash |= (if .wiper       == null then .wiper       = 63    else . end)
+| .VHL_CAM.i2c1.ch3.led_flash |= (if .flash_delay == null then .flash_delay = 0     else . end)
+' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
 #streamApp
 if [[ $1 == 1 ]]; then

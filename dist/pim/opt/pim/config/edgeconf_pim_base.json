@@ -212,7 +212,12 @@
                 "bps": [
                     2048,
                     2048
-                ]
+                ],
+                "led_flash": {
+                    "enable": false,
+                    "wiper": 63,
+                    "flash_delay": 0
+                }
             },
             "ch1": {
                 "enable": true,
@@ -223,7 +228,12 @@
                 "bps": [
                     2048,
                     2048
-                ]
+                ],
+                "led_flash": {
+                    "enable": false,
+                    "wiper": 63,
+                    "flash_delay": 0
+                }
             }
         },
         "i2c1": {
@@ -237,7 +247,12 @@
                 "bps": [
                     2048,
                     2048
-                ]
+                ],
+                "led_flash": {
+                    "enable": false,
+                    "wiper": 63,
+                    "flash_delay": 0
+                }
             },
             "ch3": {
                 "enable": true,
@@ -248,7 +263,12 @@
                 "bps": [
                     2048,
                     2048
-                ]
+                ],
+                "led_flash": {
+                    "enable": false,
+                    "wiper": 63,
+                    "flash_delay": 0
+                }
             }
         }
     }
