@@ -6,7 +6,7 @@
 #include "util.h"
 #endif
 
-#define SW_VERSION   "4.3"
+#define SW_VERSION   "4.4"
 
 int main()
 {

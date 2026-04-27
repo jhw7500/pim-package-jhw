@@ -2,6 +2,8 @@
 #include "tcpServer.h"
 #include <unistd.h>
 #include <errno.h>
+#include <sys/stat.h>
+#include <time.h>
 
 struct SrtQueueItem {
 	char filePath[512];
@@ -292,7 +294,7 @@ dequeuedData.time.wMinute, dequeuedData.time.wSecond, _TVhlConf.vhl_name, dequeu
     return 0;
 }
 
-void* thread_watingMakeSRT(void* pData)
+void* thread_waitingMakeSRT(void* pData)
 {
 	CTCPServer* instance = CTCPServer::getInstance() ;
 	
@@ -313,14 +315,14 @@ int CTCPServer::waitingMakeSRT()
 	//char *strTmp = (char *)malloc(512);
 	char strTmp[512];
 	//char strDeque[512];
-	char prefixFileName[128];
+	char prefixFileName[128] = {0};	/* 첫 분할(L611) 전에 srt/vib 분기에서 garbage 사용 방지 */
 	uint8_t srtMinStart, srtSecStart;
-	long tmp1, tmp2; 
 	long setTime;
 	struct timeval  tv;
 	uint64_t epochCurMsec, epochPreMsec = 0; 
 	//struct tm* ptm;
 	bool resync_f = false;
+	time_t lastStartMtime = 0;	/* PATH_START_VIDEO_TIME 마지막 처리 시점의 mtime — gstApp 재작성 감지용 */
 	TQueue _TSrtQueue;
 	char *_TSrtDequeueStr;
 	uint srt_delay = _TVcmConf.srt_delay*MSEC;
@@ -412,87 +414,59 @@ set_start_time:
 						__LOG(LOG_ERR, "[SRT][%s:%d] ret:%d", _FILE_, __LINE__, ret);
 					}
 				}
+				{
+					struct stat st;
+					if (stat(PATH_START_VIDEO_TIME, &st) == 0) {
+						lastStartMtime = st.st_mtime;
+						__LOG(LOG_INFO, "[SRT][%s:%d] lastStartMtime=%ld", _FILE_, __LINE__, (long)lastStartMtime);
+					}
+				}
 				break;
 			}
 		}
         usleep(10*MSEC);
 	} while(1);
 
+	/* mktime 기반 시각 비교 + 시프트 — date popen(3회/iter) 제거, str trailing newline 제거 */
 	while (_TVcmConf.srt_auto_sync)
 	{
-		if(m_flagDestroy)
+		if (m_flagDestroy)
 			break;
 
-		fp = popen("date +%s", "r");
-		if (NULL == fp) {
-			ret = -1;
-			perror("popen() fail");
-			__LOG(LOG_ERR, "[SRT][%s:%d] ret:%d", _FILE_, __LINE__, ret);
-            usleep(100*MSEC);
-			continue;
+		struct tm tm_target;
+		memset(&tm_target, 0, sizeof(tm_target));
+		if (sscanf(str, "%4d%2d%2d %2d:%2d:%2d",
+				&tm_target.tm_year, &tm_target.tm_mon, &tm_target.tm_mday,
+				&tm_target.tm_hour, &tm_target.tm_min, &tm_target.tm_sec) != 6) {
+			__LOG(LOG_ERR, "[SRT][%s:%d] sscanf failed: %s", _FILE_, __LINE__, str);
+			break;
 		}
-		while (fgets(strTmp, 128, fp));
-		ret = pclose(fp);
-		tmp1 = atol(strTmp);
-		snprintf(strTmp, sizeof(strTmp), "date -d '%s' +%%s", str);
+		tm_target.tm_year -= 1900;
+		tm_target.tm_mon  -= 1;
+		tm_target.tm_isdst = -1;
+		time_t tmp1 = time(NULL);
+		time_t tmp2 = mktime(&tm_target);
 
-		fp = popen(strTmp, "r");
-		if (NULL == fp) {
-			ret = -1;
-			perror("popen() fail");
-			__LOG(LOG_ERR, "[SRT][%s:%d] ret:%d", _FILE_, __LINE__, ret);
-            usleep(100*MSEC);
-			continue;
-		}
-		while (fgets(strTmp, 128, fp));
-		ret = pclose(fp);
-		tmp2 = atol(strTmp);
-
-		if(tmp1 > tmp2) {
-			__LOG(LOG_WARNING, "[SRT][%s:%d] time diff %d", _FILE_, __LINE__, tmp1-tmp2);
-			//srtMinStart = sysTime.wMinute+_TVhlConf.recording_time;
-#if 1
-            if(tmp1 - tmp2 < 30)
-            {
-                __LOG(LOG_NOTICE, "[SRT][%s:%d] start time : %s", _FILE_, __LINE__, str);
-                __LOG(LOG_INFO, "[SRT][%s:%d] start min : %d, sec : %d", _FILE_, __LINE__, srtMinStart, srtSecStart);
-                break;
-            }
-#endif
-		} else {
-			//__LOG(LOG_NOTICE, "[SRT][%s:%d] start time : %s", _FILE_, __LINE__, str);
-			__LOG(LOG_NOTICE, "[SRT][%s:%d] start min : %d, sec : %d", _FILE_, __LINE__, srtMinStart, srtSecStart);
-
-#if 0
-			sprintf(strTmp, "date -d '%s' +'%%Y%%m%%d_%%H%%M%%S'", str);
-			fp = popen(strTmp, "r");
-			if (NULL == fp) {
-				ret = -1;
-				perror("popen() fail");
-				__LOG(LOG_ERR, "[SRT][%s:%d] ret:%d", _FILE_, __LINE__, ret);
+		if (tmp1 > tmp2) {
+			__LOG(LOG_WARNING, "[SRT][%s:%d] time diff %ld", _FILE_, __LINE__, (long)(tmp1 - tmp2));
+			if (tmp1 - tmp2 < 30) {
+				__LOG(LOG_NOTICE, "[SRT][%s:%d] start time : %s", _FILE_, __LINE__, str);
+				__LOG(LOG_INFO, "[SRT][%s:%d] start min : %d, sec : %d", _FILE_, __LINE__, srtMinStart, srtSecStart);
+				break;
 			}
-			while (fgets(str, 128, fp));
-			ret = pclose(fp);
-			sprintf(strTmp, "echo %s > %s_", str, PATH_START_VIDEO_TIME);
-#endif
+		}
+		else {
+			__LOG(LOG_NOTICE, "[SRT][%s:%d] start min : %d, sec : %d", _FILE_, __LINE__, srtMinStart, srtSecStart);
 			break;
-			//usleep((tmp2-tmp1-1)*SEC);
 		}
-		sprintf(strTmp, "date '+%%Y%%m%%d %%H:%%M:%%S' -d '%s %d min'", str, _TVhlConf.recording_time);
-		__LOG(LOG_WARNING, "[SRT][%s:%d] %s", _FILE_, __LINE__, strTmp);
-		fp = popen(strTmp, "r");
-		if (NULL == fp) {
-			ret = -1;
-			perror("popen() fail");
-			__LOG(LOG_ERR, "[SRT][%s:%d] ret:%d", _FILE_, __LINE__, ret);
-            usleep(100*MSEC);
-			continue;
-		}
-		while (fgets(str, 128, fp));
-		ret = pclose(fp);
-		srtMinStart = atoi(&str[12]);
-		srtSecStart = atoi(&str[15]);
-		//srtSecStart = 0;
+
+		/* recording_time 만큼 미래 cycle로 시프트 */
+		time_t shifted = tmp2 + (time_t)_TVhlConf.recording_time * 60;
+		struct tm tm_shifted;
+		localtime_r(&shifted, &tm_shifted);
+		strftime(str, 128, "%Y%m%d %H:%M:%S", &tm_shifted);
+		srtMinStart = (uint8_t)tm_shifted.tm_min;
+		srtSecStart = (uint8_t)tm_shifted.tm_sec;
 		resync_f = true;
 		__LOG(LOG_WARNING, "[SRT][%s:%d] file resync : %s", _FILE_, __LINE__, str);
 	}
@@ -514,17 +488,12 @@ set_start_time:
 		else if (diff > 1800) diff -= 3600;
 
 		// 목표 시간을 지났거나(diff >= 0) 정각 근처라면 시작
-		if(diff >= 0 && diff < 30) 
+		if(diff >= 0 && diff < 30)
 		{
 			__LOG(LOG_INFO, "[SRT][%s:%d] start signal detected (diff:%d)", _FILE_, __LINE__, diff);
-			__LOG(LOG_INFO, "[SRT][%s:%d] removing %s", _FILE_, __LINE__, PATH_START_VIDEO_TIME);
-			ret = unlink(PATH_START_VIDEO_TIME);
-			if(ret < 0 && errno != ENOENT) {
-				__LOG(LOG_ERR, "[SRT][%s:%d] unlink fail: %s (errno:%d)", _FILE_, __LINE__, PATH_START_VIDEO_TIME, errno);
-                usleep(MSEC);
-				continue;
-			}
-			ret = 0; 
+			/* PATH_START_VIDEO_TIME 보존: gstApp이 카메라 (재)시작 시 GST_MESSAGE_NEW_CLOCK
+			 * 핸들러에서 동일 경로를 재작성하면 mtime 변화로 자동 재동기화 */
+			ret = 0;
 			break;
 		}
         usleep(MSEC);
@@ -546,9 +515,13 @@ set_start_time:
 		if(m_flagDestroy)
 			break;
 
-        if(access(PATH_START_VIDEO_TIME, F_OK) == 0) {
-            __LOG(LOG_WARNING, "[SRT][%s:%d] reset start video time", _FILE_, __LINE__);
-            goto set_start_time;
+        {
+            struct stat st;
+            if (stat(PATH_START_VIDEO_TIME, &st) == 0 && st.st_mtime != lastStartMtime) {
+                __LOG(LOG_WARNING, "[SRT][%s:%d] start_video_time mtime changed (%ld -> %ld) - resync",
+                    _FILE_, __LINE__, (long)lastStartMtime, (long)st.st_mtime);
+                goto set_start_time;
+            }
         }
 
 		do		//if(sysTime.wSecond == 0) 
@@ -602,6 +575,20 @@ set_start_time:
 				}
 				snprintf(prefixFileName, sizeof(prefixFileName), "%s_%04d%02d%02d_%02d%02d%02d", _TVhlConf.vhl_name, \
 						sysTime.wYear, sysTime.wMonth, sysTime.wDay, sysTime.wHour, srtMinStart, 0);
+				/* 비정상 prefix(빈값/제어문자/vhl_name 불일치) 차단 — 디버그 정보 함께 기록 */
+				if (prefixFileName[0] == '\0' || (unsigned char)prefixFileName[0] < 0x20 ||
+					(_TVhlConf.vhl_name[0] != '\0' &&
+					 strncmp(prefixFileName, _TVhlConf.vhl_name, strlen(_TVhlConf.vhl_name)) != 0)) {
+					__LOG(LOG_ERR, "[SRT][%s:%d] invalid prefix bytes=[%02x %02x %02x %02x] vhl='%s' min=%d",
+						_FILE_, __LINE__,
+						(unsigned)prefixFileName[0] & 0xff, (unsigned)prefixFileName[1] & 0xff,
+						(unsigned)prefixFileName[2] & 0xff, (unsigned)prefixFileName[3] & 0xff,
+						_TVhlConf.vhl_name, srtMinStart);
+					prefixFileName[0] = '\0';	/* 가드에서 막히도록 비움 */
+				}
+				else {
+					__LOG(LOG_INFO, "[SRT][%s:%d] split prefix='%s'", _FILE_, __LINE__, prefixFileName);
+				}
 
 				i = 0;
 				setTime = tv.tv_sec;
@@ -662,7 +649,7 @@ set_start_time:
 			sanitize_srt_text(srtSafe, sizeof(srtSafe), srtSnapshot);
 
 			usleep(srt_delay);
-			if(_TVcmConf.srt_enable)
+			if(_TVcmConf.srt_enable && prefixFileName[0] != 0)
 			{
 				SrtQueueItem item;
 				snprintf(item.filePath, sizeof(item.filePath), "%s/%s-data.srt.part", _TVhlConf.tmp_path, prefixFileName);
@@ -695,7 +682,7 @@ set_start_time:
 			}
 			memcpy(srtPreTime.byte, srtCurTime.byte, sizeof(SysTime));
 
-			if(_TVcmConf.vib_test)
+			if(_TVcmConf.vib_test && prefixFileName[0] != 0)
 			{
 				char srtSnapshot[256];
 				pthread_mutex_lock(&g_srtBufMutex);
@@ -865,10 +852,17 @@ int CTCPServer::init()
 	if(ret < 0)
 		__LOG(LOG_CRIT, "[WRT][%s:%d] ret:%d", _FILE_, __LINE__, ret);
 
-	// SRT 생성 스레드 무조건 생성 (테스트 및 안정성 확보)
-	ret = pthread_create(&m_threadMakeSRT, NULL, &thread_watingMakeSRT, NULL);
-	if(ret < 0)
-		__LOG(LOG_CRIT, "[SRT][%s:%d] ret:%d", _FILE_, __LINE__, ret);
+	// SRT/vib 관련 플래그 중 하나라도 켜져있을 때만 쓰레드 생성
+	if(_TVcmConf.srt_enable || _TVcmConf.srt_test || _TVcmConf.vib_enable || _TVcmConf.vib_test) {
+		ret = pthread_create(&m_threadMakeSRT, NULL, &thread_waitingMakeSRT, NULL);
+		if(ret < 0)
+			__LOG(LOG_CRIT, "[SRT][%s:%d] ret:%d", _FILE_, __LINE__, ret);
+		else
+			m_srtThreadActive = true;
+	}
+	else {
+		__LOG(LOG_NOTICE, "[SRT][%s:%d] skip thread (srt/vib flags all off)", _FILE_, __LINE__);
+	}
 
 	if(_TVcmConf.ops_enable) {
 		ret = pthread_create(&m_threadGetOPS, NULL, &thread_waitingGetOPS, NULL);
@@ -895,9 +889,11 @@ int CTCPServer::destroy()
 	if(ret < 0)
 		__LOG(LOG_CRIT, "[TCP][%s:%d] ret:%d", _FILE_, __LINE__, ret);
 
-	ret = pthread_join(m_threadMakeSRT, &nStatus);
-	if(ret < 0)
-		__LOG(LOG_CRIT, "[SRT][%s:%d] ret:%d", _FILE_, __LINE__, ret);
+	if(m_srtThreadActive) {
+		ret = pthread_join(m_threadMakeSRT, &nStatus);
+		if(ret < 0)
+			__LOG(LOG_CRIT, "[SRT][%s:%d] ret:%d", _FILE_, __LINE__, ret);
+	}
 
 	ret = pthread_join(m_threadGetOPS, &nStatus);
 	if(ret < 0)

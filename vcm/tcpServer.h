@@ -200,6 +200,7 @@ public :
 private :
 	pthread_t m_threadConnect;
 	pthread_t m_threadMakeSRT;
+	bool m_srtThreadActive = false;	/* SRT/vib 쓰레드 생성 여부 — destroy join 가드용 */
 	pthread_t m_threadGetOPS;
 	pthread_t m_threadFileWriter; // 파일 쓰기 전용 스레드
 	pthread_mutex_t lock_ops = PTHREAD_MUTEX_INITIALIZER;

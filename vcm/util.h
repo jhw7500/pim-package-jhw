@@ -32,6 +32,7 @@
 
 #define PATH_LOG		"/var/log/cantops"
 #define PATH_START_VIDEO_TIME	"/tmp/start_video_time"
+#define PATH_START_VIDEO_TIME_ACTUAL	"/tmp/cam_state/recording/start_video_time"
 #define PATH_CHECK_VIDEO_TIME	"/tmp/start_video_time_chk"
 #define PATH_COPY_VIDEO_TIME	"/tmp/start_video_time_cpy"
 #define PATH_VIB_VIDEO_TIME	"/tmp/start_video_time_vib"
