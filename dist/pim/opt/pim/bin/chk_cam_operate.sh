@@ -1044,24 +1044,38 @@ do
 			datetime=$(date -d "$startTime" "+%Y%m%d_%H%M%S")
             datetime_=$(date -d "$startTime" "+%Y%m%d_%H%M")
             drv_disc=$(read_driver_disconnect)
-			if [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] && [ $(( (drv_disc >> 0) & 1 )) -eq 0 ]; then
+            enabled_chs=()
+            disconnect_chs=()
+            checked_chs=()
+            missing_chs=()
+            srt_status="disabled"
+            [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] && enabled_chs+=("ch0")
+            [[ "$cam_ch1" == *"$ENABLE_VAL"* ]] && enabled_chs+=("ch1")
+            [[ "$cam_ch2" == *"$ENABLE_VAL"* ]] && enabled_chs+=("ch2")
+            [[ "$cam_ch3" == *"$ENABLE_VAL"* ]] && enabled_chs+=("ch3")
+            [ $(( (drv_disc >> 0) & 1 )) -eq 1 ] && disconnect_chs+=("ch0")
+            [ $(( (drv_disc >> 1) & 1 )) -eq 1 ] && disconnect_chs+=("ch1")
+            [ $(( (drv_disc >> 2) & 1 )) -eq 1 ] && disconnect_chs+=("ch2")
+            [ $(( (drv_disc >> 3) & 1 )) -eq 1 ] && disconnect_chs+=("ch3")
+
+            if [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] && [ $(( (drv_disc >> 0) & 1 )) -eq 0 ]; then
                 ((check_num++))
+                checked_chs+=("ch0")
                 if [ -f "${tmp_path}/${vhl_name}_${datetime}-ch0.${muxer}" ]; then
-			        logger -p local0.debug "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime}-ch0.${muxer} exist"
+                    logger -p local0.debug "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime}-ch0.${muxer} exist"
                     ((file_cnt++))
                 elif compgen -G "${tmp_path}/*${vhl_name}_${datetime_}*ch0*" > /dev/null; then
                     logger -p local0.debug "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*ch0* exist"
                     ((file_cnt++))
-	    		else
-		    		logger -p local0.error "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*ch0* not exist"
-                    #((file_cnt--))
-                    #((file_time_err++))
+                else
+                    missing_chs+=("ch0")
                 fi
-			fi
+            fi
 
 
             if [[ "$cam_ch1" == *"$ENABLE_VAL"* ]] && [ $(( (drv_disc >> 1) & 1 )) -eq 0 ]; then
                 ((check_num++))
+                checked_chs+=("ch1")
                 if [ -f "${tmp_path}/${vhl_name}_${datetime}-ch1.${muxer}" ]; then
                     logger -p local0.debug "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime}-ch1.${muxer} exist"
                     ((file_cnt++))
@@ -1069,14 +1083,13 @@ do
                     logger -p local0.debug "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*ch1* exist"
                     ((file_cnt++))
                 else
-                    logger -p local0.error "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*ch1* not exist"
-                    #((file_cnt--))
-                    #((file_time_err++))
+                    missing_chs+=("ch1")
                 fi
             fi
 
             if [[ "$cam_ch2" == *"$ENABLE_VAL"* ]] && [ $(( (drv_disc >> 2) & 1 )) -eq 0 ]; then
                 ((check_num++))
+                checked_chs+=("ch2")
                 if [ -f "${tmp_path}/${vhl_name}_${datetime}-ch2.${muxer}" ]; then
                     logger -p local0.debug "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime}-ch2.${muxer} exist"
                     ((file_cnt++))
@@ -1084,14 +1097,13 @@ do
                     logger -p local0.debug "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*ch2* exist"
                     ((file_cnt++))
                 else
-                    logger -p local0.error "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*ch2* not exist"
-                    #((file_cnt--))
-                    #((file_time_err++))
+                    missing_chs+=("ch2")
                 fi
             fi
 
             if [[ "$cam_ch3" == *"$ENABLE_VAL"* ]] && [ $(( (drv_disc >> 3) & 1 )) -eq 0 ]; then
                 ((check_num++))
+                checked_chs+=("ch3")
                 if [ -f "${tmp_path}/${vhl_name}_${datetime}-ch3.${muxer}" ]; then
                     logger -p local0.debug "[$KEY][$tag:$LINENO] ${tmp_path}/${vhl_name}_${datetime}-ch3.${muxer} exist"
                     ((file_cnt++))
@@ -1099,9 +1111,18 @@ do
                     logger -p local0.debug "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*ch3* exist"
                     ((file_cnt++))
                 else
-                    logger -p local0.error "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*ch3* not exist"
-                    #((file_cnt--))
-                    #((file_time_err++))
+                    missing_chs+=("ch3")
+                fi
+            fi
+
+            if [[ "$srt_en" == *"$ENABLE_VAL"* ]]; then
+                ((check_num++))
+                if compgen -G "${tmp_path}/*${vhl_name}_${datetime_}*data.srt*" > /dev/null; then
+                    logger -p local0.debug "[$KEY][$tag:$LINENO] ${tmp_path}/*${vhl_name}_${datetime_}*data.srt* exist"
+                    ((file_cnt++))
+                    srt_status="ok"
+                else
+                    srt_status="miss"
                 fi
             fi
 
@@ -1123,9 +1144,13 @@ do
             #     fi
             # fi
             sync
+            en_str=$(IFS=,; echo "${enabled_chs[*]}")
+            disc_str=$(IFS=,; echo "${disconnect_chs[*]}")
+            chk_str=$(IFS=,; echo "${checked_chs[*]}")
+            miss_str=$(IFS=,; echo "${missing_chs[*]}")
 			logger -p local0.debug "[$KEY][$tag:$LINENO] check_num:$check_num cnt:$file_cnt"
 			if [ "$check_num" -ne "$file_cnt" ]; then
-                logger -p local0.error "[$KEY][$tag:$LINENO] $check_num != $file_cnt file cnt check fail"
+                logger -p local0.error "[$KEY][$tag:$LINENO] ${muxer},srt file chk fail: en=[${en_str}] disc=[${disc_str}] chk=[${chk_str}] miss=[${miss_str}] srt=[${srt_status}] ($retry/$retry_boot/$retry_total)"
                 start_f=0
                 echo "NG" > $FILE_CHECK
                 cam_disconnect_flag=$(get_cam_disconnect_flag)
@@ -1174,7 +1199,7 @@ do
                     fi
                 fi
 			else
-				logger -p local0.info "[$KEY][$tag:$LINENO] ${muxer},srt file cnt check ok ($retry/$retry_boot/$retry_total)"
+				logger -p local0.info "[$KEY][$tag:$LINENO] ${muxer},srt file chk ok: en=[${en_str}] disc=[${disc_str}] chk=[${chk_str}] srt=[${srt_status}]"
 				retry=0
                 retry_boot=0
                 retry_total=0
