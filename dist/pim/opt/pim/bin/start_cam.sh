@@ -122,10 +122,10 @@ if CheckApp "kill_test.sh"; then
     exit 0
 fi
 
-if CheckApp "vcm"; then
-    logger -p local0.notice "[$key][$tag:$LINENO] kill vcm because srt sync"
-    pkill vcm
-fi
+#if CheckApp "vcm"; then
+#    logger -p local0.notice "[$key][$tag:$LINENO] kill vcm because srt sync"
+#    pkill vcm
+#fi
 
 if CheckApp "BG_Check_for_pim.sh"; then
     logger -p local0.notice "[$key][$tag:$LINENO] killall -s KILL BG_Check_for_pim.sh"
