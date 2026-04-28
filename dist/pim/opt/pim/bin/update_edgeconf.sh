@@ -298,9 +298,6 @@ jq --argjson key0 "$ch3_en" --argjson key1 "$ch3_rotate" --argjson key2 "$bps" '
 | .VHL_CAM.i2c1.ch3 |= (if .bps == null then .bps = [$key2,2048] else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
 echo "check led_flash per channel"
-# Legacy cleanup: drop experimental 'subdev' draft (replaced by led_flash)
-jq 'del(.VHL_CAM.i2c2.ch0.subdev, .VHL_CAM.i2c2.ch1.subdev, .VHL_CAM.i2c1.ch2.subdev, .VHL_CAM.i2c1.ch3.subdev)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
-
 # led_flash: integrated LED control applied via V4L2 ioctl (max9296 driver)
 #   enable      : bool. gates mcp4018_power_chX (MAX9295 MFP4 GPIO) + led_flash_chX bit8 (AR0234 R0x3270)
 #   wiper       : int  0..127 (MCP4018 digital pot; 63 = mid-scale default)
