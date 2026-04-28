@@ -5,10 +5,15 @@ set -euo pipefail
 # sync-to-gitlab.sh — GitHub monorepo → GitLab 서브모듈 동기화
 #
 # 사용법:
-#   ./sync-to-gitlab.sh ord          # ord만 동기화
-#   ./sync-to-gitlab.sh vcm vsd      # vcm, vsd 동기화
-#   ./sync-to-gitlab.sh all          # ord+vcm+vsd+pim 전부
-#   ./sync-to-gitlab.sh --dry-run all # 실제 push 없이 미리보기
+#   ./sync-to-gitlab.sh ord                  # ord 파일만 sync (commit/push 없음)
+#   ./sync-to-gitlab.sh --commit pim         # pim 파일 sync + commit (push 없음)
+#   ./sync-to-gitlab.sh --push all           # ord+vcm+vsd+pim 전부 sync + commit + push
+#   ./sync-to-gitlab.sh --dry-run all        # rsync 시뮬레이션만 (commit/push 없음)
+#
+# 모드 우선순위: --dry-run > 기본(파일만) < --commit < --push
+#
+# 메시지 prefix `sync-back:` 가진 GitHub commit은 GitLab sync 메시지에서 자동 제외
+# (회사 측에서 GitHub로 가져온 변경이 다시 GitLab으로 sync되는 것 방지)
 # =============================================================================
 
 GITHUB_REPO="/home/jhw/ai/opencode/projects/pim-package-jhw"
@@ -22,34 +27,52 @@ declare -A SUBMODULE_MAP=(
 )
 
 # pim 본체 동기화 대상 디렉토리 (서브모듈 외)
-PIM_DIRS=("dist" "patch" "upgrade_file" "tools" "release" "docker")
+# release/는 빌드 산출물이므로 제외 (.gitignore와 정합)
+PIM_DIRS=("dist" "patch" "upgrade_file" "tools" "docker")
 PIM_FILES=("build.sh")
 
 DRY_RUN=false
+DO_COMMIT=false
+DO_PUSH=false
 TARGETS=()
 
 # --- 인자 파싱 ---
 for arg in "$@"; do
     case "$arg" in
         --dry-run) DRY_RUN=true ;;
-        all) TARGETS=("ord" "vcm" "vsd" "pim") ;;
-        *) TARGETS+=("$arg") ;;
+        --commit)  DO_COMMIT=true ;;
+        --push)    DO_COMMIT=true; DO_PUSH=true ;;
+        all)       TARGETS=("ord" "vcm" "vsd" "pim") ;;
+        *)         TARGETS+=("$arg") ;;
     esac
 done
 
 if [ ${#TARGETS[@]} -eq 0 ]; then
-    echo "사용법: $0 [--dry-run] <ord|vcm|vsd|pim|all> [...]"
-    echo ""
-    echo "  ord, vcm, vsd  — 해당 서브모듈만 동기화"
-    echo "  pim            — dist, patch, build.sh 등 본체 파일 동기화"
-    echo "  all            — 전부 동기화"
-    echo "  --dry-run      — 실제 push 없이 미리보기"
+    cat <<EOF
+사용법: $0 [--dry-run|--commit|--push] <ord|vcm|vsd|pim|all> [...]
+
+대상:
+  ord, vcm, vsd  — 해당 서브모듈만 동기화
+  pim            — dist, patch, build.sh 등 본체 파일 동기화
+  all            — 전부 동기화
+
+모드 (기본은 파일만 sync, commit/push 없음):
+  --dry-run      — rsync 시뮬레이션만 (실제 파일 변경 없음)
+  --commit       — 파일 sync + GitLab repo에 commit (push 없음)
+  --push         — 파일 sync + commit + GitLab origin push
+EOF
     exit 1
 fi
 
 # --- 유틸 함수 ---
 log() { echo "=== $1 ==="; }
 warn() { echo "⚠ $1"; }
+
+# sync-back: prefix 메시지를 가진 commit은 GitLab sync에서 제외
+# (회사 측 변경을 GitHub에 통합한 commit이 다시 GitLab으로 sync되는 것 방지)
+filter_sync_back() {
+    grep -v '^[a-f0-9]\+ sync-back:' || true
+}
 
 get_github_commits() {
     local scope="$1"
@@ -58,9 +81,11 @@ get_github_commits() {
 
     if [ -f "$last_sync_file" ]; then
         since_commit=$(cat "$last_sync_file")
-        git -C "$GITHUB_REPO" log --oneline "${since_commit}..HEAD" -- "${scope}/" 2>/dev/null || true
+        git -C "$GITHUB_REPO" log --oneline "${since_commit}..HEAD" -- "${scope}/" 2>/dev/null \
+            | filter_sync_back
     else
-        git -C "$GITHUB_REPO" log --oneline -10 -- "${scope}/" 2>/dev/null || true
+        git -C "$GITHUB_REPO" log --oneline -10 -- "${scope}/" 2>/dev/null \
+            | filter_sync_back
     fi
 }
 
@@ -74,9 +99,11 @@ get_pim_commits() {
 
     if [ -f "$last_sync_file" ]; then
         since_commit=$(cat "$last_sync_file")
-        git -C "$GITHUB_REPO" log --oneline "${since_commit}..HEAD" -- "${paths[@]}" 2>/dev/null || true
+        git -C "$GITHUB_REPO" log --oneline "${since_commit}..HEAD" -- "${paths[@]}" 2>/dev/null \
+            | filter_sync_back
     else
-        git -C "$GITHUB_REPO" log --oneline -10 -- "${paths[@]}" 2>/dev/null || true
+        git -C "$GITHUB_REPO" log --oneline -10 -- "${paths[@]}" 2>/dev/null \
+            | filter_sync_back
     fi
 }
 
@@ -85,6 +112,45 @@ save_sync_point() {
     local current_sha
     current_sha=$(git -C "$GITHUB_REPO" rev-parse HEAD)
     echo "$current_sha" > "$GITLAB_REPO/.last-sync-${scope}"
+}
+
+# commit/push 분기 처리 — sync_submodule, sync_pim, update_submodule_refs에서 공통 사용
+# args: $1=commit_dir, $2=commit_msg, $3=label, $4=save_scope (빈 값이면 save_sync_point 스킵)
+finalize_commit() {
+    local commit_dir="$1"
+    local commit_msg="$2"
+    local label="$3"
+    local save_scope="${4:-}"
+
+    cd "$commit_dir"
+
+    if git diff --quiet && git diff --cached --quiet; then
+        echo "  변경사항 없음 (이미 동기화됨)"
+        cd "$GITHUB_REPO"
+        return 0
+    fi
+
+    if [ "$DO_COMMIT" = false ]; then
+        echo "  [FILES-ONLY] 파일 sync 완료. GitLab repo 검토 후 수동 commit 필요"
+        echo "    (--commit 또는 --push 옵션으로 자동 commit 가능)"
+        cd "$GITHUB_REPO"
+        return 0
+    fi
+
+    git add -A
+    git commit -m "$commit_msg"
+    echo "  ${label} commit 완료"
+
+    if [ "$DO_PUSH" = true ]; then
+        git push
+        echo "  ${label} push 완료"
+    else
+        echo "  [NO-PUSH] commit만 생성됨. push는 수동으로 실행하세요"
+    fi
+
+    cd "$GITHUB_REPO"
+
+    [ -n "$save_scope" ] && save_sync_point "$save_scope"
 }
 
 # --- 서브모듈 동기화 ---
@@ -111,39 +177,23 @@ sync_submodule() {
 
     if [ "$DRY_RUN" = true ]; then
         rsync -avn --delete \
+            --filter=':- .gitignore' \
             --exclude='.git' \
-            --exclude='build/' \
             "${GITHUB_REPO}/${subdir}/" "${GITLAB_REPO}/${subdir}/"
-        echo "  [DRY-RUN] push 건너뜀"
+        echo "  [DRY-RUN] commit/push 건너뜀"
         return 0
     fi
 
     rsync -a --delete \
+        --filter=':- .gitignore' \
         --exclude='.git' \
-        --exclude='build/' \
         "${GITHUB_REPO}/${subdir}/" "${GITLAB_REPO}/${subdir}/"
-
-    # GitLab 서브모듈에서 커밋 + push
-    cd "${GITLAB_REPO}/${subdir}"
-
-    if git diff --quiet && git diff --cached --quiet; then
-        echo "  변경사항 없음 (이미 동기화됨)"
-        cd "$GITHUB_REPO"
-        return 0
-    fi
 
     local sync_msg
     sync_msg="sync: GitHub 반영 ($(date +%Y-%m-%d))"$'\n\n'
     sync_msg+=$(echo "$commits" | sed 's/^/- /')
 
-    git add -A
-    git commit -m "$sync_msg"
-    git push
-
-    echo "  ${scope} 서브모듈 push 완료"
-    cd "$GITHUB_REPO"
-
-    save_sync_point "$scope"
+    finalize_commit "${GITLAB_REPO}/${subdir}" "$sync_msg" "${scope} 서브모듈" "$scope"
 }
 
 # --- pim 본체 동기화 ---
@@ -161,58 +211,42 @@ sync_pim() {
     echo "  GitHub 커밋:"
     echo "$commits" | sed 's/^/    /'
 
-    # 디렉토리 복사
+    # PIM_DIRS + PIM_FILES을 단일 rsync 호출로 통합
+    # source를 GitHub repo 루트로 잡아 루트 .gitignore가 per-directory merge로 자동 적용됨
+    # → 사용자가 .gitignore에 패턴 추가하면 자동으로 동기화에서도 제외 (별도 관리 불필요)
+    local rsync_includes=()
     for d in "${PIM_DIRS[@]}"; do
-        if [ -d "${GITHUB_REPO}/${d}" ]; then
-            echo "  복사: ${d}/"
-            if [ "$DRY_RUN" = true ]; then
-                rsync -avn --delete \
-                    --exclude='.git' \
-                    "${GITHUB_REPO}/${d}/" "${GITLAB_REPO}/${d}/"
-            else
-                rsync -a --delete \
-                    --exclude='.git' \
-                    "${GITHUB_REPO}/${d}/" "${GITLAB_REPO}/${d}/"
-            fi
-        fi
+        rsync_includes+=(--include="${d}/" --include="${d}/**")
+    done
+    for f in "${PIM_FILES[@]}"; do
+        rsync_includes+=(--include="${f}")
     done
 
-    # 개별 파일 복사
-    for f in "${PIM_FILES[@]}"; do
-        if [ -f "${GITHUB_REPO}/${f}" ]; then
-            echo "  복사: ${f}"
-            if [ "$DRY_RUN" = false ]; then
-                cp "${GITHUB_REPO}/${f}" "${GITLAB_REPO}/${f}"
-            fi
-        fi
-    done
+    echo "  복사: ${PIM_DIRS[*]} ${PIM_FILES[*]}"
 
     if [ "$DRY_RUN" = true ]; then
-        echo "  [DRY-RUN] push 건너뜀"
+        rsync -avn --delete \
+            --filter=':- .gitignore' \
+            "${rsync_includes[@]}" \
+            --exclude='*' \
+            --exclude='.git' \
+            "${GITHUB_REPO}/" "${GITLAB_REPO}/"
+        echo "  [DRY-RUN] commit/push 건너뜀"
         return 0
     fi
 
-    # GitLab pim-package에서 커밋 + push
-    cd "$GITLAB_REPO"
-
-    if git diff --quiet && git diff --cached --quiet; then
-        echo "  변경사항 없음 (이미 동기화됨)"
-        cd "$GITHUB_REPO"
-        return 0
-    fi
+    rsync -a --delete \
+        --filter=':- .gitignore' \
+        "${rsync_includes[@]}" \
+        --exclude='*' \
+        --exclude='.git' \
+        "${GITHUB_REPO}/" "${GITLAB_REPO}/"
 
     local sync_msg
     sync_msg="sync: GitHub 반영 ($(date +%Y-%m-%d))"$'\n\n'
     sync_msg+=$(echo "$commits" | sed 's/^/- /')
 
-    git add -A
-    git commit -m "$sync_msg"
-    git push
-
-    echo "  pim 본체 push 완료"
-    cd "$GITHUB_REPO"
-
-    save_sync_point "pim"
+    finalize_commit "$GITLAB_REPO" "$sync_msg" "pim 본체" "pim"
 }
 
 # --- 서브모듈 참조 업데이트 ---
@@ -237,7 +271,14 @@ update_submodule_refs() {
     fi
 
     if [ "$DRY_RUN" = true ]; then
-        echo "  [DRY-RUN] 서브모듈 참조 커밋 건너뜀"
+        echo "  [DRY-RUN] 서브모듈 참조 commit/push 건너뜀"
+        cd "$GITHUB_REPO"
+        return 0
+    fi
+
+    if [ "$DO_COMMIT" = false ]; then
+        echo "  [FILES-ONLY] 서브모듈 참조 변경 감지. GitLab repo에서 수동 commit 필요"
+        echo "    (--commit 또는 --push 옵션으로 자동 commit 가능)"
         cd "$GITHUB_REPO"
         return 0
     fi
@@ -245,8 +286,14 @@ update_submodule_refs() {
     git add ord vcm vsd 2>/dev/null || true
     if ! git diff --cached --quiet; then
         git commit -m "chore: 서브모듈 참조 업데이트 ($(date +%Y-%m-%d))"
-        git push
-        echo "  서브모듈 참조 업데이트 push 완료"
+        echo "  서브모듈 참조 commit 완료"
+
+        if [ "$DO_PUSH" = true ]; then
+            git push
+            echo "  서브모듈 참조 push 완료"
+        else
+            echo "  [NO-PUSH] commit만 생성됨. push는 수동으로 실행하세요"
+        fi
     fi
 
     cd "$GITHUB_REPO"
@@ -257,6 +304,9 @@ cd "$GITHUB_REPO"
 
 log "동기화 시작 ($(date '+%Y-%m-%d %H:%M:%S'))"
 [ "$DRY_RUN" = true ] && warn "DRY-RUN 모드 — 실제 변경 없음"
+[ "$DRY_RUN" = false ] && [ "$DO_COMMIT" = false ] && warn "FILES-ONLY 모드 — 파일만 sync, commit/push 없음"
+[ "$DO_COMMIT" = true ] && [ "$DO_PUSH" = false ] && warn "COMMIT 모드 — commit만, push 없음"
+[ "$DO_PUSH" = true ] && warn "PUSH 모드 — commit + push 자동 진행"
 echo ""
 
 has_submodule=false
