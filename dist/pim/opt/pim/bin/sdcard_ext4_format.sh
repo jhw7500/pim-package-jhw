@@ -123,12 +123,12 @@ wipe_device_signatures() {
     return 0
 }
 
-create_fat32_partition() {
-    log "create DOS partition table and FAT32 partition on $DEVICE"
+create_ext4_partition() {
+    log "create DOS partition table and one Linux partition on $DEVICE"
 
     sfdisk --delete "$DEVICE" >/dev/null 2>&1
 
-    echo ',,c' | sfdisk --wipe always "$DEVICE" >/dev/null 2>&1 || {
+    echo ',,83' | sfdisk --wipe always "$DEVICE" >/dev/null 2>&1 || {
         err "sfdisk failed: $DEVICE"
         return 1
     }
@@ -155,10 +155,10 @@ create_fat32_partition() {
     return 1
 }
 
-format_fat32() {
-    log "format $PART to FAT32"
-    mkfs.vfat -F 32 "$PART" >/dev/null 2>&1 || {
-        err "mkfs.vfat failed: $PART"
+format_ext4() {
+    log "format $PART to ext4"
+    mkfs.ext4 -F "$PART" >/dev/null 2>&1 || {
+        err "mkfs.ext4 failed: $PART"
         return 1
     }
 
@@ -187,15 +187,22 @@ verify_partition_table() {
     return 0
 }
 
-verify_fat32() {
+verify_ext4() {
     FSTYPE="$(blkid -o value -s TYPE "$PART" 2>/dev/null)"
 
-    if [ "$FSTYPE" != "vfat" ]; then
+    if [ "$FSTYPE" != "ext4" ]; then
         err "blkid verification failed: $PART TYPE=$FSTYPE"
         return 1
     fi
 
-    log "filesystem verification success: $PART is vfat"
+    if command -v dumpe2fs >/dev/null 2>&1; then
+        dumpe2fs -h "$PART" >/dev/null 2>&1 || {
+            err "dumpe2fs verification failed: $PART"
+            return 1
+        }
+    fi
+
+    log "filesystem verification success: $PART is ext4"
     return 0
 }
 
@@ -236,10 +243,10 @@ main() {
 
     umount_all_from_dev || exit 1
     wipe_device_signatures || exit 1
-    create_fat32_partition || exit 1
+    create_ext4_partition || exit 1
     verify_partition_table || exit 1
-    format_fat32 || exit 1
-    verify_fat32 || exit 1
+    format_ext4 || exit 1
+    verify_ext4 || exit 1
     init_sdcard_directory || exit 1
 
     log "all done"

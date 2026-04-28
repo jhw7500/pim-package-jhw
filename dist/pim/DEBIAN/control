@@ -1,5 +1,5 @@
 Package: pim-mp
-Version: 0.5.9
+Version: 0.6.0
 Replaces: cis
 Breaks: cis
 Section: test
@@ -72,3 +72,4 @@ Description: PIM application
 0.5.7.3 : pim_gate sFTP_UDP modified enable series cmd
 0.5.8 : gstApp(1.4), ord(4.8.1), vcm(4.3), max9296(2.0), runtime scripts
 0.5.9 : gstApp(1.5), max9296(2.1), pim_guardian(10.0)
+0.6.0 :  pim_gate sen_vl01, edit factory_init

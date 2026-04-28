@@ -62,7 +62,7 @@ def get_global_conf():
 
 #################################################
 
-json_path = getconfval.get_global_conf()
+json_path = get_global_conf()
 #print("json_path : "+json_path)
 
 with open(json_path, "r") as f :

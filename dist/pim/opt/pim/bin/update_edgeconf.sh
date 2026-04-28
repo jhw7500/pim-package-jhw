@@ -17,12 +17,30 @@ err_report() {
 trap err_report ERR
 #FILE_JSON="/home/user/edgeconf_pim.json"
 FILE_JSON=""
-for f in /root/shared_v/edgeconf_*.json /root/shared_v/backup_edgeconf_*.json; do
+for f in /root/shared_v/edgeconf_*.json; do
     [ -e "$f" ] || continue
     if [ -z "$FILE_JSON" ] || [ "$f" -nt "$FILE_JSON" ]; then
         FILE_JSON="$f"
     fi
 done
+
+if [ -z "$FILE_JSON" ] || [ ! -f "$FILE_JSON" ]; then
+    FILE_BACKUP_JSON=""
+    for f in /root/shared_v/backup_edgeconf_*.json; do
+        [ -e "$f" ] || continue
+        if [ -z "$FILE_BACKUP_JSON" ] || [ "$f" -nt "$FILE_BACKUP_JSON" ]; then
+            FILE_BACKUP_JSON="$f"
+        fi
+    done
+    if [ -f "$FILE_BACKUP_JSON" ]; then
+        dir=$(dirname "$FILE_BACKUP_JSON")
+        file=$(basename "$FILE_BACKUP_JSON")
+        newfile=${file#backup_}
+        FILE_JSON="${dir}/${newfile}"
+        cp "$FILE_BACKUP_JSON" "$FILE_JSON"
+        logger -p local0.notice "[$KEY][$tag:$LINENO] edgeconf json copied from backup json ( $FILE_BACKUP_JSON )"
+    fi
+fi
 
 if [ -z "$FILE_JSON" ] || [ ! -f "$FILE_JSON" ]; then
     logger -p local0.err "[$KEY][$tag:$LINENO] edgeconf json not found under /root/shared_v (edgeconf_*.json or backup_edgeconf_*.json)"
@@ -231,7 +249,7 @@ jq '
     )
   | .NETWORK.ETH1 |= (
       if .ping_check_enable != null then .
-      else .ping_check_enable = true
+      else .ping_check_enable = false
       end
     )
   | .NETWORK.ETH1 |= (
@@ -313,6 +331,72 @@ if [[ $1 == 1 ]]; then
 elif [[ $1 == 2 ]]; then
     echo "update for gstApp"
     jq '.VHL_CAM.app = "gstApp"' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+fi
+
+model=$(jq -r '.model_name' '/etc/cts/model_info.json')
+bd_type="${model:4:1}"
+if [[ "$bd_type" == "a" || "$bd_type" == "c" ]]; then
+    echo "check SENSORS config (model: $model)"
+    # .SENSORS.ACC
+    jq '
+    .SENSORS |= (. // {})
+    | .SENSORS.ACC |= (. // {})
+    | .SENSORS.ACC |= (if .use == null then .use = true else . end)
+    | .SENSORS.ACC |= (if .samplerate == null then .samplerate = 1000 else . end)
+    | .SENSORS.ACC |= (if .scale == null then .scale = 1000 else . end)
+    | .SENSORS.ACC |= (if .targetX == null then .targetX = "x" else . end)
+    | .SENSORS.ACC |= (if .targetY == null then .targetY = "y" else . end)
+    | .SENSORS.ACC |= (if .targetZ == null then .targetZ = "z" else . end)
+    | .SENSORS.ACC |= (if .offset == null then .offset = [0,0,0,0,0,0,0,0] else . end)
+    | .SENSORS.ACC |= (if .use_filter == null then .use_filter = false else . end)
+    | .SENSORS.ACC |= (if .ntaps == null then .ntaps = 101 else . end)
+    | .SENSORS.ACC |= (if .cutoff == null then .cutoff = 499 else . end)
+    | .SENSORS.ACC |= (if .decimation == null then .decimation = 1 else . end)
+    | .SENSORS.ACC |= (if .dataframe == null then .dataframe = "ACC" else . end)
+    ' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+
+    # .SENSORS.ADC
+    jq '
+    .SENSORS |= (. // {})
+    | .SENSORS.ADC |= (. // {})
+    | .SENSORS.ADC |= (if .use == null then .use = true else . end)
+    | .SENSORS.ADC |= (if .version == null then .version = "" else . end)
+    | .SENSORS.ADC |= (if .fpga_version == null then .fpga_version = "" else . end)
+    | .SENSORS.ADC |= (if .deviceid == null then .deviceid = [0,0] else . end)
+    | .SENSORS.ADC |= (if .samplerate == null then .samplerate = 20000 else . end)
+    | .SENSORS.ADC |= (if .cnv_unit == null then .cnv_unit = [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1] else . end)
+    | .SENSORS.ADC |= (if .use_filter == null then .use_filter = false else . end)
+    | .SENSORS.ADC |= (if .ntaps == null then .ntaps = 51 else . end)
+    | .SENSORS.ADC |= (if .cutoff == null then .cutoff = 499 else . end)
+    | .SENSORS.ADC |= (if .decimation == null then .decimation = 20 else . end)
+    | .SENSORS.ADC |= (if .dataframe == null then .dataframe = "ADC" else . end)
+    ' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+    
+    # .SENSORS.ETHERCAT
+    jq '
+    .SENSORS |= (. // {})
+    | .SENSORS.ETHERCAT |= (. // {})
+    | .SENSORS.ETHERCAT |= (if .use == null then .use = false else . end)
+    | .SENSORS.ETHERCAT |= (if .samplerate == null then .samplerate = 1000 else . end)
+    | .SENSORS.ETHERCAT |= (if .version == null then .version = "" else . end)
+    | .SENSORS.ETHERCAT |= (if .deviceid == null then .deviceid = ["RX", "TX"] else . end)
+    | .SENSORS.ETHERCAT |= (if .direction == null then .direction = "BOTH" else . end)
+    | .SENSORS.ETHERCAT |= (if .wcnt == null then .wcnt = 15 else . end)
+    | .SENSORS.ETHERCAT |= (if .PDO_len == null then .PDO_len = 518 else . end)
+    | .SENSORS.ETHERCAT |= (if .mot1_sp == null then .mot1_sp = ["<i", 125, 129, 0.00732421875] else . end)
+    | .SENSORS.ETHERCAT |= (if .mot1_tq == null then .mot1_tq = ["<h", 123, 125, 0.1] else . end)
+    | .SENSORS.ETHERCAT |= (if .mot2_sp == null then .mot2_sp = ["<i", 106, 110, 0.00732421875] else . end)
+    | .SENSORS.ETHERCAT |= (if .mot2_tq == null then .mot2_tq = ["<h", 104, 106, 0.1] else . end)
+    | .SENSORS.ETHERCAT |= (if .mot3_sp == null then .mot3_sp = ["<i", 144, 148, -0.00732421875] else . end)
+    | .SENSORS.ETHERCAT |= (if .mot3_tq == null then .mot3_tq = ["<h", 142, 144, -0.1] else . end)
+    | .SENSORS.ETHERCAT |= (if .mot4_sp == null then .mot4_sp = ["<i", 163, 167, 0.00732421875] else . end)
+    | .SENSORS.ETHERCAT |= (if .mot4_tq == null then .mot4_tq = ["<h", 161, 163, 0.1] else . end)
+    | .SENSORS.ETHERCAT |= (if .use_filter == null then .use_filter = false else . end)
+    | .SENSORS.ETHERCAT |= (if .ntaps == null then .ntaps = 101 else . end)
+    | .SENSORS.ETHERCAT |= (if .cutoff == null then .cutoff = 499 else . end)
+    | .SENSORS.ETHERCAT |= (if .decimation == null then .decimation = 1 else . end)
+    | .SENSORS.ETHERCAT |= (if .dataframe == null then .dataframe = "ETHERCAT" else . end)
+    ' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 fi
 
 sync

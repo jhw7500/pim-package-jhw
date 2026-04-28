@@ -192,11 +192,6 @@ def verify_conf_key(conf_path):
     return 0
 
 def init_conf(conf_path):
-    try:
-        fwver = dbver.get_daughter_board_version()
-    except:
-        fwver = "0.0.0"
-    
     sysinfo = {
         "mainboard_version":"",
         "daughterboard_version":"",
@@ -269,6 +264,11 @@ def init_conf(conf_path):
                 edgeconf["NETWORK"]["WLAN0"]["identity"] = devid + id_suffix
     
     if getconfval.get_json_val("daughterboard_type") != "none":
+        try:
+            fwver = dbver.get_daughter_board_version()
+        except:
+            fwver = "0.0.0"
+        
         if is_json_key_present(edgeconf, "SENSORS") == False:
             return -2
         else:
@@ -282,7 +282,11 @@ def init_conf(conf_path):
                 edgeconf["SENSORS"]["ADC"]["use"] = True
             if is_json_key_present(edgeconf["SENSORS"], "ETHERCAT") == True:
                 edgeconf["SENSORS"]["ETHERCAT"]["use"] = False
-        
+
+            if getconfval.get_json_val("daughterboard_type") == "ethercat":
+                edgeconf["SENSORS"]["ADC"]["samplerate"] = 1000
+                edgeconf["SENSORS"]["ADC"]["decimation"] = 1
+
         edgeconf["SENSORS"]["ADC"]["version"] = sysinfo["daughterboard_version"]
         edgeconf["SENSORS"]["ADC"]["fpga_version"] = fwver
 

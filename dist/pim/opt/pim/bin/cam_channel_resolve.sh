@@ -5,9 +5,7 @@ find_edgeconf_file() {
 
     for candidate in \
         /root/shared_v/edgeconf_pim.json \
-        /root/shared_v/edgeconf_cis.json \
-        "$SCRIPT_DIR/../config/edgeconf_pim_base.json" \
-        "$SCRIPT_DIR/../config/edgeconf_cis_base.json"
+        /root/shared_v/edgeconf_cis.json
     do
         if [[ -f "$candidate" ]]; then
             printf "%s\n" "$candidate"

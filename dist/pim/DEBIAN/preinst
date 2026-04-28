@@ -40,6 +40,12 @@ systemctl stop cam-operate
 echo "stop sd-mount daemon"
 systemctl stop sd-mount
 
+status=$(systemctl is-active pim-gate 2>/dev/null)
+if [ "$status" == "active" ]; then
+  echo "stop pim-gate"
+  systemctl stop pim-gate
+fi
+
 #timedatectl set-timezone Asia/Seoul
 
 case "$1" in
