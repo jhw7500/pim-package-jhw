@@ -45,7 +45,7 @@ defunct=0
 
 #list="BG_Check_for_pim.sh vcm streamApp PIMCAM"
 #list="BG_Check_for_pim.sh vcm gstApp"
-list="BG_Check_for_pim.sh vcm"
+list="BG_Check_for_pim.sh"
 
 JSON_PREFIX=edgeconf_
 JOSN_SUFFIX=.json

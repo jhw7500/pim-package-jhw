@@ -472,12 +472,26 @@ set_start_time:
 	}
 
 	__LOG(LOG_INFO, "[SRT][%s:%d] start wait...", _FILE_, __LINE__);
+	{
+	int mtime_chk_cnt = 0;	/* stale 시간으로 wait 진입 시 gstApp NEW_CLOCK 갱신을 받기 위한 throttled mtime 검사 (~100ms/회) */
 	do {
 		if(m_flagDestroy)
 			break;
 
+		/* gstApp 재시작으로 PATH_START_VIDEO_TIME mtime 변경 시 즉시 set_start_time 재진입.
+		 * 메인 루프(L520)와 동일 패턴이지만 1ms 루프라 100 iter당 1회로 throttle. */
+		if (++mtime_chk_cnt >= 100) {
+			mtime_chk_cnt = 0;
+			struct stat st;
+			if (stat(PATH_START_VIDEO_TIME, &st) == 0 && st.st_mtime != lastStartMtime) {
+				__LOG(LOG_WARNING, "[SRT][%s:%d] mtime changed during wait (%ld -> %ld) - resync",
+					_FILE_, __LINE__, (long)lastStartMtime, (long)st.st_mtime);
+				goto set_start_time;
+			}
+		}
+
 		sysTime = get_sys_time();
-		
+
 		// 목표 시간(srtMinStart:srtSecStart) 대비 현재 시각 차이 계산
 		int current_total_sec = sysTime.wMinute * 60 + sysTime.wSecond;
 		int target_total_sec = (int)srtMinStart * 60 + (int)srtSecStart;
@@ -499,6 +513,7 @@ set_start_time:
         usleep(MSEC);
 
 	} while(1);
+	}
 
     if(access("/dev/shm/sd_mount_flag", F_OK) != 0)
     {
