@@ -1,15 +1,17 @@
 # PIM Package 릴리즈 노트
-## v0.6.1 (2026-04-09 ~ 2026-04-27)
+## v0.6.1 (2026-04-09 ~ 2026-04-30)
 
 ---
 
 ## 🎯 핵심 수정사항 (Quick Summary)
 
-- **VCM SRT 파이프라인 안정화 (v4.4)**: `popen` 3회/iter 제거(mktime 기반), prefix 가드, 조건부 쓰레드 생성, `PATH_START_VIDEO_TIME` mtime 재동기화
+- **VCM SRT 파이프라인 안정화 (v4.4)**: `popen` 3회/iter 제거(mktime 기반), prefix 가드, 조건부 쓰레드 생성, `PATH_START_VIDEO_TIME` mtime 재동기화 (1ms wait 루프 내부 throttled stat 포함)
 - **led_flash 통합 LED 제어**: edgeconf `led_flash` 스키마 + MAX9296 v2.3 MCP4018 wiper / AR0234 R0x3270 V4L2 통합
 - **MAX9296 v2.3**: MCP4018 VCC/wiper + LED flash V4L2 통합, AWB 프리셋 10가지 확장, 채널/저수준 로그 구조화 (`chN` 접두사)
-- **gstApp 업데이트**: single mode ch3 단독 활성 버그 수정, cam_state 녹화 시각 파일 기반 미러링, `exp_time` NOTICE 노출, led_flash V4L2 통합
+- **gstApp 업데이트 (v2.0)**: single mode ch3 단독 활성 버그 수정, cam_state 녹화 시각 파일 기반 미러링, `exp_time` NOTICE 노출, led_flash V4L2 통합, parser JSON 타입 검증 + bps 범위 폴백
 - **chk_cam_operate 진단 로그 강화**: 채널별 enable/disconnect/checked/missing 분리, SRT 파일(`*data.srt*`) 존재 검증 통합
+- **chk_cam_operate retention 사각지대 차단**: RAM/SD 보호선(2 sessions) hard cap fallback, /dev/shm panic watchdog, SD inode/ro 감시 + RAM-only 폴백
+- **kill_test.sh kill 대상 정리**: VCM v4.4 자체 동기화로 카메라 kill 시 vcm 동반 kill 불필요
 - **docker build 산출물 검증 자동화**: ARM aarch64 + GLIBC max 검사, `mcp_trust_test` 모듈 등록, clean 화이트리스트
 
 ---
@@ -50,9 +52,10 @@ VCM의 SRT 동기화 루프를 popen-free로 재구성하고, led_flash 통합 L
 - **prefixFileName 가드**: 첫 분할 전 garbage 사용 방지를 위해 `{0}` 초기화 + 비정상 prefix(빈값/제어문자/`vhl_name` 불일치) 차단. 차단 시 첫 4바이트 hex와 vhl_name을 함께 ERR 로그에 기록 (디버깅 정보 확보)
 - **조건부 쓰레드 생성**: `srt_enable / srt_test / vib_enable / vib_test` 플래그가 모두 OFF면 SRT 쓰레드 미생성. `m_srtThreadActive` 멤버로 `destroy()`의 `pthread_join` 보호
 - **`PATH_START_VIDEO_TIME` 보존 + mtime 재동기화**: 기존 시작 직후 unlink → 보존으로 변경. gstApp이 카메라 (재)시작 시 `GST_MESSAGE_NEW_CLOCK` 핸들러에서 동일 경로를 재작성하면 mtime 변화로 자동 재동기화 진입 (`set_start_time`)
+- **1ms wait 루프 내부 throttled mtime 검사**: SRT 시작시각 도달 대기 중에도 100 iter당 1회 `stat()`로 `PATH_START_VIDEO_TIME` mtime 변경을 감지, 변경 시 `set_start_time`으로 goto 재진입. 메인 루프 외 1ms 정밀 대기 구간에서도 gstApp 재시작 직후 stale 시작시각이 그대로 사용되는 문제 차단
 - **신규 매크로**: `PATH_START_VIDEO_TIME_ACTUAL = "/tmp/cam_state/recording/start_video_time"` (`vcm/util.h`)
 
-> **운영 영향**: `start_cam.sh`에서 srt sync 사유의 `pkill vcm`이 더 이상 필요하지 않아 비활성화(주석)되었습니다. v4.4 vcm을 빌드/배포해야 합니다.
+> **운영 영향**: `start_cam.sh`에서 srt sync 사유의 `pkill vcm`이 더 이상 필요하지 않아 비활성화(주석)되었습니다. `kill_test.sh`도 카메라 kill 시 vcm 동반 kill을 제거했습니다 (자체 동기화 위임). v4.4 vcm을 빌드/배포해야 합니다.
 
 ---
 
@@ -90,6 +93,13 @@ VCM의 SRT 동기화 루프를 popen-free로 재구성하고, led_flash 통합 L
 - **cam_state 녹화 시각 미러링 파일 기반 전환** — v0.6.0의 cam_state JSON→파일 리팩터링 후속. `start_video_time` 등을 `/tmp/cam_state/recording/`에 직접 기록
 - **NOTICE 요약 로그 `exp_time` 노출**
 - **led_flash V4L2 통합 제어 호출 경로**
+- **parser JSON config 견고화** (`parser.cpp/h`):
+  - `json_get_int` / `json_get_uint` / `json_get_uint32` / `json_get_int_array` 신규 strict accessor 도입
+  - 누락 키: 기존 default 유지 (조용히)
+  - 타입 mismatch / 음수 / 배열 길이 불일치: default 유지 + `LOG_ERR` (기존 `LOG_CRIT` 노이즈와 무성 fallthrough 제거)
+  - 마이그레이션 키: `cam_width/height`, `recording_time`, `log/debug_level`, `fps`, capture(`delay/timeout/quality/queue_size`), cam[i] `exp_time`/`bps[]`/`ae_gain`/`led_flash(wiper, flash_delay)`
+- **bps 범위 폴백**: 기존 `bps < 1` 시 `return -1` abort → `MIN_BITRATE_KBPS..MAX_BITRATE_KBPS` 범위 검사로 전환, 벗어나면 `DEFAULT_RECORD_BITRATE` / `DEFAULT_RTSP_BITRATE` 폴백 후 startup 계속
+- **single-encoder 모드 rtsp bps 미러링**: `!dual_enc`일 때 rtsp 슬롯에 rec bps 미러링하여 다운스트림 코드 정합성 유지
 
 ---
 
@@ -109,9 +119,59 @@ VCM의 SRT 동기화 루프를 popen-free로 재구성하고, led_flash 통합 L
 
 ---
 
-#### 6. start_cam: SRT 동기화 사유 vcm 강제 재기동 비활성화
+#### 5-1. chk_cam_operate retention 사각지대 차단 (RAM/SD)
 
-`start_cam.sh`의 srt sync 사유 `pkill vcm` 라인을 주석 처리했습니다. VCM v4.4의 SRT 안정화(#1)로 vcm을 죽이지 않고도 동기화가 복구됩니다.
+기존 retention 로직은 `PROTECT_RECENT_SESSIONS=2` 보호선 때문에 다음 케이스에서 cap 초과에도 삭제 0건이 되는 사각지대가 있었습니다.
+
+- 거대 단일 세션 1개가 RAM cap(1.6GiB) / SD crit(98%)을 단독 초과
+- 모든 파일이 `.part` 상태 (commit 마커 누락) → 세션 후보 0
+- 파일명 패턴 미스로 세션 ID 추출 실패한 orphan 파일
+
+추가로 SD 측에는 다음 위험이 있었습니다.
+
+- ext4 ro 리마운트 시 retention silent skip → EROFS/ENOSPC 무한 발생
+- df-block만 보고 ext4 inode 고갈 미감지 (`*.srt` / `-vib.bin` 누적)
+- `disable_file` 회복 조건이 block만 보고 inode 무시 → 재발생 루프
+
+**다층 안전장치** (`chk_cam_operate.sh`):
+
+- **RAM hard cap** (`RAM_HARD_CAP_BYTES_DEFAULT=2.0GiB`): 보호선 무시하고 `oldest fragment`부터 파일 단위 evict (newest 1개는 항상 보존)
+- **/dev/shm panic watchdog** (`RAM_FS_PANIC_PCT_DEFAULT=92`): 사용률 자체가 임계 도달 시 모드 무관 emergency evict
+- **SD hard cap** (`SD_HARD_CAP_PCT_DEFAULT=99`): 동일한 파일 단위 evict, 단 stop은 `df% < warn_pct` 도달 시 break
+- **SD ro → force-disable**: RW 테스트 실패 감지 시 `SD_WRITE_DISABLE_FILE` 강제 작성 → RAM-only 폴백 즉시 발동
+- **inode watchdog**: `get_df_inode_pct`로 ext4 inode 사용률 감시, `crit` 도달 시 SD writes disable
+- **회복 조건 강화**: block AND inode 모두 `warn_pct` 미만일 때만 SD writes 재개 (단일 지표 회복으로 인한 재발생 차단)
+
+**신규 헬퍼**: `emergency_evict_oldest_fragments()`, `emergency_evict_oldest_fragments_pct()`, `ram_fs_panic()`, `get_df_inode_pct()`
+
+**환경변수 오버라이드** (운영 튜닝):
+```bash
+RAM_HARD_CAP_BYTES=2147483648   # 2.0 GiB
+RAM_FS_PANIC_PCT=92             # /dev/shm usage%
+SD_HARD_CAP_PCT=99              # SD usage% bypass 임계
+WARN_PCT=95 / CRIT_PCT=98       # 기존 retention/disable 임계 (현행 유지)
+```
+
+**동작 매트릭스**:
+
+| 상황 | 트리거 라인 | 효과 |
+|---|---|---|
+| SD 95~98% | `retention: deleting session` | 세션 단위 삭제 (보호선 2개 유지) |
+| SD ≥98% | `CRITICAL: disk usage` | `/tmp/sd_write_disabled` → RAM-only 폴백 |
+| SD inode ≥98% | `CRITICAL: SD inode` | 동일 (block 무관) |
+| SD ≥99% + 보호 세션만 남음 | `SD HARD CAP` | 보호선 무시 oldest fragment evict |
+| SD ro 리마운트 | `SD read-only — force-disable` | RAM-only 즉시 폴백, EROFS 폭주 차단 |
+| /dev/shm ≥92% (RAM-only) | `panic threshold reached` | RAM emergency evict |
+| RAM > 2.0GiB (RAM-only) | `RAM HARD CAP` | RAM 보호선 무시 evict |
+
+---
+
+#### 6. 카메라 kill 흐름에서 vcm 제외 (start_cam + kill_test)
+
+VCM v4.4의 SRT 안정화(#1)로 vcm을 죽이지 않고도 mtime 재동기화로 복구되므로, 카메라 kill 시 vcm을 동반 종료하던 두 지점을 정리했습니다.
+
+- **`start_cam.sh`**: srt sync 사유 `pkill vcm` 라인 주석 처리
+- **`kill_test.sh`**: kill 대상 list에서 `vcm` 제거 (`list="BG_Check_for_pim.sh vcm"` → `"BG_Check_for_pim.sh"`)
 
 > **전제**: VCM v4.4 (SRT 파이프라인 안정화 적용 빌드)를 사용해야 합니다.
 
@@ -150,10 +210,12 @@ VCM의 SRT 동기화 루프를 popen-free로 재구성하고, led_flash 통합 L
 
 | 구성요소 | 변경 파일 | 주요 키워드 |
 |---------|----------|------------|
-| **VCM SRT 안정화** | `vcm/tcpServer.{cpp,h}`, `vcm/util.h` | popen 제거, mktime, prefix 가드, mtime 재동기화 |
+| **VCM SRT 안정화** | `vcm/tcpServer.{cpp,h}`, `vcm/util.h` | popen 제거, mktime, prefix 가드, mtime 재동기화 (메인 + 1ms wait throttled stat) |
 | **led_flash 통합** | `update_edgeconf.sh`, `edgeconf_pim_base.json`, `max9296.ko`, `gstApp` | MCP4018 wiper, AR0234 R0x3270, V4L2 |
-| **chk_cam_operate** | `chk_cam_operate.sh` | 채널별 진단, SRT 파일 검증 |
-| **start_cam** | `start_cam.sh` | vcm pkill 비활성화 |
+| **gstApp parser** | `parser.cpp/h` | json_get_int/uint/uint32/int_array, bps 범위 폴백, single-encoder rtsp 미러링 |
+| **chk_cam_operate (진단)** | `chk_cam_operate.sh` | 채널별 진단, SRT 파일 검증 |
+| **chk_cam_operate (retention)** | `chk_cam_operate.sh` | RAM hard cap, /dev/shm panic, SD hard cap, SD ro force-disable, inode watchdog |
+| **카메라 kill 흐름** | `start_cam.sh`, `kill_test.sh` | vcm 동반 kill 제거 (자체 동기화 위임) |
 | **docker build** | `docker/build.sh` | mcp_trust_test, 산출물 검증 |
 | **문서** | `docs/*.md`, `docs/*.xlsx` | file_check_reboot 명세, ord_vcm 설정 분석 |
 
@@ -187,8 +249,9 @@ VCM의 SRT 동기화 루프를 popen-free로 재구성하고, led_flash 통합 L
 
 **권장 작업**
 
-- `start_cam.sh`의 srt sync 사유 `pkill vcm` 비활성화 — VCM v4.4 SRT 안정화 미반영 환경이라면 활성화 유지
+- `start_cam.sh`의 srt sync 사유 `pkill vcm` + `kill_test.sh`의 vcm 동반 kill 비활성화 — VCM v4.4 SRT 안정화 미반영 환경이라면 활성화 유지
 - docker build 산출물 검증 출력 (`verify_binary`/`verify_directory`)을 CI에서 실패 신호(exit 2)로 활용
+- chk_cam_operate retention emergency 임계값 (`RAM_HARD_CAP_BYTES` / `RAM_FS_PANIC_PCT` / `SD_HARD_CAP_PCT`)을 운영 환경에 맞게 튜닝. 로그에서 `RAM HARD CAP` / `SD HARD CAP` / `panic threshold reached`가 자주 뜨면 fragment size 정책(분할 주기/비트레이트) 재검토 권장
 
 ---
 
@@ -210,6 +273,7 @@ v0.6.1 (VCM SRT 안정화 + led_flash 통합 + 진단 로그 강화) ← 현재
 
 ---
 
-**문서 작성일**: 2026-04-27
+**문서 작성일**: 2026-04-27 (최종 갱신: 2026-04-30)
 **이전 버전 커밋**: 2d4ecad (v0.6.0)
-**HEAD 커밋**: (작성 시점 워킹트리, 커밋 예정)
+**HEAD 커밋**: 6f73c1e (chk_cam_operate retention emergency evict)
+**연관 커밋**: 4d3e77f (vcm SRT mtime + kill_test vcm 제외), 10d65ea (gstApp parser JSON 검증)
