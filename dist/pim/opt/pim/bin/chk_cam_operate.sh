@@ -9,7 +9,12 @@ SD_WRITE_DISABLE_FILE_DEFAULT="/tmp/sd_write_disabled"
 
 # Mode B (SD BAD): commit + retention in RAM only
 RAM_ONLY_FINAL_PATH_DEFAULT="/dev/shm/recordings"
-RAM_CAP_BYTES_DEFAULT=1717986918  # 1.6GiB
+RAM_CAP_BYTES_DEFAULT=1717986918       # 1.6GiB (warn cap)
+RAM_HARD_CAP_BYTES_DEFAULT=2147483648  # 2.0GiB (emergency cap; bypass protect)
+RAM_FS_PANIC_PCT_DEFAULT=92            # /dev/shm usage% to trigger panic evict
+
+# Mode A (SD OK): emergency thresholds beyond crit_pct
+SD_HARD_CAP_PCT_DEFAULT=99             # SD usage% to bypass session protect (file-level evict)
 
 # Mode A (SD OK): SD retention thresholds
 WARN_PCT_DEFAULT=95
@@ -417,6 +422,38 @@ get_df_usage_pct() {
     df -P "$dir" 2>/dev/null | awk 'NR==2 {gsub(/%/,"",$5); print $5}'
 }
 
+get_df_inode_pct() {
+    local dir="$1"
+    df -Pi "$dir" 2>/dev/null | awk 'NR==2 {gsub(/%/,"",$5); print $5}'
+}
+
+# SD-side emergency: evict oldest fragments at file granularity until df% drops below stop_pct.
+# Bypasses session protect; preserves the single newest fragment.
+emergency_evict_oldest_fragments_pct() {
+    local dir="$1"
+    local stop_pct="$2"
+    local files
+    [ -d "$dir" ] || return 0
+    mapfile -t files < <(find "$dir" -maxdepth 1 -type f \
+        \( -name '*.mp4' -o -name '*.ts' -o -name '*.srt' \
+           -o -name '*-vib.bin' -o -name '*.part' \) \
+        -printf '%T@\t%p\n' 2>/dev/null | sort -n | awk -F'\t' '{print $2}')
+    local n=${#files[@]}
+    [ "$n" -le 1 ] && return 0
+    local last_idx=$((n - 1))
+    local i=0 removed=0 cur=""
+    for (( i=0; i<last_idx; i++ )); do
+        rm -f "${files[$i]}" 2>/dev/null && ((removed++))
+        if [ -n "$stop_pct" ]; then
+            cur=$(get_df_usage_pct "$dir")
+            [ -n "$cur" ] && [ "$cur" -lt "$stop_pct" ] && break
+        fi
+    done
+    if [ "$removed" -gt 0 ]; then
+        logger -p local0.emerg "[$KEY][$tag:$LINENO] SD emergency evict: removed $removed fragments (now ${cur:-?}%, dir=$dir)"
+    fi
+}
+
 enforce_sd_retention_if_needed() {
     local target_dir="$1"
     local warn_pct=${WARN_PCT:-$WARN_PCT_DEFAULT}
@@ -425,9 +462,11 @@ enforce_sd_retention_if_needed() {
     local usage sid
     local sessions keep_line
 
-    # Skip retention if filesystem is read-only
+    # Skip retention if filesystem is read-only — and force-disable SD writes to fall back to RAM-only.
+    # Without this, RAM-only fallback never engages and gstApp keeps hitting EROFS/ENOSPC on SD.
     if ! touch "$target_dir/.retention_rw_test" 2>/dev/null; then
-        logger -p local0.error "[$KEY][$tag:$LINENO] retention: skip (filesystem read-only: $target_dir)"
+        logger -p local0.emerg "[$KEY][$tag:$LINENO] retention: SD read-only — force-disable SD writes ($target_dir)"
+        : > "${SD_WRITE_DISABLE_FILE:-$SD_WRITE_DISABLE_FILE_DEFAULT}" 2>/dev/null
         return 1
     fi
     rm -f "$target_dir/.retention_rw_test" 2>/dev/null
@@ -479,6 +518,15 @@ enforce_sd_retention_if_needed() {
             [ "$usage" -lt "$warn_pct" ] && break
         fi
     done
+
+    # Hard cap fallback: bypass session protect when SD usage extreme.
+    # Triggers on oversized single session, all-.part state, or orphan-named files.
+    local hard_pct=${SD_HARD_CAP_PCT:-$SD_HARD_CAP_PCT_DEFAULT}
+    usage=$(get_df_usage_pct "$target_dir")
+    if [ -n "$usage" ] && [ "$usage" -ge "$hard_pct" ]; then
+        logger -p local0.emerg "[$KEY][$tag:$LINENO] SD HARD CAP: ${usage}% >= ${hard_pct}% (bypass protect)"
+        emergency_evict_oldest_fragments_pct "$target_dir" "$warn_pct"
+    fi
 }
 
 update_sd_write_disable_flag() {
@@ -486,23 +534,66 @@ update_sd_write_disable_flag() {
     local disable_file="${SD_WRITE_DISABLE_FILE:-$SD_WRITE_DISABLE_FILE_DEFAULT}"
     local warn_pct=${WARN_PCT:-$WARN_PCT_DEFAULT}
     local crit_pct=${CRIT_PCT:-$CRIT_PCT_DEFAULT}
-    local usage
+    local usage inode_pct
 
     usage=$(get_df_usage_pct "$target_dir")
     [ -n "$usage" ] || return 0
 
+    # Inode exhaustion watchdog: df-block can be fine while ext4 inodes are full.
+    # Many small files (.srt / -vib.bin) accumulate faster than block usage.
+    inode_pct=$(get_df_inode_pct "$target_dir")
+
     if [ "$usage" -ge "$crit_pct" ]; then
         logger -p local0.emerg "[$KEY][$tag:$LINENO] CRITICAL: disk usage ${usage}% >= ${crit_pct}% (disable SD writes)"
         : > "$disable_file"
-    elif [ -f "$disable_file" ] && [ "$usage" -lt "$warn_pct" ]; then
+    elif [ -n "$inode_pct" ] && [ "$inode_pct" -ge "$crit_pct" ]; then
+        logger -p local0.emerg "[$KEY][$tag:$LINENO] CRITICAL: SD inode ${inode_pct}% >= ${crit_pct}% (disable SD writes)"
+        : > "$disable_file"
+    elif [ -f "$disable_file" ] && [ "$usage" -lt "$warn_pct" ] && \
+         { [ -z "$inode_pct" ] || [ "$inode_pct" -lt "$warn_pct" ]; }; then
         rm -f "$disable_file"
-        logger -p local0.notice "[$KEY][$tag:$LINENO] disk usage ${usage}% < ${warn_pct}% (re-enable SD writes)"
+        logger -p local0.notice "[$KEY][$tag:$LINENO] disk usage ${usage}% inode ${inode_pct:-?}% < ${warn_pct}% (re-enable SD writes)"
     fi
 }
 
 get_dir_size_bytes() {
     local dir="$1"
     du -sb "$dir" 2>/dev/null | awk '{print $1}'
+}
+
+# Emergency: evict oldest fragments at file granularity, ignoring session protect.
+# Used when RAM hard cap or /dev/shm panic threshold is hit.
+# Always preserves the single newest fragment so an active recording can continue.
+emergency_evict_oldest_fragments() {
+    local dir="$1"
+    local target_size="$2"
+    local files
+    [ -d "$dir" ] || return 0
+    mapfile -t files < <(find "$dir" -maxdepth 1 -type f \
+        \( -name '*.mp4' -o -name '*.ts' -o -name '*.srt' \
+           -o -name '*-vib.bin' -o -name '*.part' \) \
+        -printf '%T@\t%p\n' 2>/dev/null | sort -n | awk -F'\t' '{print $2}')
+    local n=${#files[@]}
+    [ "$n" -le 1 ] && return 0
+    local last_idx=$((n - 1))
+    local i=0 removed=0 cur
+    for (( i=0; i<last_idx; i++ )); do
+        rm -f "${files[$i]}" 2>/dev/null && ((removed++))
+        if [ -n "$target_size" ]; then
+            cur=$(get_dir_size_bytes "$dir")
+            [ -n "$cur" ] && [ "$cur" -le "$target_size" ] && break
+        fi
+    done
+    if [ "$removed" -gt 0 ]; then
+        logger -p local0.emerg "[$KEY][$tag:$LINENO] emergency evict: removed $removed oldest fragments (dir=$dir)"
+    fi
+}
+
+ram_fs_panic() {
+    local pct
+    pct=$(df -P /dev/shm 2>/dev/null | awk 'NR==2 {gsub(/%/,"",$5); print $5}')
+    [ -n "$pct" ] || return 1
+    [ "$pct" -ge "${RAM_FS_PANIC_PCT:-$RAM_FS_PANIC_PCT_DEFAULT}" ]
 }
 
 enforce_ram_cap_if_needed() {
@@ -543,6 +634,16 @@ enforce_ram_cap_if_needed() {
         sessions=$(list_sessions_in_dir_sorted "$target_dir")
         [ -n "$sessions" ] || break
     done
+
+    # Hard cap fallback: bypass session protect when emergency cap exceeded.
+    # Triggers when only protected sessions remain but size still over hard cap
+    # (e.g., a single oversized session, all-.part state, orphan-named files).
+    local hard_cap=${RAM_HARD_CAP_BYTES:-$RAM_HARD_CAP_BYTES_DEFAULT}
+    size=$(get_dir_size_bytes "$target_dir")
+    if [ -n "$size" ] && [ "$size" -gt "$hard_cap" ]; then
+        logger -p local0.emerg "[$KEY][$tag:$LINENO] RAM HARD CAP: ${size}B > ${hard_cap}B (bypass protect)"
+        emergency_evict_oldest_fragments "$target_dir" "$cap_bytes"
+    fi
 }
 
 # 완료된 세션의 모든 .part 파일 처리
@@ -816,6 +917,14 @@ BackfillRamRecordingsToSd() {
 
 # Disk 사용량 체크
 CheckDiskSpace() {
+    # Panic watchdog: /dev/shm filesystem near-full → emergency evict regardless of cap state.
+    # Last line of defense against tmpfs full (would block all subsequent .part writes).
+    if is_ram_only_mode && [ -d "$final_path" ] && ram_fs_panic; then
+        logger -p local0.emerg "[$KEY][$tag:$LINENO] /dev/shm panic threshold reached — emergency evict"
+        emergency_evict_oldest_fragments "$final_path" \
+            "${RAM_CAP_BYTES:-$RAM_CAP_BYTES_DEFAULT}"
+    fi
+
     if ! is_ram_only_mode; then
         BackfillRamRecordingsToSd
     fi
