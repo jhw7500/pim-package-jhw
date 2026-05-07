@@ -89,28 +89,29 @@ cpchk() {
     depmod -a
   fi
 
-  rm -f /usr/lib/libpiencrypt*
-  ln -s /usr/local/lib/libpiencrypt.so.0  /usr/lib/libpiencrypt.so.0
-  ln -s /usr/local/lib/libpiencrypt.so.0  /usr/lib/libpiencrypt.so
-  rm -f /usr/lib/libpifilewriter*
-  ln -s /usr/local/lib/libpifilewriter.so.0  /usr/lib/libpifilewriter.so.0
-  ln -s /usr/local/lib/libpifilewriter.so.0  /usr/lib/libpifilewriter.so
-  rm -f /usr/lib/libpirtspstream*
-  ln -s /usr/local/lib/libpirtspstream.so.0  /usr/lib/libpirtspstream.so.0
-  ln -s /usr/local/lib/libpirtspstream.so.0  /usr/lib/libpirtspstream.so
-  rm -f /usr/lib/libpirtspstreamserver*
-  ln -s /usr/local/lib/libpirtspstreamserver.so.0  /usr/lib/libpirtspstreamserver.so.0
-  ln -s /usr/local/lib/libpirtspstreamserver.so.0  /usr/lib/libpirtspstreamserver.so
-  rm -f /usr/lib/libpiutils*
-  ln -s /usr/local/lib/libpiutils.so.0  /usr/lib/libpiutils.so.0
-  ln -s /usr/local/lib/libpiutils.so.0  /usr/lib/libpiutils.so
-  rm -f /usr/lib/libpiwriter*
-  ln -s /usr/local/lib/libpiwriter.so.0  /usr/lib/libpiwriter.so.0
-  ln -s /usr/local/lib/libpiwriter.so.0  /usr/lib/libpiwriter.so
-  rm -f /usr/local/bin/killcam
-  ln -s /opt/pim/bin/kill_test.sh /usr/local/bin/killcam
-  rm -f /usr/local/bin/startcam
-  ln -s /opt/pim/bin/start_cam.sh /usr/local/bin/startcam
+  # streamApp(deprecated) 전용 — 기존 환경 링크 유지를 위해 rm/ln 모두 비활성
+  #ln -sf /usr/local/lib/libpiencrypt.so.0  /usr/lib/libpiencrypt.so.0
+  #ln -sf /usr/local/lib/libpiencrypt.so.0  /usr/lib/libpiencrypt.so
+  #ln -sf /usr/local/lib/libpifilewriter.so.0  /usr/lib/libpifilewriter.so.0
+  #ln -sf /usr/local/lib/libpifilewriter.so.0  /usr/lib/libpifilewriter.so
+  #ln -sf /usr/local/lib/libpirtspstream.so.0  /usr/lib/libpirtspstream.so.0
+  #ln -sf /usr/local/lib/libpirtspstream.so.0  /usr/lib/libpirtspstream.so
+  #ln -sf /usr/local/lib/libpirtspstreamserver.so.0  /usr/lib/libpirtspstreamserver.so.0
+  #ln -sf /usr/local/lib/libpirtspstreamserver.so.0  /usr/lib/libpirtspstreamserver.so
+  #ln -sf /usr/local/lib/libpiutils.so.0  /usr/lib/libpiutils.so.0
+  #ln -sf /usr/local/lib/libpiutils.so.0  /usr/lib/libpiutils.so
+  #ln -sf /usr/local/lib/libpiwriter.so.0  /usr/lib/libpiwriter.so.0
+  #ln -sf /usr/local/lib/libpiwriter.so.0  /usr/lib/libpiwriter.so
+  ln -sf /opt/pim/bin/kill_test.sh /usr/local/bin/killcam
+  ln -sf /opt/pim/bin/start_cam.sh /usr/local/bin/startcam
+  ln -sf /opt/pim/bin/update_edgeconf.sh /usr/local/bin/update_edgeconf
+  ln -sf /opt/pim/bin/update_ordvcmconf.sh /usr/local/bin/update_ordvcmconf
+  ln -sf /opt/pim/bin/creboot.sh /usr/local/bin/creboot
+  ln -sf /opt/pim/bin/cstop.sh /usr/local/bin/cstop
+  ln -sf /opt/pim/bin/change_mode.sh /usr/local/bin/change_mode
+  ln -sf /opt/pim/bin/i2cread.sh /usr/local/bin/i2cread
+  ln -sf /opt/pim/bin/i2cwrite.sh /usr/local/bin/i2cwrite
+  ln -sf /opt/pim/bin/pim_guardian.py /usr/local/bin/pim_guardian
 
   ## cis
   rm -f /etc/init.d/cis.sh
@@ -450,13 +451,6 @@ fi
     fi
 
 
-  #update_json 2 &
-  #/opt/pim/bin/bgscan_polling.sh
-  rm -f /usr/local/bin/update_edgeconf
-  rm -f /usr/local/bin/update_ordvcmconf
-  ln -s /opt/pim/bin/update_edgeconf.sh /usr/local/bin/update_edgeconf
-  ln -s /opt/pim/bin/update_ordvcmconf.sh /usr/local/bin/update_ordvcmconf
-  ln -s /opt/pim/bin/pim_guardian.py /usr/local/bin/pim_guardian
   update_edgeconf
   update_ordvcmconf
 

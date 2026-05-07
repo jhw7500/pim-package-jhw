@@ -74,7 +74,7 @@ GST_LOG_FILE="/var/log/cantops/gst/$app_$(date +'%Y%m%d_%H%M%S').log"
 IFS=$'\t' read -r \
     app cap_en tmp_path < <(
     jq -r '[
-        (.VHL_CAM.app // "streamApp"),
+        (.VHL_CAM.app // "gstApp"),
         (.VHL_CAM.capture.enable // false),
         (.VHL_CAM.tmp_path // "/dev/shm")
     ] | @tsv' "$FILE_JSON"

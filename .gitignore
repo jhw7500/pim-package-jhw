@@ -20,3 +20,4 @@ docs/superpowers
 # Tool directories
 .omc/
 .bkit/
+docs/*.xlsx

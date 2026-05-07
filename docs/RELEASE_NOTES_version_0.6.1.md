@@ -273,7 +273,66 @@ v0.6.1 (VCM SRT 안정화 + led_flash 통합 + 진단 로그 강화) ← 현재
 
 ---
 
-**문서 작성일**: 2026-04-27 (최종 갱신: 2026-04-30)
+## 🔧 후속 정리 (post-0.6.1, 2026-05-07)
+
+0.6.1 마감 후 패키지 설치 흐름 정리와 streamApp deprecation 1단계 작업.
+
+### 8. postinst 심볼릭 링크 생성 일원화
+
+기존에 `dist/pim/usr/local/bin/`에 트래킹되어 있던 7개 심볼릭 링크를 삭제하고, postinst의 `cpchk()`에서 런타임 생성으로 일원화했습니다.
+
+- **트래킹 심볼릭 링크 7개 삭제**: `change_mode`, `creboot`, `cstop`, `i2cread`, `i2cwrite`, `update_edgeconf`, `update_ordvcmconf`
+- **잠재 버그 동시 정정**:
+  - `update_ordvcmconf`: 기존 타겟이 `dist/pim/opt/pim/bin/...`라는 **빌드 트리 절대 경로 leak** 상태였음 → postinst가 `/opt/pim/bin/...`로 정정
+  - `creboot`/`cstop`/`i2cread`/`i2cwrite`: 기존 `../../../opt/pim/bin/...` **상대 경로**가 `/usr/local/bin`에서 풀면 `/usr/local/opt/pim/bin/...`로 깨지는 잠재 버그였음 → 절대 경로로 정상화
+- **`ln -s` → `ln -sf` 일괄 치환**: 기존 `rm -f` 후 `ln -s` 패턴을 idempotent한 `ln -sf`로 통합
+- **`pim_guardian` 심볼릭 링크 통합**: 기존 cpchk() + 메인 흐름 두 곳에서 중복 생성하던 것을 cpchk() 한 곳으로 통합 (메인 흐름 7줄 정리)
+- **libpi*.so → /usr/lib 심볼릭 링크 비활성화** (12줄 주석 처리 + 사유 주석):
+  - streamApp(deprecated) 전용 의존, 신규 타겟에서 미사용
+  - `rm -f`와 `ln -s` 모두 비활성화 → 기존 환경의 심볼릭 링크는 그대로 유지됨 (호환성 보존)
+  - 라이브러리 파일 자체(`libpi*.so.0.0.1` 6종)는 패키지에 그대로 포함
+
+### 9. streamApp deprecation 1단계 (config 강제 마이그레이션 정합)
+
+`update_edgeconf.sh` 라인 159가 `.VHL_CAM.app = "gstApp"`(무조건 대입)으로 패키지 설치 시마다 모든 노드를 gstApp으로 강제 마이그레이션하므로, 런타임 fallback도 gstApp으로 정합.
+
+- **`update_edgeconf.sh`**: `$1==1` (streamApp 모드) 분기 제거. `update_edgeconf 2` (gstApp 명시 모드)는 유지
+- **`restart_app.sh`**: jq fallback `(.VHL_CAM.app // "streamApp")` → `"gstApp"`. 알 수 없는 app 값일 때 fallback도 `"streamApp"` → `"gstApp"`
+- **`start_cam.sh`**: jq fallback `(.VHL_CAM.app // "streamApp")` → `"gstApp"`
+
+> **잔존**: `restart_app.sh`/`start_cam.sh`/`kill_pid.sh`/`chk_cpu_info.sh`의 streamApp 명시 비교/모니터링 라인은 호환성을 위해 유지. streamApp 바이너리(`/usr/local/bin/streamApp`, 53.3K)와 `libpi*.so*` 6종도 패키지에 그대로 포함 (점진적 deprecation).
+
+### 10. 기타
+
+- **`docs/*.xlsx` → `.gitignore`**: 외부 공유용 수정사항 워크북(0.5.9-20260320, 0.5.9-20260401, 0.6.0-20260409 등)을 트래킹 대상에서 제외
+
+### 후속 정리 변경 파일
+
+| 파일 | 변경 |
+|---|---|
+| `dist/pim/DEBIAN/postinst` | cpchk() 심볼릭 링크 일원화, libpi*.so 비활성화 |
+| `dist/pim/usr/local/bin/{change_mode,creboot,cstop,i2cread,i2cwrite,update_edgeconf,update_ordvcmconf}` | 삭제 (런타임 생성으로 전환) |
+| `dist/pim/opt/pim/bin/update_edgeconf.sh` | streamApp 분기 제거 |
+| `dist/pim/opt/pim/bin/restart_app.sh` | streamApp fallback → gstApp |
+| `dist/pim/opt/pim/bin/start_cam.sh` | streamApp fallback → gstApp |
+| `.gitignore` | `docs/*.xlsx` 추가 |
+
+### 후속 정리 마이그레이션
+
+**필수**: 없음. 기존 환경의 `/usr/lib/libpi*.so*` 심볼릭 링크는 비활성화로 유지되며, config는 패키지 설치 시 자동으로 gstApp으로 마이그레이션됨.
+
+**확인 권장**:
+- 패키지 설치/업그레이드 후 `/usr/local/bin/{killcam,startcam,update_edgeconf,update_ordvcmconf,creboot,cstop,change_mode,i2cread,i2cwrite,pim_guardian}` 심볼릭 링크가 모두 `/opt/pim/bin/*`로 정상 생성되었는지 확인
+- 신규 노드 설치 시 streamApp 모드(`update_edgeconf 1`) 호출 코드가 외부에 남아있다면 제거
+
+### 후속 정리 커밋
+
+- `88f97b5` — postinst 정리 + streamApp deprecation 1단계
+
+---
+
+**문서 작성일**: 2026-04-27 (최종 갱신: 2026-05-07 — 후속 정리 섹션 추가)
 **이전 버전 커밋**: 2d4ecad (v0.6.0)
-**HEAD 커밋**: 6f73c1e (chk_cam_operate retention emergency evict)
-**연관 커밋**: 4d3e77f (vcm SRT mtime + kill_test vcm 제외), 10d65ea (gstApp parser JSON 검증)
+**HEAD 커밋 (0.6.1 마감)**: 6f73c1e (chk_cam_operate retention emergency evict)
+**HEAD 커밋 (post-0.6.1)**: 88f97b5 (postinst 정리 + streamApp deprecation 1단계)
+**연관 커밋**: 4d3e77f (vcm SRT mtime + kill_test vcm 제외), 10d65ea (gstApp parser JSON 검증), 9b59b6c (0.6.1 노트 갱신)

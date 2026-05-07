@@ -320,12 +320,8 @@ jq '.VHL_CAM.i2c2.ch0.led_flash |= (. // {})
 | .VHL_CAM.i2c1.ch3.led_flash |= (if .flash_delay == null then .flash_delay = 0     else . end)
 ' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
-#streamApp
-if [[ $1 == 1 ]]; then
-    echo "update for streamApp"
-    jq '.VHL_CAM.app = "streamApp"' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
-#gstApp
-elif [[ $1 == 2 ]]; then
+#gstApp (streamApp deprecated — $1==1 분기 제거됨)
+if [[ $1 == 2 ]]; then
     echo "update for gstApp"
     jq '.VHL_CAM.app = "gstApp"' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 fi

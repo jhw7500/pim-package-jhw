@@ -79,7 +79,7 @@ FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' 
 IFS=$'\t' read -r \
     app cap_en cam_ch0 cam_ch1 cam_ch2 cam_ch3 csi0_subdev csi1_subdev < <(
     jq -r '[
-        (.VHL_CAM.app // "streamApp"),
+        (.VHL_CAM.app // "gstApp"),
         (.VHL_CAM.capture.enable // false),
         (.VHL_CAM.i2c2.ch0.enable // false),
         (.VHL_CAM.i2c2.ch1.enable // false),
@@ -97,7 +97,7 @@ csi1_subdev=${csi1_subdev:-3}
 if [ "$app" != "streamApp" ] && [ "$app" != "gstApp" ]; then
     logger -p local0.err "[$KEY][$tag:$LINENO] app : $app"
     logger -p local0.err "[$KEY][$tag:$LINENO] please update json"
-    app="streamApp"
+    app="gstApp"
     #exit 0
 fi
 
