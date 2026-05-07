@@ -74,35 +74,40 @@ filter_sync_back() {
     grep -v '^[a-f0-9]\+ sync-back:' || true
 }
 
-get_github_commits() {
-    local scope="$1"
-    local last_sync_file="$GITLAB_REPO/.last-sync-${scope}"
-    local since_commit=""
-
-    if [ -f "$last_sync_file" ]; then
-        since_commit=$(cat "$last_sync_file")
-        git -C "$GITHUB_REPO" log --oneline "${since_commit}..HEAD" -- "${scope}/" 2>/dev/null \
-            | filter_sync_back
-    else
-        git -C "$GITHUB_REPO" log --oneline -10 -- "${scope}/" 2>/dev/null \
-            | filter_sync_back
-    fi
+# rsync dry-run으로 실제 변경/신규/삭제될 파일 목록만 추출 (디렉토리 제외)
+# .last-sync-pim stale에 강건 — 변경되지 않은 파일의 commits는 자동 제외됨
+# 인자: rsync에 전달할 옵션/include/exclude/src/dst 모두 그대로 패스스루
+rsync_dry_changed_files() {
+    rsync -an --delete -i --out-format='%i|%n' \
+        --filter=':- .gitignore' \
+        --exclude='.git' \
+        "$@" 2>/dev/null \
+        | awk -F'|' '
+            {
+                c = substr($1, 1, 1)
+                # > 송신, < 수신, c 새 항목 생성, * 메시지(deleting 등)
+                if (c == ">" || c == "<" || c == "c" || c == "*") {
+                    # 디렉토리 항목(%n 끝이 /) 제외
+                    if (substr($2, length($2), 1) != "/") print $2
+                }
+            }'
 }
 
-get_pim_commits() {
-    local last_sync_file="$GITLAB_REPO/.last-sync-pim"
+# 변경 파일에 한정한 git log 추출 (since..HEAD 또는 -10 fallback)
+# 변경 파일 기반이므로 .last-sync-pim이 stale이어도 영향 받지 않은 commit은 포함되지 않음
+git_log_for_files() {
+    local last_sync_file="$1"
+    shift
+    local files=("$@")
+    [ ${#files[@]} -eq 0 ] && return 0
+
     local since_commit=""
-    local paths=()
-
-    for d in "${PIM_DIRS[@]}"; do paths+=("${d}/"); done
-    for f in "${PIM_FILES[@]}"; do paths+=("$f"); done
-
     if [ -f "$last_sync_file" ]; then
         since_commit=$(cat "$last_sync_file")
-        git -C "$GITHUB_REPO" log --oneline "${since_commit}..HEAD" -- "${paths[@]}" 2>/dev/null \
+        git -C "$GITHUB_REPO" log --oneline "${since_commit}..HEAD" -- "${files[@]}" 2>/dev/null \
             | filter_sync_back
     else
-        git -C "$GITHUB_REPO" log --oneline -10 -- "${paths[@]}" 2>/dev/null \
+        git -C "$GITHUB_REPO" log --oneline -10 -- "${files[@]}" 2>/dev/null \
             | filter_sync_back
     fi
 }
@@ -160,19 +165,34 @@ sync_submodule() {
 
     log "${scope} 서브모듈 동기화"
 
-    # GitHub 커밋 내역 수집
-    local commits
-    commits=$(get_github_commits "$scope")
+    # 1. 실제 변경될 파일 dry-run으로 먼저 추출 (.last-sync-pim stale 영향 차단)
+    local changed_files
+    changed_files=$(rsync_dry_changed_files \
+        "${GITHUB_REPO}/${subdir}/" "${GITLAB_REPO}/${subdir}/")
 
-    if [ -z "$commits" ]; then
+    if [ -z "$changed_files" ]; then
         echo "  동기화할 변경사항 없음 (${scope})"
         return 0
     fi
 
-    echo "  GitHub 커밋:"
-    echo "$commits" | sed 's/^/    /'
+    # 2. 변경 파일에 한정해서 GitHub commits 추출 (subdir/ prefix 부여)
+    local file_args=()
+    while IFS= read -r f; do
+        [ -n "$f" ] && file_args+=("${subdir}/${f}")
+    done <<< "$changed_files"
 
-    # rsync (GitHub → GitLab 서브모듈)
+    local commits
+    commits=$(git_log_for_files "$GITLAB_REPO/.last-sync-${scope}" "${file_args[@]}")
+
+    if [ -n "$commits" ]; then
+        echo "  GitHub 커밋:"
+        echo "$commits" | sed 's/^/    /'
+    else
+        echo "  GitHub 커밋: (변경 파일이 추적된 commits에 매핑되지 않음 — file restoration 가능성)"
+        commits="(no matching commits — file restoration or out-of-band change)"
+    fi
+
+    # 3. rsync (GitHub → GitLab 서브모듈)
     echo "  파일 복사: ${GITHUB_REPO}/${subdir}/ → ${GITLAB_REPO}/${subdir}/"
 
     if [ "$DRY_RUN" = true ]; then
@@ -200,18 +220,7 @@ sync_submodule() {
 sync_pim() {
     log "pim 본체 동기화"
 
-    local commits
-    commits=$(get_pim_commits)
-
-    if [ -z "$commits" ]; then
-        echo "  동기화할 변경사항 없음 (pim)"
-        return 0
-    fi
-
-    echo "  GitHub 커밋:"
-    echo "$commits" | sed 's/^/    /'
-
-    # PIM_DIRS + PIM_FILES을 단일 rsync 호출로 통합
+    # PIM_DIRS + PIM_FILES을 단일 rsync include 패턴으로 통합
     # source를 GitHub repo 루트로 잡아 루트 .gitignore가 per-directory merge로 자동 적용됨
     # → 사용자가 .gitignore에 패턴 추가하면 자동으로 동기화에서도 제외 (별도 관리 불필요)
     local rsync_includes=()
@@ -221,6 +230,35 @@ sync_pim() {
     for f in "${PIM_FILES[@]}"; do
         rsync_includes+=(--include="${f}")
     done
+
+    # 1. 실제 변경될 파일 dry-run으로 먼저 추출 (.last-sync-pim stale 영향 차단)
+    local changed_files
+    changed_files=$(rsync_dry_changed_files \
+        "${rsync_includes[@]}" \
+        --exclude='*' \
+        "${GITHUB_REPO}/" "${GITLAB_REPO}/")
+
+    if [ -z "$changed_files" ]; then
+        echo "  동기화할 변경사항 없음 (pim)"
+        return 0
+    fi
+
+    # 2. 변경 파일에 한정해서 GitHub commits 추출
+    local file_args=()
+    while IFS= read -r f; do
+        [ -n "$f" ] && file_args+=("$f")
+    done <<< "$changed_files"
+
+    local commits
+    commits=$(git_log_for_files "$GITLAB_REPO/.last-sync-pim" "${file_args[@]}")
+
+    if [ -n "$commits" ]; then
+        echo "  GitHub 커밋:"
+        echo "$commits" | sed 's/^/    /'
+    else
+        echo "  GitHub 커밋: (변경 파일이 추적된 commits에 매핑되지 않음 — file restoration 가능성)"
+        commits="(no matching commits — file restoration or out-of-band change)"
+    fi
 
     echo "  복사: ${PIM_DIRS[*]} ${PIM_FILES[*]}"
 
