@@ -142,6 +142,12 @@ finalize_commit() {
         return 0
     fi
 
+    # .last-sync-{scope}를 commit 전에 갱신해서 같은 commit에 포함되게 함
+    # (이전: commit 후 갱신 → working tree에만 남아 다음 sync까지 dirty 상태)
+    # 서브모듈의 경우 .last-sync-{scope}는 GITLAB_REPO 루트에 있으므로
+    # 서브모듈 commit에는 포함 안 되고 update_submodule_refs에서 add됨
+    [ -n "$save_scope" ] && save_sync_point "$save_scope"
+
     git add -A
     git commit -m "$commit_msg"
     echo "  ${label} commit 완료"
@@ -154,8 +160,6 @@ finalize_commit() {
     fi
 
     cd "$GITHUB_REPO"
-
-    [ -n "$save_scope" ] && save_sync_point "$save_scope"
 }
 
 # --- 서브모듈 동기화 ---
@@ -294,11 +298,18 @@ update_submodule_refs() {
     cd "$GITLAB_REPO"
 
     local changed=false
+    local sync_files=()
     for scope in "${!SUBMODULE_MAP[@]}"; do
         local subdir="${SUBMODULE_MAP[$scope]}"
         # 서브모듈 참조가 변경되었는지 확인
         if ! git diff --quiet -- "$subdir"; then
             changed=true
+        fi
+        # .last-sync-{scope} 파일도 변경 여부 확인 (sync_submodule이 갱신했을 수 있음)
+        local sync_file=".last-sync-${scope}"
+        if [ -f "$sync_file" ] && ! git diff --quiet -- "$sync_file"; then
+            changed=true
+            sync_files+=("$sync_file")
         fi
     done
 
@@ -322,6 +333,8 @@ update_submodule_refs() {
     fi
 
     git add ord vcm vsd 2>/dev/null || true
+    # .last-sync-{scope} 파일도 함께 add (working tree dirty 잔존 방지)
+    [ ${#sync_files[@]} -gt 0 ] && git add "${sync_files[@]}"
     if ! git diff --cached --quiet; then
         git commit -m "chore: 서브모듈 참조 업데이트 ($(date +%Y-%m-%d))"
         echo "  서브모듈 참조 commit 완료"
