@@ -85,6 +85,37 @@ VCM의 SRT 동기화 루프를 popen-free로 재구성하고, led_flash 통합 L
 - **저수준 로그 chN 접두사**: I²C/DMA/MCP4018 write 경로 로그에 채널 식별자 추가
 - **init_controls 진입 로그 정리** + V4L2 가이드 문서에 init_controls 로그 해석 섹션 추가
 
+##### 3.1 AWB 프리셋 매핑 (edgeconf `awb` 문자열 → AP1302 AWB_CTRL)
+
+edgeconf `i2c[12].chX.awb` 문자열은 gstApp `awb_str_to_mode`(videoBin.cpp:97)에서 mode nibble로 변환되고, max9296.ko `AP1302_AWB_CTRL_FROM_MODE`(max9296.c:110)가 `AWB_CTRL` 레지스터(`0x5100`)에 `(0x1150 | mode)`를 16-bit로 씁니다.
+
+```
+┌─────────────┬──────────────┬─────────────────────────────┬─────────────────────────────────────────────────────────┐
+│ awb 문자열  │ mode nibble  │ AP1302_AWB_MODE_*           │ 의미                                                    │
+├─────────────┼──────────────┼─────────────────────────────┼─────────────────────────────────────────────────────────┤
+│ "auto"      │ 0xf          │ AWB_MODE_AUTO               │ 기본값. AP1302 자동 화이트밸런스 추적                   │
+│ "off"       │ 0x0          │ AWB_MODE_OFF                │ AWB 비활성, AWB_MANUAL_QX/QY 수동 게인 사용             │
+│ "manual"    │ 0x0          │ AWB_MODE_OFF                │ "off"와 동일 모드 nibble (수동 게인 진입점)             │
+│ "horizon"   │ 0x1          │ AWB_MODE_HORIZON            │ Horizon (저색온, ~2300K)                                │
+│ "a"         │ 0x2          │ AWB_MODE_A                  │ Illuminant A (백열등, ~2856K)                           │
+│ "cwf"       │ 0x3          │ AWB_MODE_CWF                │ Cool White Fluorescent (냉백색 형광등, ~4150K)          │
+│ "d50"       │ 0x4          │ AWB_MODE_D50                │ D50 주광 (~5000K)                                       │
+│ "d65"       │ 0x5          │ AWB_MODE_D65                │ D65 주광 (~6500K)                                       │
+│ "d75"       │ 0x6          │ AWB_MODE_D75                │ D75 주광 (~7500K)                                       │
+│ "temp"      │ 0x7          │ AWB_MODE_TEMP               │ 사용자 색온도 (AWB_MANUAL_TEMP 레지스터로 지정)         │
+│ "measure"   │ 0x8          │ AWB_MODE_MEASURE            │ One-shot 측정                                           │
+│ (그 외/NULL)│ 0xf          │ AWB_MODE_AUTO               │ 알 수 없는 값은 "auto"로 폴백 (DEFAULT_AWB)             │
+└─────────────┴──────────────┴─────────────────────────────┴─────────────────────────────────────────────────────────┘
+```
+
+- 키워드는 **11종**, 실제 mode nibble은 **9종** (off ↔ manual은 같은 nibble `0x0`. 차이는 gstApp 측에서 의미적으로만 구분).
+- AP1302 레지스터: `AP1302_REG_AWB_CTRL = 0x5100` (16-bit). 쓰기 값 = `0x1150 | (mode & 0xf)` (`AP1302_AWB_CTRL_BASE | mode`).
+- V4L2 컨트롤 ID: `V4L2_CID_AUTO_WHITE_BALANCE_CH0 = V4L2_CID_USER_BASE + 0x1002`, `..._CH1 = V4L2_CID_USER_BASE + 0x1003` (max9296.c:116~117).
+- gstApp 호출 경로: `set_v4l2_subdev_control(csiNum, V4L2_CID_AUTO_WHITE_BALANCE_CH0/CH1, mode)` → max9296.ko가 `AWB_CTRL_FROM_MODE`로 16-bit 값 합성 후 per-channel I²C write.
+- NOTICE 로그: `awb=<문자열>(0x<nibble>)` 형식으로 출력 (videoBin.cpp:557, 584, 624). dual mode 요약 로그는 `awb:<nibble>` 정수만 표시 (line 84 예시).
+
+> 이전 문서/안내에 등장한 `incandescent` / `fluorescent` / `daylight` / `cloudy` / `twilight` / `shade` 같은 Android 카메라류 키워드는 **이 드라이버에서 지원하지 않습니다.** AP1302는 표준 라이트 소스 약어(A, CWF, D50/D65/D75, Horizon)와 자동/측정/사용자 색온도만 노출합니다.
+
 ---
 
 #### 4. gstApp 업데이트 (v2.0)
@@ -245,7 +276,8 @@ VCM v4.4의 SRT 안정화(#1)로 vcm을 죽이지 않고도 mtime 재동기화�
 3. **gstApp 바이너리 교체** (v1.5 → v2.0): single ch3 fix, cam_state 파일 기반 미러링, led_flash V4L2 통합, exp_time NOTICE
 
 4. **VCM 재빌드/재배포**: SRT 파이프라인 안정화 v4.4 — `vcm/tcpServer.{cpp,h}`, `vcm/util.h` 변경분 반영
-   - **주의**: vcm 바이너리는 본 패키지에 포함되지 않습니다 (서브모듈 빌드/배포 흐름 정책). 별도로 빌드해 `dist/pim/usr/local/bin/vcm`을 갱신해야 합니다.
+   - **주의**: vcm 바이너리는 git 저장소에 트래킹되지 않습니다 (`.gitignore` 제외, ord/vsd와 동일. `vcm/`은 git submodule이 아니라 소스만 트래킹되는 일반 디렉토리이며 빌드 산출물 `vcm/build/vcm`과 `dist/pim/usr/local/bin/vcm`만 ignored). `./build.sh vcm` 또는 `./docker/build.sh vcm` 실행 시 v4.4 소스가 컴파일되어 `dist/pim/usr/local/bin/vcm` → deb 패키지에 자동 포함됩니다. 빌드 후 `docker/build.sh`의 `verify_binary` 출력으로 ARM aarch64 / GLIBC 버전을 확인하세요.
+   - 참고: max9296.ko (`dist/pim/opt/pim/driver/`)와 gstApp (`dist/pim/usr/local/bin/`)은 git에 트래킹되어 있어 deb 업그레이드만으로 자동 교체됩니다.
 
 **권장 작업**
 

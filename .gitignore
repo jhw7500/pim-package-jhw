@@ -21,3 +21,5 @@ docs/superpowers
 .omc/
 .bkit/
 docs/*.xlsx
+# Added by code-review-graph
+.code-review-graph/
