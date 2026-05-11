@@ -95,21 +95,46 @@ rsync_dry_changed_files() {
 
 # 변경 파일에 한정한 git log 추출 (since..HEAD 또는 -10 fallback)
 # 변경 파일 기반이므로 .last-sync-pim이 stale이어도 영향 받지 않은 commit은 포함되지 않음
+# 각 commit subject 뒤에 [실제 sync된 file 목록] 첨부 — file-level 책임 표시
+# (통합 commit이 sync 범위 밖 파일까지 다뤘더라도 메시지엔 sync된 파일만 노출됨)
 git_log_for_files() {
     local last_sync_file="$1"
     shift
     local files=("$@")
     [ ${#files[@]} -eq 0 ] && return 0
 
-    local since_commit=""
+    local log_range="-10"
     if [ -f "$last_sync_file" ]; then
-        since_commit=$(cat "$last_sync_file")
-        git -C "$GITHUB_REPO" log --oneline "${since_commit}..HEAD" -- "${files[@]}" 2>/dev/null \
-            | filter_sync_back
-    else
-        git -C "$GITHUB_REPO" log --oneline -10 -- "${files[@]}" 2>/dev/null \
-            | filter_sync_back
+        log_range="$(cat "$last_sync_file")..HEAD"
     fi
+
+    local raw_log
+    raw_log=$(git -C "$GITHUB_REPO" log --format='%H %s' $log_range -- "${files[@]}" 2>/dev/null \
+        | filter_sync_back)
+    [ -z "$raw_log" ] && return 0
+
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        local sha=${line%% *}
+        local subject=${line#* }
+        local short=${sha:0:7}
+        local commit_files
+        commit_files=$(git -C "$GITHUB_REPO" show --name-only --format='' "$sha" 2>/dev/null || true)
+        local matched=()
+        local f
+        for f in "${files[@]}"; do
+            if grep -qFx -- "$f" <<< "$commit_files"; then
+                matched+=("$f")
+            fi
+        done
+        if [ ${#matched[@]} -gt 0 ]; then
+            local IFS=','
+            local files_str="${matched[*]}"
+            echo "${short} ${subject} [${files_str//,/, }]"
+        else
+            echo "${short} ${subject}"
+        fi
+    done <<< "$raw_log"
 }
 
 save_sync_point() {
