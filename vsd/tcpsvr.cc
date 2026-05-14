@@ -706,7 +706,7 @@ bool Tcpsvr::Begin(uint16_t port) {
     run_flag_ = true;
     thread_ = std::thread([this](){
         int n;
-        char buf[5120];
+        char buf[15360];
         struct sockaddr_in client_addr;
         int client = -1, new_client = -1;
         unsigned int sin_size;
