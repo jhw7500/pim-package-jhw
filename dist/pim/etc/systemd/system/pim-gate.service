@@ -9,7 +9,6 @@ Type=simple
 User=root
 WorkingDirectory=/root
 Environment=PYTHONUNBUFFERED=1
-Environment=TZ=Asia/Seoul
 
 ExecStartPre=/usr/local/bin/ctsiotbe start
 ExecStart=/usr/bin/python3 /opt/pim_gate/bin/main.py

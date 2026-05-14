@@ -392,6 +392,157 @@ if [[ "$bd_type" == "a" || "$bd_type" == "c" ]]; then
     ' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 fi
 
+if [[ "${model:0:3}" == "cis" ]]; then
+    echo "add CIS config (model: $model)"
+    jq '
+    . |= (if .config_version == null then .config_version = "1.1.1" else . end)
+    | . |= (if .manufacturer == null then .manufacturer = "cantops" else . end)
+    | . |= (if .daughter_board_type == null then .daughter_board_type = "analog" else . end)
+    | . |= (if .mainboard_version == null then .mainboard_version = "" else . end)
+    | . |= (if .fw_version == null then .fw_version = "" else . end)
+    | . |= (if .device_id == null then .device_id = "000000000000" else . end)
+    | . |= (if .testmode == null then .testmode = false else . end)
+    | . |= (if .factory == null then .factory = "UNKNOWN" else . end)
+    | . |= (if .target == null then .target = "OHT" else . end)
+    | . |= (if .maker == null then .maker = "user" else . end)
+    | .TARGET_OHT |= (. // {})
+    | .TARGET_OHT |= (if .ip == null then .ip = "100.100.100.100" else . end)
+    | .TARGET_OHT |= (if .port == null then .port = 7007 else . end)
+    | .TARGET_OHT |= (if .id == null then .id = "VD9999" else . end)
+    | .TARGET_OHT |= (if .comm_period_ms == null then .comm_period_ms = 500 else . end)
+    | .TARGET_OHT |= (if .acc_warn_enable == null then .acc_warn_enable = false else . end)
+    | .TARGET_OHT |= (if .acc_warnlevel_mg == null then .acc_warnlevel_mg = 800 else . end)
+    | .TARGET_OHT |= (if .angle_warnlevel_deg == null then .angle_warnlevel_deg = 6 else . end)
+    | .TARGET_OHT |= (if .angle_warnlevel_duration == null then .angle_warnlevel_duration = 3 else . end)
+    | .TARGET_STK |= (. // {})
+    | .TARGET_STK |= (if .id == null then .id = "" else . end)
+    | .TARGET_STK |= (if .ip == null then .ip = "100.100.100.15" else . end)
+    | .TARGET_STK |= (if .port == null then .port = 9001 else . end)
+    | .TARGET_STK |= (if .mode == null then .mode = 1 else . end)
+    | .TARGET_STK |= (if .main == null then .main = true else . end)
+    | .TARGET_STK |= (if .heartBeatPort == null then .heartBeatPort = 9002 else . end)
+    | .TARGET_STK |= (if .heartBeatTimeoutMs == null then .heartBeatTimeoutMs = 60000 else . end)
+    | .TARGET_STK |= (if .hSizeLimitMB == null then .hSizeLimitMB = 100 else . end)
+    | .TARGET_STK |= (if .nSizeLimitMB == null then .nSizeLimitMB = 70 else . end)
+    | .SERVER_JINDAN |= (. // {})
+    | .SERVER_JINDAN |= (if .interface == null then .interface = "WLAN0" else . end)
+    | .SERVER_JINDAN |= (if .ip == null then .ip = "127.0.0.1" else . end)
+    | .SERVER_JINDAN |= (if .port == null then .port = 9661 else . end)
+    | .SERVER_JINDAN |= (if .id == null then .id = "999" else . end)
+    | .CRON_PROPERTIES |= (. // {})
+    | .CRON_PROPERTIES.JOBS |= (. // {})
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA |= (. // {})
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA |= (if .use == null then .use = true else . end)
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA |= (if .period == null then .period = 5 else . end)
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA.SUBJOBS |= (. // {})
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA.SUBJOBS.ANALYZER_ZONE |= (. // {})
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA.SUBJOBS.ANALYZER_ZONE |= (if .use == null then .use = true else . end)
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA.SUBJOBS.ANALYZER_ZONE |= (if .sp1_threshold == null then .sp1_threshold = 1000 else . end)
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA.SUBJOBS.ANALYZER_ZONE |= (if .sp2_threshold == null then .sp2_threshold = 1000 else . end)
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA.SUBJOBS.ANALYZER_ZONE |= (if .sp3_threshold == null then .sp3_threshold = 30 else . end)
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA.SUBJOBS.ANALYZER_ZONE |= (if .sp4_threshold == null then .sp4_threshold = 30 else . end)
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA.SUBJOBS.ANALYZER_ZONE |= (if .thr_elapsed == null then .thr_elapsed = 1 else . end)
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA.SUBJOBS.ANALYZER_ZONE |= (if .min_axis2report == null then .min_axis2report = 2 else . end)
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA.SUBJOBS.ANALYZER_ZONE |= (if .saveAddBehind == null then .saveAddBehind = 120 else . end)
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA.SUBJOBS.ANALYZER_ZONE |= (if .saveAddFront == null then .saveAddFront = 30 else . end)
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA.SUBJOBS.ANALYZER_ZONE |= (if .overwrite == null then .overwrite = true else . end)
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA.SUBJOBS.ANALYZER_ZONE |= (if .data == null then .data = "adc" else . end)
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA.SUBJOBS.FULLTIME_ANALYSIS |= (. // {})
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA.SUBJOBS.FULLTIME_ANALYSIS |= (if .use == null then .use = false else . end)
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA.SUBJOBS.FULLTIME_ANALYSIS.FEATURES |= (. // {})
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA.SUBJOBS.FULLTIME_ANALYSIS.FEATURES |= (if .guide_roller_rpm == null then .guide_roller_rpm = [600] else . end)
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA.SUBJOBS.FULLTIME_ANALYSIS.FEATURES |= (if .constvel == null then .constvel = [2803,0.05] else . end)
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA.SUBJOBS.FULLTIME_ANALYSIS.FEATURES |= (if .boltloosestatus == null then .boltloosestatus = [] else . end)
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA.SUBJOBS.FULLTIME_ANALYSIS.FEATURES |= (if .overSpeedRPM == null then .overSpeedRPM = [2900] else . end)
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA.SUBJOBS.ADV_ANALYSIS |= (. // {})
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA.SUBJOBS.ADV_ANALYSIS |= (if .use == null then .use = false else . end)
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA.SUBJOBS.ADV_ANALYSIS |= (if .saveTimeLength == null then .saveTimeLength = 200 else . end)
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA.SUBJOBS.ADV_ANALYSIS |= (if .data == null then .data = "eadc" else . end)
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA.SUBJOBS.STK_ANALYSIS_HC |= (. // {})
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA.SUBJOBS.STK_ANALYSIS_HC |= (if .use == null then .use = false else . end)
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA.SUBJOBS.STK_ANALYSIS_HC |= (if .saveTimeLength == null then .saveTimeLength = 616 else . end)
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA.SUBJOBS.STK_ANALYSIS_HC |= (if .data == null then .data = "hadc" else . end)
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA.SUBJOBS.STK_ANALYSIS_TR |= (. // {})
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA.SUBJOBS.STK_ANALYSIS_TR |= (if .use == null then .use = false else . end)
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA.SUBJOBS.STK_ANALYSIS_TR |= (if .saveTimeLength == null then .saveTimeLength = 616 else . end)
+    | .CRON_PROPERTIES.JOBS.GENERATE_DATA.SUBJOBS.STK_ANALYSIS_TR |= (if .data == null then .data = "adc" else . end)
+    | .CRON_PROPERTIES.JOBS.WIFI_CHECKER |= (. // {})
+    | .CRON_PROPERTIES.JOBS.WIFI_CHECKER |= (if .use == null then .use = false else . end)
+    | .CRON_PROPERTIES.JOBS.WIFI_CHECKER |= (if .period == null then .period = 60 else . end)
+    | .CRON_PROPERTIES |= (if .tmpfs_marginsize == null then .tmpfs_marginsize = 15 else . end)
+    | .CRON_PROPERTIES |= (if .mode == null then .mode = "NA" else . end)
+    | . |= (if .log_level == null then .log_level = "INFO" else . end)
+    | . |= (if .logfile_level == null then .logfile_level = "INFO" else . end)
+    | . |= (if .ipc_addr == null then .ipc_addr = "/var/run/sea/sea_data.sock" else . end)
+    | . |= (if .sdcard_path == null then .sdcard_path = "/mnt/sd/" else . end)
+    | . |= (if .reset_hour == null then .reset_hour = 7 else . end)
+    | . |= (if .limit_cpu_temp == null then .limit_cpu_temp = 75 else . end)
+    | . |= (if .chunk_store_sec == null then .chunk_store_sec = 60 else . end)
+    | . |= (if .reboot_count_1day == null then .reboot_count_1day = 0 else . end)
+    | . |= (if .fw_updated == null then .fw_updated = false else . end)
+    | . |= (if .force_reboot == null then .force_reboot = false else . end)
+    | . |= (if .tmpfs_data == null then .tmpfs_data = "/root/data/" else . end)
+    | . |= (if .tmpfs_result == null then .tmpfs_result = "/root/result/" else . end)
+    | . |= (if .tmpfs_log == null then .tmpfs_log = "/root/log/" else . end)
+    | . |= (if .tmpfs_socket == null then .tmpfs_socket = "/root/socket/" else . end)
+    | . |= (if .shared_v == null then .shared_v = "/root/shared_v/" else . end)
+    | . |= (if .zmq_ext_pub == null then .zmq_ext_pub = "tcp://127.0.0.1:9991" else . end)
+    | . |= (if .zmq_ext_sub == null then .zmq_ext_sub = "tcp://127.0.0.1:9992" else . end)
+    | . |= (if .zmq_proxy_pub == null then .zmq_proxy_pub = "ipc:///root/socket/main_publish.sock" else . end)
+    | . |= (if .zmq_proxy_sub == null then .zmq_proxy_sub = "ipc:///root/socket/main_subscribe.sock" else . end)
+    | . |= (if .zmq_log == null then .zmq_log = "ipc:///root/socket/log.sock" else . end)
+    | . |= (if .server == null then .server = "JINDAN" else . end)
+    | . |= (if .acc_report_min == null then .acc_report_min = 10 else . end)
+    | . |= (if .tq_report_min == null then .tq_report_min = 10 else . end)
+    | . |= (if .device_report_min == null then .device_report_min = 1 else . end)
+    | .SERVER_DSIOT |= (. // {})
+    | .SERVER_DSIOT |= (if .pass == null then .pass = 0 else . end)
+    ' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+else
+    echo "remove CIS config (model: $model)"
+    jq 'del (
+    .config_version,
+    .manufacturer,
+    .daughter_board_type,
+    .mainboard_version,
+    .fw_version,
+    .device_id,
+    .testmode,
+    .factory,
+    .target,
+    .maker,
+    .TARGET_OHT,
+    .TARGET_STK,
+    .SERVER_JINDAN,
+    .CRON_PROPERTIES,
+    .log_level,
+    .logfile_level,
+    .ipc_addr,
+    .sdcard_path,
+    .reset_hour,
+    .limit_cpu_temp,
+    .chunk_store_sec,
+    .reboot_count_1day,
+    .fw_updated,
+    .force_reboot,
+    .tmpfs_data,
+    .tmpfs_result,
+    .tmpfs_log,
+    .tmpfs_socket,
+    .shared_v,
+    .zmq_ext_pub,
+    .zmq_ext_sub,
+    .zmq_proxy_pub,
+    .zmq_proxy_sub,
+    .zmq_log,
+    .server,
+    .acc_report_min,
+    .tq_report_min,
+    .device_report_min,
+    .SERVER_DSIOT
+    )' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+fi
+
 sync
 logger -p local0.notice "[$KEY][$tag:$LINENO] complete update $FILE_JSON$"
 echo -e "\e[32mcomplete update $FILE_JSON\e[0m"

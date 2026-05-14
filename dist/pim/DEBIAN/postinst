@@ -361,7 +361,8 @@ fi
   (echo root; echo root;) | passwd root
   (echo user; echo user;) | smbpasswd -as user
   (echo root; echo root;) | smbpasswd -as root
-  useradd -m semes && (echo semes; echo semes;) | passwd semes
+  #useradd -m semes && (echo semes; echo semes;) | passwd semes
+  useradd -m -s /bin/bash admin && (echo admin; echo admin;) | passwd admin
 
 #  chmod -R 777 /mnt/sd_cam
   chmod 777 /share
