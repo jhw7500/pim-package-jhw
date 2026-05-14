@@ -1,0 +1,12 @@
+[Unit]
+Description=WLAN watchdog (auto-recover wlp1s0 link via update_network.py)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/pim/bin/wlan_watchdog.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
