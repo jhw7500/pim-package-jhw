@@ -1067,6 +1067,13 @@ CheckDiskSpace() {
             update_sd_write_disable_flag "$final_path_cfg"
             # Apply runtime overrides immediately when CRIT flips SD write state.
             apply_storage_mode_overrides
+            # P0-2: update_sd_write_disable_flag가 막 sd_write_disabled를 제거했을 수 있다.
+            # 이 경우 위쪽 첫 backfill은 is_ram_only_mode=true 상태에서 skip 되어,
+            # 같은 사이클의 CheckFinalArrival이 SD 모드로 실행되는데 RAM backlog가 그대로
+            # 남아 false STALL이 발생할 수 있다. 모드 복구 후 한 번 더 시도하여 차단한다.
+            if ! is_ram_only_mode; then
+                BackfillRamRecordingsToSd
+            fi
         fi
     fi
 
