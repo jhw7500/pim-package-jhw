@@ -263,6 +263,13 @@ MovePartFile() {
     else
         final_name="$filename"
     fi
+
+    # P1-A: SD 상태가 60s 사이클 사이에 바뀔 수 있으므로 commit 시점에 모드를 재확인하여
+    # final_path / sd_tmp_path 가 현재 SD 상태에 맞도록 보장한다.
+    # (SD가 마운트 해제됐는데도 final_path가 SD인 채로 mv 시도하면 rootfs 마운트포인트에
+    # 잘못 쓰이고 heartbeat가 거짓으로 갱신될 수 있다.)
+    apply_storage_mode_overrides
+
     local src_file="$part_file"
     local part_dir
     part_dir=$(dirname "$part_file")
