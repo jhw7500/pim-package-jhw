@@ -988,8 +988,12 @@ CheckFinalArrival() {
         return 0
     fi
 
-    # 시작 직후 워밍업: 첫 녹화가 final에 도달할 시간 확보
-    if [ "$timer" -lt $(( rec_time * 2 )) ]; then
+    # 시작 직후 워밍업: 첫 녹화가 final에 도달할 시간 확보.
+    # P2: rec_time*2 단독은 boundary case에 부족. file_check_delay (gstApp 첫 fragment 대기)
+    # 와 startup_grace_extra_sec (앱 부팅 grace) 까지 포함하여 첫 post-warmup 사이클의
+    # false STALL을 차단한다.
+    local warmup_sec=$(( rec_time * 2 + ${file_check_delay:-10} + ${startup_grace_extra_sec:-10} ))
+    if [ "$timer" -lt "$warmup_sec" ]; then
         _write_final_health "WARMUP" "$timer"
         return 0
     fi
