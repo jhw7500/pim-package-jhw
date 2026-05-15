@@ -4,7 +4,47 @@
 
 ---
 
-## 📌 최신 변경사항 (2026-02-11)
+## 📌 최신 변경사항 (2026-05-15) — FINAL STALL 사일런트 정체 차단
+
+### 문제
+
+영상 fragment(.part)는 매분 생성되는데 final 디렉토리(/mnt/sd_cam)에 도착하지 않는 사일런트 정체.
+기존 헬스체크는 tmp_path 라이브니스만 확인하여 "정상"으로 보고했고, final_path 도착은 누구도 검사하지 않았다.
+근인은 gstApp Snap-back split 시점에 vcm가 mtime change resync로 첫 분기점 처리를 skip하여
+`/tmp/session_<ts>.srt_done` 마커가 영구 누락 → `.all_done` 미생성 → `MovePartFile` 미발동.
+
+### 변경
+
+**vcm/tcpServer.cpp**
+- `_TVcmConf.srt_enable` 디폴트 TRUE → **FALSE** (gstApp/chk_cam_operate.sh와 일치). ord_vcm_conf.json에 키가
+  없으면 SRT 비활성으로 일관 동작.
+- 메인 split-point 핸들러에서 `prefixFileName`이 비어있을 때 (시작 직후 / resync 직후) 직전 세션의 timestamp를
+  시간 계산으로 만들어 `srt_done` 생성. recording_time(분) 비례. vhl_name underscore-safe (끝에서 13자 추출).
+
+**chk_cam_operate.sh**
+- 신규 `CheckFinalArrival()` 함수. 60초 주기로 final_path_cfg에서 `${vhl_name}_*` 파일의 최근 `rec_min×2`분
+  도착 여부 검사. heartbeat(`/tmp/cam_last_final_ts`) 우선, `find -mmin` fallback.
+- 정체 시 escalation: stall_cnt 1~2 → `kill_test.sh`, 3~4 → `init_cam.sh`, 5+ → `reboot` (file_chk_reboot=true 시).
+- 진입 가드: RAM-only 모드, 녹화 비활성(cap_record_en=false), restart/init/kill_flag 진행 중에는 자동 skip.
+- `MovePartFile` Stage 2 mv 성공 후 `/tmp/cam_last_final_ts` heartbeat 갱신 (mv가 mtime을 보존하는
+  특성 우회).
+- 텔레메트리 1줄: `/tmp/cam_final_health` = `<status> <metric> <window_min> <epoch>`.
+
+**pim_guardian.py**
+- `_collect_*` 결과에 `final_health_status`/`metric`/`window_min`/`epoch`/`heartbeat_epoch` 필드 추가.
+  외부 fleet 모니터링에서 정체를 즉시 감지 가능.
+
+### 운영자 작업 (rollout 전)
+
+1. fleet 단말에서 `tools/audit_srt_enable.sh` 실행 — srt_enable 키 누락 단말 식별.
+2. 누락 단말에 `tools/migrate_srt_enable.sh true` 적용 — `ord_vcm_conf.json`에 명시값 추가 + 백업.
+3. 새 vcm binary + chk_cam_operate.sh 배포.
+4. `docs/runbook_final_stall.md` 운영자 공유.
+5. `test/test_final_stall_scenarios.md` 의 S1~S10 시나리오 1개 단말에서 통과 검증.
+
+---
+
+## 📌 변경사항 (2026-02-11)
 
 ### gstApp v1.4 (PR #21, #22)
 - 파이프라인 큐 저지연 튜닝 (100~200ms) 및 컴팩트 기본값 적용

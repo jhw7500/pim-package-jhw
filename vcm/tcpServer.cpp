@@ -566,14 +566,42 @@ set_start_time:
 			if(diff >= 0 && diff < 10) 
 			{
 				// 이전 세션 완료 처리 (파일이 교체되므로 이전 파일은 완료됨)
-				if (_TVcmConf.srt_enable && prefixFileName[0] != 0) {
-					char lastTs[16];
-					// prefixFileName: VD3000_20260209_143000
-					const char* ts_ptr = strchr(prefixFileName, '_');
-					if (ts_ptr && strlen(ts_ptr) >= 14) {
-						strncpy(lastTs, ts_ptr + 1, 13);
-						lastTs[13] = '\0';
-						
+				// 시작 직후 또는 gstApp resync 직후 첫 분기에는 prefixFileName이 비어있어
+				// 직전 세션 timestamp 추출이 불가하므로 시간 계산으로 fallback 한다.
+				// (H1 보강: 첫 세션 .all_done 영구 누락 방지)
+				if (_TVcmConf.srt_enable) {
+					char lastTs[16] = {0};
+					if (prefixFileName[0] != 0) {
+						// prefixFileName 형식: "<vhl_name>_YYYYMMDD_HHMMSS" (L610-611)
+						// vhl_name에 underscore가 포함되어도 안전하도록 끝에서 15자(YYYYMMDD_HHMMSS) 추출 후
+						// 앞 13자(YYYYMMDD_HHMM)만 lastTs로 사용 (P1-A: underscore-safe)
+						size_t plen = strlen(prefixFileName);
+						if (plen >= 15) {
+							const char *ts_start = prefixFileName + (plen - 15);
+							// sanity: 첫 자리는 digit
+							if (ts_start[0] >= '0' && ts_start[0] <= '9') {
+								strncpy(lastTs, ts_start, 13);
+								lastTs[13] = '\0';
+							}
+						}
+					} else {
+						// 첫 분기 bootstrap: 직전 녹화 세션 timestamp를 시간 계산으로 생성.
+						// recording_time(분 단위)에 비례하여 빼야 rec_min != 1 케이스도 정확.
+						// (P1-C: rec_min 비례)
+						int rec_min_local = (int)_TVhlConf.recording_time;
+						if (rec_min_local < 1) rec_min_local = 1;
+						time_t now_t = time(NULL);
+						time_t prev_t = now_t - (time_t)(rec_min_local * 60);
+						struct tm tm_prev;
+						localtime_r(&prev_t, &tm_prev);
+						snprintf(lastTs, sizeof(lastTs), "%04d%02d%02d_%02d%02d",
+							tm_prev.tm_year + 1900, tm_prev.tm_mon + 1, tm_prev.tm_mday,
+							tm_prev.tm_hour, tm_prev.tm_min);
+						__LOG(LOG_NOTICE, "[SRT][%s:%d] bootstrap srt_done for prev session: %s (rec_min=%d)",
+							_FILE_, __LINE__, lastTs, rec_min_local);
+					}
+
+					if (lastTs[0] != 0) {
 						char srt_flag[128];
 						snprintf(srt_flag, sizeof(srt_flag), "/tmp/session_%s.srt_done", lastTs);
 						FILE *fp_flag = fopen(srt_flag, "w");
@@ -1123,7 +1151,7 @@ void CTCPServer::init_json_config()
 	}
 
 	_TVcmConf.portNum = 10009;
-	_TVcmConf.srt_enable = TRUE;
+	_TVcmConf.srt_enable = FALSE;
 	_TVcmConf.srt_auto_sync = TRUE;
 	_TVcmConf.srt_test = FALSE;
 	_TVcmConf.srt_set_index = 1;

@@ -20,13 +20,29 @@
 
 ### 2.1 마커 생성 조건
 
-- **생성 주체**: `gstApp` (바이너리)
-- **생성 시점**: 녹화 시간(예: 1분)이 다 차고 파일이 닫힌 후
+`all_done` 마커는 **두 개의 부분 마커**가 모두 갖춰져야 생성된다.
+
+| 부분 마커 | 생성 주체 | 생성 시점 |
+| :--- | :--- | :--- |
+| `/tmp/session_<ts>.video_done` | `gstApp` (muxSinkBin.cpp) | 해당 분의 영상 fragment가 활성 채널 수만큼 모두 close된 직후 |
+| `/tmp/session_<ts>.srt_done` | `vcm` (tcpServer.cpp) | 해당 분의 SRT 자막 처리가 완료된 직후. **시작/resync 직후 첫 분기는 prefixFileName이 비어있어도 시간 계산 fallback으로 생성됨** (2026-05-15 패치) |
+| `/tmp/session_<ts>.all_done` | 어느 쪽이든 위 두 마커가 모두 존재할 때 `check_and_mark_all_done()` 이 생성. 동시에 부분 마커는 unlink. | video_done + srt_done 매칭 시 |
+
 - **생성 위치**: `/tmp/session_YYYYMMDD_HHMM.all_done`
-- **조건**: 활성 채널 수 이상의 채널에서 완료 카운트가 쌓일 때
+- **video_done 조건**: 활성 채널 수(`cmdArg.cam[i].enable`) 이상의 채널에서 fragment_closed 누적
+- **srt_done 조건**: `_TVcmConf.srt_enable == TRUE` 그리고 (정상 분기에서 `prefixFileName != ""` OR 부트스트랩 분기)
 - **코드 참고**:
-  - 생성: `projects/gstApp/muxSinkBin.cpp:57-67`, `131-168`
-  - 처리: `projects/pim-package/dist/pim/opt/pim/bin/chk_cam_operate.sh:394-450`
+  - video_done: `gstApp/muxSinkBin.cpp:283`
+  - srt_done (정상): `vcm/tcpServer.cpp:600-606`
+  - srt_done (부트스트랩, 2026-05-15 패치): `vcm/tcpServer.cpp:584-599`
+  - all_done 통합 판정: `muxSinkBin.cpp:120-133`, `tcpServer.cpp:58-69`
+  - 처리: `dist/pim/opt/pim/bin/chk_cam_operate.sh:1135` (ProcessCompletedSessions trigger)
+
+#### 설정 의존성: `srt_enable`
+
+세 컴포넌트(vcm / gstApp parser / chk_cam_operate.sh) 모두 `srt_enable` 디폴트가 **FALSE** 로 통일됨 (2026-05-15 패치). 이전에는 vcm만 TRUE 였다.
+운영 단말은 `ord_vcm_conf.json`에 명시값(`"srt_enable": true|false`)을 둘 것을 권장. 누락 시 SRT가 일관되게 비활성으로 동작.
+점검: `tools/audit_srt_enable.sh`, 마이그레이션: `tools/migrate_srt_enable.sh`.
 
 ### 2.2 마커가 있을 때 (정상 흐름)
 
@@ -170,6 +186,43 @@ fi
   - 파일 개수 확인이 성공하면(`check_num == file_cnt`)
   - 모든 카운트(`retry`, `retry_boot`, `retry_total`)는 0으로 초기화됩니다
 
+### 5.4 Final-path 도착 정체 워치독 (2026-05-15 패치)
+
+기존 파일 생성 감지가 잡지 못하는 **사일런트 정체** 차단용 별도 워치독.
+
+- **이름**: `CheckFinalArrival`
+- **주기**: 60초 (timer % 60 == 0)
+- **검사**: heartbeat(`/tmp/cam_last_final_ts`) age < `rec_min*2` 분 → OK. 없거나 stale이면 `find $final_path_cfg -name "${vhl_name}_*" -mmin -N` fallback.
+- **결과 노출**: `/tmp/cam_final_health` 1줄 (`<status> <metric> <window_min> <epoch>`)
+
+#### 진입 가드 (검사 자체 skip)
+
+| 가드 | telemetry status |
+| :--- | :--- |
+| `is_ram_only_mode` (SD BAD/write-disable) | `RAM_ONLY` |
+| 모든 카메라 채널 disabled (csi1_en=0 && csi2_en=0) | `REC_DISABLED` |
+| capture 모드인데 cap_record_en=false (`cap_en=true && cap_record_en=false`) | `REC_DISABLED` |
+| `/tmp/init_cam_flag` / `/tmp/restart_flag` / `/tmp/kill_flag` 진행 중 | `BUSY` |
+| 시작 후 워밍업 (`timer < rec_time*2`) | `WARMUP <timer>` |
+
+#### 정체 escalation 사슬
+
+| stall_cnt | 동작 |
+| :--- | :--- |
+| 1 ~ 2 | `/opt/pim/bin/kill_test.sh` |
+| 3 ~ 4 | `/opt/pim/bin/init_cam.sh` |
+| 5+ | `reboot` (단, `file_chk_reboot=true` 시. 아니면 카운터 리셋) |
+
+각 단계 사이 60초 간격으로 재평가. `MovePartFile` 성공 시 heartbeat 갱신 → 다음 사이클에 자동 OK 복귀.
+
+**코드 위치**:
+- 워치독: `chk_cam_operate.sh:918-1010` (CheckFinalArrival, _write_final_health)
+- heartbeat 갱신: `chk_cam_operate.sh:309-311` (MovePartFile Stage 2 직후)
+- 호출: `chk_cam_operate.sh:1415` (60초 블록)
+- guardian 노출: `pim_guardian.py:702-712, 729-733` (final_health_* 필드 5종)
+
+상세 진단 절차는 [runbook_final_stall.md](./runbook_final_stall.md), 시나리오 테스트는 [../test/test_final_stall_scenarios.md](../test/test_final_stall_scenarios.md) 참조.
+
 ---
 
 ## 6. 시나리오별 동작 요약
@@ -256,9 +309,51 @@ fi
 
 **코드 위치**: `chk_cam_operate.sh:264-375`
 
+### 8.4 /tmp 파일 명세 (마커 + telemetry + 사이클 플래그)
+
+녹화 라이프사이클에서 chk_cam_operate.sh / gstApp / vcm 사이에 오가는 `/tmp` 파일 전체 목록.
+
+#### 세션 마커 (transient)
+
+| 파일 | 생성자 | 소비자 | 의미 | 수명 |
+| :--- | :--- | :--- | :--- | :--- |
+| `/tmp/session_<YYYYMMDD_HHMM>.video_done` | gstApp/muxSinkBin.cpp:283 | check_and_mark_all_done() | 해당 분 영상 fragment 전 채널 close | mark_session_complete() 시 unlink |
+| `/tmp/session_<YYYYMMDD_HHMM>.srt_done` | vcm/tcpServer.cpp:600 또는 부트스트랩 | check_and_mark_all_done() | 해당 분 SRT 처리 완료 또는 부트스트랩 fallback | mark_session_complete() 시 unlink |
+| `/tmp/session_<YYYYMMDD_HHMM>.all_done` | check_and_mark_all_done() (vcm 또는 gstApp 측) | chk_cam_operate.sh ProcessCompletedSessions | 세션 완료, 이동 트리거 | ProcessCompletedSessions 완료 후 unlink |
+| `/tmp/session_debug.log` | gstApp/muxSinkBin.cpp:271 | (없음, 디버그용) | 매 fragment_closed의 채널 카운팅 | append-only, /tmp 재초기화 시 비워짐 |
+
+#### Final-path 워치독 telemetry (2026-05-15 신규)
+
+| 파일 | 생성자 | 소비자 | 의미 |
+| :--- | :--- | :--- | :--- |
+| `/tmp/cam_last_final_ts` | MovePartFile Stage 2 mv 성공 직후 | CheckFinalArrival 1차 검사 | 마지막 final 도착 epoch (heartbeat) |
+| `/tmp/cam_final_health` | CheckFinalArrival 매 60초 | pim_guardian.py, 외부 fleet 모니터 | 1줄: `<status> <metric> <window_min> <epoch>`. status ∈ {OK, OK_FB, RAM_ONLY, REC_DISABLED, BUSY, WARMUP, STALL} |
+
+#### 라이브니스 / 사이클 플래그 (기존)
+
+| 파일 | 생성자 | 의미 |
+| :--- | :--- | :--- |
+| `/tmp/cam_state/file_check.txt` (`$FILE_CHECK`) | chk_cam_operate.sh 매 사이클 | OK / NG (라이브니스 외부 노출) |
+| `/tmp/start_video_time_chk` | gstApp NEW_CLOCK 핸들러 | 현재 녹화 시작 시각. vcm가 mtime 변화로 resync 트리거 |
+| `/tmp/init_cam_flag` | init_cam.sh | 카메라 초기화 진행 중 |
+| `/tmp/restart_flag` | start_cam.sh / restart_app.sh | 앱 재시작 진행 중 |
+| `/tmp/kill_flag` | kill_test.sh | 종료 진행 중 |
+| `/tmp/bg_chk_flag.bin` | BG_Check_for_pim.sh | 카메라 disconnect bitmap |
+| `/tmp/sd_write_disabled` | retention 로직 | SD write 강제 차단 (RAM-only 진입) |
+| `/dev/shm/sd_mount_flag` | automnt_sd_for_emmc_boot.sh | SD 마운트 상태 (0=BAD, 1/2=OK) |
+| `/tmp/chk_cam_operate.part_state` | CleanupStalePartFiles | stale .part 추적 |
+| `/tmp/chk_cam_operate.disconnect_state` | maybe_init_cam_on_disconnect | disconnect 첫 감지 시각 + last init |
+| `/tmp/cam_state/last_start_ts` | start_cam.sh | 마지막 시작 epoch |
+| `/tmp/pim_cam_start_delay` | start_cam.sh | app_delay 값 |
+| `/tmp/last_init_cam_ts` | init_cam.sh | 마지막 init_cam 시각 (cooldown 판정용) |
+
 ---
 
 ## 9. 버전 정보
 
 - **작성일**: 2026-02-06
-- **기반 버전**: `chk_cam_operate.sh` (943 lines)
+- **최종 갱신**: 2026-05-15 (FINAL STALL 워치독 + /tmp 파일 명세 추가)
+- **기반 버전**:
+  - `chk_cam_operate.sh` (~1430 lines, P0/P1/P2 hotfix 적용본)
+  - `vcm/tcpServer.cpp` (srt_enable 디폴트 FALSE, prefixFileName bootstrap)
+  - `gstApp/muxSinkBin.cpp` (변경 없음)

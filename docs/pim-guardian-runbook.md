@@ -145,6 +145,31 @@
 - `sdErrAge` : `/tmp/err_sdcard.log` 경과초
 - 쉽게 말해: SD 관련 에러가 최근에 있었는지
 
+### Final 라인 (2026-05-15 신규)
+
+TMP 라인 바로 다음에 별행으로 출력됨. Final-path 워치독 상태 5필드.
+
+```text
+`- [Final: status=OK metric=12 window=2m hbAge=12s hbEpoch=1778827600]
+```
+
+- `status` : 워치독 상태. `OK`, `OK_FB`, `RAM_ONLY`, `REC_DISABLED`, `BUSY`, `WARMUP`, `STALL`, `N/A`
+- 쉽게 말해: 영상이 SD 최종 위치까지 잘 도착하는지. 자세한 의미는 위의 `Final-path 워치독 필드` 섹션 표 참조.
+- `metric` : status 별 의미 다름.
+  - `OK` → 마지막 final 도착 후 경과 초
+  - `WARMUP` → 현재 timer 초
+  - `STALL` → stall_cnt (escalation 단계 추적)
+  - 그 외 → `0`
+- `window` : 검사 윈도우(분). 보통 `rec_min * 2` (최소 2)
+- `hbAge` : `/tmp/cam_last_final_ts`(마지막 final 도착 epoch) 기준 경과초. `N/A` 면 heartbeat 파일 없음
+- `hbEpoch` : 마지막 final 도착 시각(epoch). `N/A` 면 heartbeat 파일 없음
+
+운영 빠른 해석:
+- `status=OK hbAge=<window*60 이내>` → 정상
+- `status=STALL metric=<n>` → 자동 escalation 진행 중 (1~2: kill_test, 3~4: init_cam, 5+: reboot)
+- `status=RAM_ONLY` / `REC_DISABLED` → 의도된 비활성, 워치독 skip 중
+- `status=WARMUP metric=120 이상` → 시작 워밍업이 끝났는데 status 갱신 안 됨 → chk_cam_operate.sh 정지 의심
+
 ### 초보자용 한 줄 해석 예시
 
 - `Camera:STARTING(...)` : 지금은 기동 직후라 판정 유예 중
@@ -153,6 +178,47 @@
 - `syncDebounced=WARN` : start time 불일치가 일시적이 아니라 지속됨
 - `bgCamMask=0x5` : CAM0 + CAM2 채널 에러
 - `CamErr:CAM0,CAM2` 또는 `bgCamCh=CAM0,CAM2` : 사람이 바로 읽는 채널 표기
+
+### Final-path 워치독 필드 (2026-05-15 신규)
+
+`chk_cam_operate.sh CheckFinalArrival`이 60초마다 `/tmp/cam_final_health` 1줄을 갱신하고,
+`MovePartFile` 성공 시 `/tmp/cam_last_final_ts` heartbeat를 찍는다. guardian이 이 2개 파일을 collect하여 다음 5필드로 노출한다.
+
+| 필드 | 출처 | 의미 |
+| :--- | :--- | :--- |
+| `final_health_status` | `cam_final_health` 1번째 토큰 | 워치독 상태. 아래 표 참조 |
+| `final_health_metric` | `cam_final_health` 2번째 토큰 | status 별 의미 다름 (아래) |
+| `final_health_window_min` | 3번째 토큰 | 검사 윈도우(분). `rec_min * 2` (최소 2) |
+| `final_health_epoch` | 4번째 토큰 | telemetry 갱신 시각(epoch) |
+| `final_heartbeat_epoch` | `cam_last_final_ts` 원문 | 마지막 final 도착 시각(epoch). MovePartFile 성공 직후 갱신 |
+
+#### status 값 + metric 의미
+
+| status | metric 의미 | 운영 해석 |
+| :--- | :--- | :--- |
+| `OK` | 마지막 final 도착 후 경과 초 | 정상. heartbeat 기반 |
+| `OK_FB` | 0 | 정상이지만 heartbeat 없음/stale → find -mmin fallback으로 확인 |
+| `RAM_ONLY` | 0 | SD BAD/write-disable → SD final 검사 의도적 skip (정상 RAM-only) |
+| `REC_DISABLED` | 0 | 모든 채널 disabled 또는 capture 모드+record off → 녹화 없음 |
+| `BUSY` | 0 | restart/init/kill 사이클 진행 중 → 검사 일시 skip |
+| `WARMUP` | 현재 timer 초 (0~119) | 시작 후 워밍업 중 (~120s) |
+| `STALL` | stall_cnt | **정체 감지**. escalation 진행 중 (자동 복구 시도) |
+
+#### 운영 시 빠른 확인
+
+```bash
+cat /tmp/cam_final_health        # 1줄 telemetry
+cat /tmp/cam_last_final_ts       # heartbeat
+date +%s                          # 비교 기준
+```
+
+- `OK <age>` 인데 age > rec_min*60*2 → guardian 갱신 지연 또는 워치독 정지
+- `STALL <n>` 이 1~2 → 자동 kill_test.sh 진행 중 (지켜보기)
+- `STALL <n>` 이 3~4 → init_cam.sh 진행 중
+- `STALL <n>` 이 5+ → reboot 직전 (file_chk_reboot=true 시)
+- `WARMUP` 이 120 이상이면 워치독이 멈춰있다는 신호 (chk_cam_operate.sh hang)
+
+상세 진단/대응: [runbook_final_stall.md](./runbook_final_stall.md)
 
 ---
 
@@ -282,6 +348,26 @@ guardian은 `guardian_bits`를 만들고, 아래 조건일 때만 복구 요청 
 - `RAMDelta`는 실제 write byte가 아니라 **순사용량 변화량**이다.
 - 파일 이동/정리 시 음수(`-`)가 나올 수 있다.
 
+### H. FINAL STALL (사일런트 정체)
+
+증상:
+- `final_health_status = STALL <n>` 지속
+- `final_heartbeat_epoch` 가 `final_health_epoch` 기준 `rec_min * 120` 초보다 오래된 상태
+- syslog 에 `[RST] FINAL STALL: no new <vhl>_* in <final_dir>` 반복
+- 그러나 `Heartbeat:OK` (영상 fragment는 만들어지고 있음)
+
+원인 후보:
+- vcm/gstApp 간 `srt_done` 마커 미생성 (config srt_enable 불일치 등)
+- `MovePartFile` 실패 (권한/SD 풀/마운트 RO)
+- 카메라 disconnect 후 dead state 영구화
+
+조치:
+1. `cat /tmp/cam_final_health /tmp/cam_last_final_ts && date +%s`
+2. `ls -la /tmp/session_*.{video_done,srt_done,all_done} 2>/dev/null` — 어느 마커가 누락인지
+3. `jq '.VCM.srt_enable' /root/shared_v/ord_vcm_conf.json` — null이면 `tools/migrate_srt_enable.sh true`
+4. escalation은 자동 진행 (kill_test → init_cam → reboot). 5분 지나도 회복 안 되면 hardware 의심
+5. 상세 진단: [runbook_final_stall.md](./runbook_final_stall.md)
+
 ---
 
 ## 9) bgCamMask 비트맵
@@ -316,5 +402,8 @@ guardian은 `guardian_bits`를 만들고, 아래 조건일 때만 복구 요청 
 ## 11) 관련 문서
 
 - `docs/camera-operation-guide.md`
-- `docs/session-lifecycle.md`
+- `docs/session-lifecycle.md` — 세션 마커 + `/tmp` 파일 명세 8.4
 - `docs/cpu-usage-analysis.md`
+- `docs/runbook_final_stall.md` — FINAL STALL 시나리오 H 상세 절차
+- `tools/audit_srt_enable.sh`, `tools/migrate_srt_enable.sh` — srt_enable 키 점검/마이그레이션
+- `test/test_final_stall_scenarios.md` — 워치독 재현 시나리오 S1~S10

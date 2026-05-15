@@ -29,6 +29,8 @@ MCP_TRUST_TOOL = "/opt/pim/bin/mcp_trust_test"
 TMP_BG_CAM_ERR_STREAK = "/tmp/cam_state/streak"
 TMP_CAM_STATE_DIR = "/tmp/cam_state"
 TMP_PART_STATE = "/tmp/chk_cam_operate.part_state"
+TMP_FINAL_HEALTH = "/tmp/cam_final_health"
+TMP_FINAL_HEARTBEAT = "/tmp/cam_last_final_ts"
 TMP_CHK_MMC_VAR = "/tmp/chk_mmc_var"
 TMP_ERR_SDCARD_LOG = "/tmp/err_sdcard.log"
 TMP_FILE_CHECK = "/tmp/file_check"
@@ -699,6 +701,16 @@ class PIMHealthGuardian:
 
         session_debug_last = self._safe_tail_line(TMP_SESSION_DEBUG_LOG)
 
+        # final-path 정체 감시 telemetry (chk_cam_operate.sh CheckFinalArrival)
+        # 형식: "<status> <metric> <window_min> <epoch>"
+        final_health_raw = self._safe_read_text_file(TMP_FINAL_HEALTH, "").strip()
+        final_health_parts = final_health_raw.split()
+        final_health_status = final_health_parts[0] if len(final_health_parts) >= 1 else ""
+        final_health_metric = final_health_parts[1] if len(final_health_parts) >= 2 else ""
+        final_health_window_min = final_health_parts[2] if len(final_health_parts) >= 3 else ""
+        final_health_epoch = final_health_parts[3] if len(final_health_parts) >= 4 else ""
+        final_heartbeat_raw = self._safe_read_text_file(TMP_FINAL_HEARTBEAT, "").strip()
+
         return {
             "bg_cam_err_streak": bg_streak,
             "file_check": file_check,
@@ -722,6 +734,13 @@ class PIMHealthGuardian:
             "cam_state_recording": cam_state_recording,
             "start_time_sync": start_time_sync,
             "session_debug_last": session_debug_last,
+            "final_health": {
+                "status": final_health_status,
+                "metric": final_health_metric,
+                "window_min": final_health_window_min,
+                "epoch": final_health_epoch,
+                "heartbeat_epoch": final_heartbeat_raw,
+            },
         }
 
     def _write_guardian_state(self, payload: Mapping[str, object]) -> None:
@@ -1522,6 +1541,25 @@ class PIMHealthGuardian:
                     + f" done(video/srt)={tmp_sig['video_done_cnt']}/{tmp_sig['srt_done_cnt']}"
                     + f" syncRaw={sync_raw_str} syncDebounced={sync_debounced} bgCamMask=0x{bg_cam_mask:x} bgCamCh={bg_cam_channels_str}"
                     + f" vhl={vhl_str} sdErrAge={sd_err_age_str}s]"
+                )
+
+                # Final-path watchdog 별행 (2026-05-15)
+                fh_obj = tmp_sig.get("final_health") if isinstance(tmp_sig, dict) else None
+                fh = fh_obj if isinstance(fh_obj, dict) else {}
+                final_status_str = str(fh.get("status", "") or "") or "N/A"
+                final_metric_str = str(fh.get("metric", "") or "") or "0"
+                final_window_str = str(fh.get("window_min", "") or "") or "N/A"
+                final_hb_raw = str(fh.get("heartbeat_epoch", "") or "")
+                if final_hb_raw.isdigit():
+                    final_hb_age_str = f"{int(time.time()) - int(final_hb_raw)}s"
+                    final_hb_epoch_str = final_hb_raw
+                else:
+                    final_hb_age_str = "N/A"
+                    final_hb_epoch_str = "N/A"
+
+                logger.info(
+                    f"         `- [Final: status={final_status_str} metric={final_metric_str}"
+                    + f" window={final_window_str}m hbAge={final_hb_age_str} hbEpoch={final_hb_epoch_str}]"
                 )
 
                 if in_startup_grace:

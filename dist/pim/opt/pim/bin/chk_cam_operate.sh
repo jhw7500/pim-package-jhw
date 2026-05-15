@@ -43,6 +43,10 @@ DISCONNECT_INIT_CAM_INTERVAL_SEC_DEFAULT=180
 DISCONNECT_INIT_CAM_GRACE_SEC_DEFAULT=60
 DISCONNECT_INIT_CAM_STATE_FILE_DEFAULT="/tmp/chk_cam_operate.disconnect_state"
 
+# P2: final-path 진척 telemetry / heartbeat (외부 모니터링용)
+FINAL_HEARTBEAT_FILE="/tmp/cam_last_final_ts"
+FINAL_HEALTH_FILE="/tmp/cam_final_health"
+
 DISCONNECT_INIT_CAM_STATE_FILE=${DISCONNECT_INIT_CAM_STATE_FILE_DEFAULT}
 
 SYSFS_LINK_I2C2="/sys/bus/i2c/devices/2-0048/link_status"
@@ -305,6 +309,10 @@ MovePartFile() {
         logger -p local0.error "[$KEY][$tag:$LINENO] Stage2 mv failed: $filename"
         return 1
     fi
+
+    # P2-3: final 도착 heartbeat. mv가 mtime을 보존하므로 find -mmin은 도착 시점이 아닌
+    # fragment 생성 시점을 본다. 정확한 "최근 final 도착 시각"을 별도 파일로 기록한다.
+    date +%s > "$FINAL_HEARTBEAT_FILE" 2>/dev/null
 
     logger -p local0.info "[$KEY][$tag:$LINENO] Complete: $final_name"
     return 0
@@ -915,6 +923,122 @@ BackfillRamRecordingsToSd() {
     [ "$fail_count" -eq 0 ]
 }
 
+# Final-path telemetry 1줄 갱신. 외부 모니터(pim_guardian 등)에서 읽어 사용.
+# 형식: <status> <last_arrival_age_sec | stall_cnt> <window_min> <epoch_now>
+_write_final_health() {
+    local status="$1"
+    local metric="$2"
+    local window_min_local=$(( rec_min * 2 ))
+    [ "$window_min_local" -lt 2 ] && window_min_local=2
+    printf '%s %s %s %s\n' \
+        "$status" "$metric" "$window_min_local" "$(date +%s)" \
+        > "$FINAL_HEALTH_FILE" 2>/dev/null
+}
+
+# Final-path 정체 감시.
+# 최근 (rec_min × 2)분 내에 final_path에 새 ${vhl_name}_* 파일이 없으면
+# .all_done 마커 누락 등으로 인한 사일런트 정체로 판단하고 카메라 앱을 재시작한다.
+# (사용자 우선순위: "정체가 침묵하는 게 진짜 문제, 복구만 되면 OK")
+#
+# P0 가드:
+#   - RAM-only 모드에서는 final_path_cfg(SD)가 의도적으로 안 쓰임 → skip
+#   - 녹화 비활성(cap_record_en=false 또는 모든 채널 disabled) → skip
+#   - 이미 재시작/kill 사이클 진행 중 → skip
+# Escalation (사용자 escalation 정책: 정체 지속 시 단계적 강도 증가):
+#   stall_cnt 1-2: kill_test.sh
+#   stall_cnt 3-4: init_cam.sh (cooldown 무관, 정체는 cooldown보다 우선)
+#   stall_cnt 5+ : reboot (file_chk_reboot=true 시)
+CheckFinalArrival() {
+    local final_dir="${final_path_cfg%/}"
+    [ -d "$final_dir" ] || return 0
+
+    # P0-1: RAM-only 모드에서는 SD 경로 검사 자체가 무의미
+    if is_ram_only_mode; then
+        final_stall_cnt=0
+        _write_final_health "RAM_ONLY" 0
+        return 0
+    fi
+
+    # P1-B: 녹화 비활성 시 트리거 안 함.
+    # 메인 루프(L1124, L1129)와 동일 조건을 사용:
+    #   - 모든 카메라 채널 disabled
+    #   - capture 모드(cap_en=true)인데 capture.record=false
+    # cap_record_en 단독 체크는 잘못된 가드 (일반 녹화 단말이 cap_en=false, cap_record_en=false 케이스에서 오작동).
+    if [[ "$csi1_en" -eq 0 ]] && [[ "$csi2_en" -eq 0 ]]; then
+        final_stall_cnt=0
+        _write_final_health "REC_DISABLED" 0
+        return 0
+    fi
+    if [[ "$cap_en" == *"$ENABLE_VAL"* && "$cap_record_en" != *"$ENABLE_VAL"* ]]; then
+        final_stall_cnt=0
+        _write_final_health "REC_DISABLED" 0
+        return 0
+    fi
+
+    # P0-2: 이미 재시작/kill 사이클 진행 중이면 중복 호출 차단
+    if [ -f /tmp/init_cam_flag ] || [ -f /tmp/restart_flag ] || [ -f /tmp/kill_flag ]; then
+        _write_final_health "BUSY" 0
+        return 0
+    fi
+
+    # 시작 직후 워밍업: 첫 녹화가 final에 도달할 시간 확보
+    if [ "$timer" -lt $(( rec_time * 2 )) ]; then
+        _write_final_health "WARMUP" "$timer"
+        return 0
+    fi
+
+    local window_min=$(( rec_min * 2 ))
+    [ "$window_min" -lt 2 ] && window_min=2
+    local window_sec=$(( window_min * 60 ))
+
+    # P2-3: heartbeat 1차 검사 (가장 정확). MovePartFile 성공 시 갱신됨.
+    if [ -f "$FINAL_HEARTBEAT_FILE" ]; then
+        local hb_ts now_ts age
+        hb_ts=$(cat "$FINAL_HEARTBEAT_FILE" 2>/dev/null | tr -d '\r\n')
+        now_ts=$(date +%s)
+        if [[ "$hb_ts" =~ ^[0-9]+$ ]]; then
+            age=$(( now_ts - hb_ts ))
+            if [ "$age" -ge 0 ] && [ "$age" -lt "$window_sec" ]; then
+                final_stall_cnt=0
+                _write_final_health "OK" "$age"
+                return 0
+            fi
+        fi
+    fi
+
+    # 2차 fallback: find -mmin (heartbeat 없거나 깨졌을 때만)
+    if find "$final_dir" -maxdepth 1 -type f -name "${vhl_name}_*" \
+            -mmin -"$window_min" -print -quit 2>/dev/null | grep -q .; then
+        # heartbeat가 없었다면 지금 만들어둔다 (다음 사이클부터 정확)
+        date +%s > "$FINAL_HEARTBEAT_FILE" 2>/dev/null
+        final_stall_cnt=0
+        _write_final_health "OK_FB" 0
+        return 0
+    fi
+
+    ((final_stall_cnt++))
+    logger -p local0.emerg "[$KEY][$tag:$LINENO] FINAL STALL: no new ${vhl_name}_* in ${final_dir} for >${window_min}m (stall_cnt=$final_stall_cnt)"
+    echo "NG" > "$FILE_CHECK"
+    _write_final_health "STALL" "$final_stall_cnt"
+
+    if [ "$final_stall_cnt" -le 2 ]; then
+        logger -p local0.error "[$KEY][$tag:$LINENO] FINAL STALL escalate: kill_test.sh (stall_cnt=$final_stall_cnt)"
+        /opt/pim/bin/kill_test.sh
+    elif [ "$final_stall_cnt" -le 4 ]; then
+        logger -p local0.error "[$KEY][$tag:$LINENO] FINAL STALL escalate: init_cam.sh (stall_cnt=$final_stall_cnt)"
+        /opt/pim/bin/init_cam.sh
+    else
+        if [[ "$file_chk_reboot" == *"$ENABLE_VAL"* ]]; then
+            logger -p local0.emerg "[$KEY][$tag:$LINENO] FINAL STALL persistent (stall_cnt=$final_stall_cnt) — reboot"
+            sleep 1
+            reboot
+        else
+            logger -p local0.notice "[$KEY][$tag:$LINENO] FINAL STALL persistent but file_chk_reboot=false — reset counter"
+            final_stall_cnt=0
+        fi
+    fi
+}
+
 # Disk 사용량 체크
 CheckDiskSpace() {
     # Panic watchdog: /dev/shm filesystem near-full → emergency evict regardless of cap state.
@@ -964,6 +1088,7 @@ retry=0
 retry_boot=0
 retry_total=0
 last_init_ts=0
+final_stall_cnt=0
 #touch $FILE_
 
 JSON_PREFIX=edgeconf_
@@ -1389,6 +1514,7 @@ do
         mkdir -p "$tmp_path" "$sd_tmp_path" "$final_path" 2>/dev/null
         CleanupStalePartFiles
         CheckDiskSpace
+        CheckFinalArrival
     fi
 
     sleep 2
