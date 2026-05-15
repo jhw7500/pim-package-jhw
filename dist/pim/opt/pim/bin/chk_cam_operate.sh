@@ -918,6 +918,13 @@ BackfillRamRecordingsToSd() {
     if [ "$moved_count" -gt 0 ] || [ "$skipped_count" -gt 0 ] || [ "$fail_count" -gt 0 ]; then
         logger -p local0.notice "[$KEY][$tag:$LINENO] ram backlog backfill: moved=$moved_count skipped=$skipped_count failed=$fail_count ($ram_final_dir -> $sd_final_dir)"
         sync -f "$sd_final_dir" 2>/dev/null || sync
+        # P0-1: SD 복귀 후 backfill로 RAM 파일이 SD final에 도착했음을 heartbeat에 반영한다.
+        # mv는 mtime을 보존하므로 find -mmin은 backfill된 파일을 못 잡고, heartbeat도 갱신 안 되면
+        # 다음 CheckFinalArrival 사이클에 false STALL 발생 → 무한 kill_test.sh loop.
+        # moved_count>0 (실제 mv 발생) 시에만 갱신. skipped (dedup)는 새 도착이 아니므로 제외.
+        if [ "$moved_count" -gt 0 ]; then
+            date +%s > "$FINAL_HEARTBEAT_FILE" 2>/dev/null
+        fi
     fi
 
     [ "$fail_count" -eq 0 ]
