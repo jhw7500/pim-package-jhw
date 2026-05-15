@@ -966,9 +966,12 @@ CheckFinalArrival() {
     local final_dir="${final_path_cfg%/}"
     [ -d "$final_dir" ] || return 0
 
-    # P0-1: RAM-only 모드에서는 SD 경로 검사 자체가 무의미
+    # P0-1: RAM-only 모드에서는 SD 경로 검사 자체가 무의미.
+    # P1-B: stall_cnt 는 리셋하지 않는다. flapping(SD가 OK/BAD를 빠르게 반복) 케이스에서
+    # RAM_ONLY 진입마다 0으로 리셋하면 SD-OK 사이클에서 STALL이 감지되어도 다음 RAM_ONLY
+    # 사이클에서 다시 리셋되어 escalation이 영영 진행되지 않는다.
+    # 실제로 SD에 도착이 확인되거나(OK/OK_FB) 녹화 자체가 비활성(REC_DISABLED)일 때만 리셋.
     if is_ram_only_mode; then
-        final_stall_cnt=0
         _write_final_health "RAM_ONLY" 0
         return 0
     fi
