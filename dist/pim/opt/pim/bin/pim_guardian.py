@@ -188,6 +188,12 @@ class PIMHealthGuardian:
         message: str,
         action_fn: Callable[[], bool],
     ) -> bool:
+        # --recovery flag로 명시 활성화하지 않으면 즉시 skip.
+        # systemd 데몬 모드(stdin 없음)에서 prompt가 30초 timeout으로 폭주하지 않도록 보호.
+        # 감지/보고/GUARD_BIT_* set은 그대로 유지되고, interactive recovery 행위만 차단된다.
+        if not self.recovery_enabled:
+            return False
+
         is_anomaly_now = True
         was_anomaly_before = self._recovery_prev_anomaly.get(event_key, False)
         self._recovery_prev_anomaly[event_key] = is_anomaly_now

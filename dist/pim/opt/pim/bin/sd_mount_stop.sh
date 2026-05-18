@@ -16,7 +16,9 @@ tmp_path=$(jq -r '.VHL_CAM.tmp_path' "$FILE_JSON")
 if [ "$tmp_path" == "$DIR" ]; then
     daemon_name=cam-operate
     status=$(systemctl is-active $daemon_name 2>/dev/null)
-    if [ "$status" != "active" ]; then
+    # tmp_path가 SD 경로(=DIR)이고 cam-operate가 active면 SD를 잡고 있을 가능성이 크다.
+    # umount 전에 graceful stop으로 file handle을 닫고 EIO를 피한다.
+    if [ "$status" == "active" ]; then
         logger -p local0.notice "[$KEY][$TAG:$LINENO] systemctl stop cam-operate"
         systemctl stop $daemon_name
         sleep 1
