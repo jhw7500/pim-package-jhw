@@ -38,19 +38,30 @@ static void sanitize_srt_text(char* out, size_t outSize, const char* in)
 }
 
 static void mark_session_complete(const char *timestamp) {
-  char done_file[128];
+  // /tmp/session_<timestamp>.all_done 생성 (idempotent)
+  // startup transient 시 gstApp 측 두 번째 video_done과 매칭되어 두 번째 호출이 들어올 수 있다.
+  // 이미 .all_done이 있으면 chk_cam_operate가 처리 중이라고 보고 부분 마커만 정리한다.
+  char done_file[128], video_flag[128], srt_flag[128];
   snprintf(done_file, sizeof(done_file), "/tmp/session_%s.all_done", timestamp);
+  snprintf(video_flag, sizeof(video_flag), "/tmp/session_%s.video_done", timestamp);
+  snprintf(srt_flag, sizeof(srt_flag), "/tmp/session_%s.srt_done", timestamp);
+
+  if (access(done_file, F_OK) == 0) {
+    __LOG(LOG_INFO, "[SRT][%s:%d] all_done already exists for %s, skip recreate (idempotent)",
+          _FILE_, __LINE__, timestamp);
+    unlink(video_flag);
+    unlink(srt_flag);
+    return;
+  }
+
   FILE *fp = fopen(done_file, "w");
   if (fp) {
     fprintf(fp, "%s\n", timestamp);
     fclose(fp);
     __LOG(LOG_NOTICE, "[SRT][%s:%d] Session complete: %s", _FILE_, __LINE__, timestamp);
   }
-  
+
   // 개별 플래그 정리
-  char video_flag[128], srt_flag[128];
-  snprintf(video_flag, sizeof(video_flag), "/tmp/session_%s.video_done", timestamp);
-  snprintf(srt_flag, sizeof(srt_flag), "/tmp/session_%s.srt_done", timestamp);
   unlink(video_flag);
   unlink(srt_flag);
 }
