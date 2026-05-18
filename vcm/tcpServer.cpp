@@ -676,7 +676,7 @@ set_start_time:
 				if(srtMinStart >= 60) srtMinStart -= 60;
 				srtSecStart = 0;
 
-                if(_TVcmConf.srt_enable) __LOG(LOG_INFO, "[SRT][%s:%d] filename : %s/%s-data.srt", _FILE_, __LINE__, _TVhlConf.tmp_path, prefixFileName);
+                if(_TVcmConf.srt_enable) __LOG(LOG_NOTICE, "[SRT][%s:%d] filename : %s/%s-data.srt", _FILE_, __LINE__, _TVhlConf.tmp_path, prefixFileName);
                 if(_TVcmConf.vib_test) __LOG(LOG_INFO, "[SRT][%s:%d] filename : %s/%s-vib.bin", _FILE_, __LINE__, _TVhlConf.tmp_path, prefixFileName);
 				//srtMinOffset = srtMinStart % recording_time;
 			}
