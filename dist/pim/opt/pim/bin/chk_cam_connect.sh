@@ -33,6 +33,11 @@ CH2_EN_FAIL="0x26"
 CH3_EN_FAIL="0x16"
 
 cam_ch_en=$1
+# 전 채널 disable 시 deserializer가 power-down되어 i2c NACK이 발생하므로 i2c 트랜잭션 자체를 건너뛴다.
+if [ "${cam_ch_en:-0}" -eq 0 ] 2>/dev/null; then
+    logger -p local0.info "[CHK][$tag:$LINENO] all camera channels disabled (cam_ch_en=${cam_ch_en:-0}), skip i2c check"
+    exit 0
+fi
 if [[ $((cam_ch_en&0x01)) == 1 ]]; then
     cam_ch0="true"
 else
@@ -202,6 +207,8 @@ cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
             logger -p local0.error "[CHK][$tag:$LINENO] CAM3_ERR : $cam23_res"
             echo "${timestamp} CAM3 ERR" >> ${FLAG_PATH}/err_cam3.log
         fi
+    else
+        logger -p local0.info "[CHK][$tag:$LINENO] CAM2 CAM3 disable"
 	fi
 #fi
 
