@@ -23,3 +23,19 @@ docs/superpowers
 docs/*.xlsx
 # Added by code-review-graph
 .code-review-graph/
+.cursor/
+.claude/
+
+# AI assistant configs / context files (local-only, do not push to remote)
+.cursorrules
+.gemini/
+.kiro/
+.mcp.json
+.opencode.json
+.qoder/
+.windsurfrules
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+QODER.md
+.github/code-review-graph.instruction.md
