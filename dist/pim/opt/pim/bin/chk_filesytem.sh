@@ -23,12 +23,13 @@ while :; do
         break
     else
         ((mnt_cnt++))
-        if (( mnt_cnt > 1 )); then
-            logger -p local0.err "[$KEY][$TAG:$LINENO] umount -f $DEVICE"
-            umount -f $DEVICE
-        elif (( mnt_cnt > 2 )); then
+        # 큰 임계부터 검사: > 2 cascade bug 회피
+        if (( mnt_cnt > 2 )); then
             logger -p local0.crit "[$KEY][$TAG:$LINENO] cannot unmount $DEVICE"
             exit 1
+        elif (( mnt_cnt > 1 )); then
+            logger -p local0.err "[$KEY][$TAG:$LINENO] umount -f $DEVICE"
+            umount -f $DEVICE
         else
             logger -p local0.err "[$KEY][$TAG:$LINENO] umount $DEVICE"
             umount $DEVICE
@@ -102,12 +103,13 @@ while :; do
         exit 0
     else
         ((mnt_cnt++))
-        if (( mnt_cnt > 1 )); then
-            logger -p local0.err "[$KEY][$TAG:$LINENO] umount -f $DEVICE"
-            umount -f $DEVICE
-        elif (( mnt_cnt > 2 )); then
+        # 큰 임계부터 검사: > 2 cascade bug 회피
+        if (( mnt_cnt > 2 )); then
             logger -p local0.crit "[$KEY][$TAG:$LINENO] cannot unmount $DEVICE"
             exit 1
+        elif (( mnt_cnt > 1 )); then
+            logger -p local0.err "[$KEY][$TAG:$LINENO] umount -f $DEVICE"
+            umount -f $DEVICE
         else
             logger -p local0.err "[$KEY][$TAG:$LINENO] umount $DEVICE"
             umount $DEVICE
