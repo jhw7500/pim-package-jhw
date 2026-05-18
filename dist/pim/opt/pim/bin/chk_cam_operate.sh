@@ -1060,6 +1060,54 @@ CheckFinalArrival() {
     fi
 }
 
+# 고아 마커(짝 없는 .video_done / .srt_done) 정리.
+# startup alignment 미수렴 transient 또는 비정상 종료로 같은 timestamp에 한 쪽 부분
+# 마커만 남는 경우가 있다 (예: 1차 cycle에서 .all_done 생성·unlink 후 2차 cycle이
+# video_done만 다시 만드는 케이스). 짝 없이 충분히 오래 남아있고 .all_done도 없으면 unlink.
+# 현재 분 timestamp는 보호 (아직 짝이 생성될 가능성).
+# 임계 시간은 rec_min(녹화 분할 분) × 3, 최소 2분 / 최대 30분으로 cap.
+# (_write_final_health의 rec_min × 2 패턴과 일관성을 유지하되 cleanup은 더 보수적으로 잡음)
+CleanupOrphanMarkers() {
+    local maxage_min=$(( ${rec_min:-1} * 3 ))
+    [ "$maxage_min" -lt 2 ] && maxage_min=2
+    [ "$maxage_min" -gt 30 ] && maxage_min=30
+    local current_min_ts
+    current_min_ts=$(date '+%Y%m%d_%H%M')
+    local now_epoch
+    now_epoch=$(date +%s)
+    local removed=0
+    local marker base ts pair all_done age_min mtime
+
+    for marker in /tmp/session_*.video_done /tmp/session_*.srt_done; do
+        [ -f "$marker" ] || continue
+        base=$(basename "$marker")
+        # session_<ts>.video_done 또는 session_<ts>.srt_done에서 ts 추출
+        ts=$(echo "$base" | sed -E 's/^session_(.+)\.(video|srt)_done$/\1/')
+        # 현재 분 보호
+        [ "$ts" = "$current_min_ts" ] && continue
+        # 짝 마커 또는 all_done이 있으면 정상 처리 중 → skip
+        case "$base" in
+            *.video_done) pair="/tmp/session_${ts}.srt_done" ;;
+            *.srt_done)   pair="/tmp/session_${ts}.video_done" ;;
+        esac
+        all_done="/tmp/session_${ts}.all_done"
+        [ -f "$pair" ] && continue
+        [ -f "$all_done" ] && continue
+        # 마커가 maxage_min 이상 오래됐으면 unlink
+        mtime=$(stat -c '%Y' "$marker" 2>/dev/null || echo "$now_epoch")
+        age_min=$(( (now_epoch - mtime) / 60 ))
+        if [ "$age_min" -ge "$maxage_min" ]; then
+            rm -f "$marker"
+            ((removed++))
+            logger -p local0.notice "[$KEY][$tag:$LINENO] cleanup orphan marker: $base (age=${age_min}min)"
+        fi
+    done
+
+    if [ "$removed" -gt 0 ]; then
+        logger -p local0.info "[$KEY][$tag:$LINENO] cleaned $removed orphan marker(s)"
+    fi
+}
+
 # Disk 사용량 체크
 CheckDiskSpace() {
     # Panic watchdog: /dev/shm filesystem near-full → emergency evict regardless of cap state.
@@ -1541,6 +1589,7 @@ do
         apply_storage_mode_overrides
         mkdir -p "$tmp_path" "$sd_tmp_path" "$final_path" 2>/dev/null
         CleanupStalePartFiles
+        CleanupOrphanMarkers
         CheckDiskSpace
         CheckFinalArrival
     fi
