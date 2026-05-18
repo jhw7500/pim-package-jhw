@@ -246,6 +246,7 @@ customctl() {
   customctl disable NetworkManager
   customctl disable nfs-client.target
 
+  customctl enable pim-config-guard
   customctl enable cam-operate
   customctl enable vsd-operate
   customctl enable run-watchdog-custom

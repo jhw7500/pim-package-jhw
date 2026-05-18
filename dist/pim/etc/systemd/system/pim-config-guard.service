@@ -1,0 +1,15 @@
+[Unit]
+Description=PIM Config Guard (edgeconf/ord_vcm validate and restore)
+DefaultDependencies=no
+After=local-fs.target
+Before=cam-operate.service vsd-operate.service ord-operate.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/pim/bin/config_guard.sh
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
