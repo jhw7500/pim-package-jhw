@@ -1,0 +1,14 @@
+[Unit]
+Description=One-shot WPA recovery after cis.service (reassociate if idle)
+After=cis.service
+Wants=cis.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/pim/bin/wpa_recovery_once.sh
+RemainAfterExit=no
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
