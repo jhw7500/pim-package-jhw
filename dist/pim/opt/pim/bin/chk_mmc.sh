@@ -32,7 +32,8 @@ max_per1=95
 max_per2=90
 max_per3=85
 
-VAR_FILE="/tmp/chk_mmc_var"
+TMP_VAR_FILE="/tmp/chk_mmc_var"
+VAR_FILE="/var/log/cantops/mmc_mode"
 if [[ ! -f "$VAR_FILE" ]]; then
     echo "Initializing variable to default value..."
     echo "MODE=0" > "$VAR_FILE"
@@ -105,3 +106,6 @@ elif (( MODE != 1 )); then
     systemctl enable rsyslog
     echo "MODE=$NEW_MODE" > "$VAR_FILE"
 fi
+
+TMP_TEXT=$(cat "$VAR_FILE")
+echo "$TMP_TEXT" > "$TMP_VAR_FILE"
