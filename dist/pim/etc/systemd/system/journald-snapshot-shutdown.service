@@ -1,0 +1,15 @@
+[Unit]
+Description=Final journald snapshot before shutdown/reboot
+DefaultDependencies=no
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/pim/bin/journald-snapshot.sh
+TimeoutStartSec=30s
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=shutdown.target

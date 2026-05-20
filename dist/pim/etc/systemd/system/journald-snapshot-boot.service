@@ -1,0 +1,14 @@
+[Unit]
+Description=Journald snapshot at boot completion
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/pim/bin/journald-snapshot.sh
+TimeoutStartSec=30s
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=multi-user.target

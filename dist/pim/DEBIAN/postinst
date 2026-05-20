@@ -252,6 +252,8 @@ customctl() {
   customctl enable vsd-operate
   customctl enable run-watchdog-custom
   customctl enable pre-reboot-custom
+  customctl enable journald-snapshot-shutdown
+  customctl enable journald-snapshot-boot
   customctl enable ethtool-operate
   customctl enable sd-mount
   customctl enable fake-hwclock
