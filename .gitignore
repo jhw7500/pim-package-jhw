@@ -17,6 +17,9 @@ mcp_trust_test/build
 docs/plans
 docs/superpowers
 
+# Handover docs (로컬 전용, git 추적 안 함)
+handover/
+
 # Tool directories
 .omc/
 .bkit/
