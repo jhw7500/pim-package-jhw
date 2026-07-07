@@ -196,7 +196,8 @@
          "quality": 85,
          "response": true,
          "path": "/dev/shm/capture",
-         "queue_size": 30
+         "queue_size": 30,
+         "instant": 0
       },
       "rtsp_tune": {
          "rtsp_factory_latency_ms": 200,
