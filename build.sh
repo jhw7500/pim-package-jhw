@@ -309,6 +309,12 @@ cd ${BASEDIR}/release
 version=$(cat ../dist/pim/DEBIAN/control| grep Version |grep -v ^$#| cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n' | tr -d ' ')
 package=$(cat ../dist/pim/DEBIAN/control| grep Package |grep -v ^$#| cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n' | tr -d ' ')
 echo version:$version
+
+# Strip dev tool artifacts before packaging.
+# .gitignore does not apply to dpkg, so .omc/.bkit/__pycache__ under dist/
+# get copied into release/ and shipped inside the .deb.
+find ${BASEDIR}/release/pim \( -name '.omc' -o -name '.bkit' -o -name '__pycache__' -o -name '.serena' \) -prune -exec rm -rf {} + 2>/dev/null
+
 dpkg -b pim
 #dpkg-deb --build pim
 cp pim.deb $package-$version.deb
