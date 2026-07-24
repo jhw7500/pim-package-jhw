@@ -313,7 +313,7 @@ echo version:$version
 # Strip dev tool artifacts before packaging.
 # .gitignore does not apply to dpkg, so .omc/.bkit/__pycache__ under dist/
 # get copied into release/ and shipped inside the .deb.
-find ${BASEDIR}/release/pim \( -name '.omc' -o -name '.bkit' -o -name '__pycache__' -o -name '.serena' \) -prune -exec rm -rf {} + 2>/dev/null
+find ${BASEDIR}/release/pim \( -name '.omc' -o -name '.bkit' -o -name '__pycache__' -o -name '.serena' -o -name '.vscode' \) -prune -exec rm -rf {} + 2>/dev/null
 
 dpkg -b pim
 #dpkg-deb --build pim
