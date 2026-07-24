@@ -82,6 +82,7 @@ rsync_dry_changed_files() {
         --filter=':- .gitignore' \
         --exclude='.git' \
         --exclude='upgrade_file/dpkg/pimwebserver_*.deb' \
+        --exclude='dist/pim/opt/pim/driver/sc16is7xx_ext.ko' \
         "$@" 2>/dev/null \
         | awk -F'|' '
             {
@@ -230,6 +231,7 @@ sync_submodule() {
             --filter=':- .gitignore' \
             --exclude='.git' \
             --exclude='upgrade_file/dpkg/pimwebserver_*.deb' \
+            --exclude='dist/pim/opt/pim/driver/sc16is7xx_ext.ko' \
             "${GITHUB_REPO}/${subdir}/" "${GITLAB_REPO}/${subdir}/"
         echo "  [DRY-RUN] commit/push 건너뜀"
         return 0
@@ -239,6 +241,7 @@ sync_submodule() {
         --filter=':- .gitignore' \
         --exclude='.git' \
         --exclude='upgrade_file/dpkg/pimwebserver_*.deb' \
+        --exclude='dist/pim/opt/pim/driver/sc16is7xx_ext.ko' \
         "${GITHUB_REPO}/${subdir}/" "${GITLAB_REPO}/${subdir}/"
 
     local sync_msg
@@ -301,6 +304,7 @@ sync_pim() {
             --exclude='*' \
             --exclude='.git' \
             --exclude='upgrade_file/dpkg/pimwebserver_*.deb' \
+            --exclude='dist/pim/opt/pim/driver/sc16is7xx_ext.ko' \
             "${GITHUB_REPO}/" "${GITLAB_REPO}/"
         echo "  [DRY-RUN] commit/push 건너뜀"
         return 0
@@ -312,6 +316,7 @@ sync_pim() {
         --exclude='*' \
         --exclude='.git' \
         --exclude='upgrade_file/dpkg/pimwebserver_*.deb' \
+        --exclude='dist/pim/opt/pim/driver/sc16is7xx_ext.ko' \
         "${GITHUB_REPO}/" "${GITLAB_REPO}/"
 
     local sync_msg
