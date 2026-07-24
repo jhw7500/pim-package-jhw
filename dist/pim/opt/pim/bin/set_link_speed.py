@@ -12,7 +12,7 @@ json_path = json_files[0]
 
 def set_ethtool(interface: str, speed_value: str):
     speed_value = speed_value.lower()
-    if speed_value not in ("100", "1000", "auto"):
+    if speed_value not in ("10", "100", "1000", "auto"):
         speed_value = "auto"
 
     if speed_value == "auto":

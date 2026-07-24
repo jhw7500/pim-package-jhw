@@ -104,9 +104,9 @@ class UdpBroadcastResponder(object):
         try :
             model_name = get_jsonexpr_value("/etc/cts/model_info.json","model_name")
             self.model = model_name.replace('-', '_').upper()
-            if model_name in {'pim-a2', 'pim-a4', 'pim-c2', 'pim-x2', 'pim-x4'}:
+            if model_name and model_name[-1].isdigit() :
                 self.fwver = os.popen("dpkg -l pim-mp | grep 'pim-mp' | awk '{print $3}'").readline().rstrip('\n')
-            elif model_name in {'pim-ax', 'pim-cx' }:
+            else :
                 self.fwver = os.popen("dpkg -l cis | grep 'cis' | awk '{print $3}'").readline().rstrip('\n')
         except :
             pass
@@ -367,6 +367,11 @@ class UdpBroadcastResponder(object):
                 extra_info['vhl_name'] = get_jsonexpr_value(conf_list[0],"VHL_CAM.vhl_name") or ""
                 extra_info['floor'] = get_jsonexpr_value(conf_list[0],"VHL_CAM.floor") or ""
                 extra_info['line'] = get_jsonexpr_value(conf_list[0],"VHL_CAM.line") or ""
+
+            pim_manager_path = "/root/shared_v/pim_gate/pim_manager.json"
+            if os.path.exists(pim_manager_path):
+                extra_info['pim_group'] = get_jsonexpr_value(pim_manager_path, "base.id_conf.group") or ""
+                extra_info['pim_id'] = get_jsonexpr_value(pim_manager_path, "base.id_conf.pim_id") or ""
         except Exception as e:
             logger.warning(f"get_extra_info Error: {e}")
         return extra_info

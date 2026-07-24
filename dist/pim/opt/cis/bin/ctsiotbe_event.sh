@@ -6,7 +6,7 @@ start() {
     CFG_FILE="/root/shared_v/ctsiotbe.json"
     evtmod_enable=$(jq -r '.evtmod_enable // empty' "$CFG_FILE" 2>/dev/null)
     if [ -z "$evtmod_enable" ]; then
-        evtmod_enable="false"
+        evtmod_enable="true"
     fi
     
     if [[ ${evtmod_enable} != "true" ]]; then
@@ -18,9 +18,8 @@ start() {
         exit 0
     fi
 
-    DEFAULT_ID="UNKNOWN_PIM"
-
-    PIM_ID=$(jq -r '.PIM_ID // empty' "$CFG_FILE" 2>/dev/null)
+    PIM_CFG_FILE="/root/shared_v/pim_gate/pim_manager.json"
+    PIM_ID=$(jq -r '.base.id_conf.pim_id // empty' "$PIM_CFG_FILE" 2>/dev/null)
     APP_CONF_FILE="/root/shared_v/event_module/config.json"
     mkdir -p "/root/shared_v/event_module/"
     if [ -d "$APP_CONF_FILE" ]; then

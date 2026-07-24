@@ -1,11 +1,16 @@
 #!/bin/bash
 
 start() {
+    local board=""
     python3 /opt/cis/bin/auto_fwupgrade.py > /dev/null 2> /dev/null
     
     python3 /opt/cis/bin/init.py > /dev/null 2> /dev/null
     python3 /opt/cis/bin/update_network.py > /dev/null 2> /dev/null
-    adab start > /dev/null 2> /dev/null
+
+    board=$(awk -F'"' '/daughterboard_type/ {print $4}' /etc/cts/model_info.json)
+    if [ "${board}" != "none" ]; then
+        adab start > /dev/null 2> /dev/null
+    fi
 }
 
 stop() {
@@ -29,11 +34,14 @@ upgrade() {
     then
         name=`basename $1`
         file_extension="${name##*.}"
-        if [ $file_extension == "zip" ]
-        then
-            python3 /opt/cis/bin/auto_fwupgrade.py $1
+        if [ "$file_extension" == "zip" -o "$file_extension" == "tar" -o "$file_extension" == "deb" ]; then
+            python3 /opt/cis/bin/auto_fwupgrade.py "$1"
+            ret=$?
+            if [ $ret -ne 0 ]; then
+                echo "ERROR:upgrade fail"
+            fi
         else
-            echo "ERROR:bad zip file"
+            echo "ERROR:bad upgrade file"
         fi
     else
         echo "ERROR:file not found"
@@ -67,10 +75,10 @@ status() {
 
     local mainboard_type=$(awk -F'"' '/mainboard_type/ {print $4}' /etc/cts/model_info.json)
     if [ "${mainboard_type}" == "plus" ]; then
-        cisver=$(dpkg -s pim-mp 2> /dev/null | grep 'Version:' | awk  '{print $2}')
+        cisver=$(dpkg -s pim-mp 2> /dev/null | grep '^Version:' | awk  '{print $2}')
 
     else
-        cisver=$(dpkg -s cis 2> /dev/null | grep 'Version:' | awk  '{print $2}')
+        cisver=$(dpkg -s cis 2> /dev/null | grep '^Version:' | awk  '{print $2}')
     fi
 
     if [ -r /tmp/dbver ]; then
@@ -176,7 +184,7 @@ fn_help() {
     echo "   or: fwdriver log                  show firmware log"
     echo "   or: fwdriver logclear             clear firmware log"
     echo "   or: fwdriver upgrade <file_path>  upgrade firmware"
-    echo "       ex) fwdriver upgrade CIS_release_xxx.zip"
+    echo "       ex) fwdriver upgrade pim_update_xxxx.tar"
     echo "   or: fwdriver set_antenna <value>  set wifi antenna (0:ANT1, 1:ANT2, 2:BOTH)"
     echo "       ex) fwdriver set_antenna 2"
 }

@@ -405,6 +405,16 @@ else
   echo '{"PROGRESS":'"$prog_per"',"MSG":"installed '"$package"'"}'
 fi
 
+package="pimwebserver"
+if [ -z "$(dpkg -s $package 2> /dev/null)" ]; then
+  echo '{"PROGRESS":'"$prog_per"',"MSG":"install '"$package"'"}'
+  var='pimwebserver_1.0.0_all.deb'
+  echo '{"PROGRESS":'"$prog_per"',"MSG":"dpkg -i '"$var"'"}'
+  dpkg -i "$var" > /dev/null 2> /dev/null
+else
+  echo '{"PROGRESS":'"$prog_per"',"MSG":"installed '"$package"'"}'
+fi
+
 ########################################
 ## Install pip packages               ##
 ########################################

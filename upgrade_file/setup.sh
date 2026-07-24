@@ -3,6 +3,8 @@
 PIM_DEB_FILE="pim-mp-xxx.deb"
 DB_ANAL_FIRMWARE_VER="1.0.1"
 DB_ANAL_FIRMWARE_FILE="cis-daxx_1.0.1.hex"
+DB_ECAT_FIRMWARE_VER="1.0.1"
+DB_ECAT_FIRMWARE_FILE="cis-dcxx_1.0.1.hex"
 DB_TYPE="none"
 tag=$(basename "$0")
 KEY=PKG
@@ -17,16 +19,12 @@ function get_mainboard_type() {
 }
 
 function get_daughter_type() {
-    local dbid_gpio=(132 88 107)
+    local dbid_gpio=(496 497 498)
     local sum_id0=0
     local sum_id1=0
     local sum_id2=0
     local id=0
     local type=""
-
-    if [ "$(get_mainboard_type)" == "plus" ]; then
-        dbid_gpio=(496 497 498)
-    fi
 
     #gpio init
     for var in "${dbid_gpio[@]}"
@@ -57,22 +55,29 @@ function get_daughter_type() {
     done
 
     if [ $sum_id0 -ge 5 ]; then
-        id=`expr $_id + 1`
+        id=`expr $id + 1`
     fi
 
     if [ $sum_id1 -ge 5 ]; then
-        id=`expr $_id + 2`
+        id=`expr $id + 2`
     fi
 
     if [ $sum_id2 -ge 5 ]; then
-        id=`expr $_id + 4`
+        id=`expr $id + 4`
     fi
 
-    if [ $id -eq 1 ]; then
+    #   ID[0:2]
+    #ANAL: 000
+    #ECAT: 100
+    if [ $id -eq 0 ]; then
         type="analog"
-    else
+    elif [ $id -eq 1 ]; then
         type="ethercat"
+    else
+        type="none"
     fi
+
+    echo "$type"
 }
 
 function get_edge_id() {
@@ -137,6 +142,11 @@ cd `dirname "$0"`
 BASEDIR=${PWD}
 echo '{"PROGRESS":1,"MSG":"Begin upgrade"}'
 
+if [ "$(get_mainboard_type)" != "plus" ]; then
+    echo '{"PROGRESS":100,"MSG":"Error, Bad mainboard_type"}'
+	exit 0
+fi
+
 ########################################
 ## Install dependency packages        ##
 ########################################
@@ -146,8 +156,8 @@ ${BASEDIR}/install_deb.sh
 ########################################
 ## Remove old cis package             ##
 ########################################
-echo '{"PROGRESS":10,"MSG":"Check if cis package is installed"}'
 if [ -n "$(dpkg -s cis 2> /dev/null)" ]; then 
+  echo '{"PROGRESS":10,"MSG":"Start deleting the cis package."}'
   set_db_uartmon 0
   adab stop > /dev/null 2> /dev/null
   dbmon stop > /dev/null 2> /dev/null
@@ -162,7 +172,7 @@ if [ -n "$(dpkg -s cis 2> /dev/null)" ]; then
   rm -rf /var/cis/log > /dev/null 2> /dev/null
   rmdir /var/cis  > /dev/null 2> /dev/null 
   dpkg --purge cis > /dev/null 2> /dev/null
-  echo '{"PROGRESS":19,"MSG":"Removed cis package"}'
+  echo '{"PROGRESS":19,"MSG":"End deleting the cis package."}'
 fi
 
 ########################################
@@ -173,21 +183,35 @@ echo '{"PROGRESS":20,"MSG":"check model"}'
 model=$(get_pim_model)
 if [ -z "$model" ] || [ "$model" == "none" ]; then
     model=$(suggest_suitable_model)
+    echo "pim-mp pim-mp/model select $model" | debconf-set-selections
 fi
 
 echo '{"PROGRESS":21,"MSG":"model='"$model"'"}'
+if [[ "$model" == *-a* ]]; then
+	DB_TYPE="analog"
+	DB_FIRMWARE_VER=$DB_ANAL_FIRMWARE_VER
+	DB_FIRMWARE_FILE=$DB_ANAL_FIRMWARE_FILE
+elif [[ "$model" == *-c* ]]; then
+	DB_TYPE="ethercat"
+	DB_FIRMWARE_VER=$DB_ECAT_FIRMWARE_VER
+	DB_FIRMWARE_FILE=$DB_ECAT_FIRMWARE_FILE
+else
+	DB_TYPE="none"
+fi
 
 ########################################
 ## Install PIM-MP package             ##
 ########################################
-case "$model" in
-"cis-"*)
+
+if [ "$(check_installed_sea)" == "1" ]; then
     echo '{"PROGRESS":22,"MSG":"docker stop edge"}'
     docker stop edge > /dev/null 2> /dev/null
-    ;;
-*)
-    ;;
-esac
+fi
+
+if systemctl is-active --quiet pim-gate; then
+    echo '{"PROGRESS":22,"MSG":"stop pim-gate"}'
+    systemctl stop pim-gate 1> /dev/null 2>&1
+fi
 
 case $model in
 cis-a2|cis-a4|cis-c2|pim-a2|pim-a4|pim-c2)
@@ -198,7 +222,6 @@ cis-a2|cis-a4|cis-c2|pim-a2|pim-a4|pim-c2)
   wifim stop > /dev/null 2> /dev/null
   automnt stop > /dev/null 2> /dev/null
   longrun stop > /dev/null 2> /dev/null	
-  pim_gate stop 1> /dev/null 2>&1
   set_db_uartmon 0
   ;;
 esac
@@ -210,20 +233,28 @@ echo '{"PROGRESS":24,"MSG":"End install pim-mp"}'
 ########################################
 ## Upgrade daughter board firmware    ##
 ########################################
-case $model in
-cis-a2|cis-a4|pim-a2|pim-a4)
+if [ "$DB_TYPE" != "none" ]; then
+  echo '{"PROGRESS":24,"MSG":"CHECK, daughter board firmware"}'
   /opt/cis/bin/init_daughter_gpio.sh > /dev/null 2> /dev/null
   sleep 1
-  dbver=$(get_db_version)
-  if [[ "$dbver" != "$DB_ANAL_FIRMWARE_VER" ]]; then
-	stm32update -b 24 -e 94 $DB_ANAL_FIRMWARE_FILE
-	echo '{"PROGRESS":95,"MSG":"Wait for Daughter board boot"}'
-	sleep 1
-	echo '{"PROGRESS":96,"MSG":"Update Daughter board version"}'
-	python3 /opt/cis/bin/dbver.py > /dev/null
+  cur_db_type=$(get_daughter_type)
+  if [ "$DB_TYPE" == "$cur_db_type" ]; then
+    dbver=$(get_db_version)
+    if [[ "$dbver" != "$DB_FIRMWARE_VER" ]]; then
+  	  stm32update -b 24 -e 94 $DB_FIRMWARE_FILE
+  	  echo '{"PROGRESS":95,"MSG":"Wait for Daughter board boot"}'
+  	  sleep 1
+  	  echo '{"PROGRESS":96,"MSG":"Update Daughter board version"}'
+  	  python3 /opt/cis/bin/dbver.py > /dev/null
+    else
+      echo '{"PROGRESS":24,"MSG":"daughter board firmware already '$dbver'"}'
+      sleep 1
+    fi
+  else
+    echo '{"PROGRESS":24,"MSG":"Warning, daughter board type mismatch('$DB_TYPE'!='$cur_db_type')"}'
+    sleep 1
   fi
-  ;;
-esac
+fi
 
 ########################################
 ## Excute APP                         ##
@@ -236,11 +267,6 @@ cis-a2|cis-a4|cis-c2|pim-a2|pim-a4|pim-c2)
   dbmon start > /dev/null 2> /dev/null
   wifim start > /dev/null 2> /dev/null
   automnt start > /dev/null 2> /dev/null
-
-  iot_app=$(python3 /opt/cis/bin/getconfval.py iot_app)
-  if [[ ${iot_app} == "pim_gate" ]]; then
-      pim_gate start 1> /dev/null 2>&1
-  fi
   set_db_uartmon 1
   echo '{"PROGRESS":99,"MSG":"start adab"}'
   ;;
@@ -252,6 +278,10 @@ case "$model" in
     docker start edge > /dev/null 2> /dev/null
     ;;
 *)
+    if systemctl is-enabled --quiet pim-gate; then
+        echo '{"PROGRESS":99,"MSG":"start pim-gate"}'
+        systemctl start pim-gate 1> /dev/null 2>&1
+    fi
     ;;
 esac
 

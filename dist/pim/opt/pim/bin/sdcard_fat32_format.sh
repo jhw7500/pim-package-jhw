@@ -218,6 +218,8 @@ init_sdcard_directory() {
 main() {
     if ! is_dev_exists; then
         err "device not found: $DEVICE"
+        rm -rf "$MOUNT_POINT"
+        mkdir -p $MOUNT_POINT
         exit 1
     fi
 

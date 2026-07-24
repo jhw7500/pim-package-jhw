@@ -196,8 +196,7 @@
          "quality": 85,
          "response": true,
          "path": "/dev/shm/capture",
-         "queue_size": 30,
-         "instant": 0
+         "queue_size": 30
       },
       "rtsp_tune": {
          "rtsp_factory_latency_ms": 200,
@@ -220,7 +219,7 @@
             "led_flash": {
                "enable": false,
                "wiper": 63,
-               "flash_delay": 0
+               "flash_delay": 128
             }
          },
          "ch1": {
@@ -236,7 +235,7 @@
             "led_flash": {
                "enable": false,
                "wiper": 63,
-               "flash_delay": 0
+               "flash_delay": 128
             }
          }
       },
@@ -255,7 +254,7 @@
             "led_flash": {
                "enable": false,
                "wiper": 63,
-               "flash_delay": 0
+               "flash_delay": 128
             }
          },
          "ch3": {
@@ -271,7 +270,7 @@
             "led_flash": {
                "enable": false,
                "wiper": 63,
-               "flash_delay": 0
+               "flash_delay": 128
             }
          }
       }

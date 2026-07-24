@@ -7,6 +7,7 @@ import glob
 import sys
 import subprocess
 from datetime import datetime
+from collections import OrderedDict
 import syslog
 
 def write_logfile(lvl, msg):
@@ -17,6 +18,37 @@ def write_logfile(lvl, msg):
         syslog.syslog(syslog.LOG_INFO, "init.py|"+msg)
     else:
         syslog.syslog(syslog.LOG_DEBUG, "init.py|"+msg)
+
+def update_json_file(path, new_data):
+    """
+    path     : json 파일 경로
+    new_data : dict 또는 OrderedDict
+
+    반환값:
+        True  -> 파일 저장됨
+        False -> 변경 없음
+    """
+
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            current_text = f.read()
+    except Exception:
+        current_text = ""
+
+    # OrderedDict 유지
+    new_text = json.dumps(
+        new_data,
+        indent=3,
+        ensure_ascii=False
+    ) + "\n"
+
+    # 스타일 또는 내용이 다르면 저장
+    if current_text != new_text:
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(new_text)
+        return True
+
+    return False
 
 def log_jsonconferr(err, path):
     if err == -1:
@@ -66,40 +98,28 @@ def copy_backup_conf(conf_path):
     conf = {}
     try:
         with open(conf_path) as json_file:
-            conf = json.load(json_file)
+            conf = json.load(json_file, object_pairs_hook=OrderedDict)
     except:
         return False
     
-    json_str = json.dumps(conf, indent=3)
     backup_flag = True
     backup_path = os.path.dirname(conf_path) + "/backup_" + os.path.basename(conf_path)
-    backup_conf = {}
 
     backup_pattern = os.path.dirname(conf_path)+"/backup_edgeconf_*.json"
     backup_list = glob.glob(backup_pattern)
     for v in backup_list:
         if v != backup_path :
             subprocess.call(['rm',v])
-    try:
-        with open(backup_path) as backup_json_file:
-            backup_conf = json.load(backup_json_file)
-            backup_json_str = json.dumps(backup_conf, indent=3)
-            if json_str == backup_json_str:
-                backup_flag = False
-    except:
-        backup_flag = True
 
-    if backup_flag == True:
+    if update_json_file(backup_path, conf) == True :
         print("backup json data is different. backup save file.")
-        with open(backup_path, 'w') as f:
-            json.dump(conf, f, indent=3)
-    else:
+    else :
         print("backup json data is same.")
 
 def verify_conf_key(conf_path):
     try:
         with open(conf_path) as json_file:
-            edgeconf = json.load(json_file)
+            edgeconf = json.load(json_file, object_pairs_hook=OrderedDict)
     except:
         return -1
 
@@ -203,16 +223,16 @@ def init_conf(conf_path):
 
     try:
         with open(conf_path) as json_file:
-            edgeconf = json.load(json_file)
+            edgeconf = json.load(json_file, object_pairs_hook=OrderedDict)
     except:
         return -1
     try:
         with open('/etc/cts/sysinfo.json') as f:
-            sysinfo = json.load(f)
+            sysinfo = json.load(f, object_pairs_hook=OrderedDict)
     except:
         print("/etc/cts/sysinfo.json file not found")
 
-    prev_json_str = json.dumps(edgeconf, indent=3)
+    #prev_json_str = json.dumps(edgeconf, indent=3)
 
     if is_json_key_present(edgeconf, "manufacturer") == True:
         edgeconf["manufacturer"] = "cantops"
@@ -253,15 +273,11 @@ def init_conf(conf_path):
         if is_json_key_present(edgeconf["NETWORK"], "WLAN0") == False:
             return -2
         else:
-            auto_identity=True
-            if is_json_key_present(edgeconf["NETWORK"]["WLAN0"], "auto_identity") == True:
-                auto_identity=edgeconf["NETWORK"]["WLAN0"]["auto_identity"]
-            if auto_identity == True:
-                id_suffix = ""
-                if is_json_key_present(edgeconf["NETWORK"]["WLAN0"], "identity") == True:
-                    s = edgeconf["NETWORK"]["WLAN0"]["identity"]
-                    id_suffix = s[12:]
-                edgeconf["NETWORK"]["WLAN0"]["identity"] = devid + id_suffix
+            security = edgeconf["NETWORK"]["WLAN0"].get("security","PSK")
+            ssid = edgeconf["NETWORK"]["WLAN0"].get("ssid","")
+            if security == "EAP" and ssid == "ureadythings" :
+                edgeconf["NETWORK"]["WLAN0"]["identity"] = identity
+                edgeconf["NETWORK"]["WLAN0"]["passwd"] = "qwe124@@"
     
     if getconfval.get_json_val("daughterboard_type") != "none":
         try:
@@ -312,14 +328,11 @@ def init_conf(conf_path):
                 if is_json_key_present(edgeconf["VHL_CAM"]["i2c2"],"ch0") == True:
                     edgeconf["VHL_CAM"]["i2c2"]["ch0"]["enable"] = False
 
-    new_json_str = json.dumps(edgeconf, indent=3)
-    if edgeconf_file_error == True or prev_json_str != new_json_str :
-        print("edgeconf json data is different. save file.")
-        with open(conf_path, 'w') as f:
-            json_string = json.dump(edgeconf, f, indent=3)
+    if update_json_file(conf_path, edgeconf) == True :
+        print(f"{conf_path} is different. save file.")
     else :
-        print("edgeconf json data is same. skip save file.")
-    
+        print(f"{conf_path} data is same.")
+
     return 0
 
 #################################################

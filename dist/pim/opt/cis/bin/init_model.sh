@@ -46,7 +46,7 @@ json_cis_c2='{
     "mainboard_type":"plus",
     "daughterboard_type":"ethercat",
     "iot_app": "sea_app",
-    "cam_max_channel": 0,
+    "cam_max_channel": 2,
     "dev": {
         "f_status": 131,
         "f_boot0": 132,
@@ -106,7 +106,7 @@ json_pim_c2='{
     "mainboard_type":"plus",
     "daughterboard_type":"ethercat",
     "iot_app": "pim_gate",
-    "cam_max_channel": 0,
+    "cam_max_channel": 2,
     "dev": {
         "f_status": 131,
         "f_boot0": 132,

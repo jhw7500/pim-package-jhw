@@ -199,7 +199,6 @@ jq --argjson key0 "$capture_en" --argjson key1 0 --argjson key2 200 '.VHL_CAM.ca
 | .VHL_CAM.capture |= (if .response == null then .response = true else . end)
 | .VHL_CAM.capture |= (if .path == null then .path = "/dev/shm/capture" else . end)
 | .VHL_CAM.capture |= (if .queue_size == null then .queue_size = 30 else . end)
-| .VHL_CAM.capture |= (if .instant == null then .instant = 0 else . end)
 ' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
 jq '.VHL_CAM.queue_tune |= (if .main_src_time_ms == null then .main_src_time_ms = 300 else . end)
@@ -306,19 +305,19 @@ echo "check led_flash per channel"
 jq '.VHL_CAM.i2c2.ch0.led_flash |= (. // {})
 | .VHL_CAM.i2c2.ch0.led_flash |= (if .enable      == null then .enable      = false else . end)
 | .VHL_CAM.i2c2.ch0.led_flash |= (if .wiper       == null then .wiper       = 63    else . end)
-| .VHL_CAM.i2c2.ch0.led_flash |= (if .flash_delay == null then .flash_delay = 0     else . end)
+| .VHL_CAM.i2c2.ch0.led_flash.flash_delay = 128
 | .VHL_CAM.i2c2.ch1.led_flash |= (. // {})
 | .VHL_CAM.i2c2.ch1.led_flash |= (if .enable      == null then .enable      = false else . end)
 | .VHL_CAM.i2c2.ch1.led_flash |= (if .wiper       == null then .wiper       = 63    else . end)
-| .VHL_CAM.i2c2.ch1.led_flash |= (if .flash_delay == null then .flash_delay = 0     else . end)
+| .VHL_CAM.i2c2.ch1.led_flash.flash_delay = 128
 | .VHL_CAM.i2c1.ch2.led_flash |= (. // {})
 | .VHL_CAM.i2c1.ch2.led_flash |= (if .enable      == null then .enable      = false else . end)
 | .VHL_CAM.i2c1.ch2.led_flash |= (if .wiper       == null then .wiper       = 63    else . end)
-| .VHL_CAM.i2c1.ch2.led_flash |= (if .flash_delay == null then .flash_delay = 0     else . end)
+| .VHL_CAM.i2c1.ch2.led_flash.flash_delay = 128
 | .VHL_CAM.i2c1.ch3.led_flash |= (. // {})
 | .VHL_CAM.i2c1.ch3.led_flash |= (if .enable      == null then .enable      = false else . end)
 | .VHL_CAM.i2c1.ch3.led_flash |= (if .wiper       == null then .wiper       = 63    else . end)
-| .VHL_CAM.i2c1.ch3.led_flash |= (if .flash_delay == null then .flash_delay = 0     else . end)
+| .VHL_CAM.i2c1.ch3.led_flash.flash_delay = 128
 ' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
 #gstApp (streamApp deprecated — $1==1 분기 제거됨)

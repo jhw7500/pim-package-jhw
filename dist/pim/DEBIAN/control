@@ -1,5 +1,5 @@
 Package: pim-mp
-Version: 0.6.0
+Version: 0.6.2
 Replaces: cis
 Breaks: cis
 Section: test
@@ -73,3 +73,5 @@ Description: PIM application
 0.5.8 : gstApp(1.4), ord(4.8.1), vcm(4.3), max9296(2.0), runtime scripts
 0.5.9 : gstApp(1.5), max9296(2.1), pim_guardian(10.0)
 0.6.0 :  pim_gate sen_vl01, edit factory_init
+0.6.1 : debug cism vsd buf overflow, useradd admin, pim-gate schema-v2 TZ debug
+0.6.2 : pim_gate post _id filename, debug upgrade setup.sh, led flash delay 128, pimwebserver

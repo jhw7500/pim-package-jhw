@@ -21,8 +21,26 @@ cp /etc/defaultconf.json /root/shared_v/edgeconf_pim.json
 #update_edgeconf
 /opt/pim/bin/update_edgeconf.sh
 
+JSON_FILE="/root/shared_v/edgeconf_pim.json"
+TMP_FILE=$(mktemp)
+jq '
+  .VHL_CAM.event_auto_remove = false |
+  .VHL_CAM.event_storage_size = 86 |
+  .VHL_CAM.app = "gstApp" |
+  .VHL_CAM.capture.enable = false |
+  .VHL_CAM.capture.rtsp = true |
+  .VHL_CAM.tmp_path = "/dev/shm" |
+  .VHL_CAM.muxer = "ts"
+' "$JSON_FILE" > "$TMP_FILE" && mv "$TMP_FILE" "$JSON_FILE"
+
 log "ord_vcm_conf.json init"
 cp /opt/pim/config/ord_vcm_conf.json /root/shared_v/
+
+# JSON_FILE="/root/shared_v/ord_vcm_conf.json"
+# TMP_FILE=$(mktemp)
+# jq '
+#   .VCM.srt_enable = false 
+# ' "$JSON_FILE" > "$TMP_FILE" && mv "$TMP_FILE" "$JSON_FILE"
 
 log "check OLD_USER."
 # exclude_users를 제외한 계정 삭제.
@@ -64,20 +82,8 @@ echo admin:admin | chpasswd
 log "time_sync init"
 /opt/pim/bin/update_time_sync.sh
 
-if systemctl is-active --quiet pim-gate; then
-    log "stop pim_gate"
-    systemctl stop pim-gate 1> /dev/null 2>&1
-fi
-
-if systemctl is-enabled --quiet pim-gate; then
-    log "disable pim_gate"
-    systemctl disable pim-gate 1> /dev/null 2>&1
-fi
-
-if [ -d "/root/shared_v/pim_gate" ]; then
-    log "pim_gate conf remove"
-    rm -rf /root/shared_v/pim_gate 2> /dev/null
-fi
+log "pim_gate conf default"
+/opt/pim_gate/bin/pim_gate.sh default_cfg DEFAULT
 
 if [ -f "/root/shared_v/ctsiotbe.json" ]; then
     log "ctsiotbe conf remove"
@@ -88,6 +94,9 @@ if [ -d "/root/shared_v/event_module" ]; then
     log "ctsiotbe-event conf remove"
     rm -rf /root/shared_v/event_module 2> /dev/null
 fi
+
+log "enable pim_gate"
+systemctl enable pim-gate 1> /dev/null 2>&1
 
 if [ -f "/etc/cts/gyrozerobase" ]; then
     log "gyrozerobase remove"

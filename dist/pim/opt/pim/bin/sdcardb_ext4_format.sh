@@ -2,8 +2,8 @@
 tag=$(basename "$0")
 KEY=SDC
 
-DEVICE="/dev/mmcblk1"
-MOUNT_POINT="/mnt/sd_cam"
+DEVICE="/dev/mmcblk0"
+MOUNT_POINT="/mnt/sd"
 PART="${DEVICE}p1"
 
 log() {
@@ -216,9 +216,6 @@ init_sdcard_directory() {
         return 1
     fi
 
-    mkdir -p $MOUNT_POINT/event
-    mkdir -p $MOUNT_POINT/recycle
-    mkdir -p $MOUNT_POINT/tmp
     return 0
 }
 
@@ -232,16 +229,8 @@ main() {
 
     log "device exists: $DEVICE"
 
-    log "stop cam-operate"
-    systemctl stop cam-operate
-
-    log "stop sd-mount"
-    systemctl stop sd-mount
-    status=$(systemctl is-active pim-gate 2>/dev/null)
-    if [ "$status" = "active" ]; then
-        log "stop pim-gate"
-        systemctl stop pim-gate
-    fi
+    log "stop automnt"
+    /opt/cis/bin/automnt.sh stop
 
     umount_all_from_dev || exit 1
     wipe_device_signatures || exit 1

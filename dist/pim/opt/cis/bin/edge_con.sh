@@ -1,63 +1,23 @@
 #!/bin/bash
 
 
-function Get_Docker_Image() {
-    cnt=0
-	docker images | while read line;
-	do
-	if [ $cnt -ge 1 ]; then 
-        name=`echo $line | cut -d' ' -f1`
-        ver=`echo $line | cut -d' ' -f2`
-        if [[ ${ver} != "latest" ]]; then
-            echo $line
-            break;
-        fi
-	fi
-	cnt=`expr $cnt + 1`
-	done
-}
-
-function Get_Docker_Latest_Image() {
-    cnt=0
-	docker images | while read line;
-	do
-	if [ $cnt -ge 1 ]; then 
-        name=`echo $line | cut -d' ' -f1`
-        ver=`echo $line | cut -d' ' -f2`
-        if [[ ${ver} == "latest" ]]; then
-            echo $line
-            break;
-        fi
-	fi
-	cnt=`expr $cnt + 1`
-	done
-}
-
 function Check_Installed_Image() {
-    ## image 설치여부 확인  ##
-    installed_Image="$(Get_Docker_Image)"
-    installed_Image_id=`echo ${installed_Image} | cut -d' ' -f3`
-    if [ -z ${installed_Image_id} ]; then
+    ## sea_app:latest의 IMAGE ID 확인#
+    latest_image_id=$(docker images | awk '$1=="sea_app" && $2=="latest" {print $3}')
+    if [ -z ${latest_image_id} ]; then
         echo "NO_IMAGE"
         exit 1
     fi
 
-    installed_Image_tag="$(Get_Docker_Latest_Image)"
-    installed_Image_tag_id=`echo ${installed_Image_tag} | cut -d' ' -f3`
-    if [ -z ${installed_Image_tag_id} ]; then
-        echo "NO_IMAGE_TAG"
-        exit 1
-    fi
-
-    if [ $installed_Image_id != $installed_Image_tag_id ]; then
+    ## latest_image_id와 동일한 IMAGE ID를 가진 sea_app버전 확인 ##
+    image_ver=$(docker images | awk -v imgid="$latest_image_id" '$1=="sea_app" && $2!="latest" && $3==imgid {print $1 "," $2}')
+    if [ -z ${image_ver} ]; then
         echo "INVALID_IMAGE_TAG"
         exit 1
     fi
 
-    name=`echo $installed_Image | cut -d' ' -f1`
-    ver=`echo $installed_Image | cut -d' ' -f2`
-
-    echo "$name,$ver"
+    #echo "sea_app,1.1.5"
+    echo "$image_ver"
 }
 
 function Get_Edge_Container() {

@@ -55,17 +55,44 @@ cpchk() {
   #cpchk /etc/defaultconf.json /root/shared_v/edgeconf_pim.json
   #cpchk /opt/pim/config/ord_vcm_conf.json /root/shared_v/ord_vcm_conf.json
 
-  backup_alias=""
-  if [ "$model" == "cis-a2" ] || [ "$model" == "cis-a4" ] || [ "$model" == "cis-c2" ]; then
-    #sea_app alias backup
-    backup_alias="$(awk '/date >> boot_time.log/,EOF' /root/.bashrc >> /root/.bashrc)"
-  fi
+  # backup_alias=""
+  # if [[ "$model" == cis-* ]]; then
+  #     #sea_app alias backup
+  #   backup_alias="$(awk '/date >> boot_time.log/,EOF' /root/.bashrc >> /root/.bashrc)"
+  # fi
   
   logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp /root/.bashrc"
   cp /opt/pim/root/.bashrc /root/
 
-  if [ -n "$backup_alias" ]; then
-    echo "$backup_alias" >> /root/.bashrc
+  # if [ -n "$backup_alias" ]; then
+  #   echo "$backup_alias" >> /root/.bashrc
+  # fi
+
+  if [[ "$model" == cis-* ]]; then
+    BASHRC="/root/.bashrc"
+    aliases=(
+      'date >> boot_time.log'
+      'alias egrep="docker logs edge 2>&1 | grep"'
+      'alias ein="docker exec -ti edge bash"'
+      'alias elog="docker logs -f edge --tail 100"'
+      'alias etop="docker exec -ti edge htop"'
+      'alias erestart="docker restart edge"'
+      'alias elogdump="docker logs edge >&"'
+      'alias estatus="docker exec -ti edge python3 main_controller status"'
+      'alias einfo="docker exec -ti edge python3 main_controller info"'
+      'alias ecsv="docker exec -ti edge python3 main_controller start_datalogging"'
+      'alias ecsv_stop="docker exec -ti edge python3 main_controller stop_datalogging"'
+    )
+    
+    added=0
+    for alias_line in "${aliases[@]}"; do
+      if ! grep -Fxq -- "$alias_line" "$BASHRC"; then
+        printf '%s\n' "$alias_line" >> "$BASHRC"
+        added=$((added + 1))
+      fi
+    done
+    
+    echo "Done. Added $added alias line(s) to $BASHRC."
   fi
 
   cp /opt/pim/etc/logrotate.d/rsyslog /etc/logrotate.d/
@@ -102,6 +129,12 @@ cpchk() {
   #ln -sf /usr/local/lib/libpiutils.so.0  /usr/lib/libpiutils.so
   #ln -sf /usr/local/lib/libpiwriter.so.0  /usr/lib/libpiwriter.so.0
   #ln -sf /usr/local/lib/libpiwriter.so.0  /usr/lib/libpiwriter.so
+
+  # /usr/local/lib is not in the ld.so default search path (only /lib, /usr/lib are).
+  # Without this, vsd/PIMCAM/streamApp fail with "libpiencrypt.so.0: cannot open
+  # shared object file" when upgrading from a version that shipped libs in /usr/lib.
+  ldconfig
+
   ln -sf /opt/pim/bin/kill_test.sh /usr/local/bin/killcam
   ln -sf /opt/pim/bin/start_cam.sh /usr/local/bin/startcam
   ln -sf /opt/pim/bin/update_edgeconf.sh /usr/local/bin/update_edgeconf
@@ -119,7 +152,7 @@ cpchk() {
   update-rc.d cis.sh defaults
   rm -f /usr/local/bin/stm32update
   ln -s /opt/cis/bin/stm32update /usr/local/bin/stm32update
-  if [ "$model" == "cis-c2" ] || [ "$model" == "pim-c2" ]; then
+  if [[ "$model" == *-c* ]]; then
     rm -f /opt/cis/bin/adab
     ln -s /opt/cis/bin/adab_ecat /opt/cis/bin/adab
   else
@@ -260,9 +293,7 @@ customctl() {
 
   customctl enable docker
   customctl enable docker.socket
-  if [[ "$model" == pim-* ]]; then
-    customctl enable pim-gate
-  else
+  if [[ "$model" == cis-* ]]; then
     customctl disable pim-gate
   fi
 
@@ -446,15 +477,13 @@ fi
   /opt/pim/bin/change_line.sh "APT::Periodic::Unattended-Upgrade \"0\";" "APT::Periodic::Unattended-Upgrade" /etc/apt/apt.conf.d/20auto-upgrades
 
 
-  if [ "$model" == "cis-a2" ] || [ "$model" == "cis-a4" ] || [ "$model" == "cis-c2" ]; then
-        echo "sea_app is installed"
-        /opt/pim/bin/change_line.sh "    #/opt/pim/bin/led_ctrl.sh 2>/dev/null" "/opt/pim/bin/led_ctrl.sh" /opt/pim/bin/BG_Check_for_pim.sh
-        #/opt/pim/bin/comment_line.sh "/opt/pim/bin/led_ctrl.sh 2>/dev/null" /opt/pim/bin/BG_Check_for_pim.sh
-    else
-        echo "sea_app is not installed"
-        /opt/pim/bin/change_line.sh "    /opt/pim/bin/led_ctrl.sh 2>/dev/null" "/opt/pim/bin/led_ctrl.sh" /opt/pim/bin/BG_Check_for_pim.sh
-    fi
-
+  if [[ "$model" == cis-* ]]; then
+    echo "sea_app is installed"
+    /opt/pim/bin/change_line.sh "    #/opt/pim/bin/led_ctrl.sh 2>/dev/null" "/opt/pim/bin/led_ctrl.sh" /opt/pim/bin/BG_Check_for_pim.sh
+  else
+    echo "sea_app is not installed"
+    /opt/pim/bin/change_line.sh "    /opt/pim/bin/led_ctrl.sh 2>/dev/null" "/opt/pim/bin/led_ctrl.sh" /opt/pim/bin/BG_Check_for_pim.sh
+  fi
 
   update_edgeconf
   update_ordvcmconf

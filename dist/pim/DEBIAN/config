@@ -18,16 +18,12 @@ function get_mainboard_type() {
 }
 
 function get_daughter_type() {
-    local dbid_gpio=(132 88 107)
+    local dbid_gpio=(496 497 498)
     local sum_id0=0
     local sum_id1=0
     local sum_id2=0
     local id=0
     local type=""
-
-    if [ "$(get_mainboard_type)" == "plus" ]; then
-        dbid_gpio=(496 497 498)
-    fi
 
     #gpio init
     for var in "${dbid_gpio[@]}"
@@ -58,22 +54,29 @@ function get_daughter_type() {
     done
 
     if [ $sum_id0 -ge 5 ]; then
-        id=`expr $_id + 1`
+        id=`expr $id + 1`
     fi
 
     if [ $sum_id1 -ge 5 ]; then
-        id=`expr $_id + 2`
+        id=`expr $id + 2`
     fi
 
     if [ $sum_id2 -ge 5 ]; then
-        id=`expr $_id + 4`
+        id=`expr $id + 4`
     fi
 
-    if [ $id -eq 1 ]; then
+    #   ID[0:2]
+    #ANAL: 000
+    #ECAT: 100
+    if [ $id -eq 0 ]; then
         type="analog"
-    else
+    elif [ $id -eq 1 ]; then
         type="ethercat"
+    else
+        type="none"
     fi
+
+    echo "$type"
 }
 
 function get_edge_id() {
