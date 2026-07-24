@@ -42,3 +42,6 @@ CLAUDE.md
 GEMINI.md
 QODER.md
 .github/code-review-graph.instruction.md
+
+# GitHub 100MB 제한 초과 — GitLab(pim-package)에는 정상 보관됨
+upgrade_file/dpkg/pimwebserver_*.deb
