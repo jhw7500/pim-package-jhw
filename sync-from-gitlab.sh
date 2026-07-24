@@ -125,6 +125,7 @@ rsync_dry_changed_files() {
     rsync -an --delete -i --out-format='%i|%n' \
         --filter=':- .gitignore' \
         --exclude='.git' \
+        --exclude='upgrade_file/dpkg/pimwebserver_*.deb' \
         "$@" 2>/dev/null \
         | awk -F'|' '
             {
@@ -302,6 +303,7 @@ sync_submodule() {
         rsync -avn --delete \
             --filter=':- .gitignore' \
             --exclude='.git' \
+            --exclude='upgrade_file/dpkg/pimwebserver_*.deb' \
             "${sub_repo}/" "${GITHUB_REPO}/${subdir}/"
         echo "  [DRY-RUN] commit/push 건너뜀"
         return 0
@@ -310,6 +312,7 @@ sync_submodule() {
     rsync -a --delete \
         --filter=':- .gitignore' \
         --exclude='.git' \
+        --exclude='upgrade_file/dpkg/pimwebserver_*.deb' \
         "${sub_repo}/" "${GITHUB_REPO}/${subdir}/"
 
     local sync_msg
@@ -377,6 +380,7 @@ sync_pim() {
             "${rsync_includes[@]}" \
             --exclude='*' \
             --exclude='.git' \
+            --exclude='upgrade_file/dpkg/pimwebserver_*.deb' \
             "${GITLAB_REPO}/" "${GITHUB_REPO}/"
         echo "  [DRY-RUN] commit/push 건너뜀"
         return 0
@@ -387,6 +391,7 @@ sync_pim() {
         "${rsync_includes[@]}" \
         --exclude='*' \
         --exclude='.git' \
+        --exclude='upgrade_file/dpkg/pimwebserver_*.deb' \
         "${GITLAB_REPO}/" "${GITHUB_REPO}/"
 
     local sync_msg
