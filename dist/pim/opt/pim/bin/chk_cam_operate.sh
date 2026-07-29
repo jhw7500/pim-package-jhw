@@ -34,14 +34,32 @@ LAST_INIT_TS_FILE="/tmp/last_init_cam_ts"
 START_TS_FILE="/tmp/cam_state/last_start_ts"
 START_DELAY_FILE="/tmp/pim_cam_start_delay"
 
-startup_grace_extra_sec=10
-init_cooldown_sec=30
+# 아래 *_DEFAULT 값은 패키지 배포 설정(opt/pim/config/ord_vcm_conf.json 의 ETC)과
+# update_ordvcmconf.sh 가 채우는 값에 일치시킨다. 세 곳이 어긋나면 설정 키가 없는
+# 장비에서 스크립트마다 다른 기준으로 동작하게 되므로 함께 갱신할 것.
+FILE_CHECK_DELAY_DEFAULT=10
+STARTUP_GRACE_EXTRA_SEC_DEFAULT=10
+INIT_COOLDOWN_SEC_DEFAULT=40
+
+startup_grace_extra_sec=$STARTUP_GRACE_EXTRA_SEC_DEFAULT
+init_cooldown_sec=$INIT_COOLDOWN_SEC_DEFAULT
 
 # If cameras are disconnected, periodically run init_cam.sh to allow recovery
 # once cameras are reconnected. Never reboot in disconnect state.
 DISCONNECT_INIT_CAM_INTERVAL_SEC_DEFAULT=180
 DISCONNECT_INIT_CAM_GRACE_SEC_DEFAULT=60
 DISCONNECT_INIT_CAM_STATE_FILE_DEFAULT="/tmp/chk_cam_operate.disconnect_state"
+
+# disconnect 상태가 이 시간(초)을 넘게 지속되면 리부팅 1회로 에스컬레이션한다.
+# 0 = 비활성(위 "Never reboot in disconnect state" 원칙 유지) — 기본값.
+# disconnect 경로는 retry/retry_boot 를 증가시키지 않아 상한 없이 init_cam 을
+# 무한 반복할 수 있는데, 이를 시간 기준으로만 끊어 주기 위한 안전망이다.
+# 활성화해도 한 episode 당 1회만 리부팅한다(아래 REBOOT_FLAG).
+DISCONNECT_MAX_SEC_DEFAULT=0
+# 리부팅으로 초기화되면 안 되므로 재부팅 후에도 남는 경로에 둔다.
+DISCONNECT_REBOOT_FLAG_DIR="/var/log/cantops"
+[ -d "$DISCONNECT_REBOOT_FLAG_DIR" ] || DISCONNECT_REBOOT_FLAG_DIR="/tmp"
+DISCONNECT_REBOOT_FLAG="${DISCONNECT_REBOOT_FLAG_DIR}/cam_disconnect_reboot.flag"
 
 # P2: final-path 진척 telemetry / heartbeat (외부 모니터링용)
 FINAL_HEARTBEAT_FILE="/tmp/cam_last_final_ts"
@@ -106,6 +124,8 @@ maybe_init_cam_on_disconnect() {
                 logger -p local0.notice "[$KEY][$tag:$LINENO] disconnect state cleared (flag=$cam_disconnect_flag drv=$drv_disc)"
             fi
             rm -f "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
+            # 연결이 회복됐으므로 다음 episode 를 위해 에스컬레이션 이력도 지운다.
+            rm -f "$DISCONNECT_REBOOT_FLAG" 2>/dev/null
         fi
         return 1
     fi
@@ -127,6 +147,26 @@ maybe_init_cam_on_disconnect() {
     if (( (now - first_seen) < DISCONNECT_INIT_CAM_GRACE_SEC )); then
         printf "%s,%s" "$first_seen" "$last_init" > "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
         return 1
+    fi
+
+    # disconnect 지속시간이 상한을 넘으면 리부팅 1회로 에스컬레이션한다.
+    # 이 경로는 retry/retry_boot 를 증가시키지 않아 원래 상한이 없다.
+    # DISCONNECT_MAX_SEC=0 이면 비활성(기본) — 기존 동작을 그대로 유지한다.
+    local max_sec="${DISCONNECT_MAX_SEC:-0}"
+    [[ "$max_sec" =~ ^[0-9]+$ ]] || max_sec=0
+    if (( max_sec > 0 )) && (( (now - first_seen) >= max_sec )); then
+        if [ -f "$DISCONNECT_REBOOT_FLAG" ]; then
+            logger -p local0.notice "[$KEY][$tag:$LINENO] disconnect persisted $((now - first_seen))s, already escalated once - keep periodic init_cam"
+        elif [[ "$file_chk_reboot" == *"$ENABLE_VAL"* ]]; then
+            logger -p local0.emerg "[$KEY][$tag:$LINENO] rebooting because cam disconnect persisted $((now - first_seen))s (flag=$cam_disconnect_flag max=${max_sec}s)"
+            printf "%s" "$now" > "$DISCONNECT_REBOOT_FLAG" 2>/dev/null
+            sync
+            sleep 1
+            reboot
+            return 0
+        else
+            logger -p local0.notice "[$KEY][$tag:$LINENO] disconnect persisted $((now - first_seen))s but file_check_reboot is not true - keep periodic init_cam"
+        fi
     fi
 
     if (( (now - last_init) >= DISCONNECT_INIT_CAM_INTERVAL_SEC )); then
@@ -173,11 +213,17 @@ force_edgeconf_app_to_gstapp() {
     return 1
 }
 
+# $1이 10진 정수가 아니면(jq 실패로 빈 문자열 등) $2를 돌려준다.
+_cfg_num() {
+    if [[ "$1" =~ ^[0-9]+$ ]]; then printf '%s' "$1"; else printf '%s' "$2"; fi
+}
+
 GetConfig_() {
     IFS=$'\t' read -r \
         srt_en file_chk_reboot time_rec_en file_check_delay \
         startup_grace_extra_sec init_cooldown_sec \
-        DISCONNECT_INIT_CAM_INTERVAL_SEC DISCONNECT_INIT_CAM_GRACE_SEC < <(
+        DISCONNECT_INIT_CAM_INTERVAL_SEC DISCONNECT_INIT_CAM_GRACE_SEC \
+        DISCONNECT_MAX_SEC < <(
         jq -r '[
             (.VCM.srt_enable // false),
             (.ETC.file_check_reboot // false),
@@ -186,10 +232,23 @@ GetConfig_() {
             (.ETC.startup_grace_extra_sec // 10),
             (.ETC.init_cooldown_sec // 40),
             (.ETC.disconnect_init_interval_sec // 180),
-            (.ETC.disconnect_init_grace_sec // 60)
+            (.ETC.disconnect_init_grace_sec // 60),
+            (.ETC.disconnect_max_sec // 0)
         ] | @tsv' "$FILE_JSON_"
     )
     unset IFS
+
+    # jq 실패(설정 파일 없음/손상) 시 read 는 모든 변수를 빈 문자열로 채운다.
+    # 빈 값은 (( )) 산술에서 0으로 취급되어 grace/cooldown 보호가 조용히 사라지므로
+    # 반드시 선언된 기본값으로 되돌린다.
+    file_check_delay=$(_cfg_num "$file_check_delay" "$FILE_CHECK_DELAY_DEFAULT")
+    startup_grace_extra_sec=$(_cfg_num "$startup_grace_extra_sec" "$STARTUP_GRACE_EXTRA_SEC_DEFAULT")
+    init_cooldown_sec=$(_cfg_num "$init_cooldown_sec" "$INIT_COOLDOWN_SEC_DEFAULT")
+    DISCONNECT_INIT_CAM_INTERVAL_SEC=$(_cfg_num "$DISCONNECT_INIT_CAM_INTERVAL_SEC" "$DISCONNECT_INIT_CAM_INTERVAL_SEC_DEFAULT")
+    DISCONNECT_INIT_CAM_GRACE_SEC=$(_cfg_num "$DISCONNECT_INIT_CAM_GRACE_SEC" "$DISCONNECT_INIT_CAM_GRACE_SEC_DEFAULT")
+    DISCONNECT_MAX_SEC=$(_cfg_num "$DISCONNECT_MAX_SEC" "$DISCONNECT_MAX_SEC_DEFAULT")
+    # 불리언(srt_en, file_chk_reboot, time_rec_en)은 빈 값이면 비활성으로 판정되어
+    # 이미 안전측이므로 건드리지 않는다.
 
     #read  srt_en file_chk_reboot time_rec_en file_check_delay < <(jq -r '[.VCM.srt_enable, .ETC.file_check_reboot, .VCM.file_time_check, .ETC.file_check_delay] | @tsv' $FILE_JSON_)
 }
