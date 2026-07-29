@@ -5,32 +5,111 @@
 FLAG_PATH="/tmp"
 tag=$(basename "$0")
 
-SUCCESS_VAL="0xfa"
-CAM0_ERR="0xda"
-CAM1_ERR="0xea"
-CAM01_ERR="0x16"
+# ── MAX9296 CTRL3(0x13) 비트 정의 (데이터시트) ──────────────────────
+#  bit 7,6,0 : 예약(-). 값에 의미가 없으므로 반드시 마스킹한다.
+#  bit 5:4   : LINK_MODE  00=Dual 01=Link A 10=Link B 11=Splitter
+#  bit 3     : LOCKED     1=GMSL2 링크 락
+#  bit 2     : ERROR      1=ERRB 어서트 (링크 락 여부와 무관한 에러 플래그)
+#  bit 1     : CMU_LOCKED 1=CMU(Clock Multiplier Unit) 락
+CTRL3_VALID_MASK=0x3e
+LM_DUAL=0
+LM_LINK_A=1
+LM_LINK_B=2
+LM_SPLITTER=3
+BIT_LOCKED=0x08
+BIT_ERROR=0x04
+BIT_CMU=0x02
 
-CAM0_EN_ERR="0x26"
-CAM012_EN_ERR="0x26"
+# 양 채널 활성 시 기대하는 LINK_MODE (기존 SUCCESS_VAL=0xfa 가 Splitter 였다)
+LM_BOTH_EXPECT=$LM_SPLITTER
 
-CAM2_ERR="0xda"
-CAM3_ERR="0xea"
-CAM23_ERR="0x16"
+# 짝수 채널(ch0/ch2)과 홀수 채널(ch1/ch3)이 각각 어느 GMSL2 링크에 붙어 있는가.
+#   드라이버(max9296.c)/설계문서   : ch0=Link A, ch1=Link B
+#   기존 스크립트 상수(CH0_EN_OK=0xea) : ch0=Link B, ch1=Link A  ← 현재 동작
+# 두 소스의 매핑이 서로 반대다. 실측으로 확정될 때까지 기존 동작을 유지하며,
+# 확정되면 아래 두 줄만 교체하면 모든 판정이 따라간다.
+CH_EVEN_LINK=$LM_LINK_B    # ch0, ch2
+CH_ODD_LINK=$LM_LINK_A     # ch1, ch3
 
 ENABLE_VAL="true"
 DISABLE_VAL="false"
 result=0;
 timestamp=`date +"%Y-%m-%d %T,%3N"`
 
-CH0_EN_OK="0xea"
-CH1_EN_OK="0xda"
-CH2_EN_OK="0xea"
-CH3_EN_OK="0xda"
+# parse_ctrl3 / classify_ctrl3 의 출력 (command substitution 을 쓰면
+# 서브셸이라 값이 전달되지 않으므로 전역 변수로 주고받는다)
+ctrl3_mode=0
+ctrl3_locked=0
+ctrl3_error=0
+ctrl3_cmu=0
+ctrl3_verdict="unknown"
 
-CH0_EN_FAIL="0x26"
-CH1_EN_FAIL="0x16"
-CH2_EN_FAIL="0x26"
-CH3_EN_FAIL="0x16"
+# CTRL3 원시 문자열에서 16진 토큰을 뽑아 비트 필드로 분해한다.
+parse_ctrl3() {
+    local raw val
+    ctrl3_mode=0; ctrl3_locked=0; ctrl3_error=0; ctrl3_cmu=0
+    raw=$(printf '%s' "$1" | grep -oE '0[xX][0-9a-fA-F]+' | head -1)
+    [ -n "$raw" ] || return 1
+    val=$(( raw & CTRL3_VALID_MASK ))
+    ctrl3_mode=$(( (val >> 4) & 0x3 ))
+    [ $(( val & BIT_LOCKED )) -ne 0 ] && ctrl3_locked=1
+    [ $(( val & BIT_ERROR ))  -ne 0 ] && ctrl3_error=1
+    [ $(( val & BIT_CMU ))    -ne 0 ] && ctrl3_cmu=1
+    return 0
+}
+
+# $1=CTRL3 원시값, $2=기대 LINK_MODE → ctrl3_verdict 설정
+#   ok        : 정상
+#   errb_only : 링크는 락됐고 ERRB 만 어서트 (리셋 금지 / 에러 플래그 금지)
+#   err_even  : 짝수 채널(ch0/ch2) 링크 소실
+#   err_odd   : 홀수 채널(ch1/ch3) 링크 소실
+#   err_both  : 양 채널 소실 (CMU 미락 또는 GMSL2 미락)
+#   unknown   : 판정 불가 — 에러 플래그를 만들지 않는다
+classify_ctrl3() {
+    local expect="$2"
+    if ! parse_ctrl3 "$1"; then
+        ctrl3_verdict="unknown"
+        return
+    fi
+    if [ "$ctrl3_cmu" -eq 0 ] || [ "$ctrl3_locked" -eq 0 ]; then
+        ctrl3_verdict="err_both"
+        return
+    fi
+    if [ "$ctrl3_mode" -eq "$expect" ]; then
+        if [ "$ctrl3_error" -eq 1 ]; then
+            ctrl3_verdict="errb_only"
+        else
+            ctrl3_verdict="ok"
+        fi
+        return
+    fi
+    # 기대 모드가 아니면 살아남은 링크의 반대쪽 채널이 소실된 것이다.
+    if [ "$ctrl3_mode" -eq "$CH_EVEN_LINK" ]; then
+        ctrl3_verdict="err_odd"
+    elif [ "$ctrl3_mode" -eq "$CH_ODD_LINK" ]; then
+        ctrl3_verdict="err_even"
+    else
+        ctrl3_verdict="unknown"
+    fi
+}
+
+# 링크가 실제로 깨진 경우에만 리셋한다.
+# ERRB 만 어서트된 상태(LOCKED=1)에 리셋을 쏘면 정상 링크를 끊는다.
+ctrl3_needs_reset() {
+    case "$1" in
+        err_even|err_odd|err_both) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# 판정 근거를 원시값·비트·드라이버 비트까지 한 줄로 남긴다.
+# 채널<->링크 매핑을 현장 로그만으로 확정하기 위한 근거 수집을 겸한다.
+# $1=level  $2=i2c adapter  $3=호출부 LINENO  $4=메시지  $5=CTRL3 원시값
+log_ctrl3() {
+    local drv
+    drv=$(cat "/sys/bus/i2c/devices/$2-0048/link_status" 2>/dev/null | tr -d '\n')
+    logger -p "local0.$1" "[CHK][$tag:$3] $4 : $5 (mode=$ctrl3_mode locked=$ctrl3_locked error=$ctrl3_error cmu=$ctrl3_cmu verdict=$ctrl3_verdict drv=${drv:-NA})"
+}
 
 cam_ch_en=$1
 # 전 채널 disable 시 deserializer가 power-down되어 i2c NACK이 발생하므로 i2c 트랜잭션 자체를 건너뛴다.
@@ -64,151 +143,214 @@ cam01_res=$(i2ctransfer -f -y -a 2 w2@0x48 0x00 0x13 r1)
 #ch2/3 Des check
 cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
 
-#if [[ ! -s "$FILE_JSON" ]]; then 
-#	logger -p local0.error "[CHK][$tag:$LINENO] Not Found $FILE_JSON"
-#	result=1 ; 
+#if [[ ! -s "$FILE_JSON" ]]; then
+#    logger -p local0.error "[CHK][$tag:$LINENO] Not Found $FILE_JSON"
+#    result=1 ;
 #else
-    #cam_ch0=$(jq '.VHL_CAM.cam_ch0' "$FILE_JSON")
-    #cam_ch1=$(jq '.VHL_CAM.cam_ch1' "$FILE_JSON")
-    #cam_ch2=$(jq '.VHL_CAM.cam_ch2' "$FILE_JSON")
-    #cam_ch3=$(jq '.VHL_CAM.cam_ch3' "$FILE_JSON")
+#cam_ch0=$(jq '.VHL_CAM.cam_ch0' "$FILE_JSON")
+#cam_ch1=$(jq '.VHL_CAM.cam_ch1' "$FILE_JSON")
+#cam_ch2=$(jq '.VHL_CAM.cam_ch2' "$FILE_JSON")
+#cam_ch3=$(jq '.VHL_CAM.cam_ch3' "$FILE_JSON")
 
-	#CAM0, CAM1 ENABLE
-	if [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]; then
-		if [[ "$cam01_res" == *"$SUCCESS_VAL"*  ]]; then
-			logger -p local0.debug "[CHK][$tag:$LINENO] CAM0 CAM1 OK"
-		else
-			# Phase 1: read-only retry (no reset write)
-			for r in 1 2 3; do
-				sleep 0.3
-				cam01_res=$(i2ctransfer -f -y -a 2 w2@0x48 0x00 0x13 r1)
-				if [[ "$cam01_res" == *"$SUCCESS_VAL"* ]]; then
-					logger -p local0.info "[CHK][$tag:$LINENO] CAM0 CAM1 OK (read retry $r)"
-					break
-				fi
-			done
+#CAM0, CAM1 ENABLE
+if [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]; then
+    classify_ctrl3 "$cam01_res" "$LM_BOTH_EXPECT"
+    if [ "$ctrl3_verdict" = "ok" ]; then
+        logger -p local0.debug "[CHK][$tag:$LINENO] CAM0 CAM1 OK"
+    else
+        # Phase 1: read-only retry (no reset write)
+        for r in 1 2 3; do
+            sleep 0.3
+            cam01_res=$(i2ctransfer -f -y -a 2 w2@0x48 0x00 0x13 r1)
+            classify_ctrl3 "$cam01_res" "$LM_BOTH_EXPECT"
+            if [ "$ctrl3_verdict" = "ok" ]; then
+                logger -p local0.info "[CHK][$tag:$LINENO] CAM0 CAM1 OK (read retry $r)"
+                break
+            fi
+        done
 
-			# Phase 2: reset + read (only if read-only retry failed)
-			if [[ "$cam01_res" != *"$SUCCESS_VAL"* ]]; then
-				logger -p local0.error "[CHK][$tag:$LINENO] CAM01 read retry failed, reset : $cam01_res"
-				i2ctransfer -f -y -a 2 w3@0x48 0x00 0x10 0x31
-				i2ctransfer -f -y -a 2 w3@0x40 0x00 0x10 0x21
-				sleep 1
-				cam01_res=$(i2ctransfer -f -y -a 2 w2@0x48 0x00 0x13 r1)
-			fi
+        # Phase 2: 링크가 실제로 깨졌을 때만 리셋 + 재확인
+        if ctrl3_needs_reset "$ctrl3_verdict"; then
+            log_ctrl3 error 2 $LINENO "CAM01 link fail, reset" "$cam01_res"
+            i2ctransfer -f -y -a 2 w3@0x48 0x00 0x10 0x31
+            i2ctransfer -f -y -a 2 w3@0x40 0x00 0x10 0x21
+            sleep 1
+            cam01_res=$(i2ctransfer -f -y -a 2 w2@0x48 0x00 0x13 r1)
+            classify_ctrl3 "$cam01_res" "$LM_BOTH_EXPECT"
+        fi
 
-			# error classification
-			if [[ "$cam01_res" == *"$SUCCESS_VAL"* ]]; then
-				logger -p local0.info "[CHK][$tag:$LINENO] CAM0 CAM1 recovered after reset"
-			elif [[ "$cam01_res" == *"$CAM1_ERR"* ]]; then
-				logger -p local0.error "[CHK][$tag:$LINENO] CAM1_ERR : $cam01_res"
-				echo "${timestamp} CAM1 ERR" >> ${FLAG_PATH}/err_cam1.log
-			elif [[ "$cam01_res" == *"$CAM0_ERR"* ]]; then
-				logger -p local0.error "[CHK][$tag:$LINENO] CAM0_ERR : $cam01_res"
-				echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log
-			elif [[ "$cam01_res" == *"$CAM01_ERR"* ]]; then
-				logger -p local0.error "[CHK][$tag:$LINENO] CAM01_ERR : $cam01_res"
-				echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log
-				echo "${timestamp} CAM1 ERR" >> ${FLAG_PATH}/err_cam1.log
-			else
-				logger -p local0.error "[CHK][$tag:$LINENO] CAM01_ERR : $cam01_res"
-				echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log
-				echo "${timestamp} CAM1 ERR" >> ${FLAG_PATH}/err_cam1.log
-			fi
-		fi
-	#CAM0 ENABLE ONLY
-	elif [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch1" == *"$DISABLE_VAL"* ]]; then
-		if [[ "$cam01_res" == *"$CH0_EN_OK"*  ]]; then
+        # error classification
+        case "$ctrl3_verdict" in
+            ok)
+                logger -p local0.info "[CHK][$tag:$LINENO] CAM0 CAM1 recovered after reset"
+                ;;
+            errb_only)
+                log_ctrl3 warning 2 $LINENO "CAM01 ERRB asserted but link locked, no reset" "$cam01_res"
+                ;;
+            err_even)
+                log_ctrl3 error 2 $LINENO "CAM0_ERR" "$cam01_res"
+                echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log
+                ;;
+            err_odd)
+                log_ctrl3 error 2 $LINENO "CAM1_ERR" "$cam01_res"
+                echo "${timestamp} CAM1 ERR" >> ${FLAG_PATH}/err_cam1.log
+                ;;
+            err_both)
+                log_ctrl3 error 2 $LINENO "CAM01_ERR" "$cam01_res"
+                echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log
+                echo "${timestamp} CAM1 ERR" >> ${FLAG_PATH}/err_cam1.log
+                ;;
+            *)
+                log_ctrl3 error 2 $LINENO "CAM01 UNKNOWN CTRL3, no error flag" "$cam01_res"
+                ;;
+        esac
+    fi
+#CAM0 ENABLE ONLY
+elif [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch1" == *"$DISABLE_VAL"* ]]; then
+    classify_ctrl3 "$cam01_res" "$CH_EVEN_LINK"
+    case "$ctrl3_verdict" in
+        ok)
             logger -p local0.debug "[CHK][$tag:$LINENO] CAM0 OK"
-        elif [[ "$cam01_res" == *"$CH1_EN_OK"*  ]]; then
-            logger -p local0.warn "[CHK][$tag:$LINENO] please swap ch0 and ch1(CAM0 enable but CAM1 display) : $cam01_res"
-            #echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log
-        else
-			logger -p local0.error "[CHK][$tag:$LINENO] CAM0_ERR : $cam01_res"
-			echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log	
-		fi
-    #CAM1 ENABLE ONLY
-    elif [[ "$cam_ch0" == *"$DISABLE_VAL"* ]] && [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]; then
-        if [[ "$cam01_res" == *"$CH1_EN_OK"*  ]]; then
+            ;;
+        errb_only)
+            log_ctrl3 warning 2 $LINENO "CAM0 ERRB asserted but link locked, no reset" "$cam01_res"
+            ;;
+        unknown)
+            log_ctrl3 error 2 $LINENO "CAM0 UNKNOWN CTRL3, no error flag" "$cam01_res"
+            ;;
+        *)
+            if [ "$ctrl3_locked" -eq 1 ] && [ "$ctrl3_mode" -eq "$CH_ODD_LINK" ]; then
+                log_ctrl3 warning 2 $LINENO "please swap ch0 and ch1(CAM0 enable but CAM1 display)" "$cam01_res"
+            else
+                log_ctrl3 error 2 $LINENO "CAM0_ERR" "$cam01_res"
+                echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log
+            fi
+            ;;
+    esac
+#CAM1 ENABLE ONLY
+elif [[ "$cam_ch0" == *"$DISABLE_VAL"* ]] && [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]; then
+    classify_ctrl3 "$cam01_res" "$CH_ODD_LINK"
+    case "$ctrl3_verdict" in
+        ok)
             logger -p local0.debug "[CHK][$tag:$LINENO] CAM1 OK"
-        elif [[ "$cam01_res" == *"$CH0_EN_OK"*  ]]; then
-            logger -p local0.warn "[CHK][$tag:$LINENO] please swap ch0 and ch1(CAM1 enable but CAM0 display) : $cam01_res"
-            #echo "${timestamp} CAM1 ERR" >> ${FLAG_PATH}/err_cam1.log
-        else
-            logger -p local0.error "[CHK][$tag:$LINENO] CAM1_ERR : $cam01_res"
-            echo "${timestamp} CAM1 ERR" >> ${FLAG_PATH}/err_cam1.log
-        fi
+            ;;
+        errb_only)
+            log_ctrl3 warning 2 $LINENO "CAM1 ERRB asserted but link locked, no reset" "$cam01_res"
+            ;;
+        unknown)
+            log_ctrl3 error 2 $LINENO "CAM1 UNKNOWN CTRL3, no error flag" "$cam01_res"
+            ;;
+        *)
+            if [ "$ctrl3_locked" -eq 1 ] && [ "$ctrl3_mode" -eq "$CH_EVEN_LINK" ]; then
+                log_ctrl3 warning 2 $LINENO "please swap ch0 and ch1(CAM1 enable but CAM0 display)" "$cam01_res"
+            else
+                log_ctrl3 error 2 $LINENO "CAM1_ERR" "$cam01_res"
+                echo "${timestamp} CAM1 ERR" >> ${FLAG_PATH}/err_cam1.log
+            fi
+            ;;
+    esac
+else
+    logger -p local0.info "[CHK][$tag:$LINENO] CAM0 CAM1 disable"
+fi
+
+#CAM2,CAM3 ENABLE
+if [[ "$cam_ch2" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch3" == *"$ENABLE_VAL"* ]]; then
+    classify_ctrl3 "$cam23_res" "$LM_BOTH_EXPECT"
+    if [ "$ctrl3_verdict" = "ok" ]; then
+        logger -p local0.debug "[CHK][$tag:$LINENO] CAM2 CAM3 OK"
     else
-        logger -p local0.info "[CHK][$tag:$LINENO] CAM0 CAM1 disable"
-	fi
-	
-	#CAM2,CAM3 ENABLE
-	if [[ "$cam_ch2" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch3" == *"$ENABLE_VAL"* ]]; then
-		if [[ "$cam23_res" == *"$SUCCESS_VAL"*  ]]; then
-			logger -p local0.debug "[CHK][$tag:$LINENO] CAM2 CAM3 OK"
-		else
-			# Phase 1: read-only retry (no reset write)
-			for r in 1 2 3; do
-				sleep 0.3
-				cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
-				if [[ "$cam23_res" == *"$SUCCESS_VAL"* ]]; then
-					logger -p local0.info "[CHK][$tag:$LINENO] CAM2 CAM3 OK (read retry $r)"
-					break
-				fi
-			done
+        # Phase 1: read-only retry (no reset write)
+        for r in 1 2 3; do
+            sleep 0.3
+            cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
+            classify_ctrl3 "$cam23_res" "$LM_BOTH_EXPECT"
+            if [ "$ctrl3_verdict" = "ok" ]; then
+                logger -p local0.info "[CHK][$tag:$LINENO] CAM2 CAM3 OK (read retry $r)"
+                break
+            fi
+        done
 
-			# Phase 2: reset + read (only if read-only retry failed)
-			if [[ "$cam23_res" != *"$SUCCESS_VAL"* ]]; then
-				logger -p local0.error "[CHK][$tag:$LINENO] CAM23 read retry failed, reset : $cam23_res"
-				i2ctransfer -f -y -a 1 w3@0x48 0x00 0x10 0x31
-				i2ctransfer -f -y -a 1 w3@0x40 0x00 0x10 0x21
-				sleep 1
-				cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
-			fi
+        # Phase 2: 링크가 실제로 깨졌을 때만 리셋 + 재확인
+        if ctrl3_needs_reset "$ctrl3_verdict"; then
+            log_ctrl3 error 1 $LINENO "CAM23 link fail, reset" "$cam23_res"
+            i2ctransfer -f -y -a 1 w3@0x48 0x00 0x10 0x31
+            i2ctransfer -f -y -a 1 w3@0x40 0x00 0x10 0x21
+            sleep 1
+            cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
+            classify_ctrl3 "$cam23_res" "$LM_BOTH_EXPECT"
+        fi
 
-			# error classification
-			if [[ "$cam23_res" == *"$SUCCESS_VAL"* ]]; then
-				logger -p local0.info "[CHK][$tag:$LINENO] CAM2 CAM3 recovered after reset"
-			elif [[ "$cam23_res" == *"$CAM3_ERR"* ]]; then
-				logger -p local0.error "[CHK][$tag:$LINENO] CAM3_ERR : $cam23_res"
-				echo "${timestamp} CAM3 ERR" >> ${FLAG_PATH}/err_cam3.log
-			elif [[ "$cam23_res" == *"$CAM2_ERR"* ]]; then
-				logger -p local0.error "[CHK][$tag:$LINENO] CAM2_ERR : $cam23_res"
-				echo "${timestamp} CAM2 ERR" >> ${FLAG_PATH}/err_cam2.log
-			elif [[ "$cam23_res" == *"$CAM23_ERR"* ]]; then
-				logger -p local0.error "[CHK][$tag:$LINENO] CAM23_ERR : $cam23_res"
-				echo "${timestamp} CAM2 ERR" >> ${FLAG_PATH}/err_cam2.log
-				echo "${timestamp} CAM3 ERR" >> ${FLAG_PATH}/err_cam3.log
-			else
-				logger -p local0.error "[CHK][$tag:$LINENO] CAM23_ERR : $cam23_res"
-				echo "${timestamp} CAM2 ERR" >> ${FLAG_PATH}/err_cam2.log
-				echo "${timestamp} CAM3 ERR" >> ${FLAG_PATH}/err_cam3.log
-			fi
-		fi
-	#CAM2 ENABLE ONLY
-	elif [[ "$cam_ch2" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch3" == *"$DISABLE_VAL"* ]]; then
-		if [[ "$cam23_res" == *"$CH2_EN_OK"*  ]]; then
+        # error classification
+        case "$ctrl3_verdict" in
+            ok)
+                logger -p local0.info "[CHK][$tag:$LINENO] CAM2 CAM3 recovered after reset"
+                ;;
+            errb_only)
+                log_ctrl3 warning 1 $LINENO "CAM23 ERRB asserted but link locked, no reset" "$cam23_res"
+                ;;
+            err_even)
+                log_ctrl3 error 1 $LINENO "CAM2_ERR" "$cam23_res"
+                echo "${timestamp} CAM2 ERR" >> ${FLAG_PATH}/err_cam2.log
+                ;;
+            err_odd)
+                log_ctrl3 error 1 $LINENO "CAM3_ERR" "$cam23_res"
+                echo "${timestamp} CAM3 ERR" >> ${FLAG_PATH}/err_cam3.log
+                ;;
+            err_both)
+                log_ctrl3 error 1 $LINENO "CAM23_ERR" "$cam23_res"
+                echo "${timestamp} CAM2 ERR" >> ${FLAG_PATH}/err_cam2.log
+                echo "${timestamp} CAM3 ERR" >> ${FLAG_PATH}/err_cam3.log
+                ;;
+            *)
+                log_ctrl3 error 1 $LINENO "CAM23 UNKNOWN CTRL3, no error flag" "$cam23_res"
+                ;;
+        esac
+    fi
+#CAM2 ENABLE ONLY
+elif [[ "$cam_ch2" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch3" == *"$DISABLE_VAL"* ]]; then
+    classify_ctrl3 "$cam23_res" "$CH_EVEN_LINK"
+    case "$ctrl3_verdict" in
+        ok)
             logger -p local0.debug "[CHK][$tag:$LINENO] CAM2 OK"
-        elif [[ "$cam23_res" == *"$CH3_EN_OK"*  ]]; then
-            logger -p local0.warn "[CHK][$tag:$LINENO] please swap ch2 and ch3(CAM2 enable but CAM3 display) : $cam23_res"
-            #echo "${timestamp} CAM2 ERR" >> ${FLAG_PATH}/err_cam2.log
-        else
-			logger -p local0.error "[CHK][$tag:$LINENO] CAM2_ERR : $cam23_res"
-			echo "${timestamp} CAM2 ERR" >> ${FLAG_PATH}/err_cam2.log
-		fi
-    #CAM3 ENABLE ONLY
-    elif [[ "$cam_ch2" == *"$DISABLE_VAL"* ]] && [[ "$cam_ch3" == *"$ENABLE_VAL"* ]]; then
-        if [[ "$cam23_res" == *"$CH3_EN_OK"*  ]]; then
+            ;;
+        errb_only)
+            log_ctrl3 warning 1 $LINENO "CAM2 ERRB asserted but link locked, no reset" "$cam23_res"
+            ;;
+        unknown)
+            log_ctrl3 error 1 $LINENO "CAM2 UNKNOWN CTRL3, no error flag" "$cam23_res"
+            ;;
+        *)
+            if [ "$ctrl3_locked" -eq 1 ] && [ "$ctrl3_mode" -eq "$CH_ODD_LINK" ]; then
+                log_ctrl3 warning 1 $LINENO "please swap ch2 and ch3(CAM2 enable but CAM3 display)" "$cam23_res"
+            else
+                log_ctrl3 error 1 $LINENO "CAM2_ERR" "$cam23_res"
+                echo "${timestamp} CAM2 ERR" >> ${FLAG_PATH}/err_cam2.log
+            fi
+            ;;
+    esac
+#CAM3 ENABLE ONLY
+elif [[ "$cam_ch2" == *"$DISABLE_VAL"* ]] && [[ "$cam_ch3" == *"$ENABLE_VAL"* ]]; then
+    classify_ctrl3 "$cam23_res" "$CH_ODD_LINK"
+    case "$ctrl3_verdict" in
+        ok)
             logger -p local0.debug "[CHK][$tag:$LINENO] CAM3 OK"
-        elif [[ "$cam23_res" == *"$CH2_EN_OK"*  ]]; then
-            logger -p local0.warn "[CHK][$tag:$LINENO] please swap ch2 and ch3(CAM3 enable but CAM2 display) : $cam23_res"
-            #echo "${timestamp} CAM3 ERR" >> ${FLAG_PATH}/err_cam3.log
-        else
-            logger -p local0.error "[CHK][$tag:$LINENO] CAM3_ERR : $cam23_res"
-            echo "${timestamp} CAM3 ERR" >> ${FLAG_PATH}/err_cam3.log
-        fi
-    else
-        logger -p local0.info "[CHK][$tag:$LINENO] CAM2 CAM3 disable"
-	fi
+            ;;
+        errb_only)
+            log_ctrl3 warning 1 $LINENO "CAM3 ERRB asserted but link locked, no reset" "$cam23_res"
+            ;;
+        unknown)
+            log_ctrl3 error 1 $LINENO "CAM3 UNKNOWN CTRL3, no error flag" "$cam23_res"
+            ;;
+        *)
+            if [ "$ctrl3_locked" -eq 1 ] && [ "$ctrl3_mode" -eq "$CH_EVEN_LINK" ]; then
+                log_ctrl3 warning 1 $LINENO "please swap ch2 and ch3(CAM3 enable but CAM2 display)" "$cam23_res"
+            else
+                log_ctrl3 error 1 $LINENO "CAM3_ERR" "$cam23_res"
+                echo "${timestamp} CAM3 ERR" >> ${FLAG_PATH}/err_cam3.log
+            fi
+            ;;
+    esac
+else
+    logger -p local0.info "[CHK][$tag:$LINENO] CAM2 CAM3 disable"
+fi
 #fi
-
