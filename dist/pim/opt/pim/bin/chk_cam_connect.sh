@@ -64,11 +64,15 @@ parse_ctrl3() {
 #   err_even  : 짝수 채널(ch0/ch2) 링크 소실
 #   err_odd   : 홀수 채널(ch1/ch3) 링크 소실
 #   err_both  : 양 채널 소실 (CMU 미락 또는 GMSL2 미락)
-#   unknown   : 판정 불가 — 에러 플래그를 만들지 않는다
+#   read_fail : i2c 읽기 실패 — 재시도 후에도 지속되면 해당 버스 채널을 에러로 올린다
+#   unknown   : 유효값이나 비트 조합이 미정의 — 에러 플래그를 만들지 않는다
 classify_ctrl3() {
     local expect="$2"
     if ! parse_ctrl3 "$1"; then
-        ctrl3_verdict="unknown"
+        # 16진 토큰 자체가 없다 = i2c 읽기 실패(NACK / deserializer 접근 불가).
+        # "유효값인데 비트 조합이 미정의(unknown)"와 달리 통신 자체가 안 된 것이므로
+        # 조용히 넘기면 죽은 deserializer 가 상위에 전혀 보이지 않는다. 구분해서 올린다.
+        ctrl3_verdict="read_fail"
         return
     fi
     if [ "$ctrl3_cmu" -eq 0 ] || [ "$ctrl3_locked" -eq 0 ]; then
@@ -97,7 +101,7 @@ classify_ctrl3() {
 # ERRB 만 어서트된 상태(LOCKED=1)에 리셋을 쏘면 정상 링크를 끊는다.
 ctrl3_needs_reset() {
     case "$1" in
-        err_even|err_odd|err_both) return 0 ;;
+        err_even|err_odd|err_both|read_fail) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -200,6 +204,12 @@ if [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]; t
                 echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log
                 echo "${timestamp} CAM1 ERR" >> ${FLAG_PATH}/err_cam1.log
                 ;;
+            read_fail)
+                # 재시도·리셋 후에도 i2c 를 못 읽었다 = deserializer 통신 불가.
+                log_ctrl3 error 2 $LINENO "CAM01 CTRL3 read failed after retry" "$cam01_res"
+                echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log
+                echo "${timestamp} CAM1 ERR" >> ${FLAG_PATH}/err_cam1.log
+                ;;
             *)
                 log_ctrl3 error 2 $LINENO "CAM01 UNKNOWN CTRL3, no error flag" "$cam01_res"
                 ;;
@@ -214,6 +224,10 @@ elif [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch1" == *"$DISABLE_VAL"* ]]
             ;;
         errb_only)
             log_ctrl3 warning 2 $LINENO "CAM0 ERRB asserted but link locked, no reset" "$cam01_res"
+            ;;
+        read_fail)
+            log_ctrl3 error 2 $LINENO "CAM0 CTRL3 read failed" "$cam01_res"
+            echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log
             ;;
         unknown)
             log_ctrl3 error 2 $LINENO "CAM0 UNKNOWN CTRL3, no error flag" "$cam01_res"
@@ -236,6 +250,10 @@ elif [[ "$cam_ch0" == *"$DISABLE_VAL"* ]] && [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]
             ;;
         errb_only)
             log_ctrl3 warning 2 $LINENO "CAM1 ERRB asserted but link locked, no reset" "$cam01_res"
+            ;;
+        read_fail)
+            log_ctrl3 error 2 $LINENO "CAM1 CTRL3 read failed" "$cam01_res"
+            echo "${timestamp} CAM1 ERR" >> ${FLAG_PATH}/err_cam1.log
             ;;
         unknown)
             log_ctrl3 error 2 $LINENO "CAM1 UNKNOWN CTRL3, no error flag" "$cam01_res"
@@ -301,6 +319,12 @@ if [[ "$cam_ch2" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch3" == *"$ENABLE_VAL"* ]]; t
                 echo "${timestamp} CAM2 ERR" >> ${FLAG_PATH}/err_cam2.log
                 echo "${timestamp} CAM3 ERR" >> ${FLAG_PATH}/err_cam3.log
                 ;;
+            read_fail)
+                # 재시도·리셋 후에도 i2c 를 못 읽었다 = deserializer 통신 불가.
+                log_ctrl3 error 1 $LINENO "CAM23 CTRL3 read failed after retry" "$cam23_res"
+                echo "${timestamp} CAM2 ERR" >> ${FLAG_PATH}/err_cam2.log
+                echo "${timestamp} CAM3 ERR" >> ${FLAG_PATH}/err_cam3.log
+                ;;
             *)
                 log_ctrl3 error 1 $LINENO "CAM23 UNKNOWN CTRL3, no error flag" "$cam23_res"
                 ;;
@@ -315,6 +339,10 @@ elif [[ "$cam_ch2" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch3" == *"$DISABLE_VAL"* ]]
             ;;
         errb_only)
             log_ctrl3 warning 1 $LINENO "CAM2 ERRB asserted but link locked, no reset" "$cam23_res"
+            ;;
+        read_fail)
+            log_ctrl3 error 1 $LINENO "CAM2 CTRL3 read failed" "$cam23_res"
+            echo "${timestamp} CAM2 ERR" >> ${FLAG_PATH}/err_cam2.log
             ;;
         unknown)
             log_ctrl3 error 1 $LINENO "CAM2 UNKNOWN CTRL3, no error flag" "$cam23_res"
@@ -337,6 +365,10 @@ elif [[ "$cam_ch2" == *"$DISABLE_VAL"* ]] && [[ "$cam_ch3" == *"$ENABLE_VAL"* ]]
             ;;
         errb_only)
             log_ctrl3 warning 1 $LINENO "CAM3 ERRB asserted but link locked, no reset" "$cam23_res"
+            ;;
+        read_fail)
+            log_ctrl3 error 1 $LINENO "CAM3 CTRL3 read failed" "$cam23_res"
+            echo "${timestamp} CAM3 ERR" >> ${FLAG_PATH}/err_cam3.log
             ;;
         unknown)
             log_ctrl3 error 1 $LINENO "CAM3 UNKNOWN CTRL3, no error flag" "$cam23_res"
