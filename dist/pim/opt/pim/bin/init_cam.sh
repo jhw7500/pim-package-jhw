@@ -87,8 +87,8 @@ rmmod max9296
 sleep 0.2
 logger -p local0.notice "[RST][$tag:$LINENO] modprobe imx8-media-dev, max9296"
 modprobe max9296
-sleep 0.1
 rc1=$?
+sleep 0.1
 modprobe imx8-media-dev
 rc2=$?
 
