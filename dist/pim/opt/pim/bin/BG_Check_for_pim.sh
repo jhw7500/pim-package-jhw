@@ -56,7 +56,10 @@ if [ ! -f "$ORD_VCM_JSON" ]; then
 fi
 
 startup_grace_extra_sec=$(jq -r '(.ETC.startup_grace_extra_sec // 10)' "$ORD_VCM_JSON" 2>/dev/null || echo 10)
-init_cooldown_sec=$(jq -r '(.ETC.init_cooldown_sec // 30)' "$ORD_VCM_JSON" 2>/dev/null || echo 30)
+# 기본값 40은 패키지 배포 설정(opt/pim/config/ord_vcm_conf.json)·update_ordvcmconf.sh·
+# chk_cam_operate.sh 와 일치시킨 값이다. 어긋나면 설정 키가 없는 장비에서 두 스크립트가
+# 서로 다른 쿨다운으로 동작한다.
+init_cooldown_sec=$(jq -r '(.ETC.init_cooldown_sec // 40)' "$ORD_VCM_JSON" 2>/dev/null || echo 40)
 now_ts() { date +%s; }
 read_ts() { [ -f "$1" ] && cat "$1" 2>/dev/null | tr -d '\n' || echo 0; }
 
@@ -246,11 +249,11 @@ while true; do
         continue
     fi
 
-	streak=$(streak_get)
 	if [ -f "${FLAG_PATH}"/err_cam0.log ] || [ -f "${FLAG_PATH}"/err_cam1.log ] || [ -f "${FLAG_PATH}"/err_cam2.log ]  || [ -f "${FLAG_PATH}"/err_cam3.log ] ; then
-		streak=$((streak + 1))
-		streak_set "$streak"
+		# streak 증가는 cam_inc_streak(cam_state.sh)이 단독으로 수행한다.
+		# 같은 /tmp/cam_state/streak 파일을 streak_set으로 또 쓰면 2씩 증가한다.
 		cam_inc_streak
+		streak=$(streak_get)
 		logger -p local0.crit "[CHK][$tag:$LINENO] cam disconnect : $streak"
 	else
 		streak_set 0
