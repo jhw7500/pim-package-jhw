@@ -164,17 +164,20 @@ if [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]; t
     else
         recovered_by=""
         # Phase 1: read-only retry (no reset write)
-        for r in 1 2 3; do
-            sleep 0.3
-            cam01_res=$(i2ctransfer -f -y -a 2 w2@0x48 0x00 0x13 r1)
-            classify_ctrl3 "$cam01_res" "$LM_BOTH_EXPECT"
-            if [ "$ctrl3_verdict" = "ok" ]; then
-                recovered_by="read retry $r"
-                break
-            fi
-            # errb_only 는 링크가 안정적으로 락된 상태라 읽기 재시도로 바뀌지 않는다.
-            [ "$ctrl3_verdict" = "errb_only" ] && break
-        done
+        # errb_only 는 링크가 안정적으로 락된 상태라 읽기 재시도로 바뀌지 않으므로 건너뛴다.
+        if [ "$ctrl3_verdict" != "errb_only" ]; then
+            for r in 1 2 3; do
+                sleep 0.3
+                cam01_res=$(i2ctransfer -f -y -a 2 w2@0x48 0x00 0x13 r1)
+                classify_ctrl3 "$cam01_res" "$LM_BOTH_EXPECT"
+                if [ "$ctrl3_verdict" = "ok" ]; then
+                    recovered_by="read retry $r"
+                    break
+                fi
+                # 재시도 중 errb_only 로 바뀌면 남은 재시도도 의미가 없다.
+                [ "$ctrl3_verdict" = "errb_only" ] && break
+            done
+        fi
 
         # Phase 2: 링크가 실제로 깨졌을 때만 리셋 + 재확인
         if ctrl3_needs_reset "$ctrl3_verdict"; then
@@ -283,17 +286,20 @@ if [[ "$cam_ch2" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch3" == *"$ENABLE_VAL"* ]]; t
     else
         recovered_by=""
         # Phase 1: read-only retry (no reset write)
-        for r in 1 2 3; do
-            sleep 0.3
-            cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
-            classify_ctrl3 "$cam23_res" "$LM_BOTH_EXPECT"
-            if [ "$ctrl3_verdict" = "ok" ]; then
-                recovered_by="read retry $r"
-                break
-            fi
-            # errb_only 는 링크가 안정적으로 락된 상태라 읽기 재시도로 바뀌지 않는다.
-            [ "$ctrl3_verdict" = "errb_only" ] && break
-        done
+        # errb_only 는 링크가 안정적으로 락된 상태라 읽기 재시도로 바뀌지 않으므로 건너뛴다.
+        if [ "$ctrl3_verdict" != "errb_only" ]; then
+            for r in 1 2 3; do
+                sleep 0.3
+                cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
+                classify_ctrl3 "$cam23_res" "$LM_BOTH_EXPECT"
+                if [ "$ctrl3_verdict" = "ok" ]; then
+                    recovered_by="read retry $r"
+                    break
+                fi
+                # 재시도 중 errb_only 로 바뀌면 남은 재시도도 의미가 없다.
+                [ "$ctrl3_verdict" = "errb_only" ] && break
+            done
+        fi
 
         # Phase 2: 링크가 실제로 깨졌을 때만 리셋 + 재확인
         if ctrl3_needs_reset "$ctrl3_verdict"; then
