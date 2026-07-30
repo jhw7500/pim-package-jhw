@@ -32,14 +32,42 @@
 | Claude | `unknown` 을 `error` 레벨로 기록 | LOW | **declined** | 미정의 레지스터 값은 조사가 필요한 신호이므로 `error` 유지. 메시지에 `no error flag` 를 명시해 혼동을 줄였다 |
 | Claude | `reboot` 뒤 `return 0` → `return 1` 권장 | LOW | **declined** | 호출부가 `if maybe_init_cam_on_disconnect; then timer=0; sleep 5; continue; fi` 다. 리부팅 발동 후 루프를 재시작하는 편이 실환경에서 안전하므로 `return 0` 유지 |
 
-### 후속 PR A 에서 처리한 항목
+---
+
+## PR #4 — fix(cam): 리셋 쓰기 실패 진단 로그 + 링크 판정 회귀 테스트 추가
 
 PR #3 은 라운드 4 전원 CLEAN 상태로 rebase 머지했고, 블로킹 미만이라 미룬 아래 두 건을 후속 PR 로 분리했다.
 
 | 리뷰어 | 지적 | 심각도 | 처리 |
 |---|---|---|---|
 | Gemini | 리셋 `i2ctransfer` 쓰기의 성공 여부를 확인하지 않음 | LOW | **resolved** — deserializer/serializer 쓰기 종료코드를 각각 잡아 실패 시 `local0.warning` 으로 남긴다. 최종 판정은 종전대로 재읽기로 하되 어느 쪽 쓰기가 실패했는지 진단에 남는다 |
-| Claude | 검증이 시뮬레이션으로만 이뤄지고 테스트가 커밋되지 않음 | LOW | **resolved** — `test/cam_link/` 에 회귀 테스트 6종(단정 68개) 추가. 하드웨어 없이 `bash test/cam_link/run_all.sh` 로 실행 |
+| Claude | 검증이 시뮬레이션으로만 이뤄지고 테스트가 커밋되지 않음 | LOW | **resolved** — `test/cam_link/` 에 회귀 테스트 6종 추가. 하드웨어 없이 `bash test/cam_link/run_all.sh` 로 실행 |
+
+라운드 4회를 돌았고 **블로킹(must-fix / P1 / critical / high) 지적은 4라운드 내내 0건**이었다.
+아래는 블로킹 미만이지만 반영한 것과, 근거를 달아 반려한 것이다.
+
+### 반영 (라운드 2~4)
+
+| 라운드 | 리뷰어 | 지적 | 심각도 | 근거 |
+|---|---|---|---|---|
+| 2 | Claude | `config_default_test` 의 상수 블록 추출이 실패하면 빈 파일을 source 해 단정이 무의미해질 수 있음 | LOW | 의존 상수 6개 존재를 확인하고 없으면 중단 |
+| 2 | Gemini | `t_extract_func` 정규식이 `fn() {` 공백 1개를 엄격 요구 | LOW | 공백에 유연하게 보완 |
+| 2 | Gemini | 쓰기 실패 시나리오에 `/dev/null` 하위 경로 사용 | LOW | **일반 파일 하위 경로**로 변경. Gemini 가 권한 readonly 디렉터리는 root 가 퍼미션을 무시해 케이스가 조용히 무력화되므로 채택하지 않았다. 일반 파일 하위는 `mkdir` 이 ENOTDIR 로 실패해 root 여부와 무관하다 |
+| 2 | Claude | `rc_des`/`rc_ser` 가 스크립트 전역에 남음 | LOW | 블록별 `rc_des_01`/`rc_des_23` 로 분리 + 종료코드 의미 주석 |
+| 3 | Claude | `t_extract_func` 의 `/^\}/` 가 `} > /dev/null` 같은 행에서 끊겨 '절반짜리' 파일을 만들고 `[ -s ]` 검사를 통과함 | MEDIUM | 종료 조건을 `/^\}$/` 로 좁히고, 추출 결과를 서브셸에서 source 해 `type -t` 로 함수 파싱을 재확인 |
+| 3 | Claude | 스텁 호출 수에 리셋 쓰기가 포함되는 계산 근거가 없음 | LOW | `lib.sh`·`flag_e2e_test.sh` 양쪽에 주석 |
+| 4 | Claude | rc 위치 검사가 `modprobe` 다음 줄이 `rc1=$?` 가 아니면 내용 무관하게 실패 → 빈 줄·주석에도 오탐 | MEDIUM | 빈 줄·주석을 건너뛰고 실행 줄만 검사. `awk` 가 빈 값을 내는 경우도 명시적 실패로 처리 |
+| 4 | Claude | logger 스텁 heredoc 의 인용 규칙이 묵시적 | LOW | `$WORK` 는 지금 확장, `\$*` 는 스텁 실행 시점 인자임을 주석 |
+
+### 반려 (근거)
+
+| 리뷰어 | 지적 | 근거 |
+|---|---|---|
+| Gemini | `$tag` 가 `CHK` 면 `[CHK][CHK:188]` 로 중복 출력될 수 있음 | **사실과 다름.** `tag=$(basename "$0")` (`:6`) 이라 실제 출력은 `[CHK][chk_cam_connect.sh:88]`. 1호기 로그로 확인 |
+| Gemini | 테스트가 `sed`/`awk` 추출에 의존해 원본 스타일 변경에 취약 (3라운드 연속) | 지적은 타당하나 추출 실패가 **조용한 통과가 아닌 명시적 실패**로 드러난다(`type -t` 검증 + 빈 값 처리). Gemini 도 *"현재 수준에서는 충분"* / *"감내할 수 있는 수준"* 으로 평가. 로직을 별도 `.lib` 로 분리하는 것은 프로덕션 구조 변경이라 범위 밖 |
+| Claude | 스텁 `$val` 에 작은따옴표가 들어오면 취약 | 호출처가 16진수 문자열만 전달. Claude 도 *"실질적 문제는 없지만"* 으로 기재 |
+| Claude | `ls` 파이프라인으로 파일 목록 파싱 | 제어된 임시 디렉터리. Claude 도 *"현재 코드도 허용 범위 내"* |
+| Claude | `sed` 구분자 `#` 와 경로 충돌 가능성 | `mktemp -d` 경로에 `#` 가 들어오지 않는다. Claude 도 *"실질적 위험은 낮습니다"* |
 
 ### 이 PR 범위 밖으로 남긴 항목
 - 채널 ↔ GMSL2 링크 매핑 실측 확정 (드라이버 `max9296.c` 와 스크립트 상수가 서로 반대). 진단 로그가 원시값·비트·`link_status` 를 함께 남기므로 현장 로그로 확정 가능
