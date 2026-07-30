@@ -56,9 +56,10 @@ DISCONNECT_INIT_CAM_STATE_FILE_DEFAULT="/tmp/chk_cam_operate.disconnect_state"
 # 무한 반복할 수 있는데, 이를 시간 기준으로만 끊어 주기 위한 안전망이다.
 # 활성화해도 한 episode 당 1회만 리부팅한다(아래 REBOOT_FLAG).
 DISCONNECT_MAX_SEC_DEFAULT=0
-# 리부팅으로 초기화되면 안 되므로 재부팅 후에도 남는 경로에 둔다.
+# 에스컬레이션 이력은 재부팅을 넘어 남아야 한다. /tmp 로 폴백하면 부팅 시 지워져
+# 리부팅 루프가 되므로 폴백하지 않고, 쓰기 실패 시 에스컬레이션 자체를 건너뛴다.
+# 이 경로는 chk_mmc.sh 가 mmc_mode 를 보존하는 곳과 같은 영구 저장소다.
 DISCONNECT_REBOOT_FLAG_DIR="/var/log/cantops"
-[ -d "$DISCONNECT_REBOOT_FLAG_DIR" ] || DISCONNECT_REBOOT_FLAG_DIR="/tmp"
 DISCONNECT_REBOOT_FLAG="${DISCONNECT_REBOOT_FLAG_DIR}/cam_disconnect_reboot.flag"
 
 # P2: final-path 진척 telemetry / heartbeat (외부 모니터링용)
@@ -158,12 +159,18 @@ maybe_init_cam_on_disconnect() {
         if [ -f "$DISCONNECT_REBOOT_FLAG" ]; then
             logger -p local0.notice "[$KEY][$tag:$LINENO] disconnect persisted $((now - first_seen))s, already escalated once - keep periodic init_cam"
         elif [[ "$file_chk_reboot" == *"$ENABLE_VAL"* ]]; then
-            logger -p local0.emerg "[$KEY][$tag:$LINENO] rebooting because cam disconnect persisted $((now - first_seen))s (flag=$cam_disconnect_flag max=${max_sec}s)"
-            printf "%s" "$now" > "$DISCONNECT_REBOOT_FLAG" 2>/dev/null
-            sync
-            sleep 1
-            reboot
-            return 0
+            # 플래그를 영구 경로에 남기지 못하면(디스크 풀·퍼미션 등) 재부팅 후 이력이
+            # 사라져 리부팅 루프가 된다. 쓰기를 확인하고, 실패하면 리부팅하지 않는다.
+            if mkdir -p "$DISCONNECT_REBOOT_FLAG_DIR" 2>/dev/null &&
+               printf "%s" "$now" > "$DISCONNECT_REBOOT_FLAG" 2>/dev/null &&
+               [ -s "$DISCONNECT_REBOOT_FLAG" ]; then
+                logger -p local0.emerg "[$KEY][$tag:$LINENO] rebooting because cam disconnect persisted $((now - first_seen))s (flag=$cam_disconnect_flag max=${max_sec}s)"
+                sync
+                sleep 1
+                reboot
+                return 0
+            fi
+            logger -p local0.err "[$KEY][$tag:$LINENO] cannot persist reboot flag ($DISCONNECT_REBOOT_FLAG) - skip escalation reboot"
         else
             logger -p local0.notice "[$KEY][$tag:$LINENO] disconnect persisted $((now - first_seen))s but file_check_reboot is not true - keep periodic init_cam"
         fi
