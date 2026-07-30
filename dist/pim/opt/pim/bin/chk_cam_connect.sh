@@ -162,15 +162,18 @@ if [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]; t
     if [ "$ctrl3_verdict" = "ok" ]; then
         logger -p local0.debug "[CHK][$tag:$LINENO] CAM0 CAM1 OK"
     else
+        recovered_by=""
         # Phase 1: read-only retry (no reset write)
         for r in 1 2 3; do
             sleep 0.3
             cam01_res=$(i2ctransfer -f -y -a 2 w2@0x48 0x00 0x13 r1)
             classify_ctrl3 "$cam01_res" "$LM_BOTH_EXPECT"
             if [ "$ctrl3_verdict" = "ok" ]; then
-                logger -p local0.info "[CHK][$tag:$LINENO] CAM0 CAM1 OK (read retry $r)"
+                recovered_by="read retry $r"
                 break
             fi
+            # errb_only 는 링크가 안정적으로 락된 상태라 읽기 재시도로 바뀌지 않는다.
+            [ "$ctrl3_verdict" = "errb_only" ] && break
         done
 
         # Phase 2: 링크가 실제로 깨졌을 때만 리셋 + 재확인
@@ -181,12 +184,13 @@ if [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]; t
             sleep 1
             cam01_res=$(i2ctransfer -f -y -a 2 w2@0x48 0x00 0x13 r1)
             classify_ctrl3 "$cam01_res" "$LM_BOTH_EXPECT"
+            [ "$ctrl3_verdict" = "ok" ] && recovered_by="reset"
         fi
 
         # error classification
         case "$ctrl3_verdict" in
             ok)
-                logger -p local0.info "[CHK][$tag:$LINENO] CAM0 CAM1 recovered after reset"
+                logger -p local0.info "[CHK][$tag:$LINENO] CAM0 CAM1 recovered (${recovered_by:-unknown})"
                 ;;
             errb_only)
                 log_ctrl3 warning 2 $LINENO "CAM01 ERRB asserted but link locked, no reset" "$cam01_res"
@@ -277,15 +281,18 @@ if [[ "$cam_ch2" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch3" == *"$ENABLE_VAL"* ]]; t
     if [ "$ctrl3_verdict" = "ok" ]; then
         logger -p local0.debug "[CHK][$tag:$LINENO] CAM2 CAM3 OK"
     else
+        recovered_by=""
         # Phase 1: read-only retry (no reset write)
         for r in 1 2 3; do
             sleep 0.3
             cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
             classify_ctrl3 "$cam23_res" "$LM_BOTH_EXPECT"
             if [ "$ctrl3_verdict" = "ok" ]; then
-                logger -p local0.info "[CHK][$tag:$LINENO] CAM2 CAM3 OK (read retry $r)"
+                recovered_by="read retry $r"
                 break
             fi
+            # errb_only 는 링크가 안정적으로 락된 상태라 읽기 재시도로 바뀌지 않는다.
+            [ "$ctrl3_verdict" = "errb_only" ] && break
         done
 
         # Phase 2: 링크가 실제로 깨졌을 때만 리셋 + 재확인
@@ -296,12 +303,13 @@ if [[ "$cam_ch2" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch3" == *"$ENABLE_VAL"* ]]; t
             sleep 1
             cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
             classify_ctrl3 "$cam23_res" "$LM_BOTH_EXPECT"
+            [ "$ctrl3_verdict" = "ok" ] && recovered_by="reset"
         fi
 
         # error classification
         case "$ctrl3_verdict" in
             ok)
-                logger -p local0.info "[CHK][$tag:$LINENO] CAM2 CAM3 recovered after reset"
+                logger -p local0.info "[CHK][$tag:$LINENO] CAM2 CAM3 recovered (${recovered_by:-unknown})"
                 ;;
             errb_only)
                 log_ctrl3 warning 1 $LINENO "CAM23 ERRB asserted but link locked, no reset" "$cam23_res"
