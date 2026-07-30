@@ -88,12 +88,20 @@ sleep 0.2
 logger -p local0.notice "[RST][$tag:$LINENO] modprobe imx8-media-dev, max9296"
 modprobe max9296
 rc1=$?
+# imx8-media-dev 는 max9296 subdev 에 의존한다. deserializer 적재가 실패한 상태로
+# 상위 모듈을 올리면 커널 에러만 대량 발생하므로 시도하지 않고 중단한다.
+if [ "$rc1" -ne 0 ]; then
+    logger -p local0.emerg "[RST][$tag:$LINENO] modprobe failed (max9296:$rc1), skip imx8-media-dev"
+    logger -p local0.notice "[RST][$tag:$LINENO] reset init_cam_flag"
+    rm -f /tmp/init_cam_flag
+    exit 1
+fi
 sleep 0.1
 modprobe imx8-media-dev
 rc2=$?
 
-if [ "$rc1" -ne 0 ] || [ "$rc2" -ne 0 ]; then
-    logger -p local0.emerg "[RST][$tag:$LINENO] modprobe failed (max9296:$rc1 imx8-media-dev:$rc2)"
+if [ "$rc2" -ne 0 ]; then
+    logger -p local0.emerg "[RST][$tag:$LINENO] modprobe failed (imx8-media-dev:$rc2)"
     logger -p local0.notice "[RST][$tag:$LINENO] reset init_cam_flag"
     rm -f /tmp/init_cam_flag
     exit 1

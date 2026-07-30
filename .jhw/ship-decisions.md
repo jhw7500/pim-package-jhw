@@ -17,6 +17,21 @@
 | Claude, Gemini | 단일 채널 경로에 재시도·리셋 없음 | LOW | **declined** | 기존 동작 보존이 이 PR의 명시적 범위. 양 채널과의 비대칭은 별도 이슈로 다루는 것이 안전 |
 | Gemini | `init_cooldown_sec` 30→40 확인 요청 | LOW | **확인** | 패키지 배포 설정(`config/ord_vcm_conf.json`)·`update_ordvcmconf.sh`·`chk_cam_operate.sh` 와 일치시킨 의도된 변경. 설정 파일 없이 동작하던 장비는 쿨다운이 10초 길어진다 |
 
+### 라운드 3 (`7ee55bd`)
+
+두 리뷰어 모두 블로킹 0건을 명시했다 — Claude *"블로킹 이슈 없음"*, Gemini *"No blocking issues found"*.
+
+| 리뷰어 | 지적 | 심각도 | 처리 | 근거 |
+|---|---|---|---|---|
+| Gemini | `modprobe max9296` 실패해도 `imx8-media-dev` 를 계속 로드 | MEDIUM | **resolved** | `rc1` 실패 시 상위 모듈을 시도하지 않고 즉시 중단. 실패 모듈별로 로그를 분리해 원인 식별이 쉬워졌다 |
+| Claude | 초기 판정이 `errb_only` 일 때 Phase 1 루프 1회 진입 | LOW | **resolved** | 루프 진입 전에 건너뛴다. i2c 호출이 4회 → 2회로 감소함을 실측 |
+| Gemini | `DISCONNECT_REBOOT_FLAG` 잔류로 에스컬레이션 영구 누락 | MEDIUM | **declined** | 삭제 경로가 `cam_disconnect_flag==0 && drv_disc==0`(연결 회복) 시 동작하고 cooldown 만 지나면 도달한다. 카메라를 수리하면 회복 → 플래그 삭제 → 다음 episode 정상 동작. 하드웨어가 계속 죽어 있는 동안 재리부팅하지 않는 것은 의도된 루프 방지 동작 |
+| Gemini | 드라이버 활성 상태에서 Serializer(0x40) 강제 쓰기 | MEDIUM | **declined** | 기존 코드와 동일한 리스크로 PR 설명에 이미 범위 밖으로 명시. Gemini 도 인지 사항으로 표기 |
+| Gemini | `_cfg_num` 이 음수를 처리하지 않음 | LOW | **declined** | 사실과 다름. `^[0-9]+$` 가 이미 음수를 거부한다. 실측: `-5` → 기본값 치환 |
+| Gemini | 전역 변수 오염 가능성 | LOW | **declined** | 라운드 2와 동일 사유(서브셸). 함수 진입 시 초기화하고 있음 |
+| Claude | `unknown` 을 `error` 레벨로 기록 | LOW | **declined** | 미정의 레지스터 값은 조사가 필요한 신호이므로 `error` 유지. 메시지에 `no error flag` 를 명시해 혼동을 줄였다 |
+| Claude | `reboot` 뒤 `return 0` → `return 1` 권장 | LOW | **declined** | 호출부가 `if maybe_init_cam_on_disconnect; then timer=0; sleep 5; continue; fi` 다. 리부팅 발동 후 루프를 재시작하는 편이 실환경에서 안전하므로 `return 0` 유지 |
+
 ### 이 PR 범위 밖으로 남긴 항목
 - 채널 ↔ GMSL2 링크 매핑 실측 확정 (드라이버 `max9296.c` 와 스크립트 상수가 서로 반대). 진단 로그가 원시값·비트·`link_status` 를 함께 남기므로 현장 로그로 확정 가능
 - `disconnect_max_sec` 기본 활성화 여부 결정
