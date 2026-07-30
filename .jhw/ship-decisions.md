@@ -32,6 +32,15 @@
 | Claude | `unknown` 을 `error` 레벨로 기록 | LOW | **declined** | 미정의 레지스터 값은 조사가 필요한 신호이므로 `error` 유지. 메시지에 `no error flag` 를 명시해 혼동을 줄였다 |
 | Claude | `reboot` 뒤 `return 0` → `return 1` 권장 | LOW | **declined** | 호출부가 `if maybe_init_cam_on_disconnect; then timer=0; sleep 5; continue; fi` 다. 리부팅 발동 후 루프를 재시작하는 편이 실환경에서 안전하므로 `return 0` 유지 |
 
+### 후속 PR A 에서 처리한 항목
+
+PR #3 은 라운드 4 전원 CLEAN 상태로 rebase 머지했고, 블로킹 미만이라 미룬 아래 두 건을 후속 PR 로 분리했다.
+
+| 리뷰어 | 지적 | 심각도 | 처리 |
+|---|---|---|---|
+| Gemini | 리셋 `i2ctransfer` 쓰기의 성공 여부를 확인하지 않음 | LOW | **resolved** — deserializer/serializer 쓰기 종료코드를 각각 잡아 실패 시 `local0.warning` 으로 남긴다. 최종 판정은 종전대로 재읽기로 하되 어느 쪽 쓰기가 실패했는지 진단에 남는다 |
+| Claude | 검증이 시뮬레이션으로만 이뤄지고 테스트가 커밋되지 않음 | LOW | **resolved** — `test/cam_link/` 에 회귀 테스트 6종(단정 68개) 추가. 하드웨어 없이 `bash test/cam_link/run_all.sh` 로 실행 |
+
 ### 이 PR 범위 밖으로 남긴 항목
 - 채널 ↔ GMSL2 링크 매핑 실측 확정 (드라이버 `max9296.c` 와 스크립트 상수가 서로 반대). 진단 로그가 원시값·비트·`link_status` 를 함께 남기므로 현장 로그로 확정 가능
 - `disconnect_max_sec` 기본 활성화 여부 결정
