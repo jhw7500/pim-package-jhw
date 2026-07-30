@@ -42,9 +42,11 @@ t_extract_head() {
 }
 
 # 함수 하나만 잘라낸다. $1=원본  $2=함수명  $3=출력 파일
+# 선언 스타일 변화(fn(){ / fn () { / fn ()  {)에 견디도록 공백을 유연하게 받는다.
 t_extract_func() {
     local src="$1" fn="$2" out="$3"
-    awk -v f="^${fn}\\\\(\\\\) \\\\{" '$0 ~ f {p=1} p {print} p && /^\}/ {exit}' "$src" > "$out"
+    awk -v f="^${fn}[[:space:]]*\\\\([[:space:]]*\\\\)[[:space:]]*\\\\{" \
+        '$0 ~ f {p=1} p {print} p && /^\}/ {exit}' "$src" > "$out"
     [ -s "$out" ] || { echo "함수 추출 실패: $fn ($src)" >&2; return 1; }
 }
 

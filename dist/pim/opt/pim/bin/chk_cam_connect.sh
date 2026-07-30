@@ -182,12 +182,13 @@ if [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]; t
         # Phase 2: 링크가 실제로 깨졌을 때만 리셋 + 재확인
         if ctrl3_needs_reset "$ctrl3_verdict"; then
             log_ctrl3 error 2 $LINENO "CAM01 link fail, reset" "$cam01_res"
-            i2ctransfer -f -y -a 2 w3@0x48 0x00 0x10 0x31; rc_des=$?
-            i2ctransfer -f -y -a 2 w3@0x40 0x00 0x10 0x21; rc_ser=$?
+            i2ctransfer -f -y -a 2 w3@0x48 0x00 0x10 0x31; rc_des_01=$?
+            i2ctransfer -f -y -a 2 w3@0x40 0x00 0x10 0x21; rc_ser_01=$?
             # 링크가 완전히 끊기면 serializer(0x40) 쓰기부터 실패한다. 최종 판정은
             # 아래 재읽기로 하되, 어느 쪽 쓰기가 실패했는지는 하드웨어 진단에 필요하다.
-            if [ "$rc_des" -ne 0 ] || [ "$rc_ser" -ne 0 ]; then
-                logger -p local0.warning "[CHK][$tag:$LINENO] CAM01 reset write failed (des:$rc_des ser:$rc_ser)"
+            # 값은 i2ctransfer 종료코드로, 0=성공 / 그 외=실패(주로 1, NACK 등).
+            if [ "$rc_des_01" -ne 0 ] || [ "$rc_ser_01" -ne 0 ]; then
+                logger -p local0.warning "[CHK][$tag:$LINENO] CAM01 reset write failed (des:$rc_des_01 ser:$rc_ser_01)"
             fi
             sleep 1
             cam01_res=$(i2ctransfer -f -y -a 2 w2@0x48 0x00 0x13 r1)
@@ -309,12 +310,13 @@ if [[ "$cam_ch2" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch3" == *"$ENABLE_VAL"* ]]; t
         # Phase 2: 링크가 실제로 깨졌을 때만 리셋 + 재확인
         if ctrl3_needs_reset "$ctrl3_verdict"; then
             log_ctrl3 error 1 $LINENO "CAM23 link fail, reset" "$cam23_res"
-            i2ctransfer -f -y -a 1 w3@0x48 0x00 0x10 0x31; rc_des=$?
-            i2ctransfer -f -y -a 1 w3@0x40 0x00 0x10 0x21; rc_ser=$?
+            i2ctransfer -f -y -a 1 w3@0x48 0x00 0x10 0x31; rc_des_23=$?
+            i2ctransfer -f -y -a 1 w3@0x40 0x00 0x10 0x21; rc_ser_23=$?
             # 링크가 완전히 끊기면 serializer(0x40) 쓰기부터 실패한다. 최종 판정은
             # 아래 재읽기로 하되, 어느 쪽 쓰기가 실패했는지는 하드웨어 진단에 필요하다.
-            if [ "$rc_des" -ne 0 ] || [ "$rc_ser" -ne 0 ]; then
-                logger -p local0.warning "[CHK][$tag:$LINENO] CAM23 reset write failed (des:$rc_des ser:$rc_ser)"
+            # 값은 i2ctransfer 종료코드로, 0=성공 / 그 외=실패(주로 1, NACK 등).
+            if [ "$rc_des_23" -ne 0 ] || [ "$rc_ser_23" -ne 0 ]; then
+                logger -p local0.warning "[CHK][$tag:$LINENO] CAM23 reset write failed (des:$rc_des_23 ser:$rc_ser_23)"
             fi
             sleep 1
             cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)

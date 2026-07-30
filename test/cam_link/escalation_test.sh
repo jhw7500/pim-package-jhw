@@ -60,7 +60,11 @@ run_b "활성, 경과 >= 상한 → 에스컬레이션"   1800 1900  true  N REB
 run_b "이미 1회 에스컬레이션 → 재리부팅 없음" 1800 5000  true  Y NONE
 run_b "file_check_reboot=false → 리부팅 없음" 1800 1900  false N NONE
 run_b "max_sec 비정상값(공백) → 안전측 비활성" ""  99999 true  N NONE
-# 영구 플래그를 못 쓰면 재부팅 후 이력이 사라져 리부팅 루프가 되므로 건너뛰어야 한다
-run_b "플래그 쓰기 실패 → 리부팅 건너뜀"    1800 1900  true  N NONE /dev/null/cannot-create
+# 영구 플래그를 못 쓰면 재부팅 후 이력이 사라져 리부팅 루프가 되므로 건너뛰어야 한다.
+# 쓰기 실패는 '일반 파일 하위 경로'로 만든다 — mkdir 이 ENOTDIR 로 실패하며,
+# 퍼미션 비트를 무시하는 root 로 실행해도 동일하게 실패한다(readonly 디렉터리는
+# root 에서 통과해 이 케이스가 조용히 무력화된다).
+: > "$WORK/not-a-dir"
+run_b "플래그 쓰기 실패 → 리부팅 건너뜀"    1800 1900  true  N NONE "$WORK/not-a-dir/sub"
 
 t_summary "에스컬레이션"

@@ -14,6 +14,16 @@ trap 'rm -rf "$WORK"' EXIT
 
 # 상수 선언부 + _cfg_num + GetConfig_ 만 모아 source
 sed -n '/^FILE_CHECK_DELAY_DEFAULT=/,/^DISCONNECT_REBOOT_FLAG=/p' "$PIM_BIN/chk_cam_operate.sh" > "$DEFS"
+# 추출이 조용히 실패하면(상수명 변경·재정렬) 빈 파일을 source 해 단정이 무의미해진다.
+# 의존하는 상수가 실제로 들어왔는지 확인한다.
+for c in FILE_CHECK_DELAY_DEFAULT STARTUP_GRACE_EXTRA_SEC_DEFAULT INIT_COOLDOWN_SEC_DEFAULT \
+         DISCONNECT_INIT_CAM_INTERVAL_SEC_DEFAULT DISCONNECT_INIT_CAM_GRACE_SEC_DEFAULT \
+         DISCONNECT_MAX_SEC_DEFAULT; do
+    grep -q "^${c}=" "$DEFS" || {
+        echo "상수 블록 추출 실패: $c 없음 (chk_cam_operate.sh 상수명/순서 변경?)" >&2
+        exit 1
+    }
+done
 t_extract_func "$PIM_BIN/chk_cam_operate.sh" _cfg_num    "$WORK/f1" || exit 1
 t_extract_func "$PIM_BIN/chk_cam_operate.sh" GetConfig_  "$WORK/f2" || exit 1
 cat "$WORK/f1" "$WORK/f2" >> "$DEFS"
