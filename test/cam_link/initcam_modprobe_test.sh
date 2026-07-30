@@ -46,9 +46,19 @@ run "imx8 실패 → 둘 다 시도 후 중단"        imx8-media-dev "max9296,i
 run "둘 다 성공 → 계속 진행"                none           "max9296,imx8-media-dev" 0
 
 echo
-echo "=== rc 캡처 위치 회귀 방지 — sleep 이 modprobe 와 rc 캡처 사이에 없어야 ==="
+echo "=== rc 캡처 위치 회귀 방지 — modprobe 와 rc 캡처 사이에 실행 줄이 없어야 ==="
+# 빈 줄과 주석은 $? 를 바꾸지 않으므로 건너뛴다. 이를 dirty 로 보면 무고한 스타일
+# 편집에 오탐이 난다. 잡아야 할 것은 sleep 처럼 '$? 를 덮어쓰는 실행 줄' 뿐이다.
 between=$(sed -n "${START},${END}p" "$PIM_BIN/init_cam.sh" \
-          | awk '/^modprobe max9296$/{f=1;next} f&&/^rc1=\$\?$/{print "clean";exit} f{print "dirty:"$0;exit}')
-t_eq "modprobe max9296 직후가 rc1=\$?" "$between" "clean"
+          | awk '/^modprobe max9296$/       {f=1; next}
+                 f && /^[[:space:]]*$/      {next}
+                 f && /^[[:space:]]*#/      {next}
+                 f && /^rc1=\$\?$/          {print "clean"; exit}
+                 f                          {print "dirty:"$0; exit}')
+if [ -z "$between" ]; then
+    t_bad "위치 검사: 추출 블록에서 'modprobe max9296' 줄을 찾지 못했다"
+else
+    t_eq "modprobe max9296 직후 실행 줄이 rc1=\$?" "$between" "clean"
+fi
 
 t_summary "init_cam modprobe 가드"

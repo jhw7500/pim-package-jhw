@@ -59,6 +59,8 @@ for a in "$@"; do
 done
 echo 0xda
 STUBEOF
+# heredoc 구분자를 인용하지 않아 $WORK 는 지금 확장되고(스텁에 경로가 박힌다),
+# \$* 는 이스케이프해 스텁 실행 시점의 인자로 남긴다.
 cat > "$STUB/logger" <<STUBEOF
 #!/bin/sh
 echo "\$*" >> "$WORK/logged"
