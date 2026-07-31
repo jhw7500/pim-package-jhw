@@ -59,13 +59,17 @@ parse_ctrl3() {
 }
 
 # $1=CTRL3 원시값, $2=기대 LINK_MODE → ctrl3_verdict 설정
-#   ok        : 정상
-#   errb_only : 링크는 락됐고 ERRB 만 어서트 (리셋 금지 / 에러 플래그 금지)
-#   err_even  : 짝수 채널(ch0/ch2) 링크 소실
-#   err_odd   : 홀수 채널(ch1/ch3) 링크 소실
-#   err_both  : 양 채널 소실 (CMU 미락 또는 GMSL2 미락)
-#   read_fail : i2c 읽기 실패 — 재시도 후에도 지속되면 해당 버스 채널을 에러로 올린다
-#   unknown   : 유효값이나 비트 조합이 미정의 — 에러 플래그를 만들지 않는다
+#   ok              : 정상
+#   errb_only       : 링크는 락됐고 ERRB 만 어서트 (에러 플래그 금지)
+#   err_both        : 링크 미락 / CMU 미락 → 해당 버스의 두 채널이 함께 영향받는다
+#   mode_unexpected : 드라이버가 설정한 LINK_MODE 가 아니다 → 채널 귀속 불가
+#   read_fail       : i2c 읽기 실패
+#   unknown         : (방어용) 위 어디에도 안 걸리는 경우. 현재 classify 는 만들지 않는다
+#
+# CTRL3 의 LOCKED(bit3)는 링크별이 아니라 집계 비트 하나다. 벤치 실측에서 듀얼 구성 중
+# ch0 를 뽑든 ch1 을 뽑든 동일한 값(0x32 / link_status=3)이 나왔다 — 즉 이 레지스터만으로는
+# 어느 채널이 문제인지 원리적으로 알 수 없다. 그래서 채널을 귀속하는 판정을 두지 않는다.
+# 링크별 판별은 RX3(0x002F)의 SYNC_LOCKED_A/B·WBLOCK_A/B 로 별도 과제에서 다룬다.
 classify_ctrl3() {
     local expect="$2"
     if ! parse_ctrl3 "$1"; then
@@ -87,23 +91,9 @@ classify_ctrl3() {
         fi
         return
     fi
-    # 기대 모드가 아니면 살아남은 링크의 반대쪽 채널이 소실된 것이다.
-    if [ "$ctrl3_mode" -eq "$CH_EVEN_LINK" ]; then
-        ctrl3_verdict="err_odd"
-    elif [ "$ctrl3_mode" -eq "$CH_ODD_LINK" ]; then
-        ctrl3_verdict="err_even"
-    else
-        ctrl3_verdict="unknown"
-    fi
-}
-
-# 링크가 실제로 깨진 경우에만 리셋한다.
-# ERRB 만 어서트된 상태(LOCKED=1)에 리셋을 쏘면 정상 링크를 끊는다.
-ctrl3_needs_reset() {
-    case "$1" in
-        err_even|err_odd|err_both|read_fail) return 0 ;;
-        *) return 1 ;;
-    esac
+    # 드라이버가 설정해 둔 LINK_MODE 가 아니다. 듀얼 구성에서 이 값이 읽히면 외부에서
+    # CTRL0(0x0010)을 바꿨다는 뜻이고, 그 값으로 채널을 귀속할 근거가 없다.
+    ctrl3_verdict="mode_unexpected"
 }
 
 # 판정 근거를 원시값·비트·드라이버 비트까지 한 줄로 남긴다.
@@ -179,46 +169,37 @@ if [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]; t
             done
         fi
 
-        # Phase 2: 링크가 실제로 깨졌을 때만 리셋 + 재확인
-        if ctrl3_needs_reset "$ctrl3_verdict"; then
-            log_ctrl3 error 2 $LINENO "CAM01 link fail, reset" "$cam01_res"
-            i2ctransfer -f -y -a 2 w3@0x48 0x00 0x10 0x31; rc_des_01=$?
-            i2ctransfer -f -y -a 2 w3@0x40 0x00 0x10 0x21; rc_ser_01=$?
-            # 링크가 완전히 끊기면 serializer(0x40) 쓰기부터 실패한다. 최종 판정은
-            # 아래 재읽기로 하되, 어느 쪽 쓰기가 실패했는지는 하드웨어 진단에 필요하다.
-            # 값은 i2ctransfer 종료코드로, 0=성공 / 그 외=실패(주로 1, NACK 등).
-            if [ "$rc_des_01" -ne 0 ] || [ "$rc_ser_01" -ne 0 ]; then
-                logger -p local0.warning "[CHK][$tag:$LINENO] CAM01 reset write failed (des:$rc_des_01 ser:$rc_ser_01)"
-            fi
-            sleep 1
-            cam01_res=$(i2ctransfer -f -y -a 2 w2@0x48 0x00 0x13 r1)
-            classify_ctrl3 "$cam01_res" "$LM_BOTH_EXPECT"
-            [ "$ctrl3_verdict" = "ok" ] && recovered_by="reset"
-        fi
+        # 리셋(CTRL0 0x0010 write)은 두지 않는다. 그 write 는 0x31 =
+        # RESET_ONESHOT|AUTO_LINK|LINK_CFG(A) 로, splitter 구성을 단일링크 auto 모드로
+        # 바꿔버린다(드라이버 max9296.c:444-445 "// auto link", splitter 유지값은 0x23).
+        # 그래서 리셋 뒤에는 SUCCESS 값(Splitter)에 도달할 경로가 없다 — 필드 로그에서
+        # 리셋 41회 복구 0회, 벤치에서 5초 대기해도 0x22 고정이었다.
+        # 게다가 그렇게 바뀐 LINK_MODE 를 되읽어 채널을 지목해 왔는데, 독립 증거
+        # (gstApp Fragment opened)와 일치율이 0/10 이었다.
 
         # error classification
         case "$ctrl3_verdict" in
             ok)
-                logger -p local0.info "[CHK][$tag:$LINENO] CAM0 CAM1 recovered (${recovered_by:-unknown})"
+                logger -p local0.info "[CHK][$tag:$LINENO] CAM0 CAM1 recovered (${recovered_by:-read retry})"
                 ;;
             errb_only)
-                log_ctrl3 warning 2 $LINENO "CAM01 ERRB asserted but link locked, no reset" "$cam01_res"
-                ;;
-            err_even)
-                log_ctrl3 error 2 $LINENO "CAM0_ERR" "$cam01_res"
-                echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log
-                ;;
-            err_odd)
-                log_ctrl3 error 2 $LINENO "CAM1_ERR" "$cam01_res"
-                echo "${timestamp} CAM1 ERR" >> ${FLAG_PATH}/err_cam1.log
+                log_ctrl3 warning 2 $LINENO "CAM01 ERRB asserted but link locked" "$cam01_res"
                 ;;
             err_both)
+                # LOCKED/CMU 미락은 링크 단위 사건이라 두 채널이 함께 영향받는다.
                 log_ctrl3 error 2 $LINENO "CAM01_ERR" "$cam01_res"
                 echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log
                 echo "${timestamp} CAM1 ERR" >> ${FLAG_PATH}/err_cam1.log
                 ;;
+            mode_unexpected)
+                # 드라이버는 듀얼 구성에서 Splitter 로 설정한다. 단일링크 모드가 읽혔다면
+                # 외부에서 CTRL0 를 바꾼 것이고, 그 값으로 채널을 귀속할 수 없다.
+                log_ctrl3 error 2 $LINENO "CAM01_ERR unexpected LINK_MODE" "$cam01_res"
+                echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log
+                echo "${timestamp} CAM1 ERR" >> ${FLAG_PATH}/err_cam1.log
+                ;;
             read_fail)
-                # 재시도·리셋 후에도 i2c 를 못 읽었다 = deserializer 통신 불가.
+                # 재시도 후에도 i2c 를 못 읽었다 = deserializer 통신 불가.
                 log_ctrl3 error 2 $LINENO "CAM01 CTRL3 read failed after retry" "$cam01_res"
                 echo "${timestamp} CAM0 ERR" >> ${FLAG_PATH}/err_cam0.log
                 echo "${timestamp} CAM1 ERR" >> ${FLAG_PATH}/err_cam1.log
@@ -236,7 +217,7 @@ elif [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch1" == *"$DISABLE_VAL"* ]]
             logger -p local0.debug "[CHK][$tag:$LINENO] CAM0 OK"
             ;;
         errb_only)
-            log_ctrl3 warning 2 $LINENO "CAM0 ERRB asserted but link locked, no reset" "$cam01_res"
+            log_ctrl3 warning 2 $LINENO "CAM0 ERRB asserted but link locked" "$cam01_res"
             ;;
         read_fail)
             log_ctrl3 error 2 $LINENO "CAM0 CTRL3 read failed" "$cam01_res"
@@ -262,7 +243,7 @@ elif [[ "$cam_ch0" == *"$DISABLE_VAL"* ]] && [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]
             logger -p local0.debug "[CHK][$tag:$LINENO] CAM1 OK"
             ;;
         errb_only)
-            log_ctrl3 warning 2 $LINENO "CAM1 ERRB asserted but link locked, no reset" "$cam01_res"
+            log_ctrl3 warning 2 $LINENO "CAM1 ERRB asserted but link locked" "$cam01_res"
             ;;
         read_fail)
             log_ctrl3 error 2 $LINENO "CAM1 CTRL3 read failed" "$cam01_res"
@@ -307,46 +288,31 @@ if [[ "$cam_ch2" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch3" == *"$ENABLE_VAL"* ]]; t
             done
         fi
 
-        # Phase 2: 링크가 실제로 깨졌을 때만 리셋 + 재확인
-        if ctrl3_needs_reset "$ctrl3_verdict"; then
-            log_ctrl3 error 1 $LINENO "CAM23 link fail, reset" "$cam23_res"
-            i2ctransfer -f -y -a 1 w3@0x48 0x00 0x10 0x31; rc_des_23=$?
-            i2ctransfer -f -y -a 1 w3@0x40 0x00 0x10 0x21; rc_ser_23=$?
-            # 링크가 완전히 끊기면 serializer(0x40) 쓰기부터 실패한다. 최종 판정은
-            # 아래 재읽기로 하되, 어느 쪽 쓰기가 실패했는지는 하드웨어 진단에 필요하다.
-            # 값은 i2ctransfer 종료코드로, 0=성공 / 그 외=실패(주로 1, NACK 등).
-            if [ "$rc_des_23" -ne 0 ] || [ "$rc_ser_23" -ne 0 ]; then
-                logger -p local0.warning "[CHK][$tag:$LINENO] CAM23 reset write failed (des:$rc_des_23 ser:$rc_ser_23)"
-            fi
-            sleep 1
-            cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
-            classify_ctrl3 "$cam23_res" "$LM_BOTH_EXPECT"
-            [ "$ctrl3_verdict" = "ok" ] && recovered_by="reset"
-        fi
+        # 리셋(CTRL0 0x0010 write)은 두지 않는다. 근거는 CAM01 블록 주석 참조.
 
         # error classification
         case "$ctrl3_verdict" in
             ok)
-                logger -p local0.info "[CHK][$tag:$LINENO] CAM2 CAM3 recovered (${recovered_by:-unknown})"
+                logger -p local0.info "[CHK][$tag:$LINENO] CAM2 CAM3 recovered (${recovered_by:-read retry})"
                 ;;
             errb_only)
-                log_ctrl3 warning 1 $LINENO "CAM23 ERRB asserted but link locked, no reset" "$cam23_res"
-                ;;
-            err_even)
-                log_ctrl3 error 1 $LINENO "CAM2_ERR" "$cam23_res"
-                echo "${timestamp} CAM2 ERR" >> ${FLAG_PATH}/err_cam2.log
-                ;;
-            err_odd)
-                log_ctrl3 error 1 $LINENO "CAM3_ERR" "$cam23_res"
-                echo "${timestamp} CAM3 ERR" >> ${FLAG_PATH}/err_cam3.log
+                log_ctrl3 warning 1 $LINENO "CAM23 ERRB asserted but link locked" "$cam23_res"
                 ;;
             err_both)
+                # LOCKED/CMU 미락은 링크 단위 사건이라 두 채널이 함께 영향받는다.
                 log_ctrl3 error 1 $LINENO "CAM23_ERR" "$cam23_res"
                 echo "${timestamp} CAM2 ERR" >> ${FLAG_PATH}/err_cam2.log
                 echo "${timestamp} CAM3 ERR" >> ${FLAG_PATH}/err_cam3.log
                 ;;
+            mode_unexpected)
+                # 드라이버는 듀얼 구성에서 Splitter 로 설정한다. 단일링크 모드가 읽혔다면
+                # 외부에서 CTRL0 를 바꾼 것이고, 그 값으로 채널을 귀속할 수 없다.
+                log_ctrl3 error 1 $LINENO "CAM23_ERR unexpected LINK_MODE" "$cam23_res"
+                echo "${timestamp} CAM2 ERR" >> ${FLAG_PATH}/err_cam2.log
+                echo "${timestamp} CAM3 ERR" >> ${FLAG_PATH}/err_cam3.log
+                ;;
             read_fail)
-                # 재시도·리셋 후에도 i2c 를 못 읽었다 = deserializer 통신 불가.
+                # 재시도 후에도 i2c 를 못 읽었다 = deserializer 통신 불가.
                 log_ctrl3 error 1 $LINENO "CAM23 CTRL3 read failed after retry" "$cam23_res"
                 echo "${timestamp} CAM2 ERR" >> ${FLAG_PATH}/err_cam2.log
                 echo "${timestamp} CAM3 ERR" >> ${FLAG_PATH}/err_cam3.log
@@ -364,7 +330,7 @@ elif [[ "$cam_ch2" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch3" == *"$DISABLE_VAL"* ]]
             logger -p local0.debug "[CHK][$tag:$LINENO] CAM2 OK"
             ;;
         errb_only)
-            log_ctrl3 warning 1 $LINENO "CAM2 ERRB asserted but link locked, no reset" "$cam23_res"
+            log_ctrl3 warning 1 $LINENO "CAM2 ERRB asserted but link locked" "$cam23_res"
             ;;
         read_fail)
             log_ctrl3 error 1 $LINENO "CAM2 CTRL3 read failed" "$cam23_res"
@@ -390,7 +356,7 @@ elif [[ "$cam_ch2" == *"$DISABLE_VAL"* ]] && [[ "$cam_ch3" == *"$ENABLE_VAL"* ]]
             logger -p local0.debug "[CHK][$tag:$LINENO] CAM3 OK"
             ;;
         errb_only)
-            log_ctrl3 warning 1 $LINENO "CAM3 ERRB asserted but link locked, no reset" "$cam23_res"
+            log_ctrl3 warning 1 $LINENO "CAM3 ERRB asserted but link locked" "$cam23_res"
             ;;
         read_fail)
             log_ctrl3 error 1 $LINENO "CAM3 CTRL3 read failed" "$cam23_res"

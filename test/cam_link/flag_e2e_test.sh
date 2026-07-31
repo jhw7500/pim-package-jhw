@@ -4,8 +4,10 @@
 #
 # 스크립트 사본의 FLAG_PATH 를 임시 디렉터리로 바꿔 실행하므로 /tmp 의 실제
 # err_cam*.log 는 건드리지 않는다. i2ctransfer / logger / sleep 은 PATH 스텁.
-# 확인 대상: (1) 어느 채널에 err_cam 플래그가 생기는가
-#            (2) i2c 호출 횟수 — errb_only 는 재시도를 하지 않아야 한다
+#
+# 확인 대상:
+#  (1) 어느 채널에 err_cam 플래그가 생기는가 — 듀얼 구성에서는 채널을 특정하지 않는다
+#  (2) i2c 호출 횟수 — 리셋이 제거됐으므로 쓰기 호출이 0이어야 한다
 source "$(dirname "$0")/lib.sh"
 
 WORK=$(mktemp -d)
@@ -27,53 +29,46 @@ run() {
     t_eq "$1" "[${flags}]/${calls}" "[${4}]/${5}"
 }
 
+# 호출 수 계산 근거 (리셋 제거 후):
+#   스크립트 시작 시 버스별 초기 읽기 1회씩 = 2
+#   듀얼 분기에서 verdict 가 ok/errb_only 가 아니면 읽기 재시도 3회 (버스당)
+#   쓰기(리셋)는 없다. 단일채널 분기는 재시도가 없다.
 echo "=== 채널 인자별 플래그 생성 (i2c 상시 실패 = read_fail) ==="
-# 호출 수는 읽기와 쓰기를 합한 값이다(스텁이 구분하지 않음 — lib.sh 참고).
-# read_fail 은 리셋 대상이라 버스당 = 재시도 읽기 3 + 리셋 쓰기 2(w3@0x48, w3@0x40)
-# + 재읽기 1 = 6회. 여기에 스크립트 시작 시 버스별 초기 읽기 1회씩(총 2회)이 더해진다.
-run "전 채널 활성(15)"      "" 15 "ch0 ch1 ch2 ch3" 14
-run "ch0 만 활성(1)"        "" 1  "ch0"             2
-run "ch1 만 활성(2)"        "" 2  "ch1"             2
-run "ch2+ch3 활성(12)"      "" 12 "ch2 ch3"         8
-run "전 채널 비활성(0)"     "" 0  ""                0
+run "전 채널 활성(15)"   "" 15 "ch0 ch1 ch2 ch3" 8
+run "ch0 만 활성(1)"     "" 1  "ch0"             2
+run "ch1 만 활성(2)"     "" 2  "ch1"             2
+run "ch2+ch3 활성(12)"   "" 12 "ch2 ch3"         5
+run "전 채널 비활성(0)"  "" 0  ""                0
 
 echo
 echo "=== 판정값별 동작 (전 채널 활성) ==="
-run "0xfa 정상 → 플래그 없음, 재시도 없음"        0xfa 15 ""                2
-run "0xfe ERRB만 → 플래그 없음, 재시도 없음"      0xfe 15 ""                2
-run "0xda Link A 단독 → 짝수 채널만"              0xda 15 "ch0 ch2"        14
-run "0xea Link B 단독 → 홀수 채널만"              0xea 15 "ch1 ch3"        14
-run "0x36 LOCKED=0 → 양쪽"                        0x36 15 "ch0 ch1 ch2 ch3" 14
-# unknown 은 리셋 대상이 아니므로 버스당 재시도 3회만(리셋 2 + 재읽기 1 없음) → 2+3+3=8
-run "0x0a 미정의 유효값 → 플래그 없음, 리셋 안 함" 0x0a 15 ""                8
+run "0xfa 정상 → 플래그 없음, 재시도 없음"   0xfa 15 ""                2
+run "0xfe ERRB만 → 플래그 없음, 재시도 없음" 0xfe 15 ""                2
+run "0x36 LOCKED=0 → 양쪽"                   0x36 15 "ch0 ch1 ch2 ch3" 8
+run "0x32 벤치 관측값 → 양쪽"                0x32 15 "ch0 ch1 ch2 ch3" 8
 
 echo
-echo "=== 리셋 쓰기(w3@) 실패 시 진단 로그를 남기는가 ==="
-# 읽기(w2@...r1)는 0xda 를 주고 쓰기(w3@)만 실패시켜 리셋 write 실패 경로를 만든다.
-rm -f "$WORK"/err_cam* "$WORK/logged"
-mkdir -p "$STUB"
-cat > "$STUB/i2ctransfer" <<'STUBEOF'
-#!/bin/sh
-for a in "$@"; do
-    case "$a" in w3@*) exit 1 ;; esac    # 모든 쓰기는 실패
-done
-echo 0xda
-STUBEOF
-# heredoc 구분자를 인용하지 않아 $WORK 는 지금 확장되고(스텁에 경로가 박힌다),
-# \$* 는 이스케이프해 스텁 실행 시점의 인자로 남긴다.
-cat > "$STUB/logger" <<STUBEOF
-#!/bin/sh
-echo "\$*" >> "$WORK/logged"
-STUBEOF
-printf '#!/bin/sh\nexit 0\n' > "$STUB/sleep"
-chmod +x "$STUB"/*
-PATH="$STUB:$PATH" bash "$CHK" 15 >/dev/null 2>&1 || true
+echo "=== 듀얼 구성에서 채널을 특정하지 않는가 (회귀 방지) ==="
+# 과거 0xda→ch0만, 0xea→ch1만 으로 지목했다. 그 지목은 실측 일치율 0/10 이었고
+# 값 자체가 스크립트 리셋의 산물이었다. 되살아나면 여기서 실패한다.
+run "0xda 구 CAM0_ERR → 한쪽만 지목하면 안 됨" 0xda 15 "ch0 ch1 ch2 ch3" 8
+run "0xea 구 CAM1_ERR → 한쪽만 지목하면 안 됨" 0xea 15 "ch0 ch1 ch2 ch3" 8
 
-t_eq "CAM01 reset write failed 경고" \
-     "$(grep -c 'CAM01 reset write failed (des:1 ser:1)' "$WORK/logged" 2>/dev/null || echo 0)" "1"
-t_eq "CAM23 reset write failed 경고" \
-     "$(grep -c 'CAM23 reset write failed (des:1 ser:1)' "$WORK/logged" 2>/dev/null || echo 0)" "1"
-t_eq "warning 레벨로 기록" \
-     "$(grep -c 'local0.warning.*reset write failed' "$WORK/logged" 2>/dev/null || echo 0)" "2"
+echo
+echo "=== 리셋 write 가 실제로 사라졌는가 ==="
+rm -f "$WORK"/err_cam* "$WORK/calls"
+t_make_stubs "$STUB" 0x36 "$WORK/callargs"
+# 인자까지 기록하는 스텁으로 교체
+cat > "$STUB/i2ctransfer" <<STUBEOF
+#!/bin/sh
+echo "\$*" >> "$WORK/callargs"
+echo 0x36
+STUBEOF
+chmod +x "$STUB/i2ctransfer"
+: > "$WORK/callargs"
+PATH="$STUB:$PATH" bash "$CHK" 15 >/dev/null 2>&1 || true
+t_eq "쓰기(w3@) 호출 횟수" "$(grep -c 'w3@' "$WORK/callargs" || true)" "0"
+t_eq "CTRL0(0x10) 접근 횟수" "$(grep -c '0x00 0x10' "$WORK/callargs" || true)" "0"
+t_eq "읽기(w2@…r1)만 사용"  "$(grep -vc 'w2@0x48 0x00 0x13 r1' "$WORK/callargs" || true)" "0"
 
 t_summary "플래그 생성 E2E"
