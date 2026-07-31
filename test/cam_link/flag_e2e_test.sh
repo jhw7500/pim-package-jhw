@@ -143,7 +143,7 @@ STUBEOF
     cat > "$STUB/i2ctransfer" <<STUBEOF
 #!/bin/sh
 case "\$*" in
-  *"0x00 0x2f"*) echo $rx3v ;;
+  *"0x00 0x2f"*) echo "$rx3v" ;;
   *) echo 0x36 ;;
 esac
 STUBEOF
