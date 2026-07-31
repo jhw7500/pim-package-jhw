@@ -66,7 +66,9 @@ echo "=== 리셋 관련 코드가 되살아나지 않았는가 (회귀 방지) =
 t_eq "ctrl3_needs_reset 미정의" "$(type -t ctrl3_needs_reset || echo none)" "none"
 t_eq "CTRL0(0x0010) write 없음" \
      "$(grep -c 'w3@0x4[08] 0x00 0x10' "$PIM_BIN/chk_cam_connect.sh")" "0"
-t_eq "채널 귀속 verdict 없음" \
-     "$(grep -cE 'err_even|err_odd' "$PIM_BIN/chk_cam_connect.sh")" "0"
+# 단순히 문자열이 있는지 보면 역사적 맥락 주석에도 오탐한다. verdict 를 실제로
+# 대입하는 구문만 센다.
+t_eq "채널 귀속 verdict 대입 없음" \
+     "$(grep -cE 'ctrl3_verdict="(err_even|err_odd)"' "$PIM_BIN/chk_cam_connect.sh")" "0"
 
 t_summary "CTRL3 판정"
