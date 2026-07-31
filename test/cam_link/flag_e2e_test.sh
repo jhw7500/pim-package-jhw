@@ -63,6 +63,34 @@ echo "=== 단일 채널 구성에서 mode_unexpected 가 누락되지 않는가 
 #   0x1a = Link A(01)+LOCKED=1 → 반대 링크 = swap 케이스 → 경고만(플래그 없음, 기존 동작)
 run "ch0 단독 · 0x0a 기대 모드 아님 → 플래그 생성" 0x0a 1 "ch0" 2
 run "ch0 단독 · 0x1a swap 케이스 → 경고만"         0x1a 1 ""    2
+# LOCKED=0(실제 링크 단절)도 같은 캐치올을 지난다. swap 조건(locked=1)이 아니므로
+# 해당 채널 플래그가 나와야 한다. *) else 분기를 손댈 때의 회귀를 막는다.
+run "ch0 단독 · 0x12 LOCKED=0 → 플래그 생성"       0x12 1 "ch0" 2
+run "ch1 단독 · 0x32 LOCKED=0 → 플래그 생성"       0x32 2 "ch1" 2
+
+echo
+echo "=== 회복 로그가 재시도 횟수를 담는가 ==="
+# recovered_by 는 재시도 루프에서 "read retry N" 으로 설정된다. 리뷰에서 이 변수를
+# dead 로 보고 "read retry" 하드코딩을 제안받았는데, 그러면 몇 번째에 회복됐는지가
+# 사라진다. 실제 값이 유지되는지 못박는다.
+rm -f "$WORK"/err_cam* "$WORK/logged" "$WORK/n"
+printf '#!/bin/sh\nexit 0\n' > "$STUB/sleep"
+cat > "$STUB/logger" <<STUBEOF
+#!/bin/sh
+echo "\$*" >> "$WORK/logged"
+STUBEOF
+# 처음 2회는 실패값, 이후 정상값 → 재시도 2회째(루프 r=2)에 회복
+cat > "$STUB/i2ctransfer" <<STUBEOF
+#!/bin/sh
+n=\$(cat "$WORK/n" 2>/dev/null || echo 0); n=\$((n+1)); echo \$n > "$WORK/n"
+if [ \$n -le 2 ]; then echo 0x36; else echo 0xfa; fi
+STUBEOF
+chmod +x "$STUB/sleep" "$STUB/logger" "$STUB/i2ctransfer"
+echo 0 > "$WORK/n"
+PATH="$STUB:$PATH" bash "$CHK" 3 >/dev/null 2>&1 || true
+t_eq "recovered 로그에 재시도 횟수 포함" \
+     "$(grep -oE 'recovered \(read retry [0-9]+\)' "$WORK/logged" | head -1)" \
+     "recovered (read retry 1)"
 
 echo
 echo "=== 리셋 write 가 실제로 사라졌는가 ==="
