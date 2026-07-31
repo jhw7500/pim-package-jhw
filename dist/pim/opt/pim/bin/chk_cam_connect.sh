@@ -24,22 +24,37 @@ BIT_CMU=0x02
 LM_BOTH_EXPECT=$LM_SPLITTER
 
 # 짝수 채널(ch0/ch2)과 홀수 채널(ch1/ch3)이 각각 어느 GMSL2 링크에 붙어 있는가.
-# 벤치 실측(2026-07-31)으로 확정됐다. RX3(0x002F)의 FAILLOCK 래치 비트가 어느 링크가
-# 실패했는지 남기는데, 카메라를 하나씩 빼서 읽으면 다음과 같았다.
-#   ch0 제거(ch1만 연결) → 0x01 = FAILLOCK_A  → ch0 = Link A
-#   ch1 제거(ch0만 연결) → 0x10 = FAILLOCK_B  → ch1 = Link B
-# 드라이버(max9296.c)/설계문서와 일치한다. 종전 스크립트 상수(CH0_EN_OK=0xea)는
-# ch0=Link B 로 반대였고, 그 탓에 ch0 단독 정상 장비에서 swap 경고가 오탐으로 났다.
-CH_EVEN_LINK=$LM_LINK_A    # ch0, ch2 → Link A (serializer 0x40)
-CH_ODD_LINK=$LM_LINK_B     # ch1, ch3 → Link B (serializer 0x60)
+# 벤치 실측(2026-07-31)으로 확정. 결정적 근거는 '런타임 이탈' 실험이다 — 정상 상태에서
+# 시작해 변수 하나만 바꾸므로 해석 여지가 없다.
+#   둘 다 연결        RX3=0x66  (Link A·B 모두 SYNC_LOCKED+WBLOCK)
+#   └ ch1 물리 제거   RX3=0x60  (Link A 비트만 소거, Link B 는 락 유지)
+#   ⇒ ch1 = Link A, ch0 = Link B
+#
+# 부팅 시점 실험(카메라 하나 없이 부팅)은 이와 반대로 읽히기 쉬우니 주의:
+#   ch1 제거 → FAILLOCK_B / ch0 제거 → FAILLOCK_A
+# FAILLOCK 은 '빠진 링크'가 아니라 '카메라가 있는데도 splitter 훈련에 실패한 링크'를
+# 표시한다. 부팅 시엔 양 링크가 다 안 올라와 이 구분이 보이지 않는다. 위 런타임
+# 실험과 교차하면 두 결과가 같은 니블을 ch0 로 가리켜 일관된다.
+#
+# 드라이버(max9296.c)/설계문서는 ch0=Link A(serializer 0x40)라고 한다. RX3 의 Link A/B
+# 는 PHY 레인 라벨이라 보드 배선에 따라 드라이버의 주소 배정과 반대일 수 있다. 우리가
+# 읽는 것은 RX3 프레임이므로 아래 값을 따른다.
+CH_EVEN_LINK=$LM_LINK_B    # ch0, ch2 → RX3 기준 Link B
+CH_ODD_LINK=$LM_LINK_A     # ch1, ch3 → RX3 기준 Link A
 
 # ── MAX9296 RX3(0x002F) — 링크별 래치 ──────────────────────────────
 #  bit6 SYNC_LOCKED_B / bit5 WBLOCK_B / bit4 FAILLOCK_B
 #  bit2 SYNC_LOCKED_A / bit1 WBLOCK_A / bit0 FAILLOCK_A
 # FAILLOCK 은 Read-Clear 다(실측: 0x01 → 0x00 → 0x00). 링크가 계속 죽어 있어도
-# 두 번째 읽기부터 0이 되므로 "지금 어느 채널이 죽었나"라는 레벨 신호로 쓸 수 없다.
-# 그래서 판정에는 쓰지 않고 진단 로그에만 남긴다. 현장 데이터로 포착률이 확인되면
-# 그때 귀속에 사용할지 판단한다.
+# 두 번째 읽기부터 0이 되므로 레벨 신호로 쓸 수 없다.
+#
+# 반면 SYNC_LOCKED/WBLOCK 은 RO 라 read-clear 가 아니고, 런타임 이탈에서 링크별로
+# 정확히 갈린다(실측: 0x66 → ch1 제거 → 0x60). 즉 현장의 실제 실패 유형에서는 이
+# 비트들로 채널 특정이 가능하다. 다만 부팅 시점 부재에서는 양 링크가 다 0이 되어
+# 구분되지 않는다.
+#
+# 이번 변경에서는 판정에 쓰지 않고 진단 로그에만 남긴다. 현장 로그로 두 유형의
+# 분포와 포착률을 확인한 뒤 귀속 사용 여부를 별도로 판단한다.
 RX3_FAILLOCK_A=0x01
 RX3_FAILLOCK_B=0x10
 
@@ -81,7 +96,8 @@ parse_ctrl3() {
 # CTRL3 의 LOCKED(bit3)는 링크별이 아니라 집계 비트 하나다. 벤치 실측에서 듀얼 구성 중
 # ch0 를 뽑든 ch1 을 뽑든 동일한 값(0x32 / link_status=3)이 나왔다 — 즉 이 레지스터만으로는
 # 어느 채널이 문제인지 원리적으로 알 수 없다. 그래서 채널을 귀속하는 판정을 두지 않는다.
-# 링크별 판별은 RX3(0x002F)의 SYNC_LOCKED_A/B·WBLOCK_A/B 로 별도 과제에서 다룬다.
+# 링크별 판별은 RX3(0x002F)의 SYNC_LOCKED_A/B·WBLOCK_A/B 로 가능하다(런타임 이탈 한정).
+# 별도 과제로 다룬다.
 classify_ctrl3() {
     local expect="$2"
     if ! parse_ctrl3 "$1"; then
@@ -138,7 +154,7 @@ read_rx3_faillock() {
 }
 
 # 판정 근거를 원시값·비트·드라이버 비트·RX3 래치까지 한 줄로 남긴다.
-# rx3/faillock 은 기록 전용이며 판정에는 쓰지 않는다(Read-Clear 라 레벨 신호가 아님).
+# rx3/faillock 은 이번 변경에서 기록 전용이며 판정에는 쓰지 않는다.
 # $1=level  $2=i2c adapter  $3=호출부 LINENO  $4=메시지  $5=CTRL3 원시값
 log_ctrl3() {
     local drv rx3
