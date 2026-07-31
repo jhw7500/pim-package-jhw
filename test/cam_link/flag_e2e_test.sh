@@ -55,20 +55,33 @@ run "0xda 구 CAM0_ERR → 한쪽만 지목하면 안 됨" 0xda 15 "ch0 ch1 ch2 
 run "0xea 구 CAM1_ERR → 한쪽만 지목하면 안 됨" 0xea 15 "ch0 ch1 ch2 ch3" 8
 
 echo
+echo "=== 단일 채널 구성에서 mode_unexpected 가 누락되지 않는가 ==="
+# 단일채널 case 에는 mode_unexpected 전용 분기가 없고 캐치올 *) 이 처리한다.
+# "분기가 없어 아무 로그·플래그 없이 통과한다"는 오해를 막기 위해 실동작을 못박는다.
+# ch0 단독(기대 = CH_EVEN_LINK)에서:
+#   0x0a = Dual(00)+LOCKED=1  → swap 도 기대 모드도 아님 → 에러 + 플래그
+#   0x1a = Link A(01)+LOCKED=1 → 반대 링크 = swap 케이스 → 경고만(플래그 없음, 기존 동작)
+run "ch0 단독 · 0x0a 기대 모드 아님 → 플래그 생성" 0x0a 1 "ch0" 2
+run "ch0 단독 · 0x1a swap 케이스 → 경고만"         0x1a 1 ""    2
+
+echo
 echo "=== 리셋 write 가 실제로 사라졌는가 ==="
-rm -f "$WORK"/err_cam* "$WORK/calls"
-t_make_stubs "$STUB" 0x36 "$WORK/callargs"
+rm -f "$WORK"/err_cam* "$WORK/callargs"
 # 인자까지 기록하는 스텁으로 교체
+printf '#!/bin/sh\nexit 0\n' > "$STUB/logger"
+printf '#!/bin/sh\nexit 0\n' > "$STUB/sleep"
 cat > "$STUB/i2ctransfer" <<STUBEOF
 #!/bin/sh
 echo "\$*" >> "$WORK/callargs"
 echo 0x36
 STUBEOF
-chmod +x "$STUB/i2ctransfer"
+chmod +x "$STUB/logger" "$STUB/sleep" "$STUB/i2ctransfer"
 : > "$WORK/callargs"
 PATH="$STUB:$PATH" bash "$CHK" 15 >/dev/null 2>&1 || true
-t_eq "쓰기(w3@) 호출 횟수" "$(grep -c 'w3@' "$WORK/callargs" || true)" "0"
-t_eq "CTRL0(0x10) 접근 횟수" "$(grep -c '0x00 0x10' "$WORK/callargs" || true)" "0"
-t_eq "읽기(w2@…r1)만 사용"  "$(grep -vc 'w2@0x48 0x00 0x13 r1' "$WORK/callargs" || true)" "0"
+# grep -vc 는 빈 파일에서도 0 이라 공허하게 통과한다. 호출이 실제로 있었는지 먼저 단정한다.
+t_eq "i2c 호출이 실제로 발생" "$([ -s "$WORK/callargs" ] && echo yes || echo no)" "yes"
+t_eq "쓰기(w3@) 호출 횟수"    "$(grep -c 'w3@' "$WORK/callargs" || true)" "0"
+t_eq "CTRL0(0x10) 접근 횟수"  "$(grep -c '0x00 0x10' "$WORK/callargs" || true)" "0"
+t_eq "읽기(w2@…r1) 외 호출"   "$(grep -vc 'w2@0x48 0x00 0x13 r1' "$WORK/callargs" || true)" "0"
 
 t_summary "플래그 생성 E2E"
