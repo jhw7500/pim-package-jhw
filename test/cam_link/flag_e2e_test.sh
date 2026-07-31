@@ -29,30 +29,31 @@ run() {
     t_eq "$1" "[${flags}]/${calls}" "[${4}]/${5}"
 }
 
-# 호출 수 계산 근거 (리셋 제거 후):
+# 호출 수 계산 근거:
 #   스크립트 시작 시 버스별 초기 읽기 1회씩 = 2
 #   듀얼 분기에서 verdict 가 ok/errb_only 가 아니면 읽기 재시도 3회 (버스당)
+#   이상이 감지되면 log_ctrl3 가 RX3(0x2f) 진단 읽기를 1회 추가 (버스당)
 #   쓰기(리셋)는 없다. 단일채널 분기는 재시도가 없다.
 echo "=== 채널 인자별 플래그 생성 (i2c 상시 실패 = read_fail) ==="
-run "전 채널 활성(15)"   "" 15 "ch0 ch1 ch2 ch3" 8
-run "ch0 만 활성(1)"     "" 1  "ch0"             2
-run "ch1 만 활성(2)"     "" 2  "ch1"             2
-run "ch2+ch3 활성(12)"   "" 12 "ch2 ch3"         5
+run "전 채널 활성(15)"   "" 15 "ch0 ch1 ch2 ch3" 10
+run "ch0 만 활성(1)"     "" 1  "ch0"             3
+run "ch1 만 활성(2)"     "" 2  "ch1"             3
+run "ch2+ch3 활성(12)"   "" 12 "ch2 ch3"         6
 run "전 채널 비활성(0)"  "" 0  ""                0
 
 echo
 echo "=== 판정값별 동작 (전 채널 활성) ==="
 run "0xfa 정상 → 플래그 없음, 재시도 없음"   0xfa 15 ""                2
-run "0xfe ERRB만 → 플래그 없음, 재시도 없음" 0xfe 15 ""                2
-run "0x36 LOCKED=0 → 양쪽"                   0x36 15 "ch0 ch1 ch2 ch3" 8
-run "0x32 벤치 관측값 → 양쪽"                0x32 15 "ch0 ch1 ch2 ch3" 8
+run "0xfe ERRB만 → 플래그 없음, 재시도 없음" 0xfe 15 ""                4
+run "0x36 LOCKED=0 → 양쪽"                   0x36 15 "ch0 ch1 ch2 ch3" 10
+run "0x32 벤치 관측값 → 양쪽"                0x32 15 "ch0 ch1 ch2 ch3" 10
 
 echo
 echo "=== 듀얼 구성에서 채널을 특정하지 않는가 (회귀 방지) ==="
 # 과거 0xda→ch0만, 0xea→ch1만 으로 지목했다. 그 지목은 실측 일치율 0/10 이었고
 # 값 자체가 스크립트 리셋의 산물이었다. 되살아나면 여기서 실패한다.
-run "0xda 구 CAM0_ERR → 한쪽만 지목하면 안 됨" 0xda 15 "ch0 ch1 ch2 ch3" 8
-run "0xea 구 CAM1_ERR → 한쪽만 지목하면 안 됨" 0xea 15 "ch0 ch1 ch2 ch3" 8
+run "0xda 구 CAM0_ERR → 한쪽만 지목하면 안 됨" 0xda 15 "ch0 ch1 ch2 ch3" 10
+run "0xea 구 CAM1_ERR → 한쪽만 지목하면 안 됨" 0xea 15 "ch0 ch1 ch2 ch3" 10
 
 echo
 echo "=== 단일 채널 구성에서 mode_unexpected 가 누락되지 않는가 ==="
@@ -61,12 +62,13 @@ echo "=== 단일 채널 구성에서 mode_unexpected 가 누락되지 않는가 
 # ch0 단독(기대 = CH_EVEN_LINK)에서:
 #   0x0a = Dual(00)+LOCKED=1  → swap 도 기대 모드도 아님 → 에러 + 플래그
 #   0x1a = Link A(01)+LOCKED=1 → 반대 링크 = swap 케이스 → 경고만(플래그 없음, 기존 동작)
-run "ch0 단독 · 0x0a 기대 모드 아님 → 플래그 생성" 0x0a 1 "ch0" 2
-run "ch0 단독 · 0x1a swap 케이스 → 경고만"         0x1a 1 ""    2
+run "ch0 단독 · 0x0a 기대 모드 아님 → 플래그 생성" 0x0a 1 "ch0" 3
+run "ch0 단독 · 0xea swap 케이스 → 경고만"         0xea 1 ""    3
+run "ch0 단독 · 0x1a Link A = 정상"                0x1a 1 ""    2
 # LOCKED=0(실제 링크 단절)도 같은 캐치올을 지난다. swap 조건(locked=1)이 아니므로
 # 해당 채널 플래그가 나와야 한다. *) else 분기를 손댈 때의 회귀를 막는다.
-run "ch0 단독 · 0x12 LOCKED=0 → 플래그 생성"       0x12 1 "ch0" 2
-run "ch1 단독 · 0x32 LOCKED=0 → 플래그 생성"       0x32 2 "ch1" 2
+run "ch0 단독 · 0x12 LOCKED=0 → 플래그 생성"       0x12 1 "ch0" 3
+run "ch1 단독 · 0x32 LOCKED=0 → 플래그 생성"       0x32 2 "ch1" 3
 
 echo
 echo "=== 회복 로그가 재시도 횟수를 담는가 ==="
@@ -119,6 +121,36 @@ PATH="$STUB:$PATH" bash "$CHK" 15 >/dev/null 2>&1 || true
 t_eq "i2c 호출이 실제로 발생" "$([ -s "$WORK/callargs" ] && echo yes || echo no)" "yes"
 t_eq "쓰기(w3@) 호출 횟수"    "$(grep -c 'w3@' "$WORK/callargs" || true)" "0"
 t_eq "CTRL0(0x10) 접근 횟수"  "$(grep -c '0x00 0x10' "$WORK/callargs" || true)" "0"
-t_eq "읽기(w2@…r1) 외 호출"   "$(grep -vc 'w2@0x48 0x00 0x13 r1' "$WORK/callargs" || true)" "0"
+# 진단용 RX3(0x2f) 읽기가 추가됐다. 허용 대상은 CTRL3(0x13)·RX3(0x2f) 읽기뿐이고
+# 그 외 트랜잭션은 0 이어야 한다.
+t_eq "허용된 읽기 외 호출" \
+     "$(grep -vcE 'w2@0x48 0x00 (0x13|0x2f) r1' "$WORK/callargs" || true)" "0"
+t_eq "RX3(0x2f) 진단 읽기 발생" \
+     "$([ "$(grep -c '0x00 0x2f' "$WORK/callargs")" -gt 0 ] && echo yes || echo no)" "yes"
+
+echo
+echo "=== RX3 faillock 디코드 (판정에는 쓰지 않고 로그에만) ==="
+# ch0 제거 → FAILLOCK_A(0x01) → faillock=A / ch1 제거 → FAILLOCK_B(0x10) → faillock=B
+# CTRL3 는 이상값(0x36)을 주어 log_ctrl3 가 호출되게 한다.
+for pair in "0x01:A" "0x10:B" "0x11:AB" "0x00:none"; do
+    rx3v="${pair%%:*}"; want="${pair##*:}"
+    rm -f "$WORK/logged"
+    printf '#!/bin/sh\nexit 0\n' > "$STUB/sleep"
+    cat > "$STUB/logger" <<STUBEOF
+#!/bin/sh
+echo "\$*" >> "$WORK/logged"
+STUBEOF
+    cat > "$STUB/i2ctransfer" <<STUBEOF
+#!/bin/sh
+case "\$*" in
+  *"0x00 0x2f"*) echo $rx3v ;;
+  *) echo 0x36 ;;
+esac
+STUBEOF
+    chmod +x "$STUB/sleep" "$STUB/logger" "$STUB/i2ctransfer"
+    PATH="$STUB:$PATH" bash "$CHK" 15 >/dev/null 2>&1 || true
+    t_eq "RX3 $rx3v → faillock" \
+         "$(grep -oE 'faillock=[A-Za-z]+' "$WORK/logged" | head -1)" "faillock=$want"
+done
 
 t_summary "플래그 생성 E2E"
