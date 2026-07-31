@@ -66,12 +66,12 @@ resolve_ser_addr() {
     fi
     if [ "$SER_DUAL" != "$SER_DEFAULT" ] && ser_responds "$I2C_BUS" "$SER_DEFAULT"; then
         SER_ADDR=$SER_DEFAULT
-        echo "Note: bus $I2C_BUS 에 $SER_DUAL 무응답 → 단일채널 구성. 이 구성에는"
-        echo "      시리얼라이저가 $SER_DEFAULT 하나뿐이라 채널 인자로 카메라를 고를 수 없다."
+        echo "Note: bus $I2C_BUS 에 $SER_DUAL 무응답 → 단일채널 구성. 이 구성에는" >&2
+        echo "      시리얼라이저가 $SER_DEFAULT 하나뿐이라 채널 인자로 카메라를 고를 수 없다." >&2
         return 0
     fi
-    echo "Error: bus $I2C_BUS 에서 시리얼라이저를 찾지 못했다 ($SER_DUAL, $SER_DEFAULT 모두 무응답)."
-    echo "       카메라 연결과 드라이버 로드 상태를 확인하라."
+    echo "Error: bus $I2C_BUS 에서 시리얼라이저를 찾지 못했다 ($SER_DUAL, $SER_DEFAULT 모두 무응답)." >&2
+    echo "       카메라 연결과 드라이버 로드 상태를 확인하라." >&2
     return 1
 }
 
