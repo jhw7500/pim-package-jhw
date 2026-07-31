@@ -79,18 +79,27 @@ cat > "$STUB/logger" <<STUBEOF
 #!/bin/sh
 echo "\$*" >> "$WORK/logged"
 STUBEOF
-# 처음 2회는 실패값, 이후 정상값 → 재시도 2회째(루프 r=2)에 회복
+# 스크립트는 분기 진입 전에 cam01·cam23 를 무조건 한 번씩 읽는다. 전역 카운터를 쓰면
+# cam23 초기 읽기가 슬롯을 소비해 "몇 번째 재시도인지"가 그 구조에 결합된다.
+# 버스(-a 2)별로 세어 결합을 끊는다. i2c-2 기준:
+#   1회차 = cam01 초기 읽기(0x36) → ok 아님 → 재시도 루프 진입
+#   2회차 = 재시도 r=1 (0x36)     → 여전히 ok 아님
+#   3회차 = 재시도 r=2 (0xfa)     → 회복 → recovered_by="read retry 2"
 cat > "$STUB/i2ctransfer" <<STUBEOF
 #!/bin/sh
-n=\$(cat "$WORK/n" 2>/dev/null || echo 0); n=\$((n+1)); echo \$n > "$WORK/n"
-if [ \$n -le 2 ]; then echo 0x36; else echo 0xfa; fi
+case "\$*" in
+  *"-a 2"*)
+    n=\$(cat "$WORK/n" 2>/dev/null || echo 0); n=\$((n+1)); echo \$n > "$WORK/n"
+    if [ \$n -le 2 ]; then echo 0x36; else echo 0xfa; fi ;;
+  *) echo 0x36 ;;
+esac
 STUBEOF
 chmod +x "$STUB/sleep" "$STUB/logger" "$STUB/i2ctransfer"
 echo 0 > "$WORK/n"
 PATH="$STUB:$PATH" bash "$CHK" 3 >/dev/null 2>&1 || true
 t_eq "recovered 로그에 재시도 횟수 포함" \
      "$(grep -oE 'recovered \(read retry [0-9]+\)' "$WORK/logged" | head -1)" \
-     "recovered (read retry 1)"
+     "recovered (read retry 2)"
 
 echo
 echo "=== 리셋 write 가 실제로 사라졌는가 ==="
