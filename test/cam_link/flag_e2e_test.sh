@@ -63,10 +63,10 @@ echo "=== 단일 채널 구성에서 mode_unexpected 가 누락되지 않는가 
 # "분기가 없어 아무 로그·플래그 없이 통과한다"는 오해를 막기 위해 실동작을 못박는다.
 # ch0 단독(기대 = CH_EVEN_LINK)에서:
 #   0x0a = Dual(00)+LOCKED=1  → swap 도 기대 모드도 아님 → 에러 + 플래그
-#   0x1a = Link A(01)+LOCKED=1 → 반대 링크 = swap 케이스 → 경고만(플래그 없음, 기존 동작)
+#   0x1a = Link A(01)+LOCKED=1 → ch0 의 링크가 아님 = swap 케이스 → 경고만(플래그 없음)
 run "ch0 단독 · 0x0a 기대 모드 아님 → 플래그 생성" 0x0a 1 "ch0" 3
-run "ch0 단독 · 0xea swap 케이스 → 경고만"         0xea 1 ""    3
-run "ch0 단독 · 0x1a Link A = 정상"                0x1a 1 ""    2
+run "ch0 단독 · 0x1a swap 케이스(Link A) → 경고만" 0x1a 1 ""    3
+run "ch0 단독 · 0xea Link B = 정상"                0xea 1 ""    2
 # LOCKED=0(실제 링크 단절)도 같은 캐치올을 지난다. swap 조건(locked=1)이 아니므로
 # 해당 채널 플래그가 나와야 한다. *) else 분기를 손댈 때의 회귀를 막는다.
 run "ch0 단독 · 0x12 LOCKED=0 → 플래그 생성"       0x12 1 "ch0" 3

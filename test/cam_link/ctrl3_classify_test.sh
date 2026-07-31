@@ -52,16 +52,16 @@ check "Error: Read failed" "$LM_BOTH_EXPECT" read_fail "i2c 에러 문자열"
 
 echo
 echo "=== 단일 채널 활성 — 드라이버가 설정한 단일링크 모드는 정상이다 ==="
-# 매핑 실측 확정(2026-07-31): ch0=Link A(0xd*), ch1=Link B(0xe*)
-check 0xda "$CH_EVEN_LINK" ok "ch0 단독: Link A 와 일치"
-check 0xea "$CH_ODD_LINK"  ok "ch1 단독: Link B 와 일치"
-check 0xea "$CH_EVEN_LINK" mode_unexpected "ch0 단독인데 Link B → swap 후보"
+# 매핑 실측 확정(2026-07-31, 런타임 이탈): ch0=Link B(0xe*), ch1=Link A(0xd*)
+check 0xea "$CH_EVEN_LINK" ok "ch0 단독: Link B 와 일치"
+check 0xda "$CH_ODD_LINK"  ok "ch1 단독: Link A 와 일치"
+check 0xda "$CH_EVEN_LINK" mode_unexpected "ch0 단독인데 Link A → swap 후보"
 
 echo
 echo "=== 채널<->링크 매핑이 실측값과 일치하는가 (회귀 방지) ==="
-# RX3 FAILLOCK 실측: ch0 제거 → 0x01(FAILLOCK_A), ch1 제거 → 0x10(FAILLOCK_B)
-t_eq "ch0/ch2 = Link A" "$CH_EVEN_LINK" "$LM_LINK_A"
-t_eq "ch1/ch3 = Link B" "$CH_ODD_LINK"  "$LM_LINK_B"
+# 런타임 이탈 실측: 0x66 → ch1 제거 → 0x60 (Link A 비트만 소거)
+t_eq "ch0/ch2 = Link B" "$CH_EVEN_LINK" "$LM_LINK_B"
+t_eq "ch1/ch3 = Link A" "$CH_ODD_LINK"  "$LM_LINK_A"
 
 echo
 echo "=== 예약비트(7/6/0) 는 판정에 영향이 없어야 ==="
