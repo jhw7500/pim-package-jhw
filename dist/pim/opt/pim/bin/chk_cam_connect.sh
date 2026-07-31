@@ -226,6 +226,8 @@ elif [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch1" == *"$DISABLE_VAL"* ]]
         unknown)
             log_ctrl3 error 2 $LINENO "CAM0 UNKNOWN CTRL3, no error flag" "$cam01_res"
             ;;
+        # mode_unexpected / err_both 는 아래 *) 캐치올이 처리한다(swap 감지 포함).
+        # unknown 은 classify_ctrl3 가 만들지 않지만 ctrl3_verdict 초기값이라 남겨둔다.
         *)
             if [ "$ctrl3_locked" -eq 1 ] && [ "$ctrl3_mode" -eq "$CH_ODD_LINK" ]; then
                 log_ctrl3 warning 2 $LINENO "please swap ch0 and ch1(CAM0 enable but CAM1 display)" "$cam01_res"
@@ -252,6 +254,8 @@ elif [[ "$cam_ch0" == *"$DISABLE_VAL"* ]] && [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]
         unknown)
             log_ctrl3 error 2 $LINENO "CAM1 UNKNOWN CTRL3, no error flag" "$cam01_res"
             ;;
+        # mode_unexpected / err_both 는 아래 *) 캐치올이 처리한다(swap 감지 포함).
+        # unknown 은 classify_ctrl3 가 만들지 않지만 ctrl3_verdict 초기값이라 남겨둔다.
         *)
             if [ "$ctrl3_locked" -eq 1 ] && [ "$ctrl3_mode" -eq "$CH_EVEN_LINK" ]; then
                 log_ctrl3 warning 2 $LINENO "please swap ch0 and ch1(CAM1 enable but CAM0 display)" "$cam01_res"
@@ -339,6 +343,8 @@ elif [[ "$cam_ch2" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch3" == *"$DISABLE_VAL"* ]]
         unknown)
             log_ctrl3 error 1 $LINENO "CAM2 UNKNOWN CTRL3, no error flag" "$cam23_res"
             ;;
+        # mode_unexpected / err_both 는 아래 *) 캐치올이 처리한다(swap 감지 포함).
+        # unknown 은 classify_ctrl3 가 만들지 않지만 ctrl3_verdict 초기값이라 남겨둔다.
         *)
             if [ "$ctrl3_locked" -eq 1 ] && [ "$ctrl3_mode" -eq "$CH_ODD_LINK" ]; then
                 log_ctrl3 warning 1 $LINENO "please swap ch2 and ch3(CAM2 enable but CAM3 display)" "$cam23_res"
@@ -365,6 +371,8 @@ elif [[ "$cam_ch2" == *"$DISABLE_VAL"* ]] && [[ "$cam_ch3" == *"$ENABLE_VAL"* ]]
         unknown)
             log_ctrl3 error 1 $LINENO "CAM3 UNKNOWN CTRL3, no error flag" "$cam23_res"
             ;;
+        # mode_unexpected / err_both 는 아래 *) 캐치올이 처리한다(swap 감지 포함).
+        # unknown 은 classify_ctrl3 가 만들지 않지만 ctrl3_verdict 초기값이라 남겨둔다.
         *)
             if [ "$ctrl3_locked" -eq 1 ] && [ "$ctrl3_mode" -eq "$CH_EVEN_LINK" ]; then
                 log_ctrl3 warning 1 $LINENO "please swap ch2 and ch3(CAM3 enable but CAM2 display)" "$cam23_res"
