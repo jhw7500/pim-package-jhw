@@ -23,24 +23,31 @@ BIT_CMU=0x02
 # 양 채널 활성 시 기대하는 LINK_MODE (기존 SUCCESS_VAL=0xfa 가 Splitter 였다)
 LM_BOTH_EXPECT=$LM_SPLITTER
 
-# 짝수 채널(ch0/ch2)과 홀수 채널(ch1/ch3)이 각각 어느 GMSL2 링크에 붙어 있는가.
-# 벤치 실측(2026-07-31)으로 확정. 결정적 근거는 '런타임 이탈' 실험이다 — 정상 상태에서
-# 시작해 변수 하나만 바꾸므로 해석 여지가 없다.
-#   둘 다 연결        RX3=0x66  (Link A·B 모두 SYNC_LOCKED+WBLOCK)
-#   └ ch1 물리 제거   RX3=0x60  (Link A 비트만 소거, Link B 는 락 유지)
-#   ⇒ ch1 = Link A, ch0 = Link B
+# 짝수 채널(ch0/ch2)과 홀수 채널(ch1/ch3)이 각각 어느 LINK_MODE 로 설정되는가.
 #
-# 부팅 시점 실험(카메라 하나 없이 부팅)은 이와 반대로 읽히기 쉬우니 주의:
-#   ch1 제거 → FAILLOCK_B / ch0 제거 → FAILLOCK_A
-# FAILLOCK 은 '빠진 링크'가 아니라 '카메라가 있는데도 splitter 훈련에 실패한 링크'를
-# 표시한다. 부팅 시엔 양 링크가 다 안 올라와 이 구분이 보이지 않는다. 위 런타임
-# 실험과 교차하면 두 결과가 같은 니블을 ch0 로 가리켜 일관된다.
+# 우리가 읽는 CTRL3 의 LINK_MODE 는 드라이버가 CTRL0(0x0010) 의 LINK_CFG(bit1:0) 에
+# 써 넣은 값의 되읽기다. 즉 기대값은 추정이 아니라 드라이버 레지스터 테이블에서
+# 그대로 나온다(max9296.c, 하드웨어 없이 확인 가능):
 #
-# 드라이버(max9296.c)/설계문서는 ch0=Link A(serializer 0x40)라고 한다. RX3 의 Link A/B
-# 는 PHY 레인 라벨이라 보드 배선에 따라 드라이버의 주소 배정과 반대일 수 있다. 우리가
-# 읽는 것은 RX3 프레임이므로 아래 값을 따른다.
-CH_EVEN_LINK=$LM_LINK_B    # ch0, ch2 → RX3 기준 Link B
-CH_ODD_LINK=$LM_LINK_A     # ch1, ch3 → RX3 기준 Link A
+#   ch0 (Left,  enable!=0x02) → max9296_init_setting_720p_30fps_L
+#                               → des CTRL0=0x22 → LINK_CFG=0b10 = Link B
+#   ch1 (Right, enable==0x02) → max9296_init_setting_720p_30fps_R
+#                               → des CTRL0=0x21 → LINK_CFG=0b01 = Link A
+#   양 채널                   → ..._crop_720p_2ch_30fps
+#                               → des CTRL0=0x23 → LINK_CFG=0b11 = Splitter
+#
+# (0x2x 의 상위 니블은 RESET_ONESHOT|AUTO_LINK 라 링크 선택과 무관하다.)
+# 벤치 실측도 같은 방향이었다: 둘 다 연결 RX3=0x66 → ch1 물리 제거 → 0x60.
+#
+# 주의 — max9296.c 의 '주석'에는 이와 반대로 적힌 곳이 있다(MAX9295_SER_ADDR_CH0 를
+# "Link A: ch0", 1274행을 "Right=Link B"). 위 값은 주석이 아니라 실제 레지스터 쓰기에서
+# 뽑았다. 드라이버 내부의 link_a_err/link_b_err 도 물리 링크 이름이 아니라 로컬
+# ch0/ch1 의 별칭으로만 쓰인다(max9296.c:1295~1298).
+#
+# 시리얼라이저 주소로는 채널을 알 수 없다: 듀얼 구성에서만 한쪽 ser 를 0x40→0x60 으로
+# 리맵하고(max9296.c:483), 단일 채널은 L/R 어느 쪽이든 ser 가 0x40 그대로다(608·664행).
+CH_EVEN_LINK=$LM_LINK_B    # ch0, ch2 → LINK_MODE Link B (드라이버 _L 테이블)
+CH_ODD_LINK=$LM_LINK_A     # ch1, ch3 → LINK_MODE Link A (드라이버 _R 테이블)
 
 # ── MAX9296 RX3(0x002F) — 링크별 래치 ──────────────────────────────
 #  bit6 SYNC_LOCKED_B / bit5 WBLOCK_B / bit4 FAILLOCK_B
