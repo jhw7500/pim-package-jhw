@@ -36,7 +36,10 @@ LM_BOTH_EXPECT=$LM_SPLITTER
 #   양 채널                   → ..._crop_720p_2ch_30fps
 #                               → des CTRL0=0x23 → LINK_CFG=0b11 = Splitter
 #
-# (0x2x 의 상위 니블은 RESET_ONESHOT|AUTO_LINK 라 링크 선택과 무관하다.)
+# 상위 비트도 봐야 한다. 단일 구성이 쓰는 0x21/0x22/0x23 은 RESET_ONESHOT(0x20)만
+# 켜고 AUTO_LINK(0x10)는 꺼 둔다 — 즉 LINK_CFG 가 그대로 지켜지므로 위 표를 값만으로
+# 단정할 수 있다. 반면 듀얼 테이블이 쓰는 0x31/0x32 는 AUTO_LINK 가 켜져 있어 어느
+# 링크가 잡힐지 레지스터 값만으로는 알 수 없다(듀얼 판정에 LINK_MODE 를 쓰지 않는 이유).
 # 벤치 실측도 같은 방향이었다: 둘 다 연결 RX3=0x66 → ch1 물리 제거 → 0x60.
 #
 # 주의 — max9296.c 의 '주석'에는 이와 반대로 적힌 곳이 있다(MAX9295_SER_ADDR_CH0 를
