@@ -224,8 +224,10 @@ if command -v flock >/dev/null 2>&1; then
     RELEASE="$WORK/release"
     hold_lock() {
         rm -f "$RELEASE"
-        ( exec 9>"$LOCKDIR/mcp4018_i2c2.lock"
-          flock 9
+        # 프로덕션과 같이 fd 를 동적 할당한다. 고정 fd 는 테스트 환경에서 이미
+        # 열려 있는 fd 를 조용히 덮어쓸 수 있다.
+        ( exec {hfd}>"$LOCKDIR/mcp4018_i2c2.lock"
+          flock "$hfd"
           while [ ! -f "$RELEASE" ]; do sleep 0.05; done ) &
         holder=$!
         sleep 0.5
