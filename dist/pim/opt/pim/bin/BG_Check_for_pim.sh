@@ -121,9 +121,8 @@ check_driver_disconnect() {
     disconnect_mask=$((mask_i2c2 | mask_i2c1))
     actual_disconnect=$((disconnect_mask & cam_ch_bit))
 
-    # 로그에 채널을 찍기 위해 전역으로 올린다. 원시 마스크도 함께 남긴다 —
-    # 채널 귀속은 드라이버가 정한 것이고, 드라이버의 ch<->주소 매핑이 뒤바뀌었을
-    # 가능성이 아직 열려 있어서 나중에 재해석하려면 원시값이 필요하다.
+    # 로그에 채널을 찍기 위해 전역으로 올린다. 원시 마스크도 함께 남기는데,
+    # 합쳐진 마스크만으로는 어느 버스(des)에서 온 보고인지 알 수 없기 때문이다.
     drv_mask_i2c2=$mask_i2c2
     drv_mask_i2c1=$mask_i2c1
     drv_disconnect_mask=$actual_disconnect
