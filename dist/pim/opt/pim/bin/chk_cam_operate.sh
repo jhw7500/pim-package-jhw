@@ -50,10 +50,14 @@ DISCONNECT_INIT_CAM_INTERVAL_SEC_DEFAULT=180
 DISCONNECT_INIT_CAM_GRACE_SEC_DEFAULT=60
 DISCONNECT_INIT_CAM_STATE_FILE_DEFAULT="/tmp/chk_cam_operate.disconnect_state"
 
-# disconnect 상태가 이 시간(초)을 넘게 지속되면 리부팅 1회로 에스컬레이션한다.
+# disconnect 상태가 이 시간(초)을 넘게 지속되면 리부팅으로 에스컬레이션한다.
 # 0 = 비활성(위 "Never reboot in disconnect state" 원칙 유지) — 기본값.
-# disconnect 경로는 retry/retry_boot 를 증가시키지 않아 상한 없이 init_cam 을
-# 무한 반복할 수 있는데, 이를 시간 기준으로만 끊어 주기 위한 안전망이다.
+#
+# 오해 주의: 위 주석대로 disconnect 중 주기적 init_cam 은 '의도된 동작'이다.
+# 재연결되면 복구되도록 계속 시도하는 것이고, 반복 자체는 결함이 아니다.
+# 여기서 더하는 것은 그 반복의 상한이 아니라, 상태가 끝나지 않을 때의 '탈출구'다 —
+# 이 경로는 retry/retry_boot 를 올리지 않아 기존 상한 판정에 걸리지 않으므로
+# 사람이 개입하기 전까지 벗어날 수단이 없었다. 필요한 장비에서만 켠다.
 DISCONNECT_MAX_SEC_DEFAULT=0
 # 에스컬레이션 이력 플래그. 이 디렉터리를 어디로 두느냐가 리부팅 반복 여부를 정한다.
 #   /tmp           부팅 시 지워진다 → 조건이 유지되면 DISCONNECT_MAX_SEC 간격으로
