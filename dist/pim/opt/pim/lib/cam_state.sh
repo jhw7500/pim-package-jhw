@@ -51,7 +51,7 @@ RX3_LINK_B_UP=0x60    # SYNC_LOCKED_B | WBLOCK_B
 # $1=i2c adapter  $2=read_rx3_links 출력
 # 출력: 덧붙일 문자열(없으면 빈 문자열)
 rx3_link_hint() {
-    local adapter="$1" verdict="${2##*/}" key rec ts ch now
+    local adapter="$1" verdict="${2##*/}" key rec ts ch now elapsed
     key="link_last_down_${adapter}"
     now=$(date +%s)
     mkdir -p "$STATE_DIR" 2>/dev/null || return 0
@@ -74,7 +74,15 @@ rx3_link_hint() {
     [ -n "$rec" ] || return 0
     ts="${rec%%,*}"; ch="${rec##*,}"
     [ "$ts" -gt 0 ] 2>/dev/null || return 0
-    printf ' last=%s(%ss전)' "$ch" "$((now - ts))"
+
+    # NTP 동기화나 수동 설정으로 시계가 뒤로 가면 경과가 음수가 된다. ts>0 검사는
+    # 미래 시각을 걸러내지 못한다. 틀린 숫자를 찍느니 시간을 빼고 채널만 남긴다.
+    elapsed=$((now - ts))
+    if [ "$elapsed" -lt 0 ]; then
+        printf ' last=%s' "$ch"
+    else
+        printf ' last=%s(%ss전)' "$ch" "$elapsed"
+    fi
 }
 
 read_rx3_links() {

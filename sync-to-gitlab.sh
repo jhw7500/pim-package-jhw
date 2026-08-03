@@ -90,9 +90,23 @@ warn() { echo "⚠ $1"; }
 # $1=scope  $2.. = 역방향(GitLab→GitHub) rsync 인자
 check_reverse_pending() {
     local scope="$1"; shift
-    local pending count
+    local pending count rc=0
 
-    pending=$(rsync_dry_changed_files "$@")
+    pending=$(rsync_dry_changed_files "$@") || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        # 판정 불가를 '문제 없음'으로 넘기면 가드가 없는 것과 같다.
+        warn "${scope}: 역방향 확인용 rsync 가 실패해 미반영 여부를 판정할 수 없다."
+        if [ "$DRY_RUN" = true ]; then
+            warn "  [DRY-RUN] 경고만 하고 계속한다."
+            return 0
+        fi
+        if [ "$FORCE" = true ]; then
+            warn "  [FORCE] 판정 없이 계속한다."
+            return 0
+        fi
+        echo "중단했다. 원인을 확인하거나 --force 로 강행하라." >&2
+        exit 1
+    fi
     [ -z "$pending" ] && return 0
 
     count=$(printf '%s\n' "$pending" | grep -c .)
@@ -126,12 +140,26 @@ rsync_dry_changed_files() {
     # --checksum: rsync 기본 비교는 size+mtime 이라 내용이 같아도 mtime 만 다르면
     # 변경으로 잡힌다(역방향 sync 직후가 그렇다). 그 목록으로 커밋 메시지를 만들면
     # 실제로 바뀌지도 않은 파일의 커밋이 딸려 온다. 여기서는 정확도가 우선이다.
-    rsync -an --delete --checksum -i --out-format='%i|%n' \
+    #
+    # 종료코드를 반드시 확인한다. 이전에는 2>/dev/null 로 삼키고 파이프로 넘겨
+    # awk 의 상태만 남았다. rsync 가 실패하면 빈 목록이 나오고 호출부는 그것을
+    # '변경 없음'으로 읽는데, check_reverse_pending 에서는 그게 곧 가드 무력화다.
+    local out rc=0 errf
+    errf=$(mktemp)
+    out=$(rsync -an --delete --checksum -i --out-format='%i|%n' \
         --filter=':- .gitignore' \
         --exclude='.git' \
         --exclude='upgrade_file/dpkg/pimwebserver_*.deb' \
         --exclude='dist/pim/opt/pim/driver/sc16is7xx_ext.ko' \
-        "$@" 2>/dev/null \
+        "$@" 2>"$errf") || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        echo "rsync 실패(rc=${rc}): $(head -3 "$errf" | tr '\n' ' ')" >&2
+        rm -f "$errf"
+        return 1
+    fi
+    rm -f "$errf"
+
+    printf '%s\n' "$out" \
         | awk -F'|' '
             {
                 c = substr($1, 1, 1)
