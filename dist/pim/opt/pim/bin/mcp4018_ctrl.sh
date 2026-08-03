@@ -113,17 +113,21 @@ resolve_ser_addr() {
         resolve_by_probe
         return
     }
-    peer=$(read_ch_enable "$PEER_CH") || {
-        echo "Note: edgeconf 를 읽지 못해 응답 탐색으로 대체한다 (${EDGECONF_DIR})." >&2
-        resolve_by_probe
-        return
-    }
 
+    # 요청 채널이 비활성이면 여기서 끝낸다. 짝 채널을 먼저 읽으면, 그쪽 읽기가
+    # 실패했을 때(키 누락 등) 폴백으로 새면서 비활성 채널을 서비스하게 된다.
+    # 폴백은 enable 을 보지 않으므로 이 PR 이 막으려던 구멍이 그대로 다시 열린다.
     if [ "$me" != "1" ]; then
         echo "Error: ch${CHANNEL} 은 edgeconf 에서 enable 이 아니다 — 사용 중인 채널이 아니다." >&2
         echo "       단일 구성에서 다른 채널을 지정하면 엉뚱한 카메라를 건드리므로 막는다." >&2
         return 1
     fi
+
+    peer=$(read_ch_enable "$PEER_CH") || {
+        echo "Note: edgeconf 의 ch${PEER_CH} 를 읽지 못해 응답 탐색으로 대체한다." >&2
+        resolve_by_probe
+        return
+    }
 
     if [ "$peer" = "1" ]; then
         SER_ADDR=$SER_IF_DUAL        # 듀얼 — 한쪽이 0x60 으로 리맵돼 있다
