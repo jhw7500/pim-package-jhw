@@ -162,6 +162,8 @@ echo "=== 게이트 주소를 모르면 set/get 도 진행할 수 없다 ==="
 # 이전에는 0x2f 로 바로 갔으나, 이제 어느 ser 의 게이트를 열지 알아야 한다.
 clear_conf
 run "설정 없음 + 스캔 무응답 · set → 중단" "" 1 set none 1
+# get 도 같은 resolve → lock → gate 경로라 같은 실패 모드를 갖는다.
+run "설정 없음 + 스캔 무응답 · get → 중단" "" 1 get none 1
 # run() 은 값 인자를 넘기지 않으므로 set 은 직접 부른다.
 t_eq "설정 없음 + 스캔 dual · set → 0x60 게이트" "$(seq_for '11 12' 1 set 0x10)" \
      "0x40 0x80,0x60 0x90,0x60 0x80"
@@ -210,6 +212,17 @@ out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" EDGECONF_DIR="$CONF" MCP4018_L
       bash "$SCRIPT" 0 set 0x10 2>&1); rc=$?
 t_eq "쓰기 성공 + 닫기 실패 → 실패로 보고" "exit=$rc set=$(grep -c i2cset "$CALLS")" "exit=1 set=1"
 t_eq "닫기 실패를 경고로 알린다"           "$(printf '%s' "$out" | grep -c 'may stay open')" 1
+
+# 내 게이트 열기가 실패하는 경로. GATE_TOUCHED 는 열기 '시도' 전에 서므로 안전망
+# trap 이 닫기를 보낸다 — 열기 실패가 '안 열렸다'를 보장하지 않기 때문이다.
+restore_stub
+gate_fail_stub 0x90
+: > "$CALLS"
+out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" EDGECONF_DIR="$CONF" MCP4018_LOCK_DIR="$WORK" \
+      bash "$SCRIPT" 0 set 0x10 2>&1); rc=$?
+t_eq "게이트 열기 실패 → 중단, 전송 없음" "exit=$rc set=$(grep -c i2cset "$CALLS")" "exit=1 set=0"
+t_eq "열기 실패해도 닫기는 보낸다"        "$(gate_seq)" "0x40 0x90,0x40 0x80"
+t_eq "닫기가 되면 거짓 경고는 없다"        "$(printf '%s' "$out" | grep -c 'may stay open')" 0
 restore_stub
 
 echo
