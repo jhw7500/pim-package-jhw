@@ -113,6 +113,9 @@ out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" EDGECONF_DIR="$CONF" \
       bash "$SCRIPT" 0 on 2>&1)
 t_eq "on 실행 시 경고"   "$(printf '%s' "$out" | grep -c 'no bus lock')" 1
 out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" EDGECONF_DIR="$CONF" \
+      bash "$SCRIPT" 0 off 2>&1)
+t_eq "off 도 같은 경고"  "$(printf '%s' "$out" | grep -c 'no bus lock')" 1
+out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" EDGECONF_DIR="$CONF" \
       MCP4018_LOCK_DIR="$WORK" bash "$SCRIPT" 0 set 0x10 2>&1)
 t_eq "set 에는 그 경고가 없다" "$(printf '%s' "$out" | grep -c 'no bus lock')" 0
 
@@ -275,13 +278,27 @@ if command -v flock >/dev/null 2>&1; then
           while [ ! -f "$RELEASE" ]; do sleep 0.05; done ) &
         holder=$!
         # 고정 대기(sleep 0.5)는 부하 높은 러너에서 산발적으로 어긋난다. 락을
-        # 실제로 잡았다는 신호를 기다린다.
-        until [ -f "$READY" ]; do sleep 0.02; done
+        # 실제로 잡았다는 신호를 기다린다. 다만 무한정 기다리지는 않는다 —
+        # LOCKDIR 을 못 쓰거나 exec 이 실패하면 신호가 영영 안 와서 스위트
+        # 전체가 멈춘다. 5초면 로컬에서도 CI 에서도 충분하다.
+        # 루프 마지막 명령의 상태가 그대로 함수 반환값이 되지 않도록 끝에서
+        # 명시적으로 return 한다.
+        local i=0
+        while [ ! -f "$READY" ]; do
+            if [ "$i" -gt 250 ]; then
+                echo "hold_lock: 락 확보 신호가 오지 않는다 ($READY)" >&2
+                kill "$holder" 2>/dev/null
+                return 1
+            fi
+            sleep 0.02
+            i=$((i + 1))
+        done
+        return 0
     }
     release_lock() { touch "$RELEASE"; wait "$holder" 2>/dev/null; }
 
     # 먼저 락을 잡고 있으면 진입하지 못한다 (대기 후 포기).
-    hold_lock
+    hold_lock || t_eq "hold_lock 이 락을 잡았다" "실패" "성공"
     : > "$CALLS"
     out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" EDGECONF_DIR="$CONF" \
           MCP4018_LOCK_DIR="$LOCKDIR" bash "$SCRIPT" 1 set 0x10 2>&1); rc=$?
@@ -305,7 +322,7 @@ if command -v flock >/dev/null 2>&1; then
          "0x60 0x80,0x40 0x90,0x40 0x80"
 
     # 다른 버스는 서로 막지 않는다.
-    hold_lock
+    hold_lock || t_eq "hold_lock 이 락을 잡았다(2회차)" "실패" "성공"
     write_conf false false true true
     t_eq "bus1 은 bus2 락에 걸리지 않는다" "$(MCP4018_LOCK_DIR=$LOCKDIR seq_for '' 3 set 0x10)" \
          "0x40 0x80,0x60 0x90,0x60 0x80"

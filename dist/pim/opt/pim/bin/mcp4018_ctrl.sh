@@ -249,6 +249,8 @@ case "$COMMAND" in
         ;;
     off)
         resolve_ser_addr
+        echo "[$tag] WARNING: no bus lock is held - this may close the gate while a" \
+             "concurrent set/get is mid-transfer. use set/get to change values." >&2
         echo "Channel $CHANNEL OFF: i2ctransfer -f -y -a $I2C_BUS w3@$SER_ADDR 0x02 0xca 0x80"
         i2ctransfer -f -y -a "$I2C_BUS" w3@"$SER_ADDR" 0x02 0xca 0x80
         ;;
