@@ -137,19 +137,42 @@ mfp4_gate() {
 #
 # flock 이 없는 환경에서는 막지 않는다 — 배타성은 잃지만, 진단 도구가 아예 못 도는
 # 것보다는 낫다.
-# 락 디렉터리. /tmp 를 기본으로 쓰지 않는다 — world-writable + sticky 라 다른
+# 락 디렉터리. /tmp 에 락 파일을 바로 두지 않는다 — world-writable + sticky 라 다른
 # 사용자가 같은 이름으로 심볼릭 링크를 심어 두면, root 로 도는 이 스크립트가
 # `exec >` 로 그 대상을 열면서 잘라 버린다. fs.protected_symlinks 가 대개 막아
 # 주지만 sysctl 에 기대고 싶지 않다. /run 은 root 소유라 그 표면이 없다.
+#
+# /run 을 못 쓰는 환경(일부 컨테이너, 비 systemd)에서는 /tmp 밑에 전용 디렉터리를
+# 만들어 쓴다. 파일과 달리 디렉터리는 바꿔치기가 어렵다 — 남이 심볼릭 링크를 먼저
+# 심어 두면 -L 로 걸러지고, 남의 소유면 -O 로 걸러진다. 둘 다 아니면 빈 값을
+# 돌려주고 호출부가 락 없이 진행한다(경고와 함께). 안전하지 않은 경로로 조용히
+# 내려가지는 않는다.
 lock_dir() {
+    local d
     [ -n "$MCP4018_LOCK_DIR" ] && { printf '%s' "$MCP4018_LOCK_DIR"; return; }
     [ -d /run ] && [ -w /run ] && { printf '/run'; return; }
-    printf '/tmp'
+
+    # -p 를 쓰지 않는다. /tmp 는 이미 있으므로 필요 없고, -p 와 함께면 -m 이 가장
+    # 깊은 디렉터리에만 적용된다는 애매함이 생긴다. 이미 있으면 실패하지만 아래
+    # 검사가 그 디렉터리를 그대로 확인한다.
+    d=/tmp/.mcp4018-lock
+    mkdir -m 700 "$d" 2>/dev/null
+    if [ -d "$d" ] && [ ! -L "$d" ] && [ -O "$d" ] && [ -w "$d" ]; then
+        printf '%s' "$d"
+        return
+    fi
+    printf ''
 }
 
 acquire_bus_lock() {
-    local lock
-    lock="$(lock_dir)/mcp4018_i2c${I2C_BUS}.lock"
+    local lock dir
+    dir="$(lock_dir)"
+    if [ -z "$dir" ]; then
+        echo "[$tag] WARNING: no safe lock directory (set MCP4018_LOCK_DIR) -" \
+             "proceeding without bus exclusion" >&2
+        return 0
+    fi
+    lock="$dir/mcp4018_i2c${I2C_BUS}.lock"
     command -v flock >/dev/null 2>&1 || return 0
     # 리다이렉트는 그룹에만 걸어야 한다. `exec 9>f 2>/dev/null` 처럼 붙여 쓰면
     # 명령 없는 exec 이라 2>/dev/null 까지 셸에 영구 적용되어 이후 모든 진단이

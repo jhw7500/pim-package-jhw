@@ -235,6 +235,23 @@ out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" EDGECONF_DIR="$CONF" MCP4018_L
 t_eq "게이트 열기 실패 → 중단, 전송 없음" "exit=$rc set=$(grep -c i2cset "$CALLS")" "exit=1 set=0"
 t_eq "열기 실패해도 닫기는 보낸다"        "$(gate_seq)" "0x40 0x90,0x40 0x80"
 t_eq "닫기가 되면 거짓 경고는 없다"        "$(printf '%s' "$out" | grep -c 'may stay open')" 0
+
+# get 도 같은 게이트 경로를 탄다. set 만 검증하면 get 분기를 따로 손댈 때
+# 누락을 잡을 수단이 없다.
+restore_stub
+write_conf true true false false
+gate_fail_stub 0x80
+: > "$CALLS"
+out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" EDGECONF_DIR="$CONF" MCP4018_LOCK_DIR="$WORK" \
+      bash "$SCRIPT" 1 get 2>&1); rc=$?
+t_eq "get: 상대 게이트 못 내리면 중단" "exit=$rc read=$(grep -c i2cget "$CALLS")" "exit=1 read=0"
+restore_stub
+write_conf true false false false
+gate_fail_stub 0x90
+: > "$CALLS"
+out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" EDGECONF_DIR="$CONF" MCP4018_LOCK_DIR="$WORK" \
+      bash "$SCRIPT" 0 get 2>&1); rc=$?
+t_eq "get: 게이트 열기 실패 → 중단"    "exit=$rc read=$(grep -c i2cget "$CALLS")" "exit=1 read=0"
 restore_stub
 
 echo
