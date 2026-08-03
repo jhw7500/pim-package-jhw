@@ -7,7 +7,9 @@
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PIM_BIN="$REPO_ROOT/dist/pim/opt/pim/bin"
-PIM_LIB="$REPO_ROOT/dist/pim/opt/pim/lib"
+# chk_cam_connect.sh 가 PIM_LIB 로 cam_state.sh 를 source 한다(기본값은 타겟 경로
+# /opt/pim/lib). 스크립트를 통째로 돌리는 테스트가 저장소 사본을 쓰도록 export 한다.
+export PIM_LIB="$REPO_ROOT/dist/pim/opt/pim/lib"
 PIM_CFG="$REPO_ROOT/dist/pim/opt/pim/config"
 
 t_pass=0

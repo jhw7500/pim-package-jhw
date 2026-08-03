@@ -79,4 +79,73 @@ t_eq "257행류 — cam disconnect 에 err_chs 포함" \
 t_eq "옛 형식(cam disconnect : \$streak 단독) 잔존 없음" \
      "$(grep -cE 'cam disconnect : \$streak"' "$SRC")" 0
 
+echo
+echo "=== disconnect 분기: RX3 동반 표기 + 폭주 억제 ==="
+# 드라이버 마스크는 splitter 에서 한쪽만 빠져도 두 채널을 다 세운다. 그 자리에서
+# RX3 를 읽어 채널을 갈라 주는지, 그리고 같은 상태가 이어질 때 로그를 억제하는지 본다.
+SRC_BG="$PIM_BIN/BG_Check_for_pim.sh"
+START=$(grep -n '^    if check_driver_disconnect; then$' "$SRC_BG" | head -1 | cut -d: -f1)
+END=$(awk -v s="$START" 'NR>s && /^    fi$/{print NR; exit}' "$SRC_BG")
+[ -n "$START" ] && [ -n "$END" ] || { echo "disconnect 분기 추출 실패" >&2; exit 1; }
+sed -n "${START},${END}p" "$SRC_BG" > "$WORK/branch.sh"
+
+# $1=설명 $2=반복횟수 $3=틱당 증가초 $4=rx3 문자열 $5=기대 로그 줄수
+run_branch() {
+    local out
+    out=$(
+        tag=BG_Check_for_pim.sh; cam_ch_bit=15
+        DISCONNECT_LOG_REPEAT_SEC=60
+        drv_log_sig=""; drv_log_ts=0
+        NOW=1000
+        # 함수 안의 $4 는 그 함수의 인자다. run_branch 의 것을 쓰려면 먼저 담아야 한다.
+        RX3V="$4"
+        check_driver_disconnect() {
+            drv_disconnect_mask=3; drv_mask_i2c2=3; drv_mask_i2c1=0; return 0
+        }
+        read_rx3_links() { printf '%s' "$RX3V"; }
+        now_ts() { echo "$NOW"; }
+        logger() { echo "$*"; }
+        # shellcheck disable=SC1090
+        source "$WORK/f1"   # mask_to_chs
+        for _ in $(seq 1 "$2"); do
+            # shellcheck disable=SC1090
+            source "$WORK/branch.sh"
+            NOW=$((NOW + $3))
+        done
+    ) 2>/dev/null
+    t_eq "$1 · 로그 줄수" "$(printf '%s' "$out" | grep -c 'driver detected disconnect')" "$5"
+    printf '%s' "$out" | head -1 | grep -q "$4" \
+        && t_ok "$1 · 로그에 rx3 포함" \
+        || t_bad "$1 · 로그에 rx3 없음 → [$(printf '%s' "$out" | head -1)]"
+}
+
+# 틱 5초 x 5회 = 20초 경과 → 첫 회만 (상태 동일, 60초 미만)
+run_branch "동일 상태 5틱(20초)" 5 5 "0x06/ch0_down" 1
+# 틱 60초 x 3회 → 매번 재확인 간격 도달
+run_branch "60초 간격 3틱"      3 60 "0x06/ch0_down" 3
+
+# 상태가 바뀌면 간격과 무관하게 즉시 찍혀야 한다
+out=$(
+    tag=BG_Check_for_pim.sh; cam_ch_bit=15
+    DISCONNECT_LOG_REPEAT_SEC=60
+    drv_log_sig=""; drv_log_ts=0
+    NOW=1000; RX3="0x06/ch0_down"
+    check_driver_disconnect() { drv_disconnect_mask=3; drv_mask_i2c2=3; drv_mask_i2c1=0; return 0; }
+    read_rx3_links() { printf '%s' "$RX3"; }
+    now_ts() { echo "$NOW"; }
+    logger() { echo "$*"; }
+    # shellcheck disable=SC1090
+    source "$WORK/f1"
+    for i in 1 2 3; do
+        [ "$i" = "3" ] && RX3="0x60/ch1_down"    # 3틱째에 반대 채널로 전환
+        # shellcheck disable=SC1090
+        source "$WORK/branch.sh"
+        NOW=$((NOW + 5))
+    done
+) 2>/dev/null
+t_eq "상태 변화 시 즉시 로깅(2줄)" \
+     "$(printf '%s' "$out" | grep -c 'driver detected disconnect')" "2"
+t_eq "변화 후 줄이 새 채널을 담는가" \
+     "$(printf '%s' "$out" | grep -c 'ch1_down')" "1"
+
 t_summary "disconnect 로그 채널 표기"

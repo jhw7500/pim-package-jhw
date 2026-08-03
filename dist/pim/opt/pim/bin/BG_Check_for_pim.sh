@@ -106,6 +106,13 @@ drv_disconnect_mask=0
 drv_mask_i2c2=0
 drv_mask_i2c1=0
 
+# disconnect 로그 억제. 루프가 수 초 단위라 매번 찍으면 이 줄이 저널을 메워,
+# 채널을 특정해 주는 줄(chk_cam_connect 의 rx3/link)이 뒤로 밀려 사라진다.
+# 상태가 바뀌면 즉시 찍고, 같은 상태가 이어지면 이 간격으로만 재확인한다.
+DISCONNECT_LOG_REPEAT_SEC=60
+drv_log_sig=""
+drv_log_ts=0
+
 # sysfs link_status 비트마스크를 읽어서 disconnect된 채널에 에러 플래그 생성
 # 비트마스크: bit0=ch0, bit1=ch1, bit2=ch2, bit3=ch3 (cam_ch_bit과 동일)
 # sysfs 값: -1=미확인, 0=정상, 1~15=disconnect 비트마스크
@@ -250,10 +257,32 @@ while true; do
     drv_disconnect=0
     if check_driver_disconnect; then
         drv_disconnect=1
-        logger -p local0.notice "[CHK][$tag:$LINENO] driver detected disconnect($(mask_to_chs "$drv_disconnect_mask")), skip chk_cam_connect (i2c2=$drv_mask_i2c2 i2c1=$drv_mask_i2c1)"
+        # 드라이버 마스크는 splitter 에서 한쪽만 빠져도 두 채널을 다 세운다(실측
+        # i2c2=3). 여기서 chk_cam_connect 를 건너뛰므로, 채널을 갈라 주는 RX3 를
+        # 읽는 경로가 이 분기밖에 없다. 캐시하지 않고 매번 읽는다 — stale 값을
+        # 현재처럼 찍으면 drv 와 똑같은 함정이 된다. 보고가 있는 버스만 읽는다.
+        rx3_info=""
+        if [ "$drv_mask_i2c2" -ne 0 ]; then
+            rx3_info="$rx3_info rx3_2=$(read_rx3_links 2)"
+        fi
+        if [ "$drv_mask_i2c1" -ne 0 ]; then
+            rx3_info="$rx3_info rx3_1=$(read_rx3_links 1)"
+        fi
+        drv_log_now=$(now_ts)
+        drv_log_cur="$drv_disconnect_mask|$drv_mask_i2c2|$drv_mask_i2c1|$rx3_info"
+        if [ "$drv_log_cur" != "$drv_log_sig" ] ||
+           [ $((drv_log_now - drv_log_ts)) -ge "$DISCONNECT_LOG_REPEAT_SEC" ]; then
+            logger -p local0.notice "[CHK][$tag:$LINENO] driver detected disconnect($(mask_to_chs "$drv_disconnect_mask")), skip chk_cam_connect (i2c2=$drv_mask_i2c2 i2c1=$drv_mask_i2c1$rx3_info)"
+            drv_log_sig="$drv_log_cur"
+            drv_log_ts=$drv_log_now
+        fi
     elif [ ! -f /tmp/start_video_time_chk ]; then
+        drv_log_sig=""
         logger -p local0.info "[CHK][$tag:$LINENO] skip chk_cam_connect: gstApp not yet playing"
     else
+        # disconnect 가 풀렸다. 다음에 다시 빠지면 같은 값이라도 즉시 찍히도록
+        # 억제 상태를 비운다. 안 그러면 짧게 붙었다 떨어질 때 로그가 통째로 빠진다.
+        drv_log_sig=""
         /opt/pim/bin/chk_cam_connect.sh $cam_ch_bit 2>/dev/null
     fi
 

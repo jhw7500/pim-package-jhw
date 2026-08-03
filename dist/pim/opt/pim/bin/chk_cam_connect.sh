@@ -5,6 +5,12 @@
 FLAG_PATH="/tmp"
 tag=$(basename "$0")
 
+# RX3(0x002F) 디코드는 BG_Check_for_pim.sh 와 공유한다. 두 벌로 두면 갈라지므로
+# lib 한 곳에만 둔다. 경로를 변수로 받는 것은 테스트에서 저장소 사본을 쓰기 위함이다.
+PIM_LIB="${PIM_LIB:-/opt/pim/lib}"
+# shellcheck source=/dev/null
+source "$PIM_LIB/cam_state.sh"
+
 # ── MAX9296 CTRL3(0x13) 비트 정의 (데이터시트) ──────────────────────
 #  bit 7,6,0 : 예약(-). 값에 의미가 없으므로 반드시 마스킹한다.
 #  bit 5:4   : LINK_MODE  00=Dual 01=Link A 10=Link B 11=Splitter
@@ -56,24 +62,9 @@ LM_BOTH_EXPECT=$LM_SPLITTER
 CH_EVEN_LINK=$LM_LINK_B    # ch0, ch2 → LINK_MODE Link B (드라이버 _L 테이블)
 CH_ODD_LINK=$LM_LINK_A     # ch1, ch3 → LINK_MODE Link A (드라이버 _R 테이블)
 
-# ── MAX9296 RX3(0x002F) — 링크별 상태 ──────────────────────────────
-#  bit6 SYNC_LOCKED_B / bit5 WBLOCK_B / bit4 FAILLOCK_B
-#  bit2 SYNC_LOCKED_A / bit1 WBLOCK_A / bit0 FAILLOCK_A
-#
-# FAILLOCK 은 Read-Clear 다(실측: 0x01 → 0x00 → 0x00). 링크가 계속 죽어 있어도
-# 두 번째 읽기부터 0이라 레벨 신호로 못 쓴다. 그래서 판정에도 표기에도 쓰지 않는다.
-#
-# SYNC_LOCKED/WBLOCK 은 RO 라 read-clear 가 아니고 런타임 이탈에서 링크별로 정확히
-# 갈린다(실측: 둘 다 연결 0x66 → ch1 제거 → 0x60). 둘이 모두 서야 그 링크를 살아
-# 있는 것으로 본다. 부팅 시점 부재에서는 양 링크가 다 0이라 구분되지 않는다.
-#
-# 니블 ↔ 채널: 하위(Link A) = 홀수 채널(ch1/ch3), 상위(Link B) = 짝수(ch0/ch2).
-# 위 CH_ODD_LINK/CH_EVEN_LINK 와 같은 근거이며 ch1 제거 실측과 일치한다.
-#
+# RX3(0x002F) 비트 정의와 read_rx3_links() 는 lib/cam_state.sh 에 있다.
 # 판정에는 쓰지 않고 진단 로그에만 남긴다. 현장 로그에서 이 값과 drv(드라이버
 # link_status)의 일치율을 확인한 뒤 귀속 사용 여부를 별도로 판단한다.
-RX3_LINK_A_UP=0x06    # SYNC_LOCKED_A | WBLOCK_A
-RX3_LINK_B_UP=0x60    # SYNC_LOCKED_B | WBLOCK_B
 
 ENABLE_VAL="true"
 DISABLE_VAL="false"
@@ -141,37 +132,11 @@ classify_ctrl3() {
     ctrl3_verdict="mode_unexpected"
 }
 
-# RX3(0x002F)를 한 번 읽어 어느 링크가 락에 실패했는지 문자열로 돌려준다.
-# 출력: "<원시값>/<A|B|AB|none>" 또는 읽기 실패 시 "NA/NA"
-#
-# 호출 시점: log_ctrl3 가 불릴 때, 즉 이상이 감지됐을 때만. 정상(ok)일 때는 읽지 않아
-# 래치를 헛되이 소비하지 않는다.
-#
-# errb_only(LOCKED=1 + ERRB)에서도 읽는 것은 의도된 선택이다. 이 상태는 링크가 살아
-# 있으므로 "지금 끊긴 링크"는 없지만, 직전에 튀었다가 회복된 링크의 래치가 남아 있을 수
-# 있다 — 그 순간이 오히려 포착 가치가 가장 높다. 링크 단절(LOCKED=0 → err_both)과는
-# 같은 순간에 공존할 수 없으므로(배타적) 서로의 래치를 가로채지 않는다.
-#
-# both_down 의 해석 주의: 부팅 시점 부재도, 두 카메라가 다 빠진 경우도 같은 값이다.
-# 즉 both_down 은 채널을 지목하지 못한다. 한쪽만 내려간 경우에만 귀속에 쓸 수 있다.
-#
-# $1=i2c adapter (2 → ch0/ch1, 1 → ch2/ch3)
-# 출력: "<원시값>/<ok|chN_down|both_down>" 또는 읽기 실패 시 "NA/NA"
-read_rx3_links() {
-    local raw val base a b
-    raw=$(i2ctransfer -f -y -a "$1" w2@0x48 0x00 0x2f r1 2>/dev/null \
-          | grep -oE '0[xX][0-9a-fA-F]+' | head -1)
-    [ -n "$raw" ] || { printf 'NA/NA'; return; }
-    val=$(( raw )); a=0; b=0
-    base=0; [ "$1" = "1" ] && base=2
-    [ $(( val & RX3_LINK_A_UP )) -eq $(( RX3_LINK_A_UP )) ] && a=1
-    [ $(( val & RX3_LINK_B_UP )) -eq $(( RX3_LINK_B_UP )) ] && b=1
-    if   [ "$a" -eq 1 ] && [ "$b" -eq 1 ]; then printf '%s/ok' "$raw"
-    elif [ "$a" -eq 0 ] && [ "$b" -eq 0 ]; then printf '%s/both_down' "$raw"
-    elif [ "$a" -eq 0 ]; then printf '%s/ch%d_down' "$raw" "$((base + 1))"
-    else                      printf '%s/ch%d_down' "$raw" "$base"
-    fi
-}
+# RX3 는 log_ctrl3 가 불릴 때, 즉 이상이 감지됐을 때만 읽는다. 정상(ok)일 때는 읽지
+# 않는다. errb_only(LOCKED=1 + ERRB)에서도 읽는 것은 의도된 선택이다 — 링크는 살아
+# 있지만 직전에 튀었다 회복한 흔적이 남아 있을 수 있고, 그 순간이 포착 가치가 가장
+# 높다. 링크 단절(LOCKED=0 → err_both)과는 같은 순간에 공존할 수 없어 서로 간섭하지
+# 않는다.
 
 # 판정 근거를 원시값·비트·드라이버 비트·RX3 링크 상태까지 한 줄로 남긴다.
 # rx3/link 는 기록 전용이며 판정에는 쓰지 않는다. drv 와 대조해 일치율을 재기 위한 것.
