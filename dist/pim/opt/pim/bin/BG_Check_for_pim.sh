@@ -82,6 +82,30 @@ in_init_cooldown() {
 SYSFS_LINK_I2C2="/sys/bus/i2c/devices/2-0048/link_status"
 SYSFS_LINK_I2C1="/sys/bus/i2c/devices/1-0048/link_status"
 
+# 비트마스크를 "ch0 ch1" 형태로 나열한다 (restart_app.sh 의 dc_chs 표기와 동일).
+mask_to_chs() {
+    local ch out=""
+    for ch in 0 1 2 3; do
+        [ $(( ($1 >> ch) & 1 )) -eq 1 ] && out="${out}ch${ch} "
+    done
+    printf '%s' "${out% }"
+}
+
+# 에러 플래그 파일이 있는 채널을 "ch0 ch1" 형태로 나열한다.
+err_cam_chs() {
+    local ch out=""
+    for ch in 0 1 2 3; do
+        [ -f "${FLAG_PATH}/err_cam${ch}.log" ] && out="${out}ch${ch} "
+    done
+    printf '%s' "${out% }"
+}
+
+# check_driver_disconnect() 의 부가 출력. 함수는 리턴값으로 유무만 알려주므로
+# 어느 채널인지는 전역으로 넘긴다(command substitution 을 쓰면 서브셸이라 안 된다).
+drv_disconnect_mask=0
+drv_mask_i2c2=0
+drv_mask_i2c1=0
+
 # sysfs link_status 비트마스크를 읽어서 disconnect된 채널에 에러 플래그 생성
 # 비트마스크: bit0=ch0, bit1=ch1, bit2=ch2, bit3=ch3 (cam_ch_bit과 동일)
 # sysfs 값: -1=미확인, 0=정상, 1~15=disconnect 비트마스크
@@ -96,6 +120,13 @@ check_driver_disconnect() {
 
     disconnect_mask=$((mask_i2c2 | mask_i2c1))
     actual_disconnect=$((disconnect_mask & cam_ch_bit))
+
+    # 로그에 채널을 찍기 위해 전역으로 올린다. 원시 마스크도 함께 남긴다 —
+    # 채널 귀속은 드라이버가 정한 것이고, 드라이버의 ch<->주소 매핑이 뒤바뀌었을
+    # 가능성이 아직 열려 있어서 나중에 재해석하려면 원시값이 필요하다.
+    drv_mask_i2c2=$mask_i2c2
+    drv_mask_i2c1=$mask_i2c1
+    drv_disconnect_mask=$actual_disconnect
 
     if [ "$actual_disconnect" -ne 0 ]; then
         for ch in 0 1 2 3; do
@@ -220,7 +251,7 @@ while true; do
     drv_disconnect=0
     if check_driver_disconnect; then
         drv_disconnect=1
-        logger -p local0.notice "[CHK][$tag:$LINENO] driver detected disconnect, skip chk_cam_connect"
+        logger -p local0.notice "[CHK][$tag:$LINENO] driver detected disconnect($(mask_to_chs "$drv_disconnect_mask")), skip chk_cam_connect (i2c2=$drv_mask_i2c2 i2c1=$drv_mask_i2c1)"
     elif [ ! -f /tmp/start_video_time_chk ]; then
         logger -p local0.info "[CHK][$tag:$LINENO] skip chk_cam_connect: gstApp not yet playing"
     else
@@ -249,12 +280,14 @@ while true; do
         continue
     fi
 
-	if [ -f "${FLAG_PATH}"/err_cam0.log ] || [ -f "${FLAG_PATH}"/err_cam1.log ] || [ -f "${FLAG_PATH}"/err_cam2.log ]  || [ -f "${FLAG_PATH}"/err_cam3.log ] ; then
+	err_chs=$(err_cam_chs)
+	if [ -n "$err_chs" ]; then
 		# streak 증가는 cam_inc_streak(cam_state.sh)이 단독으로 수행한다.
 		# 같은 /tmp/cam_state/streak 파일을 streak_set으로 또 쓰면 2씩 증가한다.
 		cam_inc_streak
 		streak=$(streak_get)
-		logger -p local0.crit "[CHK][$tag:$LINENO] cam disconnect : $streak"
+		# streak 은 연속 실패 '횟수'다. 채널 번호로 오해하기 쉬워 채널을 함께 찍는다.
+		logger -p local0.crit "[CHK][$tag:$LINENO] cam disconnect : streak=$streak ($err_chs)"
 	else
 		streak_set 0
 		cam_reset_streak

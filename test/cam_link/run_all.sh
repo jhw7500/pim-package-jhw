@@ -16,6 +16,7 @@ TESTS=(
     config_default_test.sh
     initcam_modprobe_test.sh
     flag_e2e_test.sh
+    disconnect_log_test.sh
 )
 
 fail=0
