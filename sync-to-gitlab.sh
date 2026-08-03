@@ -64,9 +64,11 @@ if [ ${#TARGETS[@]} -eq 0 ]; then
   --push         — 파일 sync + commit + GitLab origin push
 
 안전 검사:
-  기본           — 역방향(GitLab→GitHub) 동기화가 밀려 있으면 중단한다.
-                   밀린 채로 정방향을 돌리면 GitLab 최신 작업이 되돌아간다.
-  --force        — 안전 검사 우회 (위험)
+  기본           — 이 sync 로 GitLab 에서 파일이 '삭제'되면 중단한다.
+                   GitLab 에만 있는 파일이라는 뜻이고, 역방향 동기화가 밀렸을 때
+                   회사 측 작업이 사라지는 경로다. 덮어쓰기는 방향을 알 수 없어
+                   판정하지 않으니 dry-run 으로 확인하라.
+  --force        — 안전 검사 우회 (삭제를 감수)
 EOF
     exit 1
 fi
@@ -75,27 +77,29 @@ fi
 log() { echo "=== $1 ==="; }
 warn() { echo "⚠ $1"; }
 
-# 정방향 sync 전에, 역방향(GitLab→GitHub)으로 가져올 것이 남아 있는지 확인한다.
+# 이 sync 로 GitLab 에서 '지워질' 파일이 있는지 미리 잡는다.
 #
-# 남아 있는 채로 정방향을 돌리면 GitLab 에만 있는 작업이 GitHub 의 옛 내용으로
-# 덮이거나 --delete 로 지워진다. 실제로 10커밋(pimwebserver 1.1.0, auto_fwupgrade
-# 디버그, redis stop timeout 등)이 밀린 상태로 돌릴 뻔했고, dry-run 을 눈으로 본
-# 덕에 걸렸다. 스크립트가 막아 주지 않으면 같은 일이 반복된다.
+# 배경: 역방향(GitLab→GitHub) 동기화가 밀린 채로 정방향을 돌리면 GitLab 에만 있는
+# 작업이 사라진다. 실제로 10커밋(pimwebserver 1.1.0 등)이 밀린 상태로 돌릴 뻔했고
+# dry-run 을 눈으로 본 덕에 걸렸다.
 #
-# 마커(.last-sync-from-gitlab-*)로 판단하지 않는 이유: 정방향 sync 자체가 GitLab 에
-# 커밋을 만들어 HEAD 를 앞세우는데, 그 커밋은 GitHub 에서 온 것이라 되가져올 게
-# 없다. 마커 비교는 그때마다 오탐한다. 그래서 '역방향으로 실제 옮겨질 파일이
-# 있는가'를 내용(--checksum)으로 본다.
+# 덮어쓰기는 판정하지 않는다. 내용 비교만으로는 'GitHub 가 앞섰다'와 'GitLab 이
+# 앞섰다'를 구분할 수 없는데, 전자가 바로 정방향 sync 의 정상 경로다. 방향을
+# 모르는 채로 막으면 정상 sync 를 매번 차단한다(그렇게 만들었다가 되돌렸다).
 #
-# $1=scope  $2.. = 역방향(GitLab→GitHub) rsync 인자
-check_reverse_pending() {
+# 반면 '지워질 파일'은 모호하지 않다 — GitLab 에만 있다는 뜻이고, --delete 로
+# 사라지면 되돌릴 수 없다. 앞선 사고도 정확히 삭제(.deb, override.conf)였다.
+# 덮어쓰기는 커밋 전 diff 로 확인할 수 있지만 삭제는 그 전에 이미 끝난다.
+#
+# $1=scope  $2.. = 정방향(GitHub→GitLab) rsync 인자
+check_delete_pending() {
     local scope="$1"; shift
-    local pending count rc=0
+    local deletions count rc=0
 
-    pending=$(rsync_dry_changed_files "$@") || rc=$?
+    deletions=$(rsync_dry_deletions "$@") || rc=$?
     if [ "$rc" -ne 0 ]; then
         # 판정 불가를 '문제 없음'으로 넘기면 가드가 없는 것과 같다.
-        warn "${scope}: 역방향 확인용 rsync 가 실패해 미반영 여부를 판정할 수 없다."
+        warn "${scope}: 삭제 대상 확인용 rsync 가 실패해 판정할 수 없다."
         if [ "$DRY_RUN" = true ]; then
             warn "  [DRY-RUN] 경고만 하고 계속한다."
             return 0
@@ -107,23 +111,23 @@ check_reverse_pending() {
         echo "중단했다. 원인을 확인하거나 --force 로 강행하라." >&2
         exit 1
     fi
-    [ -z "$pending" ] && return 0
+    [ -z "$deletions" ] && return 0
 
-    count=$(printf '%s\n' "$pending" | grep -c .)
-    warn "${scope}: 역방향으로 가져오지 않은 변경이 ${count}건 있다."
-    printf '%s\n' "$pending" | sed 's/^/    /' >&2
-    warn "  이대로 정방향 sync 하면 위 파일이 GitHub 의 옛 내용으로 덮이거나 지워진다."
-    warn "  ./sync-from-gitlab.sh ${scope} 를 먼저 실행하라."
+    count=$(printf '%s\n' "$deletions" | grep -c .)
+    warn "${scope}: 이 sync 로 GitLab 에서 ${count}건이 삭제된다."
+    printf '%s\n' "$deletions" | sed 's/^/    /' >&2
+    warn "  GitLab 에만 있는 파일이다. 역방향 동기화가 밀린 것은 아닌지 확인하라."
+    warn "  ./sync-from-gitlab.sh ${scope}"
 
     if [ "$DRY_RUN" = true ]; then
-        warn "  [DRY-RUN] 경고만 하고 계속한다 — 아래 목록에서 피해 범위를 확인하라."
+        warn "  [DRY-RUN] 경고만 하고 계속한다."
         return 0
     fi
     if [ "$FORCE" = true ]; then
-        warn "  [FORCE] 안전 검사를 무시하고 계속한다."
+        warn "  [FORCE] 삭제를 감수하고 계속한다."
         return 0
     fi
-    echo "중단했다. 확인 후 --force 로 강행할 수 있다." >&2
+    echo "중단했다. 의도한 삭제라면 --force 로 강행하라." >&2
     exit 1
 }
 
@@ -136,14 +140,17 @@ filter_sync_back() {
 # rsync dry-run으로 실제 변경/신규/삭제될 파일 목록만 추출 (디렉토리 제외)
 # .last-sync-pim stale에 강건 — 변경되지 않은 파일의 commits는 자동 제외됨
 # 인자: rsync에 전달할 옵션/include/exclude/src/dst 모두 그대로 패스스루
-rsync_dry_changed_files() {
-    # --checksum: rsync 기본 비교는 size+mtime 이라 내용이 같아도 mtime 만 다르면
-    # 변경으로 잡힌다(역방향 sync 직후가 그렇다). 그 목록으로 커밋 메시지를 만들면
-    # 실제로 바뀌지도 않은 파일의 커밋이 딸려 온다. 여기서는 정확도가 우선이다.
-    #
-    # 종료코드를 반드시 확인한다. 이전에는 2>/dev/null 로 삼키고 파이프로 넘겨
-    # awk 의 상태만 남았다. rsync 가 실패하면 빈 목록이 나오고 호출부는 그것을
-    # '변경 없음'으로 읽는데, check_reverse_pending 에서는 그게 곧 가드 무력화다.
+# rsync dry-run 의 원시 항목(%i|%n)을 그대로 돌려준다. 아래 두 추출기의 공통부다.
+#
+# --checksum: rsync 기본 비교는 size+mtime 이라 내용이 같아도 mtime 만 다르면
+# 변경으로 잡힌다(역방향 sync 직후가 그렇다). 그 목록으로 커밋 메시지를 만들면
+# 실제로 바뀌지도 않은 파일의 커밋이 딸려 온다. 여기서는 정확도가 우선이다.
+#
+# 종료코드를 반드시 확인한다. 이전에는 2>/dev/null 로 삼키고 파이프로 넘겨 awk 의
+# 상태만 남았다. rsync 가 실패하면 빈 목록이 나오고 호출부는 '변경 없음'으로 읽는데,
+# 가드에서는 그게 곧 무력화다. stderr 는 임시 파일로 받아 성공 경로의 파싱을
+# 오염시키지 않는다.
+rsync_dry_raw() {
     local out rc=0 errf
     errf=$(mktemp)
     out=$(rsync -an --delete --checksum -i --out-format='%i|%n' \
@@ -158,8 +165,12 @@ rsync_dry_changed_files() {
         return 1
     fi
     rm -f "$errf"
+    printf '%s\n' "$out"
+}
 
-    printf '%s\n' "$out" \
+rsync_dry_changed_files() {
+    # pipefail 이 켜져 있어 rsync_dry_raw 의 실패가 그대로 전달된다.
+    rsync_dry_raw "$@" \
         | awk -F'|' '
             {
                 c = substr($1, 1, 1)
@@ -168,6 +179,15 @@ rsync_dry_changed_files() {
                     # 디렉토리 항목(%n 끝이 /) 제외
                     if (substr($2, length($2), 1) != "/") print $2
                 }
+            }'
+}
+
+# 삭제될 항목만 뽑는다. rsync -i 는 삭제에 '*deleting' 을 준다.
+rsync_dry_deletions() {
+    rsync_dry_raw "$@" \
+        | awk -F'|' '
+            $1 ~ /deleting/ {
+                if (substr($2, length($2), 1) != "/") print $2
             }'
 }
 
@@ -272,8 +292,8 @@ sync_submodule() {
 
     log "${scope} 서브모듈 동기화"
 
-    check_reverse_pending "$scope" \
-        "${GITLAB_REPO}/${subdir}/" "${GITHUB_REPO}/${subdir}/"
+    check_delete_pending "$scope" \
+        "${GITHUB_REPO}/${subdir}/" "${GITLAB_REPO}/${subdir}/"
 
     # 1. 실제 변경될 파일 dry-run으로 먼저 추출 (.last-sync-pim stale 영향 차단)
     local changed_files
@@ -345,8 +365,8 @@ sync_pim() {
         rsync_includes+=(--include="${f}")
     done
 
-    check_reverse_pending "pim" \
-        "${rsync_includes[@]}" --exclude='*' "${GITLAB_REPO}/" "${GITHUB_REPO}/"
+    check_delete_pending "pim" \
+        "${rsync_includes[@]}" --exclude='*' "${GITHUB_REPO}/" "${GITLAB_REPO}/"
 
     # 1. 실제 변경될 파일 dry-run으로 먼저 추출 (.last-sync-pim stale 영향 차단)
     local changed_files
