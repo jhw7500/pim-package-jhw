@@ -31,8 +31,8 @@ COMMAND=$2
 
 MCP4018_ADDR=0x2f
 
-# 버스는 모드와 무관하다. set/get 은 MCP4018(0x2f)로 직접 가므로 듀얼/단일 판정이
-# 필요 없고, 판정에 실패했다고 막히면 안 된다. 그래서 여기서 따로 정한다.
+# 채널 번호 → 버스 번호 매핑은 모드와 무관하다. 그래서 듀얼/단일 판정보다 먼저,
+# 여기서 정한다. (모드 판정은 어느 시리얼라이저의 게이트를 열지 정할 때 필요하다.)
 case "$CHANNEL" in
     0|1) I2C_BUS=2 ;;
     2|3) I2C_BUS=1 ;;
@@ -138,9 +138,17 @@ acquire_bus_lock() {
     command -v flock >/dev/null 2>&1 || return 0
     # 리다이렉트는 그룹에만 걸어야 한다. `exec 9>f 2>/dev/null` 처럼 붙여 쓰면
     # 명령 없는 exec 이라 2>/dev/null 까지 셸에 영구 적용되어 이후 모든 진단이
-    # 사라진다. 락 파일을 못 열면 배타성만 포기하고 진행한다.
-    { exec 9>"$lock"; } 2>/dev/null || return 0
-    flock -w 5 9 || die "another $tag holds i2c-$I2C_BUS (waited 5s)"
+    # 사라진다.
+    #
+    # 락 파일을 못 열면(다른 사용자가 만들어 둬 권한이 없는 경우 등) 배타성을
+    # 포기하고 진행하되, 조용히 넘기지는 않는다 — 이 상태에서는 동시 실행이
+    # 양쪽 pot 을 건드릴 수 있다는 사실이 드러나야 한다.
+    if ! { exec 9>"$lock"; } 2>/dev/null; then
+        echo "[$tag] WARNING: cannot open lock $lock - proceeding without bus exclusion" >&2
+        return 0
+    fi
+    local wait="${MCP4018_LOCK_WAIT:-5}"   # 재정의는 테스트가 빨리 끝나게 하기 위함
+    flock -w "$wait" 9 || die "another $tag holds i2c-$I2C_BUS (waited ${wait}s)"
 }
 
 # 내 게이트만 여는 것으로는 부족하다. 진단용 `on` 은 게이트를 열어 둔 채 끝나므로
@@ -168,6 +176,9 @@ gate_close() {
 reject_if_disabled
 
 case "$COMMAND" in
+    # on/off 는 게이트를 열어 둔 채 끝내는 진단용 명령이다. 락도 잡지 않으므로
+    # 동시에 도는 set/get 과 경쟁할 수 있다. 값을 읽고 쓰는 것이 목적이면
+    # set/get 을 쓴다 — 그쪽이 열기·쓰기·닫기를 배타적으로 끝낸다.
     on)
         resolve_ser_addr
         echo "Channel $CHANNEL ON: i2ctransfer -f -y -a $I2C_BUS w3@$SER_ADDR 0x02 0xca 0x90"
@@ -201,6 +212,7 @@ case "$COMMAND" in
         ;;
     get)
         resolve_ser_addr
+        acquire_bus_lock            # 읽기도 게이트를 조작하므로 set 과 같은 락이 필요하다
         trap 'gate_close' EXIT
         gate_open_exclusive
         echo "Channel $CHANNEL GET: i2cget -y $I2C_BUS $MCP4018_ADDR (gate $SER_ADDR)"
