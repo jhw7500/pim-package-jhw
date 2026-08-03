@@ -137,8 +137,19 @@ mfp4_gate() {
 #
 # flock 이 없는 환경에서는 막지 않는다 — 배타성은 잃지만, 진단 도구가 아예 못 도는
 # 것보다는 낫다.
+# 락 디렉터리. /tmp 를 기본으로 쓰지 않는다 — world-writable + sticky 라 다른
+# 사용자가 같은 이름으로 심볼릭 링크를 심어 두면, root 로 도는 이 스크립트가
+# `exec >` 로 그 대상을 열면서 잘라 버린다. fs.protected_symlinks 가 대개 막아
+# 주지만 sysctl 에 기대고 싶지 않다. /run 은 root 소유라 그 표면이 없다.
+lock_dir() {
+    [ -n "$MCP4018_LOCK_DIR" ] && { printf '%s' "$MCP4018_LOCK_DIR"; return; }
+    [ -d /run ] && [ -w /run ] && { printf '/run'; return; }
+    printf '/tmp'
+}
+
 acquire_bus_lock() {
-    local lock="${MCP4018_LOCK_DIR:-/tmp}/mcp4018_i2c${I2C_BUS}.lock"
+    local lock
+    lock="$(lock_dir)/mcp4018_i2c${I2C_BUS}.lock"
     command -v flock >/dev/null 2>&1 || return 0
     # 리다이렉트는 그룹에만 걸어야 한다. `exec 9>f 2>/dev/null` 처럼 붙여 쓰면
     # 명령 없는 exec 이라 2>/dev/null 까지 셸에 영구 적용되어 이후 모든 진단이
@@ -152,6 +163,9 @@ acquire_bus_lock() {
     #
     # 이 문법은 bash 4.1+ 를 요구한다. 같은 패키지의 chk_cam_operate.sh 가 이미
     # declare -A / mapfile(bash 4.0+)을 쓰고 있어 추가 요구는 미미하다.
+    #
+    # LOCK_FD 는 일부러 전역이다. fd 는 프로세스가 끝날 때까지 열려 있어야
+    # 락이 유지되므로, 번호를 함수 밖에서도 볼 수 있게 남겨 둔다.
     if ! { exec {LOCK_FD}>"$lock"; } 2>/dev/null; then
         echo "[$tag] WARNING: cannot open lock $lock - proceeding without bus exclusion" >&2
         return 0
