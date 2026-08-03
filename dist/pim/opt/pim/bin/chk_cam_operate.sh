@@ -1568,9 +1568,7 @@ do
                         logger -p local0.err  "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag): /opt/pim/bin/init_cam.sh"
                         if ! in_init_cooldown && ! cam_in_init_cooldown "$init_cooldown_sec"; then
                             # periodic init_cam 간격 추적을 위해 last_init 갱신
-                            local now_ts
                             now_ts=$(date +%s)
-                            local first_seen_val
                             first_seen_val=$(cat "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null | awk -F',' '{print $1}')
                             [[ ! "$first_seen_val" =~ ^[0-9]+$ ]] && first_seen_val=$now_ts
                             printf "%s,%s" "$first_seen_val" "$now_ts" > "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
@@ -1631,7 +1629,6 @@ do
                     fi
                 fi
             else
-                local drv_disc
                 drv_disc=$(read_driver_disconnect)
                 if (( drv_disc != 0 )); then
                     logger -p local0.notice "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag) drv_disc=$drv_disc: skip init_cam (periodic handles recovery)"
@@ -1639,9 +1636,7 @@ do
                     logger -p local0.err  "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag): /opt/pim/bin/init_cam.sh"
                     if ! in_init_cooldown && ! cam_in_init_cooldown "$init_cooldown_sec"; then
                         # periodic init_cam 간격 추적을 위해 last_init 갱신
-                        local now_ts
                         now_ts=$(date +%s)
-                        local first_seen_val
                         first_seen_val=$(cat "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null | awk -F',' '{print $1}')
                         [[ ! "$first_seen_val" =~ ^[0-9]+$ ]] && first_seen_val=$now_ts
                         printf "%s,%s" "$first_seen_val" "$now_ts" > "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
