@@ -92,13 +92,14 @@ resolve_ser_addr() {
 
     if [ "$MODE" = "dual" ]; then
         case "$CHANNEL" in
-            0|2) SER_ADDR=0x40 ;;
-            1|3) SER_ADDR=0x60 ;;
+            0|2) SER_ADDR=0x40; PEER_SER_ADDR=0x60 ;;
+            1|3) SER_ADDR=0x60; PEER_SER_ADDR=0x40 ;;
         esac
         return 0
     fi
 
     SER_ADDR=0x40
+    PEER_SER_ADDR=""        # 단일에는 시리얼라이저가 하나뿐이라 상대가 없다
     if [ "$RESOLVE_SOURCE" != "edgeconf" ]; then
         echo "[$tag] Note: 단일 구성 판정이 ${RESOLVE_SOURCE} 기준이라 요청 채널이" \
              "그 하나인지는 확인할 수 없다." >&2
@@ -121,7 +122,46 @@ mfp4_gate() {
         off) v=0x80 ;;
         *)   return 1 ;;
     esac
-    i2ctransfer -f -y -a "$I2C_BUS" w3@"$1" 0x02 0xca "$v" >/dev/null 2>&1
+    # stdout 만 버린다. I2C 오류(NAK/timeout/버스 점유)는 실패 원인을 가리는
+    # 유일한 단서라 stderr 까지 삼키면 현장에서 진단이 안 된다.
+    i2ctransfer -f -y -a "$I2C_BUS" w3@"$1" 0x02 0xca "$v" >/dev/null
+}
+
+# 게이트 상태는 프로세스 밖(ser 의 MFP4 핀)에 있다. 그래서 같은 버스에 두 프로세스가
+# 동시에 들어오면, 한쪽이 연 게이트를 다른 쪽이 상대 게이트라며 닫고 자기 것을 열어
+# 먼저 들어온 쪽의 0x2F 쓰기가 엉뚱한 pot 에 도달한다. 버스 단위로 직렬화한다.
+#
+# flock 이 없는 환경에서는 막지 않는다 — 배타성은 잃지만, 진단 도구가 아예 못 도는
+# 것보다는 낫다.
+acquire_bus_lock() {
+    local lock="${MCP4018_LOCK_DIR:-/tmp}/mcp4018_i2c${I2C_BUS}.lock"
+    command -v flock >/dev/null 2>&1 || return 0
+    # 리다이렉트는 그룹에만 걸어야 한다. `exec 9>f 2>/dev/null` 처럼 붙여 쓰면
+    # 명령 없는 exec 이라 2>/dev/null 까지 셸에 영구 적용되어 이후 모든 진단이
+    # 사라진다. 락 파일을 못 열면 배타성만 포기하고 진행한다.
+    { exec 9>"$lock"; } 2>/dev/null || return 0
+    flock -w 5 9 || die "another $tag holds i2c-$I2C_BUS (waited 5s)"
+}
+
+# 내 게이트만 여는 것으로는 부족하다. 진단용 `on` 은 게이트를 열어 둔 채 끝나므로
+# `0 on` 뒤에 `1 set` 을 부르면 0x40·0x60 이 동시에 열려 0x2F 쓰기가 양쪽 pot 에
+# 도달한다. 그래서 열기 전에 상대 게이트를 먼저 내린다.
+#
+# 상대를 못 내리면 진행하지 않는다. 상대 ser 이 응답하지 않는 경우(링크 다운)에도
+# 그 MFP4 는 직전 상태를 유지하므로, '응답이 없다'는 '닫혀 있다'가 아니다.
+gate_open_exclusive() {
+    if [ -n "$PEER_SER_ADDR" ]; then
+        mfp4_gate "$PEER_SER_ADDR" off \
+            || die "failed to close peer MCP4018 gate (ser $PEER_SER_ADDR) - refusing to write shared $MCP4018_ADDR"
+    fi
+    mfp4_gate "$SER_ADDR" on || die "failed to open MCP4018 gate (ser $SER_ADDR)"
+}
+
+# 닫기 실패를 조용히 넘기면 게이트가 열린 채 남아 다음 명령이 양쪽 pot 을 건드린다.
+gate_close() {
+    mfp4_gate "$SER_ADDR" off && return 0
+    echo "[$tag] WARNING: failed to close MCP4018 gate (ser $SER_ADDR) - it may stay open" >&2
+    return 1
 }
 
 # 명령 종류와 무관하게 먼저 막는다. set/get 도 같은 하드웨어를 건드린다.
@@ -148,19 +188,26 @@ case "$COMMAND" in
         # 부르게 두면 `0 on` 뒤 `1 set` 같은 어긋난 조합에서 엉뚱한 pot 을 건드린다
         # (두 pot 이 0x2F 를 공유하므로 열려 있는 쪽이 맞는다).
         resolve_ser_addr
-        trap 'mfp4_gate "$SER_ADDR" off' EXIT   # 중단돼도 열어 둔 채 끝나지 않게
-        mfp4_gate "$SER_ADDR" on || die "failed to open MCP4018 gate (ser $SER_ADDR)"
+        acquire_bus_lock            # 락을 못 잡으면 버스를 아예 건드리지 않는다
+        trap 'gate_close' EXIT      # die·시그널로 빠져나가는 경로의 안전망
+        gate_open_exclusive
         echo "Channel $CHANNEL SET: i2cset -y $I2C_BUS $MCP4018_ADDR $VALUE (gate $SER_ADDR)"
-        i2cset -y "$I2C_BUS" "$MCP4018_ADDR" "$VALUE"
-        exit $?
+        i2cset -y "$I2C_BUS" "$MCP4018_ADDR" "$VALUE"; rc=$?
+        # 정상 경로에서는 직접 닫고 결과를 본다. 닫기 실패는 다음 명령의 배타성을
+        # 깨뜨리므로 쓰기가 성공했어도 실패로 보고한다.
+        trap - EXIT
+        gate_close || rc=1
+        exit "$rc"
         ;;
     get)
         resolve_ser_addr
-        trap 'mfp4_gate "$SER_ADDR" off' EXIT
-        mfp4_gate "$SER_ADDR" on || die "failed to open MCP4018 gate (ser $SER_ADDR)"
+        trap 'gate_close' EXIT
+        gate_open_exclusive
         echo "Channel $CHANNEL GET: i2cget -y $I2C_BUS $MCP4018_ADDR (gate $SER_ADDR)"
-        i2cget -y "$I2C_BUS" "$MCP4018_ADDR"
-        exit $?
+        i2cget -y "$I2C_BUS" "$MCP4018_ADDR"; rc=$?
+        trap - EXIT
+        gate_close || rc=1
+        exit "$rc"
         ;;
     *)
         echo "Error: Invalid command '$COMMAND'. Must be on, off, set, or get." >&2
