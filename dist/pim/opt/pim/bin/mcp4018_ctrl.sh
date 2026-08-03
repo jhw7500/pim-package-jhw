@@ -219,6 +219,8 @@ case "$COMMAND" in
     # set/get 을 쓴다 — 그쪽이 열기·쓰기·닫기를 배타적으로 끝낸다.
     on)
         resolve_ser_addr
+        echo "[$tag] WARNING: gate stays open and no bus lock is held -" \
+             "a concurrent set/get may hit the wrong pot. use set/get to change values." >&2
         echo "Channel $CHANNEL ON: i2ctransfer -f -y -a $I2C_BUS w3@$SER_ADDR 0x02 0xca 0x90"
         i2ctransfer -f -y -a "$I2C_BUS" w3@"$SER_ADDR" 0x02 0xca 0x90
         ;;
