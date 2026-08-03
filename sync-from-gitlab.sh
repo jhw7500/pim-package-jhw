@@ -124,12 +124,25 @@ filter_loopback() {
 rsync_dry_changed_files() {
     # --checksum: 기본 비교는 size+mtime 이라 내용이 같아도 mtime 만 다르면 변경으로
     # 잡힌다. 그 목록으로 커밋 메시지를 만들면 실제로 바뀌지 않은 파일이 딸려 온다.
-    rsync -an --delete --checksum -i --out-format='%i|%n' \
+    #
+    # 종료코드를 확인한다. 삼키고 파이프로 넘기면 awk 의 상태만 남아, rsync 실패가
+    # 빈 목록이 되어 '변경 없음'으로 읽힌다.
+    local out rc=0 errf
+    errf=$(mktemp)
+    out=$(rsync -an --delete --checksum -i --out-format='%i|%n' \
         --filter=':- .gitignore' \
         --exclude='.git' \
         --exclude='upgrade_file/dpkg/pimwebserver_*.deb' \
         --exclude='dist/pim/opt/pim/driver/sc16is7xx_ext.ko' \
-        "$@" 2>/dev/null \
+        "$@" 2>"$errf") || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        echo "rsync 실패(rc=${rc}): $(head -3 "$errf" | tr '\n' ' ')" >&2
+        rm -f "$errf"
+        return 1
+    fi
+    rm -f "$errf"
+
+    printf '%s\n' "$out" \
         | awk -F'|' '
             {
                 c = substr($1, 1, 1)
