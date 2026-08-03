@@ -1,17 +1,24 @@
 #!/bin/bash
 
-SCRIPT_NAME=$(basename "$0")
+tag=$(basename "$0")
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+CHANNEL_HELPER="$SCRIPT_DIR/cam_channel_resolve.sh"
 
 usage() {
-    echo "Usage: $SCRIPT_NAME <channel> <command> [value]"
+    echo "Usage: $tag <channel> <command> [value]"
     echo "  channel: 0, 1, 2, 3"
     echo "  command: on, off, set, get"
     echo ""
     echo "Examples:"
-    echo "  $SCRIPT_NAME 0 on        # Enable channel 0"
-    echo "  $SCRIPT_NAME 0 off       # Disable channel 0"
-    echo "  $SCRIPT_NAME 0 set 0x10  # Set MCP4018 wiper value"
-    echo "  $SCRIPT_NAME 0 get       # Get MCP4018 wiper value"
+    echo "  $tag 0 on        # Enable channel 0"
+    echo "  $tag 0 off       # Disable channel 0"
+    echo "  $tag 0 set 0x10  # Set MCP4018 wiper value"
+    echo "  $tag 0 get       # Get MCP4018 wiper value"
+    exit 1
+}
+
+die() {
+    echo "[$tag] $*" >&2
     exit 1
 }
 
@@ -22,135 +29,86 @@ fi
 CHANNEL=$1
 COMMAND=$2
 
-# 채널 → I2C 버스, 같은 버스의 짝 채널, 듀얼 구성에서의 시리얼라이저 주소.
+MCP4018_ADDR=0x2f
+
+# 버스는 모드와 무관하다. set/get 은 MCP4018(0x2f)로 직접 가므로 듀얼/단일 판정이
+# 필요 없고, 판정에 실패했다고 막히면 안 된다. 그래서 여기서 따로 정한다.
 case "$CHANNEL" in
-    0) I2C_BUS=2; PEER_CH=1; SER_IF_DUAL=0x40 ;;
-    1) I2C_BUS=2; PEER_CH=0; SER_IF_DUAL=0x60 ;;
-    2) I2C_BUS=1; PEER_CH=3; SER_IF_DUAL=0x40 ;;
-    3) I2C_BUS=1; PEER_CH=2; SER_IF_DUAL=0x60 ;;
-    *)
-        echo "Error: Invalid channel '$CHANNEL'. Must be 0, 1, 2, or 3." >&2
-        exit 1
-        ;;
+    0|1) I2C_BUS=2 ;;
+    2|3) I2C_BUS=1 ;;
+    *)   die "invalid channel: $CHANNEL (expected 0..3)" ;;
 esac
 
-MCP4018_ADDR=0x2f
-SER_DEFAULT=0x40    # MAX9295 파워온 기본 I2C 주소
-EDGECONF_DIR="${EDGECONF_DIR:-/root/shared_v}"
-
-# ── 시리얼라이저 주소 해석 ─────────────────────────────────────────────
+# ── 시리얼라이저 주소 ──────────────────────────────────────────────────
 # 0x60 은 홀수 채널의 하드웨어 속성이 아니다. 듀얼 구성 초기화에서만 한쪽
 # 시리얼라이저를 0x40 → 0x60 으로 옮기기 때문에 생기는 주소다 — max9296.c 의
 # 2ch 테이블에 있는 {0x40, 0x0000, 2, 0xC0} 이 드라이버 전체에서 유일한
-# 시리얼라이저 자기주소 쓰기다. 단일채널 테이블(_720p_30fps_L/_R)에는 그 리맵이
-# 없고 시리얼라이저를 0x40 으로만 접근한다.
+# 시리얼라이저 자기주소 쓰기다. 단일채널 테이블에는 그 리맵이 없다.
 #
-# 실측(단일 ch1 장비):
-#   i2ctransfer -f -y -a 2 w3@0x60 0x02 0xca 0x90   → NAK
-#   i2ctransfer -f -y -a 2 w3@0x40 0x02 0xca 0x90   → ACK
+#   실측(단일 ch1 장비): w3@0x60 → NAK / w3@0x40 → ACK
 #
-# 따라서 듀얼/단일을 먼저 가려야 주소가 정해진다. 판단 근거는 edgeconf 의
-# chx.enable 이다 — 사용하는 채널만 true 로 두는 것이 운용 원칙이고,
-# BG_Check_for_pim.sh 등 나머지 스크립트도 같은 근거를 쓴다.
+# 그래서 듀얼/단일을 먼저 가려야 주소가 정해진다. 판정은 cam_channel_resolve.sh
+# 에 맡긴다 — edgeconf 를 먼저 보고 없으면 i2cdetect 로 폴백하며, cam_* 계열
+# 스크립트 7개가 이미 같은 근거를 쓴다. 여기서 다시 구현하면 갈라진다.
 #
-# 응답 여부만으로는 판별할 수 없다. 단일 구성에서는 요청한 채널이 무엇이든
-# 0x40 이 응답하므로, ch0 단독 장비에서 `1 on` 을 해도 ch0 카메라를 건드리게
-# 된다. 설정을 봐야 그런 요청을 거절할 수 있다.
-#
-# 시리얼라이저 주소가 필요한 것은 MFP4 게이트(on/off)뿐이다. wiper(set/get)는
-# MCP4018 로 직접 가므로 이 해석과 무관하다.
+# 시리얼라이저 주소가 필요한 것은 MFP4 게이트(on/off)뿐이다.
 
-ser_responds() {   # $1=bus  $2=addr — MAX9295 DEV_ADDR(0x0000) 1바이트 읽기
-    i2ctransfer -f -y -a "$1" w2@"$2" 0x00 0x00 r1 >/dev/null 2>&1
-}
+[ -f "$CHANNEL_HELPER" ] || die "missing helper: $CHANNEL_HELPER"
+# shellcheck source=/dev/null
+source "$CHANNEL_HELPER"
 
-# edgeconf 에서 채널 enable 을 읽는다. 파일 선택은 BG_Check_for_pim.sh 와 동일
-# (가장 최근 edgeconf_*.json). 출력: 1(enable) / 0(disable). 못 읽으면 return 1.
-read_ch_enable() {
-    local ch="$1" cfg key val
+# 요청 채널이 실제로 쓰이는 채널인지 확인한다.
+#
+# 헬퍼의 MODE 는 'single' 이라는 사실만 알려주고 어느 쪽이 활성인지는 알려주지
+# 않는다. 단일 구성에는 시리얼라이저가 0x40 하나뿐이라 어느 채널을 지정해도 그놈이
+# 응답하므로, 이 확인이 없으면 ch0 단독 장비에서 `1 on` 이 ch0 카메라를 건드린다.
+#
+# 파일은 헬퍼가 찾아 둔 EDGECONF_FILE 을 그대로 쓴다. // false 는 여기서 안전하다
+# — 키가 없으면 '쓰지 않는 채널'이고, 사용하는 채널만 true 로 두는 것이 원칙이다.
+ch_enabled() {
+    local bus_key val
     command -v jq >/dev/null 2>&1 || return 1
-    cfg=$(ls -ptr "${EDGECONF_DIR}"/edgeconf_*.json 2>/dev/null \
-          | grep -v '/$' | tail -1 | tr -d '\r\n')
-    [ -n "$cfg" ] && [ -r "$cfg" ] || return 1
-    case "$ch" in
-        0|1) key=".VHL_CAM.i2c2.ch${ch}.enable" ;;
-        2|3) key=".VHL_CAM.i2c1.ch${ch}.enable" ;;
-        *)   return 1 ;;
-    esac
-    # jq 의 // 는 false 도 '비어있음'으로 쳐서 기본값으로 바꿔 버린다. enable=false
-    # 가 그대로 사라지므로 여기서는 쓰지 않는다. 키가 없으면 null 이 나온다.
-    val=$(jq -r "${key}" "$cfg" 2>/dev/null) || return 1
-    case "$val" in
-        true)  echo 1 ;;
-        false) echo 0 ;;
-        *)     return 1 ;;    # null 등 — 설정을 신뢰하지 않는다
-    esac
-}
-
-# 설정을 읽을 수 없을 때의 폴백. 주소를 확정할 수 없으므로 추정임을 밝힌다.
-resolve_by_probe() {
-    if ser_responds "$I2C_BUS" "$SER_IF_DUAL"; then
-        SER_ADDR=$SER_IF_DUAL
-        return 0
-    fi
-    if [ "$SER_IF_DUAL" != "$SER_DEFAULT" ] && ser_responds "$I2C_BUS" "$SER_DEFAULT"; then
-        SER_ADDR=$SER_DEFAULT
-        echo "Note: $SER_IF_DUAL 무응답 → 단일 구성으로 추정하고 $SER_DEFAULT 를 쓴다." >&2
-        echo "      단일 구성에는 시리얼라이저가 하나뿐이라 이 주소가 ch${CHANNEL} 의" >&2
-        echo "      것인지는 확인할 수 없다. edgeconf 를 읽을 수 있으면 확정된다." >&2
-        return 0
-    fi
-    echo "Error: bus $I2C_BUS 에서 시리얼라이저를 찾지 못했다 ($SER_IF_DUAL, $SER_DEFAULT 모두 무응답)." >&2
-    echo "       카메라 연결과 드라이버 로드 상태를 확인하라." >&2
-    return 1
+    [ -n "$EDGECONF_FILE" ] && [ -r "$EDGECONF_FILE" ] || return 1
+    bus_key=$(channel_bus_key "$1") || return 1
+    val=$(jq -r --arg b "$bus_key" --arg c "ch$1" \
+          '(.VHL_CAM[$b][$c].enable // false)' "$EDGECONF_FILE" 2>/dev/null) || return 1
+    [ "$val" = "true" ]
 }
 
 resolve_ser_addr() {
-    local me peer
+    resolve_channel_context "$CHANNEL"   # MODE / BUS / RESOLVE_SOURCE / EDGECONF_FILE
 
-    me=$(read_ch_enable "$CHANNEL") || {
-        echo "Note: edgeconf 를 읽지 못해 응답 탐색으로 대체한다 (${EDGECONF_DIR})." >&2
-        resolve_by_probe
-        return
-    }
-
-    # 요청 채널이 비활성이면 여기서 끝낸다. 짝 채널을 먼저 읽으면, 그쪽 읽기가
-    # 실패했을 때(키 누락 등) 폴백으로 새면서 비활성 채널을 서비스하게 된다.
-    # 폴백은 enable 을 보지 않으므로 이 PR 이 막으려던 구멍이 그대로 다시 열린다.
-    if [ "$me" != "1" ]; then
-        echo "Error: ch${CHANNEL} 은 edgeconf 에서 enable 이 아니다 — 사용 중인 채널이 아니다." >&2
-        echo "       단일 구성에서 다른 채널을 지정하면 엉뚱한 카메라를 건드리므로 막는다." >&2
-        return 1
+    if [ "$MODE" = "dual" ]; then
+        case "$CHANNEL" in
+            0|2) SER_ADDR=0x40 ;;
+            1|3) SER_ADDR=0x60 ;;
+        esac
+        return 0
     fi
 
-    peer=$(read_ch_enable "$PEER_CH") || {
-        echo "Note: edgeconf 의 ch${PEER_CH} 를 읽지 못해 응답 탐색으로 대체한다." >&2
-        resolve_by_probe
-        return
-    }
-
-    if [ "$peer" = "1" ]; then
-        SER_ADDR=$SER_IF_DUAL        # 듀얼 — 한쪽이 0x60 으로 리맵돼 있다
-    else
-        SER_ADDR=$SER_DEFAULT        # 단일 — 리맵이 없어 0x40 하나뿐이다
+    SER_ADDR=0x40
+    # 단일 구성에서만 채널 확인이 의미가 있다. 듀얼은 주소로 이미 갈린다.
+    # edgeconf 로 판정된 경우에만 확인한다 — i2cdetect 폴백은 어느 채널이
+    # 활성인지 알려주지 못하므로 없는 근거로 막지 않는다.
+    if [ "$RESOLVE_SOURCE" = "edgeconf" ] && ! ch_enabled "$CHANNEL"; then
+        die "ch${CHANNEL} is not enabled in edgeconf - not a channel in use." \
+            "단일 구성에서 다른 채널을 지정하면 엉뚱한 카메라를 건드리므로 막는다."
     fi
-
-    if ! ser_responds "$I2C_BUS" "$SER_ADDR"; then
-        echo "Error: 설정상 ch${CHANNEL} 의 시리얼라이저는 $SER_ADDR 인데 응답이 없다." >&2
-        echo "       카메라 연결과 드라이버 로드 상태를 확인하라." >&2
-        return 1
+    if [ "$RESOLVE_SOURCE" != "edgeconf" ]; then
+        echo "[$tag] Note: 단일 구성 판정이 ${RESOLVE_SOURCE} 기준이라 요청 채널이" \
+             "그 하나인지는 확인할 수 없다." >&2
     fi
     return 0
 }
 
 case "$COMMAND" in
     on)
-        resolve_ser_addr || exit 1
+        resolve_ser_addr
         echo "Channel $CHANNEL ON: i2ctransfer -f -y -a $I2C_BUS w3@$SER_ADDR 0x02 0xca 0x90"
         i2ctransfer -f -y -a "$I2C_BUS" w3@"$SER_ADDR" 0x02 0xca 0x90
         ;;
     off)
-        resolve_ser_addr || exit 1
+        resolve_ser_addr
         echo "Channel $CHANNEL OFF: i2ctransfer -f -y -a $I2C_BUS w3@$SER_ADDR 0x02 0xca 0x80"
         i2ctransfer -f -y -a "$I2C_BUS" w3@"$SER_ADDR" 0x02 0xca 0x80
         ;;
