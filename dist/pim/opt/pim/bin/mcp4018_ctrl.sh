@@ -14,6 +14,10 @@ usage() {
     echo "  $tag 0 off       # Disable channel 0"
     echo "  $tag 0 set 0x10  # Set MCP4018 wiper value"
     echo "  $tag 0 get       # Get MCP4018 wiper value"
+    echo ""
+    echo "Note: 값을 읽고 쓰려면 set/get 을 쓴다 - 게이트 열기·전송·닫기를"
+    echo "      배타적으로 끝낸다. on/off 는 게이트를 열어 둔 채 끝나고 버스"
+    echo "      락도 잡지 않는 진단용이라, 동시에 도는 set/get 과 경쟁한다."
     exit 1
 }
 
@@ -144,7 +148,10 @@ acquire_bus_lock() {
     # 포기하고 진행하되, 조용히 넘기지는 않는다 — 이 상태에서는 동시 실행이
     # 양쪽 pot 을 건드릴 수 있다는 사실이 드러나야 한다.
     # fd 번호는 고정하지 않는다. 9 를 박아 두면 나중에 다른 곳에서 9 를 쓰게 됐을 때
-    # 조용히 덮어쓴다. {var}> 로 빈 fd 를 할당받는다(bash 4.1+).
+    # 조용히 덮어쓴다. {var}> 로 빈 fd 를 할당받는다.
+    #
+    # 이 문법은 bash 4.1+ 를 요구한다. 같은 패키지의 chk_cam_operate.sh 가 이미
+    # declare -A / mapfile(bash 4.0+)을 쓰고 있어 추가 요구는 미미하다.
     if ! { exec {LOCK_FD}>"$lock"; } 2>/dev/null; then
         echo "[$tag] WARNING: cannot open lock $lock - proceeding without bus exclusion" >&2
         return 0
@@ -181,7 +188,10 @@ gate_open_exclusive() {
 # 닫기 실패를 조용히 넘기면 게이트가 열린 채 남아 다음 명령이 양쪽 pot 을 건드린다.
 gate_close() {
     [ "$GATE_TOUCHED" -eq 1 ] || return 0
-    mfp4_gate "$SER_ADDR" off && return 0
+    if mfp4_gate "$SER_ADDR" off; then
+        GATE_TOUCHED=0      # 닫았으니 다시 닫을 것도 없다
+        return 0
+    fi
     echo "[$tag] WARNING: failed to close MCP4018 gate (ser $SER_ADDR) - it may stay open" >&2
     return 1
 }
