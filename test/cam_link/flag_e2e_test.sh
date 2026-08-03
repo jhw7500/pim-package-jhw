@@ -131,10 +131,13 @@ t_eq "RX3(0x2f) 진단 읽기 발생" \
      "$([ "$(grep -c '0x00 0x2f' "$WORK/callargs")" -gt 0 ] && echo yes || echo no)" "yes"
 
 echo
-echo "=== RX3 faillock 디코드 (판정에는 쓰지 않고 로그에만) ==="
-# ch0 제거 → FAILLOCK_A(0x01) → faillock=A / ch1 제거 → FAILLOCK_B(0x10) → faillock=B
+echo "=== RX3 링크 디코드 (판정에는 쓰지 않고 로그에만) ==="
+# SYNC_LOCKED+WBLOCK 이 둘 다 서야 그 링크를 살아 있는 것으로 본다.
+#   하위 니블(Link A) = 홀수 채널, 상위 니블(Link B) = 짝수 채널.
+# head -1 은 adapter 2(ch0/ch1) 로그를 잡으므로 base=0 이다.
+# 0x62 는 WBLOCK_A 만 서고 SYNC_LOCKED_A 는 빠진 경우 — 살아있다고 보지 않는다.
 # CTRL3 는 이상값(0x36)을 주어 log_ctrl3 가 호출되게 한다.
-for pair in "0x01:A" "0x10:B" "0x11:AB" "0x00:none"; do
+for pair in "0x66:ok" "0x60:ch1_down" "0x06:ch0_down" "0x00:both_down" "0x62:ch1_down"; do
     rx3v="${pair%%:*}"; want="${pair##*:}"
     rm -f "$WORK/logged"
     printf '#!/bin/sh\nexit 0\n' > "$STUB/sleep"
@@ -151,8 +154,17 @@ esac
 STUBEOF
     chmod +x "$STUB/sleep" "$STUB/logger" "$STUB/i2ctransfer"
     PATH="$STUB:$PATH" bash "$CHK" 15 >/dev/null 2>&1 || true
-    t_eq "RX3 $rx3v → faillock" \
-         "$(grep -oE 'faillock=[A-Za-z]+' "$WORK/logged" | head -1)" "faillock=$want"
+    t_eq "RX3 $rx3v → link (adapter 2, base=0)" \
+         "$(grep -oE 'link=[A-Za-z0-9_]+' "$WORK/logged" | head -1)" "link=$want"
+    # 같은 실행의 마지막 로그는 adapter 1(ch2/ch3) 것이다. 같은 니블이 base=2 로
+    # 환산되는지 확인한다 — 버스별 기준 채널이 어긋나면 여기서 걸린다.
+    case "$want" in
+        ch0_down) want2="ch2_down" ;;
+        ch1_down) want2="ch3_down" ;;
+        *)        want2="$want"    ;;
+    esac
+    t_eq "RX3 $rx3v → link (adapter 1, base=2)" \
+         "$(grep -oE 'link=[A-Za-z0-9_]+' "$WORK/logged" | tail -1)" "link=$want2"
 done
 
 t_summary "플래그 생성 E2E"

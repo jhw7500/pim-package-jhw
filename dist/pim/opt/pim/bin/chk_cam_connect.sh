@@ -56,21 +56,24 @@ LM_BOTH_EXPECT=$LM_SPLITTER
 CH_EVEN_LINK=$LM_LINK_B    # ch0, ch2 → LINK_MODE Link B (드라이버 _L 테이블)
 CH_ODD_LINK=$LM_LINK_A     # ch1, ch3 → LINK_MODE Link A (드라이버 _R 테이블)
 
-# ── MAX9296 RX3(0x002F) — 링크별 래치 ──────────────────────────────
+# ── MAX9296 RX3(0x002F) — 링크별 상태 ──────────────────────────────
 #  bit6 SYNC_LOCKED_B / bit5 WBLOCK_B / bit4 FAILLOCK_B
 #  bit2 SYNC_LOCKED_A / bit1 WBLOCK_A / bit0 FAILLOCK_A
+#
 # FAILLOCK 은 Read-Clear 다(실측: 0x01 → 0x00 → 0x00). 링크가 계속 죽어 있어도
-# 두 번째 읽기부터 0이 되므로 레벨 신호로 쓸 수 없다.
+# 두 번째 읽기부터 0이라 레벨 신호로 못 쓴다. 그래서 판정에도 표기에도 쓰지 않는다.
 #
-# 반면 SYNC_LOCKED/WBLOCK 은 RO 라 read-clear 가 아니고, 런타임 이탈에서 링크별로
-# 정확히 갈린다(실측: 0x66 → ch1 제거 → 0x60). 즉 현장의 실제 실패 유형에서는 이
-# 비트들로 채널 특정이 가능하다. 다만 부팅 시점 부재에서는 양 링크가 다 0이 되어
-# 구분되지 않는다.
+# SYNC_LOCKED/WBLOCK 은 RO 라 read-clear 가 아니고 런타임 이탈에서 링크별로 정확히
+# 갈린다(실측: 둘 다 연결 0x66 → ch1 제거 → 0x60). 둘이 모두 서야 그 링크를 살아
+# 있는 것으로 본다. 부팅 시점 부재에서는 양 링크가 다 0이라 구분되지 않는다.
 #
-# 이번 변경에서는 판정에 쓰지 않고 진단 로그에만 남긴다. 현장 로그로 두 유형의
-# 분포와 포착률을 확인한 뒤 귀속 사용 여부를 별도로 판단한다.
-RX3_FAILLOCK_A=0x01
-RX3_FAILLOCK_B=0x10
+# 니블 ↔ 채널: 하위(Link A) = 홀수 채널(ch1/ch3), 상위(Link B) = 짝수(ch0/ch2).
+# 위 CH_ODD_LINK/CH_EVEN_LINK 와 같은 근거이며 ch1 제거 실측과 일치한다.
+#
+# 판정에는 쓰지 않고 진단 로그에만 남긴다. 현장 로그에서 이 값과 drv(드라이버
+# link_status)의 일치율을 확인한 뒤 귀속 사용 여부를 별도로 판단한다.
+RX3_LINK_A_UP=0x06    # SYNC_LOCKED_A | WBLOCK_A
+RX3_LINK_B_UP=0x60    # SYNC_LOCKED_B | WBLOCK_B
 
 ENABLE_VAL="true"
 DISABLE_VAL="false"
@@ -149,32 +152,35 @@ classify_ctrl3() {
 # 있다 — 그 순간이 오히려 포착 가치가 가장 높다. 링크 단절(LOCKED=0 → err_both)과는
 # 같은 순간에 공존할 수 없으므로(배타적) 서로의 래치를 가로채지 않는다.
 #
-# faillock=none 의 해석 주의: "실패가 없었다"와 "이미 누가 읽어 지워졌다"를 구분할 수
-# 없다. 다만 드라이버(max9296.c)는 des(0x48) 상태 레지스터를 전혀 읽지 않으므로
-# (i2c read 3건 모두 AP1302 ISP 대상) 실사용에서 다른 소비자는 이 스크립트뿐이다.
-read_rx3_faillock() {
-    local raw val a b
+# both_down 의 해석 주의: 부팅 시점 부재도, 두 카메라가 다 빠진 경우도 같은 값이다.
+# 즉 both_down 은 채널을 지목하지 못한다. 한쪽만 내려간 경우에만 귀속에 쓸 수 있다.
+#
+# $1=i2c adapter (2 → ch0/ch1, 1 → ch2/ch3)
+# 출력: "<원시값>/<ok|chN_down|both_down>" 또는 읽기 실패 시 "NA/NA"
+read_rx3_links() {
+    local raw val base a b
     raw=$(i2ctransfer -f -y -a "$1" w2@0x48 0x00 0x2f r1 2>/dev/null \
           | grep -oE '0[xX][0-9a-fA-F]+' | head -1)
     [ -n "$raw" ] || { printf 'NA/NA'; return; }
     val=$(( raw )); a=0; b=0
-    [ $(( val & RX3_FAILLOCK_A )) -ne 0 ] && a=1
-    [ $(( val & RX3_FAILLOCK_B )) -ne 0 ] && b=1
-    if   [ "$a" -eq 1 ] && [ "$b" -eq 1 ]; then printf '%s/AB' "$raw"
-    elif [ "$a" -eq 1 ];                   then printf '%s/A'  "$raw"
-    elif [ "$b" -eq 1 ];                   then printf '%s/B'  "$raw"
-    else                                        printf '%s/none' "$raw"
+    base=0; [ "$1" = "1" ] && base=2
+    [ $(( val & RX3_LINK_A_UP )) -eq $(( RX3_LINK_A_UP )) ] && a=1
+    [ $(( val & RX3_LINK_B_UP )) -eq $(( RX3_LINK_B_UP )) ] && b=1
+    if   [ "$a" -eq 1 ] && [ "$b" -eq 1 ]; then printf '%s/ok' "$raw"
+    elif [ "$a" -eq 0 ] && [ "$b" -eq 0 ]; then printf '%s/both_down' "$raw"
+    elif [ "$a" -eq 0 ]; then printf '%s/ch%d_down' "$raw" "$((base + 1))"
+    else                      printf '%s/ch%d_down' "$raw" "$base"
     fi
 }
 
-# 판정 근거를 원시값·비트·드라이버 비트·RX3 래치까지 한 줄로 남긴다.
-# rx3/faillock 은 이번 변경에서 기록 전용이며 판정에는 쓰지 않는다.
+# 판정 근거를 원시값·비트·드라이버 비트·RX3 링크 상태까지 한 줄로 남긴다.
+# rx3/link 는 기록 전용이며 판정에는 쓰지 않는다. drv 와 대조해 일치율을 재기 위한 것.
 # $1=level  $2=i2c adapter  $3=호출부 LINENO  $4=메시지  $5=CTRL3 원시값
 log_ctrl3() {
     local drv rx3
     drv=$(cat "/sys/bus/i2c/devices/$2-0048/link_status" 2>/dev/null | tr -d '\n')
-    rx3=$(read_rx3_faillock "$2")
-    logger -p "local0.$1" "[CHK][$tag:$3] $4 : $5 (mode=$ctrl3_mode locked=$ctrl3_locked error=$ctrl3_error cmu=$ctrl3_cmu verdict=$ctrl3_verdict drv=${drv:-NA} rx3=${rx3%%/*} faillock=${rx3##*/})"
+    rx3=$(read_rx3_links "$2")
+    logger -p "local0.$1" "[CHK][$tag:$3] $4 : $5 (mode=$ctrl3_mode locked=$ctrl3_locked error=$ctrl3_error cmu=$ctrl3_cmu verdict=$ctrl3_verdict drv=${drv:-NA} rx3=${rx3%%/*} link=${rx3##*/})"
 }
 
 cam_ch_en=$1
