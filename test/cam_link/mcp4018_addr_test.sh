@@ -212,19 +212,39 @@ echo
 echo "=== 같은 버스는 한 번에 한 프로세스만 (게이트 상태가 프로세스 밖에 있으므로) ==="
 if command -v flock >/dev/null 2>&1; then
     LOCKDIR="$WORK/lock"; mkdir -p "$LOCKDIR"
+    export MCP4018_LOCK_WAIT=1     # 기본 5s 를 기다리면 스위트가 느려진다
     write_conf true true false false
 
-    # 먼저 락을 잡고 있으면 진입하지 못한다 (5s 대기 후 포기).
-    flock "$LOCKDIR/mcp4018_i2c2.lock" -c 'sleep 8' &
-    holder=$!
-    sleep 0.5
+    # 락을 잡아 두는 보조 프로세스. `flock -c 'sleep N'` 은 sleep 이 자식이라
+    # kill 로 fd 가 안 닫혀 락이 남는다. 파일 신호로 스스로 빠져나오게 한다.
+    RELEASE="$WORK/release"
+    hold_lock() {
+        rm -f "$RELEASE"
+        ( exec 9>"$LOCKDIR/mcp4018_i2c2.lock"
+          flock 9
+          while [ ! -f "$RELEASE" ]; do sleep 0.05; done ) &
+        holder=$!
+        sleep 0.5
+    }
+    release_lock() { touch "$RELEASE"; wait "$holder" 2>/dev/null; }
+
+    # 먼저 락을 잡고 있으면 진입하지 못한다 (대기 후 포기).
+    hold_lock
     : > "$CALLS"
     out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" EDGECONF_DIR="$CONF" \
           MCP4018_LOCK_DIR="$LOCKDIR" bash "$SCRIPT" 1 set 0x10 2>&1); rc=$?
-    t_eq "락이 잡혀 있으면 게이트를 건드리지 않는다" \
+    t_eq "set: 락이 잡혀 있으면 게이트를 건드리지 않는다" \
          "exit=$rc gate=$(grep -c 0xca "$CALLS")" "exit=1 gate=0"
     t_eq "대기 실패를 알린다" "$(printf '%s' "$out" | grep -c 'holds i2c-2')" 1
-    kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
+
+    # get 도 게이트를 조작하므로 같은 락을 잡아야 한다. set 만 검증하면 get 쪽
+    # 누락이 그대로 통과한다(실제로 그렇게 빠뜨렸다).
+    : > "$CALLS"
+    out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" EDGECONF_DIR="$CONF" \
+          MCP4018_LOCK_DIR="$LOCKDIR" bash "$SCRIPT" 1 get 2>&1); rc=$?
+    t_eq "get: 락이 잡혀 있으면 게이트를 건드리지 않는다" \
+         "exit=$rc gate=$(grep -c 0xca "$CALLS")" "exit=1 gate=0"
+    release_lock
 
     # 락이 풀리면 정상 동작하고, 끝난 뒤 다음 호출도 막히지 않는다.
     t_eq "락 해제 후 정상 동작"  "$(MCP4018_LOCK_DIR=$LOCKDIR seq_for '' 1 set 0x10)" \
@@ -233,13 +253,11 @@ if command -v flock >/dev/null 2>&1; then
          "0x60 0x80,0x40 0x90,0x40 0x80"
 
     # 다른 버스는 서로 막지 않는다.
-    flock "$LOCKDIR/mcp4018_i2c2.lock" -c 'sleep 8' &
-    holder=$!
-    sleep 0.5
+    hold_lock
     write_conf false false true true
     t_eq "bus1 은 bus2 락에 걸리지 않는다" "$(MCP4018_LOCK_DIR=$LOCKDIR seq_for '' 3 set 0x10)" \
          "0x40 0x80,0x60 0x90,0x60 0x80"
-    kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
+    release_lock
 else
     echo "  SKIP flock 없음"
 fi
