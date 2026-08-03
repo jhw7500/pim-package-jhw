@@ -138,10 +138,9 @@ fn_wifiscan() {
 	fn_LogWrite $_infolvl "Done wifi_scan"
 }
 
-fn_netplan_reapply() {
-	netplan apply
-	/opt/cis/bin/update_wpaprm.sh
-	fn_LogWrite $_infolvl "Done netplan apply"
+fn_network_update() {
+	python3 /opt/cis/bin/update_network.py --force
+	fn_LogWrite $_infolvl "Done network update"
 }
 
 fn_reboot() {
@@ -255,7 +254,7 @@ fn_do_wifi_check() {
 							fi
 
 							if [ $_reboot_fail == $_false ]; then
-								fn_netplan_reapply
+								fn_network_update
 							fi
 						fi
 

@@ -214,6 +214,11 @@ def fw_upgrade(update_path, auto_mode):
         try:
             if auto_mode:
                 subprocess.call(
+                    ["dbuart", "<SETUARTMON,0>"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                subprocess.call(
                     ["cism", "stop"],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
@@ -224,6 +229,11 @@ def fw_upgrade(update_path, auto_mode):
             if auto_mode:
                 subprocess.call(
                     ["cism", "start"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                subprocess.call(
+                    ["dbuart", "<SETUARTMON,1>"],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )

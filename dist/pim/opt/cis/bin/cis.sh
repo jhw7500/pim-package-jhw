@@ -13,7 +13,7 @@ start() {
     _dev_wlan=$(python3 /opt/cis/bin/getconfval.py dev_wlan | tr -d '\r\n')
     _daughterboard_type=$(python3 /opt/cis/bin/getconfval.py daughterboard_type | tr -d '\r\n')
 
-    rm /etc/netplan/${_dev_wlan}.yaml > /dev/null 2>&1
+    #rm /etc/netplan/${_dev_wlan}.yaml > /dev/null 2>&1
     /opt/cis/bin/automnt.sh start
     /opt/cis/bin/init_daughter_gpio.sh
     for var in {1..120}; do
@@ -30,7 +30,7 @@ start() {
         python3 /opt/cis/bin/db_fw_check.py > /dev/null 2> /dev/null
         python3 /opt/cis/bin/auto_fwupgrade.py > /dev/null 2> /dev/null
         python3 /opt/cis/bin/init.py power_on > /dev/null 2> /dev/null
-        python3 /opt/cis/bin/update_network.py > /dev/null 2> /dev/null
+        python3 /opt/cis/bin/update_network.py --force > /dev/null 2> /dev/null
         
         cism start
         wifim start

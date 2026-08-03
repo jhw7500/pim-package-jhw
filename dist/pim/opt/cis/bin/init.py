@@ -270,6 +270,10 @@ def init_conf(conf_path):
     if is_json_key_present(edgeconf, "NETWORK") == False:
         return -2
     else:
+        net_used = edgeconf["NETWORK"].get("used","WLAN0")
+        if net_used != "ETH0" and net_used != "ETH1" and net_used != "WLAN0" :
+            edgeconf["NETWORK"]["used"] = "WLAN0"
+
         if is_json_key_present(edgeconf["NETWORK"], "WLAN0") == False:
             return -2
         else:

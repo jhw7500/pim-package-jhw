@@ -406,13 +406,22 @@ else
 fi
 
 package="pimwebserver"
-if [ -z "$(dpkg -s $package 2> /dev/null)" ]; then
-  echo '{"PROGRESS":'"$prog_per"',"MSG":"install '"$package"'"}'
-  var='pimwebserver_1.0.0_all.deb'
-  echo '{"PROGRESS":'"$prog_per"',"MSG":"dpkg -i '"$var"'"}'
-  dpkg -i "$var" > /dev/null 2> /dev/null
+target_ver="1.1.0"
+deb_file="pimwebserver_${target_ver}_all.deb"
+installed_ver=$(dpkg-query -W -f='${Version}' "$package" 2>/dev/null)
+
+if [ -z "$installed_ver" ]; then
+    echo '{"PROGRESS":'"$prog_per"',"MSG":"install '"$package"' (not installed)"}'
+    echo '{"PROGRESS":'"$prog_per"',"MSG":"dpkg -i '"$deb_file"'"}'
+    dpkg -i "$deb_file" >/dev/null 2>&1
+
+elif dpkg --compare-versions "$installed_ver" lt "$target_ver"; then
+    echo '{"PROGRESS":'"$prog_per"',"MSG":"upgrade '"$package"' '"$installed_ver"' -> '"$target_ver"'"}'
+    echo '{"PROGRESS":'"$prog_per"',"MSG":"dpkg -i '"$deb_file"'"}'
+    dpkg -i "$deb_file" >/dev/null 2>&1
+
 else
-  echo '{"PROGRESS":'"$prog_per"',"MSG":"installed '"$package"'"}'
+    echo '{"PROGRESS":'"$prog_per"',"MSG":"installed '"$package"' '"$installed_ver"'"}'
 fi
 
 ########################################

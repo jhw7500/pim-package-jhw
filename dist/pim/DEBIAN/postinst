@@ -490,7 +490,7 @@ fi
 
   echo "update_network.py"
   python3 /opt/cis/bin/init.py power_on
-  python3 /opt/cis/bin/update_network.py
+  python3 /opt/cis/bin/update_network.py --force
 
   #echo "check swap memory 512MB"
   #cur_swap=$(/opt/pim/bin/swap_mem.sh is_size)
