@@ -143,12 +143,14 @@ acquire_bus_lock() {
     # 락 파일을 못 열면(다른 사용자가 만들어 둬 권한이 없는 경우 등) 배타성을
     # 포기하고 진행하되, 조용히 넘기지는 않는다 — 이 상태에서는 동시 실행이
     # 양쪽 pot 을 건드릴 수 있다는 사실이 드러나야 한다.
-    if ! { exec 9>"$lock"; } 2>/dev/null; then
+    # fd 번호는 고정하지 않는다. 9 를 박아 두면 나중에 다른 곳에서 9 를 쓰게 됐을 때
+    # 조용히 덮어쓴다. {var}> 로 빈 fd 를 할당받는다(bash 4.1+).
+    if ! { exec {LOCK_FD}>"$lock"; } 2>/dev/null; then
         echo "[$tag] WARNING: cannot open lock $lock - proceeding without bus exclusion" >&2
         return 0
     fi
     local wait="${MCP4018_LOCK_WAIT:-5}"   # 재정의는 테스트가 빨리 끝나게 하기 위함
-    flock -w "$wait" 9 || die "another $tag holds i2c-$I2C_BUS (waited ${wait}s)"
+    flock -w "$wait" "$LOCK_FD" || die "another $tag holds i2c-$I2C_BUS (waited ${wait}s)"
 }
 
 # 내 게이트만 여는 것으로는 부족하다. 진단용 `on` 은 게이트를 열어 둔 채 끝나므로
@@ -157,16 +159,22 @@ acquire_bus_lock() {
 #
 # 상대를 못 내리면 진행하지 않는다. 상대 ser 이 응답하지 않는 경우(링크 다운)에도
 # 그 MFP4 는 직전 상태를 유지하므로, '응답이 없다'는 '닫혀 있다'가 아니다.
+GATE_TOUCHED=0
 gate_open_exclusive() {
     if [ -n "$PEER_SER_ADDR" ]; then
         mfp4_gate "$PEER_SER_ADDR" off \
             || die "failed to close peer MCP4018 gate (ser $PEER_SER_ADDR) - refusing to write shared $MCP4018_ADDR"
     fi
+    # 열기 '시도' 전에 세운다. 실패가 '안 열렸다'를 보장하지 않으므로, 실패해도
+    # 닫기는 해야 한다. 반대로 상대 내리기에서 멈춘 경우는 내 게이트를 건드린 적이
+    # 없으니 닫을 것도 없다.
+    GATE_TOUCHED=1
     mfp4_gate "$SER_ADDR" on || die "failed to open MCP4018 gate (ser $SER_ADDR)"
 }
 
 # 닫기 실패를 조용히 넘기면 게이트가 열린 채 남아 다음 명령이 양쪽 pot 을 건드린다.
 gate_close() {
+    [ "$GATE_TOUCHED" -eq 1 ] || return 0
     mfp4_gate "$SER_ADDR" off && return 0
     echo "[$tag] WARNING: failed to close MCP4018 gate (ser $SER_ADDR) - it may stay open" >&2
     return 1
