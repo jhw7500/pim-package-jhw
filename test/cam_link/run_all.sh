@@ -17,6 +17,7 @@ TESTS=(
     initcam_modprobe_test.sh
     flag_e2e_test.sh
     disconnect_log_test.sh
+    mcp4018_addr_test.sh
 )
 
 fail=0
