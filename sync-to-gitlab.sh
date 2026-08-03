@@ -297,14 +297,18 @@ sync_pim() {
 
     echo "  복사: ${PIM_DIRS[*]} ${PIM_FILES[*]}"
 
+    # 제외 규칙은 반드시 include 앞에 둔다. rsync 는 먼저 매칭되는 규칙이 이기므로
+    # --include='dist/**' 뒤에 놓으면 도달하지 못해 무력화된다. 실제로 그 상태였고,
+    # 그 결과 GitLab 에만 있던 pimwebserver_*.deb 가 --delete 대상에 올랐다.
+    # (제외된 파일은 --delete 에서 보호되므로 순서만 맞으면 삭제되지 않는다.)
     if [ "$DRY_RUN" = true ]; then
         rsync -avn --delete \
             --filter=':- .gitignore' \
-            "${rsync_includes[@]}" \
-            --exclude='*' \
             --exclude='.git' \
             --exclude='upgrade_file/dpkg/pimwebserver_*.deb' \
             --exclude='dist/pim/opt/pim/driver/sc16is7xx_ext.ko' \
+            "${rsync_includes[@]}" \
+            --exclude='*' \
             "${GITHUB_REPO}/" "${GITLAB_REPO}/"
         echo "  [DRY-RUN] commit/push 건너뜀"
         return 0
@@ -312,11 +316,11 @@ sync_pim() {
 
     rsync -a --delete \
         --filter=':- .gitignore' \
-        "${rsync_includes[@]}" \
-        --exclude='*' \
         --exclude='.git' \
         --exclude='upgrade_file/dpkg/pimwebserver_*.deb' \
         --exclude='dist/pim/opt/pim/driver/sc16is7xx_ext.ko' \
+        "${rsync_includes[@]}" \
+        --exclude='*' \
         "${GITHUB_REPO}/" "${GITLAB_REPO}/"
 
     local sync_msg
