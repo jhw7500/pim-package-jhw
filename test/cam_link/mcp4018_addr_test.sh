@@ -105,6 +105,18 @@ t_eq "단일 폴백 시 Note 로 한계를 알린다" \
      "$(printf '%s' "$out" | grep -c '확인할 수 없다')" 1
 
 echo
+echo "=== on 은 게이트를 열어 둔 채 끝난다는 것을 경고한다 ==="
+# 주석과 usage 에만 있으면 실제 실행 시점에는 안 보인다. on 다음 수동 조작이
+# 이어지는 경우가 이 도구의 오용 경로다.
+write_conf true true false false
+out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" EDGECONF_DIR="$CONF" \
+      bash "$SCRIPT" 0 on 2>&1)
+t_eq "on 실행 시 경고"   "$(printf '%s' "$out" | grep -c 'no bus lock')" 1
+out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" EDGECONF_DIR="$CONF" \
+      MCP4018_LOCK_DIR="$WORK" bash "$SCRIPT" 0 set 0x10 2>&1)
+t_eq "set 에는 그 경고가 없다" "$(printf '%s' "$out" | grep -c 'no bus lock')" 0
+
+echo
 echo "=== set/get 도 비활성 채널이면 막는다 (on/off 와 같은 정책) ==="
 # 단일 구성에는 MCP4018 도 하나뿐이라 `1 set` 이 ch0 의 값을 바꾼다.
 write_conf true false false false
@@ -235,15 +247,19 @@ if command -v flock >/dev/null 2>&1; then
     # 락을 잡아 두는 보조 프로세스. `flock -c 'sleep N'` 은 sleep 이 자식이라
     # kill 로 fd 가 안 닫혀 락이 남는다. 파일 신호로 스스로 빠져나오게 한다.
     RELEASE="$WORK/release"
+    READY="$WORK/lock_ready"
     hold_lock() {
-        rm -f "$RELEASE"
+        rm -f "$RELEASE" "$READY"
         # 프로덕션과 같이 fd 를 동적 할당한다. 고정 fd 는 테스트 환경에서 이미
         # 열려 있는 fd 를 조용히 덮어쓸 수 있다.
         ( exec {hfd}>"$LOCKDIR/mcp4018_i2c2.lock"
           flock "$hfd"
+          touch "$READY"
           while [ ! -f "$RELEASE" ]; do sleep 0.05; done ) &
         holder=$!
-        sleep 0.5
+        # 고정 대기(sleep 0.5)는 부하 높은 러너에서 산발적으로 어긋난다. 락을
+        # 실제로 잡았다는 신호를 기다린다.
+        until [ -f "$READY" ]; do sleep 0.02; done
     }
     release_lock() { touch "$RELEASE"; wait "$holder" 2>/dev/null; }
 
