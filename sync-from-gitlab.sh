@@ -122,7 +122,9 @@ filter_loopback() {
 # rsync dry-run으로 실제 변경/신규/삭제될 파일 목록만 추출 (디렉토리 제외)
 # .last-sync-from-gitlab-* stale에 강건 — 변경되지 않은 파일의 commits는 자동 제외됨
 rsync_dry_changed_files() {
-    rsync -an --delete -i --out-format='%i|%n' \
+    # --checksum: 기본 비교는 size+mtime 이라 내용이 같아도 mtime 만 다르면 변경으로
+    # 잡힌다. 그 목록으로 커밋 메시지를 만들면 실제로 바뀌지 않은 파일이 딸려 온다.
+    rsync -an --delete --checksum -i --out-format='%i|%n' \
         --filter=':- .gitignore' \
         --exclude='.git' \
         --exclude='upgrade_file/dpkg/pimwebserver_*.deb' \
@@ -301,7 +303,7 @@ sync_submodule() {
     echo "  파일 복사: ${sub_repo}/ → ${GITHUB_REPO}/${subdir}/"
 
     if [ "$DRY_RUN" = true ]; then
-        rsync -avn --delete \
+        rsync -avn --delete --checksum \
             --filter=':- .gitignore' \
             --exclude='.git' \
             --exclude='upgrade_file/dpkg/pimwebserver_*.deb' \
@@ -381,7 +383,7 @@ sync_pim() {
     # --include='upgrade_file/**' 뒤에 놓으면 도달하지 못해 무력화된다.
     # (sync-to-gitlab.sh 의 sync_pim 도 같은 문제였다.)
     if [ "$DRY_RUN" = true ]; then
-        rsync -avn --delete \
+        rsync -avn --delete --checksum \
             --filter=':- .gitignore' \
             --exclude='.git' \
             --exclude='upgrade_file/dpkg/pimwebserver_*.deb' \

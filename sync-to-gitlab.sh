@@ -34,6 +34,7 @@ PIM_FILES=("build.sh")
 DRY_RUN=false
 DO_COMMIT=false
 DO_PUSH=false
+FORCE=false
 TARGETS=()
 
 # --- 인자 파싱 ---
@@ -42,6 +43,7 @@ for arg in "$@"; do
         --dry-run) DRY_RUN=true ;;
         --commit)  DO_COMMIT=true ;;
         --push)    DO_COMMIT=true; DO_PUSH=true ;;
+        --force)   FORCE=true ;;
         all)       TARGETS=("ord" "vcm" "vsd" "pim") ;;
         *)         TARGETS+=("$arg") ;;
     esac
@@ -60,6 +62,11 @@ if [ ${#TARGETS[@]} -eq 0 ]; then
   --dry-run      — rsync 시뮬레이션만 (실제 파일 변경 없음)
   --commit       — 파일 sync + GitLab repo에 commit (push 없음)
   --push         — 파일 sync + commit + GitLab origin push
+
+안전 검사:
+  기본           — 역방향(GitLab→GitHub) 동기화가 밀려 있으면 중단한다.
+                   밀린 채로 정방향을 돌리면 GitLab 최신 작업이 되돌아간다.
+  --force        — 안전 검사 우회 (위험)
 EOF
     exit 1
 fi
@@ -67,6 +74,44 @@ fi
 # --- 유틸 함수 ---
 log() { echo "=== $1 ==="; }
 warn() { echo "⚠ $1"; }
+
+# 정방향 sync 전에, 역방향(GitLab→GitHub)으로 가져올 것이 남아 있는지 확인한다.
+#
+# 남아 있는 채로 정방향을 돌리면 GitLab 에만 있는 작업이 GitHub 의 옛 내용으로
+# 덮이거나 --delete 로 지워진다. 실제로 10커밋(pimwebserver 1.1.0, auto_fwupgrade
+# 디버그, redis stop timeout 등)이 밀린 상태로 돌릴 뻔했고, dry-run 을 눈으로 본
+# 덕에 걸렸다. 스크립트가 막아 주지 않으면 같은 일이 반복된다.
+#
+# 마커(.last-sync-from-gitlab-*)로 판단하지 않는 이유: 정방향 sync 자체가 GitLab 에
+# 커밋을 만들어 HEAD 를 앞세우는데, 그 커밋은 GitHub 에서 온 것이라 되가져올 게
+# 없다. 마커 비교는 그때마다 오탐한다. 그래서 '역방향으로 실제 옮겨질 파일이
+# 있는가'를 내용(--checksum)으로 본다.
+#
+# $1=scope  $2.. = 역방향(GitLab→GitHub) rsync 인자
+check_reverse_pending() {
+    local scope="$1"; shift
+    local pending count
+
+    pending=$(rsync_dry_changed_files "$@")
+    [ -z "$pending" ] && return 0
+
+    count=$(printf '%s\n' "$pending" | grep -c .)
+    warn "${scope}: 역방향으로 가져오지 않은 변경이 ${count}건 있다."
+    printf '%s\n' "$pending" | sed 's/^/    /' >&2
+    warn "  이대로 정방향 sync 하면 위 파일이 GitHub 의 옛 내용으로 덮이거나 지워진다."
+    warn "  ./sync-from-gitlab.sh ${scope} 를 먼저 실행하라."
+
+    if [ "$DRY_RUN" = true ]; then
+        warn "  [DRY-RUN] 경고만 하고 계속한다 — 아래 목록에서 피해 범위를 확인하라."
+        return 0
+    fi
+    if [ "$FORCE" = true ]; then
+        warn "  [FORCE] 안전 검사를 무시하고 계속한다."
+        return 0
+    fi
+    echo "중단했다. 확인 후 --force 로 강행할 수 있다." >&2
+    exit 1
+}
 
 # sync-back: prefix 메시지를 가진 commit은 GitLab sync에서 제외
 # (회사 측 변경을 GitHub에 통합한 commit이 다시 GitLab으로 sync되는 것 방지)
@@ -78,7 +123,10 @@ filter_sync_back() {
 # .last-sync-pim stale에 강건 — 변경되지 않은 파일의 commits는 자동 제외됨
 # 인자: rsync에 전달할 옵션/include/exclude/src/dst 모두 그대로 패스스루
 rsync_dry_changed_files() {
-    rsync -an --delete -i --out-format='%i|%n' \
+    # --checksum: rsync 기본 비교는 size+mtime 이라 내용이 같아도 mtime 만 다르면
+    # 변경으로 잡힌다(역방향 sync 직후가 그렇다). 그 목록으로 커밋 메시지를 만들면
+    # 실제로 바뀌지도 않은 파일의 커밋이 딸려 온다. 여기서는 정확도가 우선이다.
+    rsync -an --delete --checksum -i --out-format='%i|%n' \
         --filter=':- .gitignore' \
         --exclude='.git' \
         --exclude='upgrade_file/dpkg/pimwebserver_*.deb' \
@@ -196,6 +244,9 @@ sync_submodule() {
 
     log "${scope} 서브모듈 동기화"
 
+    check_reverse_pending "$scope" \
+        "${GITLAB_REPO}/${subdir}/" "${GITHUB_REPO}/${subdir}/"
+
     # 1. 실제 변경될 파일 dry-run으로 먼저 추출 (.last-sync-pim stale 영향 차단)
     local changed_files
     changed_files=$(rsync_dry_changed_files \
@@ -227,7 +278,7 @@ sync_submodule() {
     echo "  파일 복사: ${GITHUB_REPO}/${subdir}/ → ${GITLAB_REPO}/${subdir}/"
 
     if [ "$DRY_RUN" = true ]; then
-        rsync -avn --delete \
+        rsync -avn --delete --checksum \
             --filter=':- .gitignore' \
             --exclude='.git' \
             --exclude='upgrade_file/dpkg/pimwebserver_*.deb' \
@@ -266,6 +317,9 @@ sync_pim() {
         rsync_includes+=(--include="${f}")
     done
 
+    check_reverse_pending "pim" \
+        "${rsync_includes[@]}" --exclude='*' "${GITLAB_REPO}/" "${GITHUB_REPO}/"
+
     # 1. 실제 변경될 파일 dry-run으로 먼저 추출 (.last-sync-pim stale 영향 차단)
     local changed_files
     changed_files=$(rsync_dry_changed_files \
@@ -302,7 +356,7 @@ sync_pim() {
     # 그 결과 GitLab 에만 있던 pimwebserver_*.deb 가 --delete 대상에 올랐다.
     # (제외된 파일은 --delete 에서 보호되므로 순서만 맞으면 삭제되지 않는다.)
     if [ "$DRY_RUN" = true ]; then
-        rsync -avn --delete \
+        rsync -avn --delete --checksum \
             --filter=':- .gitignore' \
             --exclude='.git' \
             --exclude='upgrade_file/dpkg/pimwebserver_*.deb' \
