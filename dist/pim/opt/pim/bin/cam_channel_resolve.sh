@@ -1,11 +1,15 @@
 #!/bin/bash
 
+# 설정 디렉터리. 재정의를 허용하는 것은 테스트가 실제 /root/shared_v 를 건드리지
+# 않게 하기 위함이다. 이 헬퍼를 쓰는 스크립트가 여럿이라 검증 수단이 필요하다.
+EDGECONF_DIR="${EDGECONF_DIR:-/root/shared_v}"
+
 find_edgeconf_file() {
     local candidate
 
     for candidate in \
-        /root/shared_v/edgeconf_pim.json \
-        /root/shared_v/edgeconf_cis.json
+        "${EDGECONF_DIR}/edgeconf_pim.json" \
+        "${EDGECONF_DIR}/edgeconf_cis.json"
     do
         if [[ -f "$candidate" ]]; then
             printf "%s\n" "$candidate"
@@ -13,8 +17,8 @@ find_edgeconf_file() {
         fi
     done
 
-    if compgen -G "/root/shared_v/edgeconf_*.json" >/dev/null; then
-        ls -t /root/shared_v/edgeconf_*.json 2>/dev/null | head -n 1
+    if compgen -G "${EDGECONF_DIR}/edgeconf_*.json" >/dev/null; then
+        ls -t "${EDGECONF_DIR}"/edgeconf_*.json 2>/dev/null | head -n 1
         return 0
     fi
 
