@@ -118,6 +118,8 @@ check_delete_pending() {
     printf '%s\n' "$deletions" | sed 's/^/    /' >&2
     warn "  GitLab 에만 있는 파일이다. 역방향 동기화가 밀린 것은 아닌지 확인하라."
     warn "  ./sync-from-gitlab.sh ${scope}"
+    warn "  참고: 덮어쓰기는 방향을 알 수 없어 검사하지 않는다. GitLab 이 앞선 파일이"
+    warn "        있는지는 위 dry-run 목록을 직접 확인해야 한다."
 
     if [ "$DRY_RUN" = true ]; then
         warn "  [DRY-RUN] 경고만 하고 계속한다."
@@ -151,26 +153,28 @@ filter_sync_back() {
 # 가드에서는 그게 곧 무력화다. stderr 는 임시 파일로 받아 성공 경로의 파싱을
 # 오염시키지 않는다.
 rsync_dry_raw() {
-    local out rc=0 errf
-    errf=$(mktemp)
+    local out rc=0
+    # stderr 는 가리지 않고 그대로 흘려보낸다. 임시 파일로 받으면 Ctrl+C 나 set -e
+    # 중단 때 /tmp 에 남고, 정작 사용자는 원본 메시지를 못 본다.
     out=$(rsync -an --delete --checksum -i --out-format='%i|%n' \
         --filter=':- .gitignore' \
         --exclude='.git' \
         --exclude='upgrade_file/dpkg/pimwebserver_*.deb' \
         --exclude='dist/pim/opt/pim/driver/sc16is7xx_ext.ko' \
-        "$@" 2>"$errf") || rc=$?
+        "$@") || rc=$?
     if [ "$rc" -ne 0 ]; then
-        echo "rsync 실패(rc=${rc}): $(head -3 "$errf" | tr '\n' ' ')" >&2
-        rm -f "$errf"
+        echo "rsync 실패(rc=${rc}) — 위 오류 참고" >&2
         return 1
     fi
-    rm -f "$errf"
     printf '%s\n' "$out"
 }
 
 rsync_dry_changed_files() {
-    # pipefail 이 켜져 있어 rsync_dry_raw 의 실패가 그대로 전달된다.
-    rsync_dry_raw "$@" \
+    # pipefail 에 기대지 않는다. 안전 가드가 전역 설정 하나에 매달리면, 나중에
+    # 그 설정이 빠졌을 때 실패가 조용히 '변경 없음'으로 바뀐다.
+    local raw
+    raw=$(rsync_dry_raw "$@") || return 1
+    printf '%s\n' "$raw" \
         | awk -F'|' '
             {
                 c = substr($1, 1, 1)
@@ -184,7 +188,9 @@ rsync_dry_changed_files() {
 
 # 삭제될 항목만 뽑는다. rsync -i 는 삭제에 '*deleting' 을 준다.
 rsync_dry_deletions() {
-    rsync_dry_raw "$@" \
+    local raw
+    raw=$(rsync_dry_raw "$@") || return 1
+    printf '%s\n' "$raw" \
         | awk -F'|' '
             $1 ~ /deleting/ {
                 if (substr($2, length($2), 1) != "/") print $2

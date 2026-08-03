@@ -127,20 +127,19 @@ rsync_dry_changed_files() {
     #
     # 종료코드를 확인한다. 삼키고 파이프로 넘기면 awk 의 상태만 남아, rsync 실패가
     # 빈 목록이 되어 '변경 없음'으로 읽힌다.
-    local out rc=0 errf
-    errf=$(mktemp)
+    # stderr 는 가리지 않고 그대로 흘려보낸다. 임시 파일로 받으면 Ctrl+C 나 set -e
+    # 중단 때 /tmp 에 남고, 정작 사용자는 원본 메시지를 못 본다.
+    local out rc=0
     out=$(rsync -an --delete --checksum -i --out-format='%i|%n' \
         --filter=':- .gitignore' \
         --exclude='.git' \
         --exclude='upgrade_file/dpkg/pimwebserver_*.deb' \
         --exclude='dist/pim/opt/pim/driver/sc16is7xx_ext.ko' \
-        "$@" 2>"$errf") || rc=$?
+        "$@") || rc=$?
     if [ "$rc" -ne 0 ]; then
-        echo "rsync 실패(rc=${rc}): $(head -3 "$errf" | tr '\n' ' ')" >&2
-        rm -f "$errf"
+        echo "rsync 실패(rc=${rc}) — 위 오류 참고" >&2
         return 1
     fi
-    rm -f "$errf"
 
     printf '%s\n' "$out" \
         | awk -F'|' '
