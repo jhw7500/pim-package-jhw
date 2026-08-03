@@ -121,7 +121,8 @@ echo "=== set/get 은 게이트를 스스로 열고 닫는다 (원자적) ==="
 # pot 이 0x2F 를 공유하므로, 열기·쓰기·닫기를 한 명령 안에서 끝내지 않으면
 # `0 on` 뒤 `1 set` 같은 조합에서 엉뚱한 pot 을 건드린다.
 gate_seq() {   # CALLS 에서 MFP4 쓰기만 순서대로 뽑는다
-    grep -oE 'w3@0x[0-9a-fA-F]+ 0x02 0xca 0x[0-9a-fA-F]+' "$CALLS"         | sed 's/w3@//; s/ 0x02 0xca / /' | tr '\n' ',' | sed 's/,$//'
+    grep -oE 'w3@0x[0-9a-fA-F]+ 0x02 0xca 0x[0-9a-fA-F]+' "$CALLS" \
+        | sed 's/w3@//; s/ 0x02 0xca / /' | tr '\n' ',' | sed 's/,$//'
 }
 seq_for() {    # $1=DETECT $2=채널 $3=명령 $4=값
     : > "$CALLS"
@@ -194,9 +195,12 @@ out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" EDGECONF_DIR="$CONF" MCP4018_L
       bash "$SCRIPT" 1 set 0x10 2>&1); rc=$?
 t_eq "상대 게이트 못 내리면 중단"        "exit=$rc set=$(grep -c i2cset "$CALLS")" "exit=1 set=0"
 t_eq "중단 사유를 stderr 로 알린다"      "$(printf '%s' "$out" | grep -c 'peer MCP4018 gate')" 1
-# 중단 경로에서도 안전망 trap 이 닫기를 한 번 더 시도하므로 NAK 은 1회 이상이다.
 t_eq "i2ctransfer stderr 를 삼키지 않는다" \
      "$([ "$(printf '%s' "$out" | grep -c 'NAK')" -ge 1 ] && echo yes || echo no)" yes
+# 상대 내리기에서 멈추면 내 게이트는 건드린 적이 없다. 안전망 trap 이 열지도 않은
+# 게이트에 닫기를 보내면 불필요한 I2C 트래픽과 거짓 "may stay open" 경고가 난다.
+t_eq "열지 않은 게이트는 닫지 않는다"    "$(gate_seq)" "0x40 0x80"
+t_eq "거짓 경고를 내지 않는다"           "$(printf '%s' "$out" | grep -c 'may stay open')" 0
 
 restore_stub
 write_conf true false false false   # 단일 — 상대가 없어 닫기만 실패시킬 수 있다
