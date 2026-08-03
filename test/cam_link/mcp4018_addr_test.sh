@@ -83,10 +83,11 @@ run "단일 ch2 · ch3 on → 거절" "" 3 on none 1
 
 echo
 echo "=== 설정으로 판정 못 하면 i2cdetect 로 폴백 ==="
-# 전 채널 disable 은 헬퍼가 판정 실패로 보고 i2cdetect 를 본다
+# 설정이 '안 쓰는 채널'이라고 하면 하드웨어 스캔 결과보다 그쪽이 우선한다.
+# 선언된 의도를 스캔으로 뒤집으면 안 된다.
 write_conf false false false false
-run "전부 disable + 스캔 무응답 → 중단" ""        0 on none 1
-run "전부 disable + 스캔 dual → 0x60"   "11 12"   1 on 0x60 0
+run "전부 disable + 스캔 무응답 → 거절" ""        0 on none 1
+run "전부 disable + 스캔 dual 이어도 거절" "11 12" 1 on none 1
 clear_conf
 run "설정 없음 + 스캔 dual → 0x60"      "11 12"   1 on 0x60 0
 run "설정 없음 + 스캔 single → 0x40"    "3c"      1 on 0x40 0
@@ -102,7 +103,16 @@ t_eq "단일 폴백 시 Note 로 한계를 알린다" \
      "$(printf '%s' "$out" | grep -c '확인할 수 없다')" 1
 
 echo
-echo "=== set/get 은 모드 판정과 무관 ==="
+echo "=== set/get 도 비활성 채널이면 막는다 (on/off 와 같은 정책) ==="
+# 단일 구성에는 MCP4018 도 하나뿐이라 `1 set` 이 ch0 의 값을 바꾼다.
+# on/off 만 막고 set/get 을 열어 두면 정책이 어긋난다.
+write_conf true false false false
+run "단일 ch0 · ch1 set → 거절" "" 1 set none 1
+run "단일 ch0 · ch1 get → 거절" "" 1 get none 1
+run "단일 ch0 · ch0 get → 통과" "" 0 get none 0
+
+echo
+echo "=== 판정 불가일 때는 set/get 을 막지 않는다 ==="
 clear_conf
 : > "$CALLS"
 PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" EDGECONF_DIR="$CONF" \

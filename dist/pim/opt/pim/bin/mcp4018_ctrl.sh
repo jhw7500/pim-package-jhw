@@ -57,26 +57,38 @@ esac
 # shellcheck source=/dev/null
 source "$CHANNEL_HELPER"
 
-# 요청 채널이 실제로 쓰이는 채널인지 확인한다.
+# 헬퍼가 구버전이면 함수가 없을 수 있다. 파일 존재만으로는 부족하다.
+command -v resolve_channel_context >/dev/null 2>&1 \
+    || die "helper is missing resolve_channel_context: $CHANNEL_HELPER"
+command -v channel_bus_key >/dev/null 2>&1 \
+    || die "helper is missing channel_bus_key: $CHANNEL_HELPER"
+
+# 요청 채널이 edgeconf 상 '쓰지 않는 채널'이면 막는다.
 #
-# 헬퍼의 MODE 는 'single' 이라는 사실만 알려주고 어느 쪽이 활성인지는 알려주지
-# 않는다. 단일 구성에는 시리얼라이저가 0x40 하나뿐이라 어느 채널을 지정해도 그놈이
-# 응답하므로, 이 확인이 없으면 ch0 단독 장비에서 `1 on` 이 ch0 카메라를 건드린다.
+# 단일 구성에는 시리얼라이저도 MCP4018 도 하나씩뿐이라, 어느 채널을 지정해도 그놈이
+# 응답한다. 이 확인이 없으면 ch0 단독 장비에서 `1 on` 이나 `1 set` 이 ch0 카메라를
+# 건드린다. on/off 만 막고 set/get 을 열어 두면 정책이 어긋난다.
 #
-# 파일은 헬퍼가 찾아 둔 EDGECONF_FILE 을 그대로 쓴다. // false 는 여기서 안전하다
-# — 키가 없으면 '쓰지 않는 채널'이고, 사용하는 채널만 true 로 두는 것이 원칙이다.
-ch_enabled() {
-    local bus_key val
-    command -v jq >/dev/null 2>&1 || return 1
-    [ -n "$EDGECONF_FILE" ] && [ -r "$EDGECONF_FILE" ] || return 1
-    bus_key=$(channel_bus_key "$1") || return 1
-    val=$(jq -r --arg b "$bus_key" --arg c "ch$1" \
-          '(.VHL_CAM[$b][$c].enable // false)' "$EDGECONF_FILE" 2>/dev/null) || return 1
-    [ "$val" = "true" ]
+# 모드 판정과 분리해 둔다. '판정에 실패했다'와 '이 채널은 안 쓴다가 확인됐다'는
+# 다른 사실이다. 전자면 막지 않고(알 수 없으므로), 후자면 막는다. 그래서 여기서는
+# resolve_channel_context 를 쓰지 않는다 — 그쪽은 판정 실패 시 die 한다.
+#
+# // false 는 여기서 안전하다: 키가 없으면 '쓰지 않는 채널'이고, 사용하는 채널만
+# true 로 두는 것이 운용 원칙이다.
+reject_if_disabled() {
+    local cfg bus_key val
+    command -v jq >/dev/null 2>&1 || return 0
+    cfg=$(find_edgeconf_file 2>/dev/null) || return 0
+    [ -n "$cfg" ] && [ -r "$cfg" ] || return 0
+    bus_key=$(channel_bus_key "$CHANNEL") || return 0
+    val=$(jq -r --arg b "$bus_key" --arg c "ch$CHANNEL" \
+          '(.VHL_CAM[$b][$c].enable // false)' "$cfg" 2>/dev/null) || return 0
+    [ "$val" = "true" ] && return 0
+    die "ch${CHANNEL} is not enabled in edgeconf - not a channel in use."
 }
 
 resolve_ser_addr() {
-    resolve_channel_context "$CHANNEL"   # MODE / BUS / RESOLVE_SOURCE / EDGECONF_FILE
+    resolve_channel_context "$CHANNEL"   # MODE / BUS / RESOLVE_SOURCE
 
     if [ "$MODE" = "dual" ]; then
         case "$CHANNEL" in
@@ -87,19 +99,15 @@ resolve_ser_addr() {
     fi
 
     SER_ADDR=0x40
-    # 단일 구성에서만 채널 확인이 의미가 있다. 듀얼은 주소로 이미 갈린다.
-    # edgeconf 로 판정된 경우에만 확인한다 — i2cdetect 폴백은 어느 채널이
-    # 활성인지 알려주지 못하므로 없는 근거로 막지 않는다.
-    if [ "$RESOLVE_SOURCE" = "edgeconf" ] && ! ch_enabled "$CHANNEL"; then
-        die "ch${CHANNEL} is not enabled in edgeconf - not a channel in use." \
-            "단일 구성에서 다른 채널을 지정하면 엉뚱한 카메라를 건드리므로 막는다."
-    fi
     if [ "$RESOLVE_SOURCE" != "edgeconf" ]; then
         echo "[$tag] Note: 단일 구성 판정이 ${RESOLVE_SOURCE} 기준이라 요청 채널이" \
              "그 하나인지는 확인할 수 없다." >&2
     fi
     return 0
 }
+
+# 명령 종류와 무관하게 먼저 막는다. set/get 도 같은 하드웨어를 건드린다.
+reject_if_disabled
 
 case "$COMMAND" in
     on)
