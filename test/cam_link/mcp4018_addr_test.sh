@@ -86,6 +86,24 @@ write_conf false false false false
 run "해당 채널 disable → 거절"    "0x40 0x60" 0 on none 1
 
 echo
+echo "=== 짝 채널 읽기 실패가 거절을 무력화하면 안 된다 ==="
+# me 를 먼저 판정하지 않으면, peer 읽기 실패 시 폴백으로 새면서 비활성 채널을
+# 서비스하게 된다. 폴백은 enable 을 보지 않으므로 거절 자체가 사라진다.
+cat > "$CONF/edgeconf_test.json" <<'EOF'
+{ "VHL_CAM": {
+    "i2c2": { "ch0": {"enable": false} },
+    "i2c1": { "ch2": {"enable": true}, "ch3": {"enable": false} } } }
+EOF
+run "ch0 disable + ch1 키 누락 → 거절" "0x40 0x60" 0 on none 1
+# 반대로 요청 채널이 활성인데 짝만 못 읽으면 폴백이 맞다 (구성을 알 수 없으므로)
+cat > "$CONF/edgeconf_test.json" <<'EOF'
+{ "VHL_CAM": {
+    "i2c2": { "ch0": {"enable": true} },
+    "i2c1": { "ch2": {"enable": true}, "ch3": {"enable": false} } } }
+EOF
+run "ch0 enable + ch1 키 누락 → 폴백" "0x40" 0 on 0x40 0
+
+echo
 echo "=== edgeconf 를 못 읽으면 응답 탐색으로 폴백 ==="
 rm -f "$CONF"/edgeconf_*.json
 run "설정 없음 · 듀얼 응답 → 0x60" "0x40 0x60" 1 on 0x60 0
