@@ -105,22 +105,47 @@ t_eq "단일 폴백 시 Note 로 한계를 알린다" \
 echo
 echo "=== set/get 도 비활성 채널이면 막는다 (on/off 와 같은 정책) ==="
 # 단일 구성에는 MCP4018 도 하나뿐이라 `1 set` 이 ch0 의 값을 바꾼다.
-# on/off 만 막고 set/get 을 열어 두면 정책이 어긋난다.
 write_conf true false false false
 run "단일 ch0 · ch1 set → 거절" "" 1 set none 1
 run "단일 ch0 · ch1 get → 거절" "" 1 get none 1
-run "단일 ch0 · ch0 get → 통과" "" 0 get none 0
 
 echo
-echo "=== 판정 불가일 때는 set/get 을 막지 않는다 ==="
-clear_conf
+echo "=== set/get 은 게이트를 스스로 열고 닫는다 (원자적) ==="
+# MCP4018 의 I2C 전원은 ser 의 MFP4(0x02ca)로 게이트되고 기본이 격리다. 두 채널의
+# pot 이 0x2F 를 공유하므로, 열기·쓰기·닫기를 한 명령 안에서 끝내지 않으면
+# `0 on` 뒤 `1 set` 같은 조합에서 엉뚱한 pot 을 건드린다.
+gate_seq() {   # CALLS 에서 MFP4 쓰기만 순서대로 뽑는다
+    grep -oE 'w3@0x[0-9a-fA-F]+ 0x02 0xca 0x[0-9a-fA-F]+' "$CALLS"         | sed 's/w3@//; s/ 0x02 0xca / /' | tr '\n' ',' | sed 's/,$//'
+}
+seq_for() {    # $1=DETECT $2=채널 $3=명령 $4=값
+    : > "$CALLS"
+    PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="$1" EDGECONF_DIR="$CONF" \
+        bash "$SCRIPT" "$2" "$3" ${4:+"$4"} >/dev/null 2>&1
+    gate_seq
+}
+
+write_conf true true false false
+t_eq "듀얼 · ch1 set → 0x60 열고 닫기" "$(seq_for '' 1 set 0x10)" "0x60 0x90,0x60 0x80"
+t_eq "듀얼 · ch0 set → 0x40 열고 닫기" "$(seq_for '' 0 set 0x10)" "0x40 0x90,0x40 0x80"
+t_eq "듀얼 · ch1 get → 0x60 열고 닫기" "$(seq_for '' 1 get)"      "0x60 0x90,0x60 0x80"
+write_conf true false false false
+t_eq "단일 ch0 · set → 0x40 열고 닫기" "$(seq_for '' 0 set 0x10)" "0x40 0x90,0x40 0x80"
+
+# 게이트를 연 뒤에 실제 전송이 일어나야 한다 (순서 확인)
 : > "$CALLS"
+write_conf true true false false
 PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" EDGECONF_DIR="$CONF" \
     bash "$SCRIPT" 1 set 0x10 >/dev/null 2>&1
-t_eq "set → 0x2f 직접 (판정 실패해도 동작)" "$(grep -c 'i2cset .*0x2f 0x10' "$CALLS")" 1
-: > "$CALLS"
-PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" EDGECONF_DIR="$CONF" \
-    bash "$SCRIPT" 3 get >/dev/null 2>&1
-t_eq "get → bus1 의 0x2f"                   "$(grep -c 'i2cget -y 1 0x2f' "$CALLS")" 1
+t_eq "열기 → i2cset → 닫기 순서" \
+     "$(grep -nE '0xca 0x90|i2cset|0xca 0x80' "$CALLS" | cut -d: -f1 | tr '\n' ' ')" "1 2 3 "
+
+echo
+echo "=== 게이트 주소를 모르면 set/get 도 진행할 수 없다 ==="
+# 이전에는 0x2f 로 바로 갔으나, 이제 어느 ser 의 게이트를 열지 알아야 한다.
+clear_conf
+run "설정 없음 + 스캔 무응답 · set → 중단" "" 1 set none 1
+# run() 은 값 인자를 넘기지 않으므로 set 은 직접 부른다.
+t_eq "설정 없음 + 스캔 dual · set → 0x60 게이트" "$(seq_for '11 12' 1 set 0x10)" \
+     "0x60 0x90,0x60 0x80"
 
 t_summary "mcp4018 주소 해석"

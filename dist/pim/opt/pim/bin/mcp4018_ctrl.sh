@@ -106,6 +106,24 @@ resolve_ser_addr() {
     return 0
 }
 
+# MCP4018 의 I2C 전원은 ser 의 MFP4(0x02ca)로 게이트된다. 기본이 LOW(격리)이고
+# 통신할 때만 올린다. wiper 값은 게이트가 닫혀도 pot 이 유지한다.
+#
+# 두 채널의 pot 이 host 주소 0x2F 를 공유한다(리맵 없음). 그래서 한 번에 한쪽
+# 게이트만 열어야 한다 — 둘 다 열어 두면 같은 주소로 양쪽에 동시에 쓰게 된다.
+# 드라이버도 같은 이유로 열기→쓰기→닫기를 원자적으로 한다(max9296.c).
+#
+# $1=ser 주소  $2=on|off
+mfp4_gate() {
+    local v
+    case "$2" in
+        on)  v=0x90 ;;
+        off) v=0x80 ;;
+        *)   return 1 ;;
+    esac
+    i2ctransfer -f -y -a "$I2C_BUS" w3@"$1" 0x02 0xca "$v" >/dev/null 2>&1
+}
+
 # 명령 종류와 무관하게 먼저 막는다. set/get 도 같은 하드웨어를 건드린다.
 reject_if_disabled
 
@@ -126,12 +144,23 @@ case "$COMMAND" in
             usage
         fi
         VALUE=$3
-        echo "Channel $CHANNEL SET: i2cset -y $I2C_BUS $MCP4018_ADDR $VALUE"
+        # 게이트 열기·닫기를 이 명령 안에서 끝낸다. on/set/off 를 사람이 순서대로
+        # 부르게 두면 `0 on` 뒤 `1 set` 같은 어긋난 조합에서 엉뚱한 pot 을 건드린다
+        # (두 pot 이 0x2F 를 공유하므로 열려 있는 쪽이 맞는다).
+        resolve_ser_addr
+        trap 'mfp4_gate "$SER_ADDR" off' EXIT   # 중단돼도 열어 둔 채 끝나지 않게
+        mfp4_gate "$SER_ADDR" on || die "failed to open MCP4018 gate (ser $SER_ADDR)"
+        echo "Channel $CHANNEL SET: i2cset -y $I2C_BUS $MCP4018_ADDR $VALUE (gate $SER_ADDR)"
         i2cset -y "$I2C_BUS" "$MCP4018_ADDR" "$VALUE"
+        exit $?
         ;;
     get)
-        echo "Channel $CHANNEL GET: i2cget -y $I2C_BUS $MCP4018_ADDR"
+        resolve_ser_addr
+        trap 'mfp4_gate "$SER_ADDR" off' EXIT
+        mfp4_gate "$SER_ADDR" on || die "failed to open MCP4018 gate (ser $SER_ADDR)"
+        echo "Channel $CHANNEL GET: i2cget -y $I2C_BUS $MCP4018_ADDR (gate $SER_ADDR)"
         i2cget -y "$I2C_BUS" "$MCP4018_ADDR"
+        exit $?
         ;;
     *)
         echo "Error: Invalid command '$COMMAND'. Must be on, off, set, or get." >&2
