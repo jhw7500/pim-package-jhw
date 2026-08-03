@@ -5,7 +5,9 @@
 # 배경: cam_disconnect_flag != 0 경로는 retry/retry_boot 를 증가시키지 않아 상한 없이
 # init_cam 을 반복한다(1호기 로그 17:53~18:04, 11분간 8회). DISCONNECT_MAX_SEC 로
 # 시간 상한을 두되 기본값 0(비활성)이라 "Never reboot in disconnect state" 원칙은 유지된다.
-# 활성화 시에도 episode 당 1회만 리부팅하며, 영구 플래그를 못 쓰면 리부팅하지 않는다.
+# 활성화 시 리부팅 반복 여부는 DISCONNECT_REBOOT_FLAG_DIR 로 정한다 — 기본 /tmp 는
+# 부팅 시 지워져 반복 리부팅, 영구 경로로 두면 1회로 묶인다. 플래그를 못 쓰면
+# 이력이 남지 않아 리부팅 루프가 되므로 어느 쪽이든 리부팅하지 않는다.
 source "$(dirname "$0")/lib.sh"
 
 WORK=$(mktemp -d)
@@ -57,10 +59,10 @@ echo "=== disconnect 에스컬레이션 ==="
 run_b "기본값 0 → 비활성(기존 동작 유지)"   0    99999 true  N NONE
 run_b "활성, 경과 < 상한 → 리부팅 없음"     1800 100   true  N NONE
 run_b "활성, 경과 >= 상한 → 에스컬레이션"   1800 1900  true  N REBOOT
-run_b "이미 1회 에스컬레이션 → 재리부팅 없음" 1800 5000  true  Y NONE
+run_b "같은 부팅 안에서 재진입 → 중복 리부팅 없음" 1800 5000  true  Y NONE
 run_b "file_check_reboot=false → 리부팅 없음" 1800 1900  false N NONE
 run_b "max_sec 비정상값(공백) → 안전측 비활성" ""  99999 true  N NONE
-# 영구 플래그를 못 쓰면 재부팅 후 이력이 사라져 리부팅 루프가 되므로 건너뛰어야 한다.
+# 플래그를 못 쓰면 이력이 남지 않아 리부팅 루프가 되므로 건너뛰어야 한다.
 # 쓰기 실패는 '일반 파일 하위 경로'로 만든다 — mkdir 이 ENOTDIR 로 실패하며,
 # 퍼미션 비트를 무시하는 root 로 실행해도 동일하게 실패한다(readonly 디렉터리는
 # root 에서 통과해 이 케이스가 조용히 무력화된다).

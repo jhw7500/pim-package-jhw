@@ -54,12 +54,16 @@ DISCONNECT_INIT_CAM_STATE_FILE_DEFAULT="/tmp/chk_cam_operate.disconnect_state"
 # 0 = 비활성(위 "Never reboot in disconnect state" 원칙 유지) — 기본값.
 # disconnect 경로는 retry/retry_boot 를 증가시키지 않아 상한 없이 init_cam 을
 # 무한 반복할 수 있는데, 이를 시간 기준으로만 끊어 주기 위한 안전망이다.
-# 활성화해도 한 episode 당 1회만 리부팅한다(아래 REBOOT_FLAG).
 DISCONNECT_MAX_SEC_DEFAULT=0
-# 에스컬레이션 이력은 재부팅을 넘어 남아야 한다. /tmp 로 폴백하면 부팅 시 지워져
-# 리부팅 루프가 되므로 폴백하지 않고, 쓰기 실패 시 에스컬레이션 자체를 건너뛴다.
-# 이 경로는 chk_mmc.sh 가 mmc_mode 를 보존하는 곳과 같은 영구 저장소다.
-DISCONNECT_REBOOT_FLAG_DIR="/var/log/cantops"
+# 에스컬레이션 이력 플래그. 이 디렉터리를 어디로 두느냐가 리부팅 반복 여부를 정한다.
+#   /tmp           부팅 시 지워진다 → 조건이 유지되면 DISCONNECT_MAX_SEC 간격으로
+#                  반복 리부팅. file_check_reboot 를 켰을 때 기존 retry 경로가
+#                  (재부팅 시 카운터가 초기화되어) 반복 리부팅하는 것과 같은 의도다.
+#   /var/log/...   재부팅을 넘어 남는다 → 연결이 회복될 때까지 리부팅 1회로 제한.
+# 기본은 /tmp. 1회로 묶어야 하는 장비에서만 영구 경로로 바꾼다.
+# 어느 쪽이든 플래그를 못 쓰면 이력이 남지 않아 리부팅 루프가 되므로, 쓰기를
+# 확인하고 실패하면 에스컬레이션을 건너뛴다.
+DISCONNECT_REBOOT_FLAG_DIR="/tmp"
 DISCONNECT_REBOOT_FLAG="${DISCONNECT_REBOOT_FLAG_DIR}/cam_disconnect_reboot.flag"
 
 # P2: final-path 진척 telemetry / heartbeat (외부 모니터링용)
