@@ -2,7 +2,9 @@
 # cam_state — 파일 기반 키-값 저장소 (jq 제거, CPU 최적화)
 # 모든 상태를 /tmp/cam_state/ 디렉토리 내 개별 파일로 관리
 
-STATE_DIR="/tmp/cam_state"
+# 테스트가 실제 /tmp/cam_state 를 건드리지 않도록 재정의를 허용한다. 스크립트를
+# 통째로 돌리는 테스트에서 상태가 실행 간에 새면 결과가 서로 오염된다.
+STATE_DIR="${STATE_DIR:-/tmp/cam_state}"
 RECOVERY_FILE="/tmp/cam_recovery.json"
 LOCK_FILE="/tmp/cam_op_lock"
 
@@ -35,6 +37,46 @@ RX3_LINK_B_UP=0x60    # SYNC_LOCKED_B | WBLOCK_B
 #
 # $1=i2c adapter (2 → ch0/ch1, 1 → ch2/ch3)
 # 출력: "<원시값>/<ok|chN_down|both_down>" 또는 읽기 실패 시 "NA/NA"
+# 링크를 특정할 수 있는 순간은 짧다. 한쪽만 내려간 상태에서 init_cam 이 돌면
+# splitter 가 락을 아예 못 잡아 양 링크가 다 0이 되고, 그 뒤로는 채널을 알 수 없다
+# (실측: 0x06/ch0_down → init_cam → 0x01/both_down). disconnect grace 가 60초라
+# 판별 가능한 창은 1분 남짓이다. 그 사이에 붙잡아 두고 이후 모호한 로그에 덧붙인다.
+#
+# 'last=' 는 과거 시점 값이지 현재 상태가 아니다. 경과 시간을 함께 찍어 그 점을
+# 드러낸다 — 드라이버 link_status 가 stale 한 줄 모르고 drv=0 에 속았던 전례가 있다.
+#
+# 두 카메라가 동시에 빠지면 처음부터 both_down 이라 기록이 없고, 없는 채널을
+# 지목하지 않는다. 부팅 시부터 부재였던 경우도 마찬가지로 비어 있다.
+#
+# $1=i2c adapter  $2=read_rx3_links 출력
+# 출력: 덧붙일 문자열(없으면 빈 문자열)
+rx3_link_hint() {
+    local adapter="$1" verdict="${2##*/}" key rec ts ch now
+    key="link_last_down_${adapter}"
+    now=$(date +%s)
+    mkdir -p "$STATE_DIR" 2>/dev/null || return 0
+
+    case "$verdict" in
+        ok)
+            _cs_write "$key" ""
+            return 0
+            ;;
+        ch[0-9]_down)
+            # 판별되는 동안에는 계속 갱신한다. 마지막 값이 곧 '마지막으로 볼 수
+            # 있었던 시점'이 된다.
+            _cs_write "$key" "${now},${verdict}"
+            return 0
+            ;;
+    esac
+
+    # both_down / NA — 직전에 특정했던 기록이 있으면 덧붙인다.
+    rec=$(_cs_read "$key")
+    [ -n "$rec" ] || return 0
+    ts="${rec%%,*}"; ch="${rec##*,}"
+    [ "$ts" -gt 0 ] 2>/dev/null || return 0
+    printf ' last=%s(%ss전)' "$ch" "$((now - ts))"
+}
+
 read_rx3_links() {
     local raw val base a b
     raw=$(i2ctransfer -f -y -a "$1" w2@0x48 0x00 0x2f r1 2>/dev/null \

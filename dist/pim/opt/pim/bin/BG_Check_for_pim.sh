@@ -261,15 +261,21 @@ while true; do
         # i2c2=3). 여기서 chk_cam_connect 를 건너뛰므로, 채널을 갈라 주는 RX3 를
         # 읽는 경로가 이 분기밖에 없다. 캐시하지 않고 매번 읽는다 — stale 값을
         # 현재처럼 찍으면 drv 와 똑같은 함정이 된다. 보고가 있는 버스만 읽는다.
-        rx3_info=""
+        # rx3_sig 는 억제 판정용, rx3_info 는 표시용으로 나눈다. hint 에는 경과
+        # 시간이 들어가 매초 달라지므로, 서명에 섞으면 억제가 통째로 무력화된다.
+        rx3_info=""; rx3_sig=""
         if [ "$drv_mask_i2c2" -ne 0 ]; then
-            rx3_info="$rx3_info rx3_2=$(read_rx3_links 2)"
+            rx3_r=$(read_rx3_links 2)
+            rx3_sig="$rx3_sig|$rx3_r"
+            rx3_info="$rx3_info rx3_2=$rx3_r$(rx3_link_hint 2 "$rx3_r")"
         fi
         if [ "$drv_mask_i2c1" -ne 0 ]; then
-            rx3_info="$rx3_info rx3_1=$(read_rx3_links 1)"
+            rx3_r=$(read_rx3_links 1)
+            rx3_sig="$rx3_sig|$rx3_r"
+            rx3_info="$rx3_info rx3_1=$rx3_r$(rx3_link_hint 1 "$rx3_r")"
         fi
         drv_log_now=$(now_ts)
-        drv_log_cur="$drv_disconnect_mask|$drv_mask_i2c2|$drv_mask_i2c1|$rx3_info"
+        drv_log_cur="$drv_disconnect_mask|$drv_mask_i2c2|$drv_mask_i2c1|$rx3_sig"
         if [ "$drv_log_cur" != "$drv_log_sig" ] ||
            [ $((drv_log_now - drv_log_ts)) -ge "$DISCONNECT_LOG_REPEAT_SEC" ]; then
             logger -p local0.notice "[CHK][$tag:$LINENO] driver detected disconnect($(mask_to_chs "$drv_disconnect_mask")), skip chk_cam_connect (i2c2=$drv_mask_i2c2 i2c1=$drv_mask_i2c1$rx3_info)"

@@ -10,6 +10,14 @@ PIM_BIN="$REPO_ROOT/dist/pim/opt/pim/bin"
 # chk_cam_connect.sh 가 PIM_LIB 로 cam_state.sh 를 source 한다(기본값은 타겟 경로
 # /opt/pim/lib). 스크립트를 통째로 돌리는 테스트가 저장소 사본을 쓰도록 export 한다.
 export PIM_LIB="$REPO_ROOT/dist/pim/opt/pim/lib"
+
+# cam_state 저장소도 테스트 전용으로 돌린다. 실제 /tmp/cam_state 를 쓰면 개발
+# 머신을 오염시키고, 실행 간에 상태가 새어 결과가 서로 영향을 준다.
+#
+# trap 은 걸지 않는다 — 각 테스트가 자기 WORK 정리용 trap 을 걸기 때문에 여기서
+# 걸면 그쪽이 덮어써 버린다. 대신 고정 경로를 쓰고 시작할 때 비운다.
+export STATE_DIR="${TMPDIR:-/tmp}/cam_link_test_state"
+rm -rf "$STATE_DIR"
 PIM_CFG="$REPO_ROOT/dist/pim/opt/pim/config"
 
 t_pass=0

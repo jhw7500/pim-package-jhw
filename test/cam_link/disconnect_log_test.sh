@@ -103,6 +103,8 @@ run_branch() {
             drv_disconnect_mask=3; drv_mask_i2c2=3; drv_mask_i2c1=0; return 0
         }
         read_rx3_links() { printf '%s' "$RX3V"; }
+        # 실제 분기가 부르는 함수. 스텁이 없으면 조용히 실패해 검증이 헐거워진다.
+        rx3_link_hint() { printf ''; }
         now_ts() { echo "$NOW"; }
         logger() { echo "$*"; }
         # shellcheck disable=SC1090
@@ -132,6 +134,7 @@ out=$(
     NOW=1000; RX3="0x06/ch0_down"
     check_driver_disconnect() { drv_disconnect_mask=3; drv_mask_i2c2=3; drv_mask_i2c1=0; return 0; }
     read_rx3_links() { printf '%s' "$RX3"; }
+    rx3_link_hint() { printf ''; }
     now_ts() { echo "$NOW"; }
     logger() { echo "$*"; }
     # shellcheck disable=SC1090
@@ -147,5 +150,42 @@ t_eq "상태 변화 시 즉시 로깅(2줄)" \
      "$(printf '%s' "$out" | grep -c 'driver detected disconnect')" "2"
 t_eq "변화 후 줄이 새 채널을 담는가" \
      "$(printf '%s' "$out" | grep -c 'ch1_down')" "1"
+
+echo
+echo "=== rx3_link_hint — 판별되는 순간을 붙잡아 두는가 ==="
+# init_cam 이 돌면 both_down 이 되어 채널을 알 수 없다. 그 전에 기록해 뒀다가
+# 이후 모호한 로그에 덧붙이는 것이 이 함수의 목적이다.
+(
+    # cam_state.sh 는 STATE_DIR 재정의를 존중한다(${STATE_DIR:-...}).
+    STATE_DIR="$WORK/state_dir"
+    # shellcheck disable=SC1090
+    source "$PIM_LIB/cam_state.sh"
+    mkdir -p "$STATE_DIR"
+
+    t_eq "판별 중에는 덧붙이지 않는다"      "$(rx3_link_hint 2 '0x06/ch0_down')" ""
+    t_eq "그 뒤 both_down 이면 last= 부착"  "$(rx3_link_hint 2 '0x01/both_down' | sed 's/([0-9]*s전)//')" " last=ch0_down"
+    t_eq "NA 에서도 부착"                   "$(rx3_link_hint 2 'NA/NA' | sed 's/([0-9]*s전)//')"          " last=ch0_down"
+
+    # 버스가 다르면 남의 기록을 쓰지 않는다
+    t_eq "다른 버스는 독립"                 "$(rx3_link_hint 1 '0x01/both_down')" ""
+
+    # 회복되면 기록을 지운다 — 다음 이탈에서 옛 채널을 지목하면 안 된다
+    rx3_link_hint 2 '0x66/ok' >/dev/null
+    t_eq "ok 이후에는 기록 없음"            "$(rx3_link_hint 2 '0x01/both_down')" ""
+
+    # 처음부터 both_down 이면(양쪽 동시 이탈·부팅 시 부재) 없는 채널을 지목하지 않는다
+    t_eq "기록 없이 both_down → 무표기"     "$(rx3_link_hint 1 '0x00/both_down')" ""
+    t_summary "rx3_link_hint" >/dev/null
+    exit "$t_fail"
+) && t_ok "rx3_link_hint 하위 케이스 전부 통과" || t_bad "rx3_link_hint 하위 케이스 실패"
+
+echo
+echo "=== 억제 서명에 경과 시간이 섞이지 않는가 (회귀 방지) ==="
+# hint 에는 "(83s전)" 이 들어간다. 이것이 drv_log_cur 에 섞이면 매초 서명이 달라져
+# 억제가 통째로 무력화된다. 서명은 rx3_sig(원시값), 표시는 rx3_info 로 분리해야 한다.
+t_eq "서명은 rx3_sig 를 쓴다" \
+     "$(grep -c 'drv_log_cur=.*\$rx3_sig' "$SRC_BG")" 1
+t_eq "서명에 rx3_info 를 쓰지 않는다" \
+     "$(grep -c 'drv_log_cur=.*\$rx3_info' "$SRC_BG")" 0
 
 t_summary "disconnect 로그 채널 표기"

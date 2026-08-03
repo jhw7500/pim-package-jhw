@@ -142,10 +142,12 @@ classify_ctrl3() {
 # rx3/link 는 기록 전용이며 판정에는 쓰지 않는다. drv 와 대조해 일치율을 재기 위한 것.
 # $1=level  $2=i2c adapter  $3=호출부 LINENO  $4=메시지  $5=CTRL3 원시값
 log_ctrl3() {
-    local drv rx3
+    local drv rx3 hint
     drv=$(cat "/sys/bus/i2c/devices/$2-0048/link_status" 2>/dev/null | tr -d '\n')
     rx3=$(read_rx3_links "$2")
-    logger -p "local0.$1" "[CHK][$tag:$3] $4 : $5 (mode=$ctrl3_mode locked=$ctrl3_locked error=$ctrl3_error cmu=$ctrl3_cmu verdict=$ctrl3_verdict drv=${drv:-NA} rx3=${rx3%%/*} link=${rx3##*/})"
+    # 판별되면 기록해 두고, 모호해진 뒤에는 그 기록을 덧붙인다(lib/cam_state.sh).
+    hint=$(rx3_link_hint "$2" "$rx3")
+    logger -p "local0.$1" "[CHK][$tag:$3] $4 : $5 (mode=$ctrl3_mode locked=$ctrl3_locked error=$ctrl3_error cmu=$ctrl3_cmu verdict=$ctrl3_verdict drv=${drv:-NA} rx3=${rx3%%/*} link=${rx3##*/}${hint})"
 }
 
 cam_ch_en=$1
