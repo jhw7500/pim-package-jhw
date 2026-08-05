@@ -6,6 +6,7 @@ import os.path
 from filecmp import cmp
 import glob
 import time
+import yaml
 import syslog
 
 WLAN_DEV="wlp1s0"
@@ -43,7 +44,25 @@ def is_json_key_present(json, key):
 
     return True
 
+def check_yaml_file(file_path):
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            yaml.safe_load(f)
+
+        return True
+
+    except yaml.YAMLError as e:
+        return False
+
+    except OSError as e:
+        return False
+
 def calcu_set_static_ip(ip_str, sub_str):
+    try:
+        ipaddress.IPv4Address(ip_str)
+    except ipaddress.AddressValueError:
+        return ''
+    
     try:
         ipadd = ipaddress.ip_interface(ip_str + '/' + sub_str)
     except ValueError:
@@ -196,10 +215,13 @@ def update_network(force=False):
         f.close()
 
     file_conn_eth0 = '/etc/netplan/eth0.yaml'
-    if os.path.isfile(file_conn_eth0) == False or cmp('/tmp/eth0.yaml',file_conn_eth0) == False :
-        change_netplan_flag = True
-        _shell(['cp','/tmp/eth0.yaml',file_conn_eth0])
-
+    if check_yaml_file('/tmp/eth0.yaml') :
+        if os.path.isfile(file_conn_eth0) == False or cmp('/tmp/eth0.yaml',file_conn_eth0) == False :
+            change_netplan_flag = True
+            _shell(['cp','/tmp/eth0.yaml',file_conn_eth0])
+    else :
+        log_error(f"invalid eth0.yaml")
+    
     _shell(['rm','/tmp/eth0.yaml'])
 
     with open("/tmp/eth1.yaml", "w") as f :
@@ -230,10 +252,13 @@ def update_network(force=False):
         f.close()
 
     file_conn_eth1 = '/etc/netplan/eth1.yaml'
-    if os.path.isfile(file_conn_eth1) == False or cmp('/tmp/eth1.yaml',file_conn_eth1) == False :
-        change_netplan_flag = True
-        _shell(['cp','/tmp/eth1.yaml',file_conn_eth1])
-
+    if check_yaml_file('/tmp/eth1.yaml') :
+        if os.path.isfile(file_conn_eth1) == False or cmp('/tmp/eth1.yaml',file_conn_eth1) == False :
+            change_netplan_flag = True
+            _shell(['cp','/tmp/eth1.yaml',file_conn_eth1])
+    else :
+        log_error(f"invalid eth1.yaml")
+    
     _shell(['rm','/tmp/eth1.yaml'])
 
 
@@ -372,9 +397,13 @@ def update_network(force=False):
         _shell(['rm','/etc/netplan/wlan0.yaml'])
 
     file_conn_wlan0 = '/etc/netplan/'+WLAN_DEV+'.yaml'
-    if os.path.isfile(file_conn_wlan0) == False or cmp(temp_conn_wlan0,file_conn_wlan0) == False :
-        change_netplan_flag = True
-        _shell(['cp',temp_conn_wlan0,file_conn_wlan0])
+    if check_yaml_file(temp_conn_wlan0) :
+        if os.path.isfile(file_conn_wlan0) == False or cmp(temp_conn_wlan0,file_conn_wlan0) == False :
+            change_netplan_flag = True
+            _shell(['cp',temp_conn_wlan0,file_conn_wlan0])
+    else :
+        log_error(f"invalid {WLAN_DEV}.yaml")
+    
     _shell(['rm',temp_conn_wlan0])
 
     if wlan_chmask_use == True :
