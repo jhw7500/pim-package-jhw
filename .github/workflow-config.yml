@@ -55,6 +55,14 @@ workflows:
     auto: true
     description: "Claude automatic PR review"
 
+  # Shared OpenCode workflows
+  # 자동실행 게이트는 이 블록의 `auto:` 가 아니라 최상위 `review.auto` 다
+  # (공유 워크플로우가 그 키를 읽고, 미지정이면 true). 그래서 `auto:` 를 두지 않는다.
+  # 모델은 zai-coding-plan/glm-4.7, 인증은 저장소 시크릿 ZHIPU_API_KEY.
+  opencode-auto-review:
+    enabled: true
+    description: "OpenCode automatic PR review (zai-coding-plan/glm-4.7)"
+
 # === Shared Settings ===
 claude:
   model: "claude-sonnet-4-6"
