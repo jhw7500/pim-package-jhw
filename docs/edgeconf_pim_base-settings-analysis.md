@@ -252,13 +252,27 @@ RTSP 스트림 튜닝.
 │ ae_on                │ true/false      │ 자동 노출(AE) 활성화                             │
 │ ae_gain              │ 정수 (예: 256)  │ AE 게인 타겟                                     │
 │ bps                  │ [main, sub] kbps│ 비트레이트 [메인, 서브] (예: [2048, 2048])       │
+│                      │ 0 = 자동(VBR)   │ 0이면 해상도·fps로 자동 산출(고정 레이트 없음).  │
+│                      │                 │ 상·하한 검사 없음 — 0 이상이면 통과. 10kbps      │
+│                      │                 │ 미만은 VPU가 자동값으로, 60000kbps 초과는        │
+│                      │                 │ wrapper가 클램프                                 │
+│ gop                  │ [rec,rtsp] 0~300│ 키프레임 간격(프레임). 기본 [0, 0].              │
+│                      │ 0 = fps 연동    │ 0이면 그 스트림 fps로 치환 = 1초 간격.           │
+│                      │                 │ 300 초과분은 VPU wrapper가 300으로 자름          │
+│ profile              │ [rec,rtsp] 9~12 │ H.264 프로파일. 9=Baseline 10=Main               │
+│                      │                 │ 11=High 12=High10 (프로파일명 문자열 아님)       │
+│ quant                │ [rec,rtsp] -1~51│ 초기 QP. -1=자동. 고정 QP가 아니라               │
+│                      │                 │ 레이트컨트롤의 시작점                            │
+│ qp_min               │ [rec,rtsp] 0~51 │ QP 하한. 0 = 미설정(HW 기본값 유지)              │
+│ qp_max               │ [rec,rtsp] 0~51 │ QP 상한. 0 = 미설정(HW 기본값 유지)              │
 │ awb                  │ §8.3 표 참조    │ 화이트밸런스 프리셋                              │
 │ led_flash.enable     │ true/false      │ LED 플래시 사용 여부 (false면 wiper도 미적용)    │
 │ led_flash.wiper      │ 0~127 (7-bit)   │ MCP4018T-503E 디지털 포텐셔미터 wiper step.      │
 │                      │ 기본 63 (mid)   │ 50kΩ 128단계. 밝기/저항 방향은 보드 LED 회로에   │
 │                      │                 │ 따라 다름 — 0/127이 양 끝값                       │
 │ led_flash.flash_delay│ 0~255 (8-bit)   │ AR0234 R0x3270 bit7:0 DELAY 필드. 단위는 센서    │
-│                      │ 기본 0          │ row-time 기반. 0이면 노출 시작과 동시에 발광     │
+│                      │ 항상 128        │ row-time 기반. 0이면 노출 시작과 동시에 발광.    │
+│                      │ (§9 참조)       │ 매번 128로 강제되므로 변경해도 되돌아감          │
 └──────────────────────┴─────────────────┴──────────────────────────────────────────────────┘
 ```
 
@@ -324,6 +338,28 @@ RTSP 스트림 튜닝.
          "awb": "d65" }
 ```
 
+**예시 4 — ch1만 화질 우선(High 프로파일 + QP 범위 제한)**
+```json
+"ch1": { "enable": true, "vflip": false, "hflip": false,
+         "ae_on": true, "ae_gain": 256, "bps": [4096, 2048],
+         "gop": [30, 30],
+         "profile": [11, 11],
+         "quant": [-1, -1],
+         "qp_min": [22, 22],
+         "qp_max": [38, 38] }
+```
+
+> **배열은 반드시 원소 2개**여야 합니다. 길이가 다르면 gstApp이 해당 키를 통째로
+> 버리고 기본값을 씁니다. JSON 자체는 valid하므로 파일만 봐서는 알 수 없고,
+> 부팅 로그에서 두 종류의 라인으로 확인합니다:
+> 키별로 `<키이름>: array length mismatch (expected 2), keep defaults`,
+> 마지막에 요약으로 `!!! N config error(s) in edgeconf ...`.
+>
+> single-encoder 모드(프로덕션 기본)에서는 인코더 하나가 녹화와 RTSP를 함께 먹이므로
+> **rtsp 슬롯(두 번째 원소)이 rec 값으로 강제 정렬됩니다.** 위 예시의 `[4096, 2048]`처럼
+> 서로 다르게 적어도 실제로는 둘 다 rec 값이 쓰이고, 로그에 `single-enc: align rtsp ...`
+> 라인이 남습니다.
+
 ### 8.5 채널 enable 조합과 동작 모드
 
 ```
@@ -344,7 +380,14 @@ RTSP 스트림 튜닝.
 부팅 시 시스템이 base 파일을 보강합니다. 다음 키는 누락되면 자동으로 채워지므로 직접 안 적어도 됩니다:
 
 - `awb` 누락 → `"auto"`
-- `led_flash` 객체 누락 → `{ "enable": false, "wiper": 63, "flash_delay": 0 }`
+- `gop` 누락 → `[0, 0]` (= fps 연동, 키프레임 1초 간격)
+- `profile` 누락 → `[9, 9]` (Baseline)
+- `quant` 누락 → `[-1, -1]` (자동)
+- `qp_min` / `qp_max` 누락 → `[0, 0]` (미설정 = HW 기본값)
+- `led_flash` 객체 누락 → `{ "enable": false, "wiper": 63, "flash_delay": 128 }`
+- `led_flash.flash_delay`는 **누락 여부와 무관하게 매번 128로 재설정됩니다.**
+  기기마다 값이 갈리지 않도록 의도적으로 고정한 것이라, 다른 값을 넣어도
+  다음 패키지 설치/부팅 보강 때 128로 되돌아갑니다. (`enable`/`wiper`는 보존)
 - `i2c[12].exp_time` 누락 → `10000`
 - `queue_tune` / `rtsp_tune` / `capture`의 누락 키 → 기본값 자동 채움
 - `app` → `"gstApp"`로 강제
@@ -359,6 +402,23 @@ RTSP 스트림 튜닝.
 
 - **enable / 모드** — 시스템 로그에서 채널 활성화 라인
 - **bps** — 녹화 파일의 실제 비트레이트 (`mediainfo`, `ffprobe`)
+- **gop / profile / quant / qp_min / qp_max** — 다섯 개 모두 **적용 성공 로그는 없습니다.**
+  파싱된 값은 기동 시 채널별 요약 라인
+  `ch<N> gop:..,.. profile:..,.. quant:..,.. qp_min:..,.. qp_max:..,..` 에서 확인합니다.
+  이 라인은 "edgeconf에서 이렇게 읽었다"는 뜻이지 "인코더에 먹었다"는 뜻은 아닙니다.
+- **적용 실패는 경고로만 드러납니다** — `profile`/`qp-min`/`qp-max`가 플러그인에 없으면
+  `encoder has no '<속성>' property, <값> not applied` 경고가 남습니다. 이 경고가 보이면
+  `gst-inspect-1.0 vpuenc_h264 | grep -E 'qp-min|qp-max|profile'` 로 확인하세요 —
+  `profile`은 i.MX8MP에서만, `qp-min`/`qp-max`는 i.MX8MP와 i.MX8MM에서 노출됩니다
+- **실측 확인** — 프로파일은 `ffprobe -show_streams` 의 `profile` 필드,
+  gop은 녹화 파일의 키프레임 간격(`ffprobe -select_streams v -show_frames` 의
+  `key_frame=1` 간격)으로 봅니다
+- **VBR(자동 비트레이트) 확인** — `bps`를 `[0, 0]`으로 두면 기동 로그에
+  `ch<N> rec bps 0: encoder rate control is automatic (VBR)` 이 남습니다.
+  이 모드에서는 VPU가 해상도·fps로 목표 레이트를 산출하므로(1280×720@15 기준 약
+  2.2 Mbps) 화면 복잡도에 따라 실제 파일 비트레이트가 변합니다 —
+  `ffprobe -show_format` 의 `bit_rate` 를 장면을 바꿔가며 비교하면 고정 레이트와
+  구분됩니다
 - **vflip / hflip** — RTSP 스트림 또는 캡처 이미지 시각 확인
 - **ae_on / ae_gain / exp_time** — 조도 변경 시 노출 적응
 - **awb** — 조명색 변경 시 화이트밸런스 응답
@@ -370,4 +430,4 @@ RTSP 스트림 튜닝.
 
 ## 11. `edgeconf_cis_base.json`과의 차이
 
-CIS 모델은 별도 base 파일(`edgeconf_cis_base.json`)을 사용합니다. 두 파일의 주요 차이는 `SENSORS` 섹션과 디바이스 매핑 일부이며, **VHL_CAM의 카메라 채널 스키마(awb / led_flash 포함)는 동일**합니다.
+CIS 모델은 별도 base 파일(`edgeconf_cis_base.json`)을 사용합니다. 두 파일의 주요 차이는 `SENSORS` 섹션과 디바이스 매핑 일부이며, **VHL_CAM의 카메라 채널 스키마(awb / led_flash / 인코더 튜닝 키 포함)는 동일**합니다.

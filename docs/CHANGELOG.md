@@ -4,7 +4,97 @@
 
 ---
 
-## 📌 최신 변경사항 (2026-05-15) — FINAL STALL 사일런트 정체 차단
+## 📌 최신 변경사항 (2026-08-04) — edgeconf 채널별 인코더 튜닝 키
+
+### 변경
+
+edgeconf의 카메라 채널(ch0~ch3)에 `vpuenc_h264` 인코더 파라미터를 노출했다. 기존에
+설정 가능한 것은 `bps`뿐이었고, `gop`은 구조체 필드만 있고 JSON 리더가 없어
+컴파일 기본값에 고정돼 있었으며, `profile`/`quant`/`qp_min`/`qp_max`는 아예 세팅되지
+않아 플러그인 기본값으로 동작했다.
+
+**신규 채널 키** — 모두 `bps`와 같은 `[rec, rtsp]` 2원소 배열
+
+| 키 | 범위 | 기본값 | 비고 |
+| --- | --- | --- | --- |
+| `gop` | 0~300 | `[0, 0]` | 키프레임 간격(프레임). **0 = fps 연동(1초 간격)** |
+| `profile` | 9~12 | `[9, 9]` | 9=Baseline 10=Main 11=High 12=High10 |
+| `quant` | -1~51 | `[-1, -1]` | 초기 QP, -1=자동 |
+| `qp_min` | 0~51 | `[0, 0]` | 0 = 미설정(HW 기본값) |
+| `qp_max` | 0~51 | `[0, 0]` | 0 = 미설정(HW 기본값) |
+
+**기본값은 전부 종전 실효값과 동일하다** — 키를 추가하는 것만으로는 4채널 어디에도
+동작 변화가 없다. 값을 바꿀 때만 달라진다. (`gop:[0,0]` + 기본 fps 15 → 15)
+
+**`gop` 0의 의미** — gstApp이 기동 시 해당 스트림의 fps로 치환한다. fps를 바꾸면
+키프레임 간격이 1초로 따라간다. 0을 인코더에 그대로 넘기지 않는 이유는, 플러그인의
+주기 I프레임 판정(`gop_size && gop_count % gop_size`)이 0에서 죽고 VPU의
+`idr_interval=0` 동작은 문서화돼 있지 않기 때문이다(VC8000E 라이브러리가 바이너리).
+상한 300은 VPU wrapper의 `ENC_MAX_GOP_SIZE` — 초과분은 wrapper가 조용히 자른다.
+
+**`bps` 0 = VBR, 범위 검사 제거** — `vpuenc_h264`의 `bitrate` property는 0을
+"automatic"으로 문서화하고 있고, wrapper가 해상도·fps로 목표 레이트를
+산출한다(1280×720@15 ≈ 2.2 Mbps). 종전에는 `check_arg()`가 `100..20000` 밖이라며
+0을 거부하고 4096으로 되돌려 이 모드를 쓸 수 없었다.
+
+이제 **0 이상이면 그대로 통과한다** — 상·하한 검사를 없앴다. wrapper의
+`AdjustBitrate()`가 `VPU_ENC_MIN_BITRATE`(10 kbps) 미만은 0과 같은 자동값으로
+대체하고 `VPU_ENC_MAX_BITRATE`(60000 kbps) 초과는 클램프하므로, gstApp의 범위
+검사는 인코더가 이미 감당하는 값을 막을 뿐이었다. 음수만 거부한다.
+0이면 기동 로그에 `ch<N> rec bps 0: encoder rate control is automatic (VBR)`.
+
+**dist/pim/opt/pim/config/edgeconf_pim_base.json, edgeconf_cis_base.json**
+- ch0~ch3 4채널에 위 5개 키 추가.
+
+**dist/pim/opt/pim/bin/update_edgeconf.sh**
+- 기존 기기용 backfill 블록 추가. `if . == null` 가드를 써서 운용 중 지정한 값은 보존.
+
+**gstApp (별도 저장소 → dist/pim/usr/local/bin/gstApp)**
+- `parser.cpp` JSON 리더에 5개 키 추가. `gop`은 그동안 구조체 필드만 있고 JSON에서
+  읽히지 않아 `DEFAULT_GOP_SIZE`에 고정돼 있던 것을 이번에 연결.
+- `check_arg()`에 범위 검증 + single-enc 시 rtsp 슬롯 rec 미러링 + `qp_min > qp_max` 거부.
+  파싱된 5개 값을 채널별 요약 라인으로 로깅.
+- `encoderBin.cpp` / `recordBin.cpp` / `rtspServerBin.cpp` 세 인코더 경로 모두 edgeconf
+  값을 적용. 종전에는 `bitrate`와 `gop-size`만 넘겼다.
+- `profile`은 i.MX8MP에서만, `qp-min`/`qp-max`는 i.MX8MP와 i.MX8MM에서만 플러그인이
+  install하는 property라 `enc_set_optional_int()`로 존재 확인 후 세팅. 없으면 GLib 경고
+  대신 `encoder has no '<속성>' property` 로그를 남기고 건너뛴다.
+- `DEFAULT_GOP_SIZE`를 0(fps 연동)으로 두고, `check_arg()`가 해당 스트림 fps로 치환.
+  기본 fps 15 기준 15가 되어 종전 실효값과 같다.
+- **런타임 `set bps` / `set gop` 경로도 같은 상수로 통일했다.** 종전에는 edgeconf 경로와
+  판정이 달랐다 — `set bps`는 `0..9999`(edgeconf 경로의 당시 상한 20000과 불일치),
+  `set gop`은 `0..100`(상한이 `MAX_GOP_SIZE` 300과 불일치)이었다.
+  특히 `set gop rec 0`은 검증을 통과해 `g_object_set(enc, "gop-size", 0)`을 그대로
+  실행했다 — edgeconf 경로에서 0을 fps로 치환하는 것과 어긋나고, 0은 인코더에
+  도달하면 안 되는 값이다. 이제 런타임 경로도 채널별 fps로 치환한다.
+  `set bps`도 edgeconf와 같이 음수만 거부한다(종전 상한 9999 제거).
+- `setBitrate()` 파라미터를 `guint16` → `gint` 로 넓혔다. 호출부는 `gint` 를 넘기는데
+  세 Bin 의 시그니처가 `guint16` 이라 65535 초과 값이 잘렸다(`set bps rec 0 70000`
+  → `70000 & 0xFFFF` = 4464). 종전에는 `set bps` 의 `key > 9999` 검사가 우연히 이걸
+  막고 있었으나 상한을 없애면서 드러났다. 이제 값이 그대로 인코더까지 가고,
+  상한은 wrapper 의 `VPU_ENC_MAX_BITRATE`(60000 kbps) 클램프에 맡긴다.
+  `setGop()` 은 `guint16` 유지 — `MAX_GOP_SIZE` 가 300 이라 절단이 불가능하다.
+
+### 함께 수정한 기존 결함
+
+**gstApp `parser.cpp` — `--grec*` 옵션 이름/바인딩 불일치**
+- `--grec3`이 `cam[2]`에 묶여 있었고 `--grec0`이 두 번 등록되어 두 번째가 `cam[3]`에 묶여
+  있었다. 결과적으로 `--grec2`는 존재하지 않았고 `--grec0`은 중복 long name이었다.
+- `grec2`(→cam[2]) / `grec3`(→cam[3])로 정정. `--grtsp*`는 원래 정상이었다.
+
+### 주의
+
+- 배열 길이가 정확히 2가 아니면 gstApp이 해당 키를 통째로 무시하고 기본값을 쓴다.
+  부팅 로그에서 키별 `array length mismatch (expected 2), keep defaults` 라인과
+  요약 `!!! N config error(s) in edgeconf` 라인을 확인할 것.
+- single-encoder 모드(프로덕션 기본)에서는 rtsp 슬롯이 rec 값으로 강제 정렬된다.
+  `[a, b]`를 다르게 적어도 실제로는 둘 다 `a`가 쓰인다.
+- JSON과 gstApp 바이너리 중 한쪽만 갱신해도 기본값이 종전 실효값과 같아 동작은 유지된다.
+  다만 새 키로 값을 조정하려면 양쪽 다 필요하다.
+
+---
+
+## 변경사항 (2026-05-15) — FINAL STALL 사일런트 정체 차단
 
 ### 문제
 

@@ -298,11 +298,40 @@ jq --argjson key0 "$ch3_en" --argjson key1 "$ch3_rotate" --argjson key2 "$bps" '
 | .VHL_CAM.i2c1.ch3 |= (if .awb == null then .awb = "auto" else . end)
 | .VHL_CAM.i2c1.ch3 |= (if .bps == null then .bps = [$key2,2048] else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
 
+echo "check encoder tuning per channel"
+# vpuenc_h264 tuning, all [rec, rtsp] pairs like bps. 기본값은 종전 실효값과
+# 같으므로 backfill 자체로는 동작이 바뀌지 않는다.
+#   gop     : 키프레임 간격(프레임), 0..300.
+#             0 = fps 연동(1초 간격) — gstApp 이 기동 시 해당 스트림 fps 로
+#             치환한다. fps 를 바꾸면 간격도 따라간다.
+#             상한 300 은 VPU wrapper 의 ENC_MAX_GOP_SIZE (초과분은 조용히 잘림).
+#   profile : 9=Baseline 10=Main 11=High 12=High10 (int, not a name)
+#   quant   : initial QP, -1..51, -1 = auto
+#   qp_min  : 0..51, 0 = unset (VPU wrapper only honours > 0)
+#   qp_max  : 0..51, 0 = unset
+# 참고: bps 는 0 을 넣으면 VBR(자동 비트레이트)로 동작한다. 범위 검사는 없고
+#       0 이상이면 통과한다 — 10kbps 미만은 VPU 가 자동값으로 대체하고,
+#       60000kbps 초과는 wrapper 가 클램프한다.
+# Arrays MUST stay exactly 2 elements — gstApp ignores the whole key otherwise.
+jq 'def enc_defaults:
+      (if .gop     == null then .gop     = [0, 0]   else . end)
+    | (if .profile == null then .profile = [9, 9]   else . end)
+    | (if .quant   == null then .quant   = [-1, -1] else . end)
+    | (if .qp_min  == null then .qp_min  = [0, 0]   else . end)
+    | (if .qp_max  == null then .qp_max  = [0, 0]   else . end);
+  .VHL_CAM.i2c2.ch0 |= enc_defaults
+| .VHL_CAM.i2c2.ch1 |= enc_defaults
+| .VHL_CAM.i2c1.ch2 |= enc_defaults
+| .VHL_CAM.i2c1.ch3 |= enc_defaults
+' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+
 echo "check led_flash per channel"
 # led_flash: integrated LED control applied via V4L2 ioctl (max9296 driver)
 #   enable      : bool. gates mcp4018_power_chX (MAX9295 MFP4 GPIO) + led_flash_chX bit8 (AR0234 R0x3270)
 #   wiper       : int  0..127 (MCP4018 digital pot; 63 = mid-scale default)
 #   flash_delay : int  0..255 (AR0234 R0x3270 bit7:0 DELAY field)
+#                 enable/wiper 와 달리 == null 가드 없이 매번 128 로 강제한다.
+#                 의도된 동작 — 기기별로 값이 갈리지 않게 고정한다.
 jq '.VHL_CAM.i2c2.ch0.led_flash |= (. // {})
 | .VHL_CAM.i2c2.ch0.led_flash |= (if .enable      == null then .enable      = false else . end)
 | .VHL_CAM.i2c2.ch0.led_flash |= (if .wiper       == null then .wiper       = 63    else . end)
