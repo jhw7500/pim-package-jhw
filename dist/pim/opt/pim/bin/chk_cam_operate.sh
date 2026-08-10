@@ -1228,6 +1228,7 @@ modprobe imx8-media-dev || logger -p local0.err "[$KEY][$tag:$LINENO] modprobe i
 #/opt/pim/bin/start_cam.sh 20
 
 FILE_="/tmp/start_video_time_chk"
+SESSION_FILE_="/tmp/start_video_session_chk"
 #FILE_JSON=/root/shared_v/edgeconf_pim.json
 FILE_JSON_=/root/shared_v/ord_vcm_conf.json
 FILE_CHECK=/tmp/file_check
@@ -1425,8 +1426,18 @@ do
             logger -p local0.info "[$KEY][$tag:$LINENO] start_video_time_:$startTime, cur_time:$(date '+%Y%m%d %H:%M:%S'), diff:$diffEpoch"
             #timer=0
 			cat /dev/null > $FILE_
-			datetime=$(date -d "$startTime" "+%Y%m%d_%H%M%S")
-            datetime_=$(date -d "$startTime" "+%Y%m%d_%H%M")
+            # gstApp 이 파일명에 쓴 세션(분)을 우선 사용한다. 첫 fragment 가 분 경계
+            # 직전에 열리면 파일명은 다음 분으로 올림되어 벽시계 분과 어긋난다.
+            # 세션 파일이 없거나(구버전 바이너리) 형식이 어긋나면 기존 방식으로 폴백.
+            session_id=$(cat "$SESSION_FILE_" 2>/dev/null | tr -d '\n')
+            cat /dev/null > "$SESSION_FILE_" 2>/dev/null
+            if [[ "$session_id" =~ ^[0-9]{8}_[0-9]{4}$ ]]; then
+                datetime=${session_id}00
+                datetime_=$session_id
+            else
+                datetime=$(date -d "$startTime" "+%Y%m%d_%H%M%S")
+                datetime_=$(date -d "$startTime" "+%Y%m%d_%H%M")
+            fi
             drv_disc=$(read_driver_disconnect)
             enabled_chs=()
             disconnect_chs=()
