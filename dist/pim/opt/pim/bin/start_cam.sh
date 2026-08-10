@@ -64,7 +64,7 @@ if [[ -n "$1" ]]; then
 fi
 
 JSON_PREFIX=edgeconf_
-JOSN_SUFFIX=.json
+JSON_SUFFIX=.json
 FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' | grep "${JSON_SUFFIX}$" | tail -1 | tr -d '\r\n')
 logger -p local0.info "[$key][$tag:$LINENO] json_file : $FILE_JSON"
 GST_LOG_FILE="/var/log/cantops/gst/$app_$(date +'%Y%m%d_%H%M%S').log"

@@ -48,7 +48,7 @@ defunct=0
 list="BG_Check_for_pim.sh"
 
 JSON_PREFIX=edgeconf_
-JOSN_SUFFIX=.json
+JSON_SUFFIX=.json
 FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' | grep "${JSON_SUFFIX}$" | tail -1 | tr -d '\r\n')
 list+=" gstApp streamApp PIMCAM"
 :<<'END'

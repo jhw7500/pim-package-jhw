@@ -8,7 +8,7 @@ delay=25
 i=0
 # bg_cam_err_streak는 cam_state/streak로 통합됨
 JSON_PREFIX=edgeconf_
-JOSN_SUFFIX=.json
+JSON_SUFFIX=.json
 FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' | grep "${JSON_SUFFIX}$" | tail -1 | tr -d '\r\n')
 #cam_ch0=$(jq '.VHL_CAM.i2c2.ch0.enable' "$FILE_JSON")
 #cam_ch1=$(jq '.VHL_CAM.i2c2.ch1.enable' "$FILE_JSON")
