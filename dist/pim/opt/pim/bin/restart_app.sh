@@ -73,7 +73,7 @@ sleep 1
 ENABLE_VAL="true"
 DISABLE_VAL="false"
 JSON_PREFIX=edgeconf_
-JOSN_SUFFIX=.json
+JSON_SUFFIX=.json
 FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' | grep "${JSON_SUFFIX}$" | tail -1 | tr -d '\r\n')
 #read app cap_en < <(jq -r '[.VHL_CAM.app, .VHL_CAM.capture.enable] | @tsv' $FILE_JSON)
 IFS=$'\t' read -r \

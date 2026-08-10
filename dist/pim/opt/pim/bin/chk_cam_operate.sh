@@ -1242,7 +1242,7 @@ final_stall_cnt=0
 #touch $FILE_
 
 JSON_PREFIX=edgeconf_
-JOSN_SUFFIX=.json
+JSON_SUFFIX=.json
 FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' | grep "${JSON_SUFFIX}$" | tail -1 | tr -d '\r\n')
 force_edgeconf_app_to_gstapp "$FILE_JSON" || true
 
