@@ -150,6 +150,34 @@ log_ctrl3() {
     logger -p "local0.$1" "[CHK][$tag:$3] $4 : $5 (mode=$ctrl3_mode locked=$ctrl3_locked error=$ctrl3_error cmu=$ctrl3_cmu verdict=$ctrl3_verdict drv=${drv:-NA} rx3=${rx3%%/*} link=${rx3##*/}${hint})"
 }
 
+# 정상 판정을 주기적으로 한 줄만 notice 로 올린다.
+#
+# 정상은 debug 라 기본 로그 레벨에서 사라진다. 그래서 다른 계층이 실패했을 때
+# (예: gstApp 이 채널을 못 띄웠을 때) "그 시점 링크는 정상이었나"를 확인할 방법이
+# 없다 — 정상 로그의 부재는 '정상이었다'의 증거가 아니라 '레벨에 걸러졌다'와
+# 구분되지 않는다. debug 는 그대로 두고 기록용 한 줄을 따로 남긴다.
+#
+# 매 호출 올리면 저널을 메워 정작 필요한 줄이 밀려난다. 버스별로 간격을 둔다.
+# RX3 는 읽지 않는다 — 정상일 때 i2c 를 더 태우지 않는다는 결정(위 주석)을 지킨다.
+# drv 는 sysfs 라 비용이 없어 함께 남긴다.
+OK_NOTICE_INTERVAL_SEC="${OK_NOTICE_INTERVAL_SEC:-300}"
+
+# $1=i2c adapter  $2=호출부 LINENO  $3=라벨  $4=CTRL3 원시값
+log_ok() {
+    local f now ts drv
+    logger -p local0.debug "[CHK][$tag:$2] $3 OK"
+    mkdir -p "$STATE_DIR" 2>/dev/null || return 0
+    f="${STATE_DIR}/ok_notice_ts_$1"
+    now=$(date +%s)
+    ts=$(cat "$f" 2>/dev/null | tr -d '\n')
+    [[ "$ts" =~ ^[0-9]+$ ]] || ts=0
+    # 시계가 뒤로 가면 경과가 음수가 되어 영영 안 찍힌다. 그때는 즉시 한 번 찍고 갱신.
+    [ $((now - ts)) -ge "$OK_NOTICE_INTERVAL_SEC" ] || [ $((now - ts)) -lt 0 ] || return 0
+    printf '%s' "$now" > "$f"
+    drv=$(cat "/sys/bus/i2c/devices/$1-0048/link_status" 2>/dev/null | tr -d '\n')
+    logger -p local0.notice "[CHK][$tag:$2] $3 OK : $4 (mode=$ctrl3_mode locked=$ctrl3_locked error=$ctrl3_error cmu=$ctrl3_cmu drv=${drv:-NA})"
+}
+
 cam_ch_en=$1
 # 전 채널 disable 시 deserializer가 power-down되어 i2c NACK이 발생하므로 i2c 트랜잭션 자체를 건너뛴다.
 if [ "${cam_ch_en:-0}" -eq 0 ] 2>/dev/null; then
@@ -195,7 +223,7 @@ cam23_res=$(i2ctransfer -f -y -a 1 w2@0x48 0x00 0x13 r1)
 if [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]; then
     classify_ctrl3 "$cam01_res" "$LM_BOTH_EXPECT"
     if [ "$ctrl3_verdict" = "ok" ]; then
-        logger -p local0.debug "[CHK][$tag:$LINENO] CAM0 CAM1 OK"
+        log_ok 2 $LINENO "CAM0 CAM1" "$cam01_res"
     else
         recovered_by=""
         # Phase 1: read-only retry (no reset write)
@@ -259,7 +287,7 @@ elif [[ "$cam_ch0" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch1" == *"$DISABLE_VAL"* ]]
     classify_ctrl3 "$cam01_res" "$CH_EVEN_LINK"
     case "$ctrl3_verdict" in
         ok)
-            logger -p local0.debug "[CHK][$tag:$LINENO] CAM0 OK"
+            log_ok 2 $LINENO "CAM0" "$cam01_res"
             ;;
         errb_only)
             log_ctrl3 warning 2 $LINENO "CAM0 ERRB asserted but link locked" "$cam01_res"
@@ -287,7 +315,7 @@ elif [[ "$cam_ch0" == *"$DISABLE_VAL"* ]] && [[ "$cam_ch1" == *"$ENABLE_VAL"* ]]
     classify_ctrl3 "$cam01_res" "$CH_ODD_LINK"
     case "$ctrl3_verdict" in
         ok)
-            logger -p local0.debug "[CHK][$tag:$LINENO] CAM1 OK"
+            log_ok 2 $LINENO "CAM1" "$cam01_res"
             ;;
         errb_only)
             log_ctrl3 warning 2 $LINENO "CAM1 ERRB asserted but link locked" "$cam01_res"
@@ -318,7 +346,7 @@ fi
 if [[ "$cam_ch2" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch3" == *"$ENABLE_VAL"* ]]; then
     classify_ctrl3 "$cam23_res" "$LM_BOTH_EXPECT"
     if [ "$ctrl3_verdict" = "ok" ]; then
-        logger -p local0.debug "[CHK][$tag:$LINENO] CAM2 CAM3 OK"
+        log_ok 1 $LINENO "CAM2 CAM3" "$cam23_res"
     else
         recovered_by=""
         # Phase 1: read-only retry (no reset write)
@@ -376,7 +404,7 @@ elif [[ "$cam_ch2" == *"$ENABLE_VAL"* ]] && [[ "$cam_ch3" == *"$DISABLE_VAL"* ]]
     classify_ctrl3 "$cam23_res" "$CH_EVEN_LINK"
     case "$ctrl3_verdict" in
         ok)
-            logger -p local0.debug "[CHK][$tag:$LINENO] CAM2 OK"
+            log_ok 1 $LINENO "CAM2" "$cam23_res"
             ;;
         errb_only)
             log_ctrl3 warning 1 $LINENO "CAM2 ERRB asserted but link locked" "$cam23_res"
@@ -404,7 +432,7 @@ elif [[ "$cam_ch2" == *"$DISABLE_VAL"* ]] && [[ "$cam_ch3" == *"$ENABLE_VAL"* ]]
     classify_ctrl3 "$cam23_res" "$CH_ODD_LINK"
     case "$ctrl3_verdict" in
         ok)
-            logger -p local0.debug "[CHK][$tag:$LINENO] CAM3 OK"
+            log_ok 1 $LINENO "CAM3" "$cam23_res"
             ;;
         errb_only)
             log_ctrl3 warning 1 $LINENO "CAM3 ERRB asserted but link locked" "$cam23_res"
