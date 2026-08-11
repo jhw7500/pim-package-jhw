@@ -106,12 +106,22 @@ drv_disconnect_mask=0
 drv_mask_i2c2=0
 drv_mask_i2c1=0
 
+# 마스크로 눕히기 전의 sysfs 원시값. drv_mask_* 는 산술 연산을 위해 -1 을 0 으로
+# 바꾸므로 "미확인"과 "정상"의 구분이 사라진다. 그 구분이 필요한 곳에서 쓴다.
+drv_raw_i2c2=0
+drv_raw_i2c1=0
+
 # disconnect 로그 억제. 루프가 수 초 단위라 매번 찍으면 이 줄이 저널을 메워,
 # 채널을 특정해 주는 줄(chk_cam_connect 의 rx3/link)이 뒤로 밀려 사라진다.
 # 상태가 바뀌면 즉시 찍고, 같은 상태가 이어지면 이 간격으로만 재확인한다.
 DISCONNECT_LOG_REPEAT_SEC=60
 drv_log_sig=""
 drv_log_ts=0
+
+# 미초기화 스킵 로그 억제. 설정만 켜두고 실제로 스트리밍하지 않는 버스가 있으면
+# 이 상태가 무한히 유지되므로 disconnect 와 같은 방식으로 억제한다.
+uninit_log_sig=""
+uninit_log_ts=0
 
 # sysfs link_status 비트마스크를 읽어서 disconnect된 채널에 에러 플래그 생성
 # 비트마스크: bit0=ch0, bit1=ch1, bit2=ch2, bit3=ch3 (cam_ch_bit과 동일)
@@ -122,6 +132,10 @@ check_driver_disconnect() {
 
     mask_i2c2=$(cat "$SYSFS_LINK_I2C2" 2>/dev/null | tr -d '\n')
     mask_i2c1=$(cat "$SYSFS_LINK_I2C1" 2>/dev/null | tr -d '\n')
+    # 눕히기 전에 원시값을 보존한다. 읽기 실패(빈 값)는 0 으로 두어 기존 동작을
+    # 유지하고, -1 만 별도 상태로 남긴다.
+    drv_raw_i2c2="${mask_i2c2:-0}"
+    drv_raw_i2c1="${mask_i2c1:-0}"
     [ -z "$mask_i2c2" ] || [ "$mask_i2c2" -lt 0 ] 2>/dev/null && mask_i2c2=0
     [ -z "$mask_i2c1" ] || [ "$mask_i2c1" -lt 0 ] 2>/dev/null && mask_i2c1=0
 
@@ -144,6 +158,23 @@ check_driver_disconnect() {
         return 0
     fi
 
+    return 1
+}
+
+# 활성 채널이 속한 버스의 드라이버가 아직 레지스터 테이블을 안 실었는가.
+#
+# link_status 는 probe 에서 -1 로 시작해(max9296.c:3894) load_regs 끝에서만 0 이상이
+# 된다(max9296.c:1401). 즉 -1 은 "정상"이 아니라 "des 가 아직 프로그램되지 않았다"
+# 이고, 이때 읽히는 CTRL3 는 이전 세션이 남긴 잔상이다. 그 값으로 LINK_MODE 를
+# 판정하면 멀쩡한 링크를 에러로 올린다(실측: 미초기화 상태의 CTRL3=0xda 를
+# mode_unexpected 로 판정해 CAM23_ERR 가 4초마다 반복됐다).
+#
+# 쓰지 않는 버스는 STREAMON 이 없어 영영 -1 이다. 그걸로 전체를 막으면 안 되므로
+# cam_ch_bit 이 가리키는 버스만 본다.
+#   bit0,1 → i2c2 (ch0/ch1)   bit2,3 → i2c1 (ch2/ch3)
+drv_uninitialized() {
+    [ $((cam_ch_bit & 0x03)) -ne 0 ] && [ "$drv_raw_i2c2" = "-1" ] && return 0
+    [ $((cam_ch_bit & 0x0c)) -ne 0 ] && [ "$drv_raw_i2c1" = "-1" ] && return 0
     return 1
 }
 
@@ -285,6 +316,18 @@ while true; do
     elif [ ! -f /tmp/start_video_time_chk ]; then
         drv_log_sig=""
         logger -p local0.info "[CHK][$tag:$LINENO] skip chk_cam_connect: gstApp not yet playing"
+    elif drv_uninitialized; then
+        # 드라이버가 아직 테이블을 안 실었다 = des 레지스터는 이전 세션 잔상이다.
+        # CTRL3 로 판정할 근거가 없으므로 검사 자체를 미룬다(drv_uninitialized 주석 참조).
+        drv_log_sig=""
+        uninit_now=$(now_ts)
+        uninit_cur="$drv_raw_i2c2|$drv_raw_i2c1|$cam_ch_bit"
+        if [ "$uninit_cur" != "$uninit_log_sig" ] ||
+           [ $((uninit_now - uninit_log_ts)) -ge "$DISCONNECT_LOG_REPEAT_SEC" ]; then
+            logger -p local0.notice "[CHK][$tag:$LINENO] skip chk_cam_connect: driver not initialized (i2c2=$drv_raw_i2c2 i2c1=$drv_raw_i2c1 en=$(mask_to_chs "$cam_ch_bit"))"
+            uninit_log_sig="$uninit_cur"
+            uninit_log_ts=$uninit_now
+        fi
     else
         # disconnect 가 풀렸다. 다음에 다시 빠지면 같은 값이라도 즉시 찍히도록
         # 억제 상태를 비운다. 안 그러면 짧게 붙었다 떨어질 때 로그가 통째로 빠진다.
