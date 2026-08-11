@@ -47,6 +47,20 @@ if [ -z "$FILE_JSON" ] || [ ! -f "$FILE_JSON" ]; then
     exit 1
 fi
 
+# jq 재작성용 임시 파일.
+#
+# 이전에는 29곳이 상대 경로 임시 파일이었다 — 27곳은 고정 이름, 2곳은 PID 를 붙인
+# 이름. 실행 디렉터리에 따라 엉뚱한 곳에 만들어지고(호출자가 cwd 를 보장하지 않는다),
+# 고정 이름 쪽은 두 번 동시에 돌면 서로를 덮어쓴다. set -e 때문에 jq 가 실패하면 그
+# 자리에서 죽으므로 쓰다 만 파일이 그대로 남기도 했다.
+#
+# 대상과 같은 디렉터리에 유일한 이름으로 만든다 — 같은 파일시스템이어야 mv 가 원자적
+# 이고, 그래야 원본이 반쯤 쓰인 상태로 남지 않는다(automnt_sd_for_emmc_boot.sh 와 동일
+# 관례). 종료 경로가 여럿이라(정상 / ERR 트랩 / 중간 exit) EXIT 트랩으로 지운다.
+# ERR 트랩은 err_report 가 따로 쓰므로 서로 간섭하지 않는다.
+TMP_JSON=$(mktemp "${FILE_JSON}.tmp.XXXXXX")
+trap 'rm -f "$TMP_JSON"' EXIT
+
 if [ -d /opt/pim/config ]; then
     cp "$FILE_JSON" "/opt/pim/config/${FILE_JSON##*/}.backup"
 else
@@ -72,10 +86,10 @@ logger -p local0.notice "[$KEY][$tag:$LINENO] please wait for update $FILE_JSON$
 
 header_to_remove="ORD"
 echo "check $header_to_remove header"
-jq "if has(\"${header_to_remove}\") then del(.${header_to_remove}) else . end" "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+jq "if has(\"${header_to_remove}\") then del(.${header_to_remove}) else . end" "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
 header_to_remove="VCM"
 echo "check $header_to_remove header"
-jq "if has(\"${header_to_remove}\") then del(.${header_to_remove}) else . end" "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+jq "if has(\"${header_to_remove}\") then del(.${header_to_remove}) else . end" "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
 
 bps=$(jq -r '.VHL_CAM.bitrate' "$FILE_JSON")
 if [ -z "$bps" ] || [ "$bps" == "null" ]; then
@@ -157,7 +171,7 @@ jq '.VHL_CAM.log_level |= if . == null then 5 else . end |
 .VHL_CAM.fps |= if . == null then 15 else . end |
 .VHL_CAM.muxer |= if . == null then "mp4" else . end |
 .VHL_CAM.app = "gstApp"
-' "$FILE_JSON" > tmp.$$ && mv tmp.$$ "$FILE_JSON"
+' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
 
 
 key_name=0
@@ -167,14 +181,14 @@ do
 #    ch${num}_en=$(jq --arg key1 "cam_ch${num}" '.VHL_CAM.$key1' "$FILE_JSON")
     jq --arg key1 "cam_ch${num}_rotate" --arg key2 "ch${num}_vflip" --arg key3 "ch${num}_hflip" --arg key4 "cam_ch${num}" \
     'del(.VHL_CAM[$key1], .VHL_CAM[$key2], .VHL_CAM[$key3], .VHL_CAM[$key4])' \
-    "$FILE_JSON" > tmp.$$ && mv tmp.$$ "$FILE_JSON"
+    "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
 done
 
 echo "check vflip, hflip, bitrate, rec_fps, rtsp_ftps, rec_bps, rtsp_bps, vflip"
-jq 'del(.VHL_CAM.bitrate, .VHL_CAM.rec_fps, .VHL_CAM.rtsp_fps, .VHL_CAM.rec_bps, .VHL_CAM.rtsp_bps, .VHL_CAM.vflip, .VHL_CAM.hflip)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+jq 'del(.VHL_CAM.bitrate, .VHL_CAM.rec_fps, .VHL_CAM.rtsp_fps, .VHL_CAM.rec_bps, .VHL_CAM.rtsp_bps, .VHL_CAM.vflip, .VHL_CAM.hflip)' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
 
 echo "check exp_time"
-jq 'del (.VHL_CAM.ch0.exp_time, .VHL_CAM.ch1.exp_time, .VHL_CAM.ch2.exp_time, .VHL_CAM.ch3.exp_time)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+jq 'del (.VHL_CAM.ch0.exp_time, .VHL_CAM.ch1.exp_time, .VHL_CAM.ch2.exp_time, .VHL_CAM.ch3.exp_time)' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
 
 echo "check capture"
 capture_en=$(jq -r '.VHL_CAM.capture' "$FILE_JSON")
@@ -185,7 +199,7 @@ else
     echo "capture is exist"
     if [ "$capture_en" == "true" ] || [ "$capture_en" == "false" ]; then
         echo "del capture"
-        jq 'del (.VHL_CAM.capture)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+        jq 'del (.VHL_CAM.capture)' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
     fi
 fi
 
@@ -200,43 +214,43 @@ jq --argjson key0 "$capture_en" --argjson key1 0 --argjson key2 200 '.VHL_CAM.ca
 | .VHL_CAM.capture |= (if .path == null then .path = "/dev/shm/capture" else . end)
 | .VHL_CAM.capture |= (if .queue_size == null then .queue_size = 30 else . end)
 | .VHL_CAM.capture |= (if .instant == null then .instant = 0 else . end)
-' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
 
 jq '.VHL_CAM.queue_tune |= (if .main_src_time_ms == null then .main_src_time_ms = 300 else . end)
 | .VHL_CAM.queue_tune |= (if .enc_src_time_ms == null then .enc_src_time_ms = 300 else . end)
 | .VHL_CAM.queue_tune |= (if .rec_sink_time_ms == null then .rec_sink_time_ms = 500 else . end)
 | .VHL_CAM.queue_tune |= (if .cap_src_time_ms == null then .cap_src_time_ms = 500 else . end)
-' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
 
 jq '.VHL_CAM.rtsp_tune |= (if .rtsp_factory_latency_ms == null then .rtsp_factory_latency_ms = 200 else . end)
 | .VHL_CAM.rtsp_tune |= (if .rtsp_appsink_max_buffers == null then .rtsp_appsink_max_buffers = 3 else . end)
 | .VHL_CAM.rtsp_tune |= (if .rtsp_factory_queue_max_buffers == null then .rtsp_factory_queue_max_buffers = 3 else . end)
 | .VHL_CAM.rtsp_tune |= (if .rtsp_bin_queue_max_time_ms == null then .rtsp_bin_queue_max_time_ms = 100 else . end)
-' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
 
-jq 'del (.VHL_CAM.capture.turbojpeg)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+jq 'del (.VHL_CAM.capture.turbojpeg)' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
 
 echo "update i2c header"
 jq '.VHL_CAM.i2c2 |= (if .exp_time == null then .exp_time = 10000 else . end)
-| .VHL_CAM.i2c1 |= (if .exp_time == null then .exp_time = 10000 else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+| .VHL_CAM.i2c1 |= (if .exp_time == null then .exp_time = 10000 else . end)' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
 
 jq '.VHL_CAM |= (if .i2c2.ch0 == null then .i2c2.ch0 = .ch0 else . end)
 | .VHL_CAM |= (if .i2c2.ch1 == null then .i2c2.ch1 = .ch1 else . end)
 | .VHL_CAM |= (if .i2c1.ch2 == null then .i2c1.ch2 = .ch2 else . end)
-| .VHL_CAM |= (if .i2c1.ch3 == null then .i2c1.ch3 = .ch3 else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+| .VHL_CAM |= (if .i2c1.ch3 == null then .i2c1.ch3 = .ch3 else . end)' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
 
-#jq 'del(.VHL | select(.ch0 != null).ch0, select(.ch1 != null).ch1, select(.ch2 != null).ch2, select(.ch3 != null).ch3)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+#jq 'del(.VHL | select(.ch0 != null).ch0, select(.ch1 != null).ch1, select(.ch2 != null).ch2, select(.ch3 != null).ch3)' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
 echo "check old channel config"
 jq '.VHL_CAM |= (if .ch0 == null then . else del(.ch0) end)
 | .VHL_CAM |= (if .ch1 == null then . else del(.ch1) end)
 | .VHL_CAM |= (if .ch2 == null then . else del(.ch2) end)
-| .VHL_CAM |= (if .ch3 == null then . else del(.ch3) end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+| .VHL_CAM |= (if .ch3 == null then . else del(.ch3) end)' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
 
 echo "check path"
 jq '.VHL_CAM.tmp_path |= (. // "/dev/shm")
 | .VHL_CAM.sd_tmp_path |= (. // "/mnt/sd_cam/tmp")
 | .VHL_CAM.final_path |= (. // "/mnt/sd_cam")
-' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
 
 echo "check ETH1 health config"
 jq '
@@ -259,7 +273,7 @@ jq '
       end
     )
   | .NETWORK.ETH1 |= del(.ping_test_ip_addr)
-' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
 
 echo "update new channel config"
 #echo "check ch0"
@@ -269,7 +283,7 @@ jq --argjson key0 "$ch0_en" --argjson key1 "$ch0_rotate" --argjson key2 "$bps" '
 | .VHL_CAM.i2c2.ch0 |= (if .ae_on == null then .ae_on = true else . end)
 | .VHL_CAM.i2c2.ch0 |= (if .ae_gain == null then .ae_gain = 256 else . end)
 | .VHL_CAM.i2c2.ch0 |= (if .awb == null then .awb = "auto" else . end)
-| .VHL_CAM.i2c2.ch0 |= (if .bps == null then .bps = [$key2,2048] else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+| .VHL_CAM.i2c2.ch0 |= (if .bps == null then .bps = [$key2,2048] else . end)' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
 
 #echo "check ch1"
 jq --argjson key0 "$ch1_en" --argjson key1 "$ch1_rotate" --argjson key2 "$bps" '.VHL_CAM.i2c2.ch1 |= (if .enable == null then .enable = $key0 else . end)
@@ -278,7 +292,7 @@ jq --argjson key0 "$ch1_en" --argjson key1 "$ch1_rotate" --argjson key2 "$bps" '
 | .VHL_CAM.i2c2.ch1 |= (if .ae_on == null then .ae_on = true else . end)
 | .VHL_CAM.i2c2.ch1 |= (if .ae_gain == null then .ae_gain = 256 else . end)
 | .VHL_CAM.i2c2.ch1 |= (if .awb == null then .awb = "auto" else . end)
-| .VHL_CAM.i2c2.ch1 |= (if .bps == null then .bps = [$key2,2048] else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+| .VHL_CAM.i2c2.ch1 |= (if .bps == null then .bps = [$key2,2048] else . end)' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
 
 #echo "check ch2"
 jq --argjson key0 "$ch2_en" --argjson key1 "$ch2_rotate" --argjson key2 "$bps" '.VHL_CAM.i2c1.ch2 |= (if .enable == null then .enable = $key0 else . end)
@@ -287,7 +301,7 @@ jq --argjson key0 "$ch2_en" --argjson key1 "$ch2_rotate" --argjson key2 "$bps" '
 | .VHL_CAM.i2c1.ch2 |= (if .ae_on == null then .ae_on = true else . end)
 | .VHL_CAM.i2c1.ch2 |= (if .ae_gain == null then .ae_gain = 256 else . end)
 | .VHL_CAM.i2c1.ch2 |= (if .awb == null then .awb = "auto" else . end)
-| .VHL_CAM.i2c1.ch2 |= (if .bps == null then .bps = [$key2,2048] else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+| .VHL_CAM.i2c1.ch2 |= (if .bps == null then .bps = [$key2,2048] else . end)' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
 
 #echo "check ch3"
 jq --argjson key0 "$ch3_en" --argjson key1 "$ch3_rotate" --argjson key2 "$bps" '.VHL_CAM.i2c1.ch3 |= (if .enable == null then .enable = $key0 else . end)
@@ -296,7 +310,7 @@ jq --argjson key0 "$ch3_en" --argjson key1 "$ch3_rotate" --argjson key2 "$bps" '
 | .VHL_CAM.i2c1.ch3 |= (if .ae_on == null then .ae_on = true else . end)
 | .VHL_CAM.i2c1.ch3 |= (if .ae_gain == null then .ae_gain = 256 else . end)
 | .VHL_CAM.i2c1.ch3 |= (if .awb == null then .awb = "auto" else . end)
-| .VHL_CAM.i2c1.ch3 |= (if .bps == null then .bps = [$key2,2048] else . end)' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+| .VHL_CAM.i2c1.ch3 |= (if .bps == null then .bps = [$key2,2048] else . end)' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
 
 echo "check encoder tuning per channel"
 # vpuenc_h264 tuning, all [rec, rtsp] pairs like bps. 기본값은 종전 실효값과
@@ -323,7 +337,7 @@ jq 'def enc_defaults:
 | .VHL_CAM.i2c2.ch1 |= enc_defaults
 | .VHL_CAM.i2c1.ch2 |= enc_defaults
 | .VHL_CAM.i2c1.ch3 |= enc_defaults
-' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
 
 echo "check led_flash per channel"
 # led_flash: integrated LED control applied via V4L2 ioctl (max9296 driver)
@@ -348,12 +362,12 @@ jq '.VHL_CAM.i2c2.ch0.led_flash |= (. // {})
 | .VHL_CAM.i2c1.ch3.led_flash |= (if .enable      == null then .enable      = false else . end)
 | .VHL_CAM.i2c1.ch3.led_flash |= (if .wiper       == null then .wiper       = 63    else . end)
 | .VHL_CAM.i2c1.ch3.led_flash.flash_delay = 128
-' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
 
 #gstApp (streamApp deprecated — $1==1 분기 제거됨)
 if [[ $1 == 2 ]]; then
     echo "update for gstApp"
-    jq '.VHL_CAM.app = "gstApp"' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+    jq '.VHL_CAM.app = "gstApp"' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
 fi
 
 model=$(jq -r '.model_name' '/etc/cts/model_info.json')
@@ -376,7 +390,7 @@ if [[ "$bd_type" == "a" || "$bd_type" == "c" ]]; then
     | .SENSORS.ACC |= (if .cutoff == null then .cutoff = 499 else . end)
     | .SENSORS.ACC |= (if .decimation == null then .decimation = 1 else . end)
     | .SENSORS.ACC |= (if .dataframe == null then .dataframe = "ACC" else . end)
-    ' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+    ' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
 
     # .SENSORS.ADC
     jq '
@@ -393,7 +407,7 @@ if [[ "$bd_type" == "a" || "$bd_type" == "c" ]]; then
     | .SENSORS.ADC |= (if .cutoff == null then .cutoff = 499 else . end)
     | .SENSORS.ADC |= (if .decimation == null then .decimation = 20 else . end)
     | .SENSORS.ADC |= (if .dataframe == null then .dataframe = "ADC" else . end)
-    ' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+    ' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
     
     # .SENSORS.ETHERCAT
     jq '
@@ -419,7 +433,7 @@ if [[ "$bd_type" == "a" || "$bd_type" == "c" ]]; then
     | .SENSORS.ETHERCAT |= (if .cutoff == null then .cutoff = 499 else . end)
     | .SENSORS.ETHERCAT |= (if .decimation == null then .decimation = 1 else . end)
     | .SENSORS.ETHERCAT |= (if .dataframe == null then .dataframe = "ETHERCAT" else . end)
-    ' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+    ' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
 fi
 
 if [[ "${model:0:3}" == "cis" ]]; then
@@ -527,7 +541,7 @@ if [[ "${model:0:3}" == "cis" ]]; then
     | . |= (if .device_report_min == null then .device_report_min = 1 else . end)
     | .SERVER_DSIOT |= (. // {})
     | .SERVER_DSIOT |= (if .pass == null then .pass = 0 else . end)
-    ' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+    ' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
 else
     echo "remove CIS config (model: $model)"
     jq 'del (
@@ -570,7 +584,7 @@ else
     .tq_report_min,
     .device_report_min,
     .SERVER_DSIOT
-    )' "$FILE_JSON" > temp.json && mv temp.json "$FILE_JSON"
+    )' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
 fi
 
 sync
