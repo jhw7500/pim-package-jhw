@@ -161,7 +161,7 @@ check_driver_disconnect() {
     return 1
 }
 
-# 활성 채널이 속한 버스의 드라이버가 아직 레지스터 테이블을 안 실었는가.
+# 활성 채널 중, 드라이버가 레지스터 테이블을 이미 실은 버스의 채널만 남긴 마스크.
 #
 # link_status 는 probe 에서 -1 로 시작해(max9296.c:3894) load_regs 끝에서만 0 이상이
 # 된다(max9296.c:1401). 즉 -1 은 "정상"이 아니라 "des 가 아직 프로그램되지 않았다"
@@ -169,13 +169,19 @@ check_driver_disconnect() {
 # 판정하면 멀쩡한 링크를 에러로 올린다(실측: 미초기화 상태의 CTRL3=0xda 를
 # mode_unexpected 로 판정해 CAM23_ERR 가 4초마다 반복됐다).
 #
-# 쓰지 않는 버스는 STREAMON 이 없어 영영 -1 이다. 그걸로 전체를 막으면 안 되므로
-# cam_ch_bit 이 가리키는 버스만 본다.
+# 판정은 버스 단위로 가른다. 한쪽이 미초기화라고 나머지 버스 진단까지 버리면 그쪽
+# 카메라 장애가 초기화 창 동안 무음으로 지나간다 — 네 채널을 다 쓰는 구성에서 실제로
+# 밟는 경로다. chk_cam_connect.sh 는 부분 마스크를 정상 처리한다(꺼진 쌍은 disable
+# 분기로 빠진다).
+#
+# 쓰지 않는 버스는 STREAMON 이 없어 영영 -1 이지만 애초에 cam_ch_bit 에 없으므로
+# 마스크에 영향을 주지 않는다.
 #   bit0,1 → i2c2 (ch0/ch1)   bit2,3 → i2c1 (ch2/ch3)
-drv_uninitialized() {
-    [ $((cam_ch_bit & 0x03)) -ne 0 ] && [ "$drv_raw_i2c2" = "-1" ] && return 0
-    [ $((cam_ch_bit & 0x0c)) -ne 0 ] && [ "$drv_raw_i2c1" = "-1" ] && return 0
-    return 1
+drv_ready_mask() {
+    local m=$((cam_ch_bit & 0x0f))
+    [ "$drv_raw_i2c2" = "-1" ] && m=$((m & ~0x03))
+    [ "$drv_raw_i2c1" = "-1" ] && m=$((m & ~0x0c))
+    printf '%d' "$m"
 }
 
 if [[ -n "$1" ]]; then
@@ -316,23 +322,34 @@ while true; do
     elif [ ! -f /tmp/start_video_time_chk ]; then
         drv_log_sig=""
         logger -p local0.info "[CHK][$tag:$LINENO] skip chk_cam_connect: gstApp not yet playing"
-    elif drv_uninitialized; then
-        # 드라이버가 아직 테이블을 안 실었다 = des 레지스터는 이전 세션 잔상이다.
-        # CTRL3 로 판정할 근거가 없으므로 검사 자체를 미룬다(drv_uninitialized 주석 참조).
-        drv_log_sig=""
-        uninit_now=$(now_ts)
-        uninit_cur="$drv_raw_i2c2|$drv_raw_i2c1|$cam_ch_bit"
-        if [ "$uninit_cur" != "$uninit_log_sig" ] ||
-           [ $((uninit_now - uninit_log_ts)) -ge "$DISCONNECT_LOG_REPEAT_SEC" ]; then
-            logger -p local0.notice "[CHK][$tag:$LINENO] skip chk_cam_connect: driver not initialized (i2c2=$drv_raw_i2c2 i2c1=$drv_raw_i2c1 en=$(mask_to_chs "$cam_ch_bit"))"
-            uninit_log_sig="$uninit_cur"
-            uninit_log_ts=$uninit_now
-        fi
     else
         # disconnect 가 풀렸다. 다음에 다시 빠지면 같은 값이라도 즉시 찍히도록
         # 억제 상태를 비운다. 안 그러면 짧게 붙었다 떨어질 때 로그가 통째로 빠진다.
         drv_log_sig=""
-        /opt/pim/bin/chk_cam_connect.sh $cam_ch_bit 2>/dev/null
+        # 미초기화 버스는 빼고 준비된 버스만 검사한다(drv_ready_mask 주석 참조).
+        drv_ready=$(drv_ready_mask)
+        if [ "$drv_ready" -ne "$cam_ch_bit" ]; then
+            if [ "$drv_ready" -eq 0 ]; then
+                uninit_act="skip chk_cam_connect"
+            else
+                uninit_act="chk_cam_connect on [$(mask_to_chs "$drv_ready")]"
+            fi
+            uninit_now=$(now_ts)
+            uninit_cur="$drv_raw_i2c2|$drv_raw_i2c1|$cam_ch_bit"
+            if [ "$uninit_cur" != "$uninit_log_sig" ] ||
+               [ $((uninit_now - uninit_log_ts)) -ge "$DISCONNECT_LOG_REPEAT_SEC" ]; then
+                logger -p local0.notice "[CHK][$tag:$LINENO] driver not initialized (i2c2=$drv_raw_i2c2 i2c1=$drv_raw_i2c1 en=$(mask_to_chs "$cam_ch_bit")): $uninit_act"
+                uninit_log_sig="$uninit_cur"
+                uninit_log_ts=$uninit_now
+            fi
+        else
+            # 전 버스가 초기화됐다. 다시 미초기화로 돌아가면 같은 값이라도 즉시
+            # 찍히도록 억제 상태를 비운다 — drv_log_sig 와 같은 이유다.
+            uninit_log_sig=""
+        fi
+        if [ "$drv_ready" -ne 0 ]; then
+            /opt/pim/bin/chk_cam_connect.sh $drv_ready 2>/dev/null
+        fi
     fi
 
     if in_startup_grace || in_init_cooldown; then

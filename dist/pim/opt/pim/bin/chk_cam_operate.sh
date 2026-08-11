@@ -108,26 +108,50 @@ get_cam_disconnect_flag() {
 # 생겼다"로 오독된다 — 실제로 파일 2개가 생성된 상태에서 그렇게 읽힌 사례가 있다.
 #
 # 마커가 비어 세션(분)을 알 수 없으므로 세션에 의존하지 않는 .part 로 채널을 가른다.
-# .part 는 지금 열려 있는 fragment 뿐이라 "이 채널이 실제로 뜨고 있는가"와 같다.
 #   gstApp 이 여는 이름: <tmp_path>/<vhl>_<YYYYmmdd_HHMMSS>-ch<N>.<muxer>.part
+#
+# 존재 여부만 보면 안 된다. kill_test 로 gstApp 이 죽으면 .part 가 남고, 정리는
+# 안정성 카운트 기반이라 한참 뒤에야 지워진다(CleanupStalePartFiles). 이 로그는
+# 실패 후 rst_time(25~35초)에 찍히므로, 그 사이 남아 있는 파일을 "열려 있음"으로
+# 세면 멈춘 채널을 녹화 중이라고 말하게 된다 — 이 진단이 설명해야 할 바로 그
+# 순간에 거짓말을 하는 셈이다. 기록 중이면 muxer 가 계속 append 하므로 mtime 이
+# 갱신된다. 최근 갱신 여부로 가르고, 아니면 stale_part 로 따로 뺀다.
+#
+# 시계가 뒤로 가면 경과가 음수가 된다. 그때는 판정 근거가 없으므로 stale 로 둔다
+# — 확신 없이 "녹화 중"이라고 말하지 않는 쪽이 안전하다.
+PART_FRESH_SEC="${PART_FRESH_SEC:-15}"
 startup_fail_detail() {
-    local n var drv_disc en=() disc=() opened=() nofrag=()
+    local n var drv_disc now f mt age en=() disc=() opened=() stale=() nofrag=()
     drv_disc=$(read_driver_disconnect)
+    now=$(date +%s)
     for n in 0 1 2 3; do
         [ $(( (drv_disc >> n) & 1 )) -eq 1 ] && disc+=("ch$n")
         var="cam_ch$n"
         [[ "${!var}" == *"$ENABLE_VAL"* ]] || continue
         en+=("ch$n")
-        if compgen -G "${tmp_path}/${vhl_name}_*-ch${n}.${muxer}.part" > /dev/null 2>&1; then
+        # 같은 채널에 여러 세션의 .part 가 남아 있을 수 있다. 가장 최근 것만 본다.
+        f=$(ls -t "${tmp_path}/${vhl_name}"_*-ch${n}.${muxer}.part 2>/dev/null | head -1)
+        if [ -z "$f" ]; then
+            nofrag+=("ch$n")
+            continue
+        fi
+        mt=$(stat -c %Y "$f" 2>/dev/null)
+        if [[ ! "$mt" =~ ^[0-9]+$ ]]; then
+            stale+=("ch$n")
+            continue
+        fi
+        age=$((now - mt))
+        if [ "$age" -ge 0 ] && [ "$age" -le "$PART_FRESH_SEC" ]; then
             opened+=("ch$n")
         else
-            nofrag+=("ch$n")
+            stale+=("ch$n")
         fi
     done
-    printf 'en=[%s] disc=[%s] opened=[%s] no_fragment=[%s]' \
+    printf 'en=[%s] disc=[%s] opened=[%s] stale_part=[%s] no_fragment=[%s]' \
         "$(IFS=,; echo "${en[*]}")" \
         "$(IFS=,; echo "${disc[*]}")" \
         "$(IFS=,; echo "${opened[*]}")" \
+        "$(IFS=,; echo "${stale[*]}")" \
         "$(IFS=,; echo "${nofrag[*]}")"
 }
 
@@ -1641,6 +1665,8 @@ do
         if [ "$timer" -ge "$rst_time" ]; then 
             # 마커가 비었다는 것이 조건이므로 $startTime 은 항상 빈 값이다(1418 참조).
             # 빈 값을 찍어 봐야 정보가 없으니, 대신 무엇이 관측됐는지를 남긴다.
+            # 이 브랜치는 세션 마커를 쓰는 gstApp 바이너리를 함께 담고 있으므로
+            # session 값이 실제로 채워진다(master 에는 그 바이너리가 없어 뺐다).
             session_now=$(cat "$SESSION_FILE_" 2>/dev/null | tr -d '\n')
             logger -p local0.error "[$KEY][$tag:$LINENO] $app no start marker: $(startup_fail_detail) marker=$FILE_(empty) session=[${session_now:-none}] timer=${timer}s >= rst_time=${rst_time}s (csi1_en=$csi1_en csi2_en=$csi2_en)"
             timer=0
