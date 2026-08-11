@@ -1283,6 +1283,7 @@ modprobe imx8-media-dev || logger -p local0.err "[$KEY][$tag:$LINENO] modprobe i
 #/opt/pim/bin/start_cam.sh 20
 
 FILE_="/tmp/start_video_time_chk"
+SESSION_FILE_="/tmp/start_video_session_chk"
 #FILE_JSON=/root/shared_v/edgeconf_pim.json
 FILE_JSON_=/root/shared_v/ord_vcm_conf.json
 FILE_CHECK=/tmp/file_check
@@ -1480,8 +1481,18 @@ do
             logger -p local0.info "[$KEY][$tag:$LINENO] start_video_time_:$startTime, cur_time:$(date '+%Y%m%d %H:%M:%S'), diff:$diffEpoch"
             #timer=0
 			cat /dev/null > $FILE_
-			datetime=$(date -d "$startTime" "+%Y%m%d_%H%M%S")
-            datetime_=$(date -d "$startTime" "+%Y%m%d_%H%M")
+            # gstApp 이 파일명에 쓴 세션(분)을 우선 사용한다. 첫 fragment 가 분 경계
+            # 직전에 열리면 파일명은 다음 분으로 올림되어 벽시계 분과 어긋난다.
+            # 세션 파일이 없거나(구버전 바이너리) 형식이 어긋나면 기존 방식으로 폴백.
+            session_id=$(cat "$SESSION_FILE_" 2>/dev/null | tr -d '\n')
+            cat /dev/null > "$SESSION_FILE_" 2>/dev/null
+            if [[ "$session_id" =~ ^[0-9]{8}_[0-9]{4}$ ]]; then
+                datetime=${session_id}00
+                datetime_=$session_id
+            else
+                datetime=$(date -d "$startTime" "+%Y%m%d_%H%M%S")
+                datetime_=$(date -d "$startTime" "+%Y%m%d_%H%M")
+            fi
             drv_disc=$(read_driver_disconnect)
             enabled_chs=()
             disconnect_chs=()
@@ -1654,7 +1665,10 @@ do
         if [ "$timer" -ge "$rst_time" ]; then 
             # 마커가 비었다는 것이 조건이므로 $startTime 은 항상 빈 값이다(1418 참조).
             # 빈 값을 찍어 봐야 정보가 없으니, 대신 무엇이 관측됐는지를 남긴다.
-            logger -p local0.error "[$KEY][$tag:$LINENO] $app no start marker: $(startup_fail_detail) marker=$FILE_(empty) timer=${timer}s >= rst_time=${rst_time}s (csi1_en=$csi1_en csi2_en=$csi2_en)"
+            # 이 브랜치는 세션 마커를 쓰는 gstApp 바이너리를 함께 담고 있으므로
+            # session 값이 실제로 채워진다(master 에는 그 바이너리가 없어 뺐다).
+            session_now=$(cat "$SESSION_FILE_" 2>/dev/null | tr -d '\n')
+            logger -p local0.error "[$KEY][$tag:$LINENO] $app no start marker: $(startup_fail_detail) marker=$FILE_(empty) session=[${session_now:-none}] timer=${timer}s >= rst_time=${rst_time}s (csi1_en=$csi1_en csi2_en=$csi2_en)"
             timer=0
             start_f=0
             if [ "$csi1_en" -eq 0 ] && [ "$csi2_en" -eq 0 ]; then

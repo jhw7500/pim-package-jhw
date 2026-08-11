@@ -217,6 +217,26 @@
                2048,
                2048
             ],
+            "gop": [
+               0,
+               0
+            ],
+            "profile": [
+               9,
+               9
+            ],
+            "quant": [
+               -1,
+               -1
+            ],
+            "qp_min": [
+               0,
+               0
+            ],
+            "qp_max": [
+               0,
+               0
+            ],
             "led_flash": {
                "enable": false,
                "wiper": 63,
@@ -232,6 +252,26 @@
             "bps": [
                2048,
                2048
+            ],
+            "gop": [
+               0,
+               0
+            ],
+            "profile": [
+               9,
+               9
+            ],
+            "quant": [
+               -1,
+               -1
+            ],
+            "qp_min": [
+               0,
+               0
+            ],
+            "qp_max": [
+               0,
+               0
             ],
             "led_flash": {
                "enable": false,
@@ -252,6 +292,26 @@
                2048,
                2048
             ],
+            "gop": [
+               0,
+               0
+            ],
+            "profile": [
+               9,
+               9
+            ],
+            "quant": [
+               -1,
+               -1
+            ],
+            "qp_min": [
+               0,
+               0
+            ],
+            "qp_max": [
+               0,
+               0
+            ],
             "led_flash": {
                "enable": false,
                "wiper": 63,
@@ -267,6 +327,26 @@
             "bps": [
                2048,
                2048
+            ],
+            "gop": [
+               0,
+               0
+            ],
+            "profile": [
+               9,
+               9
+            ],
+            "quant": [
+               -1,
+               -1
+            ],
+            "qp_min": [
+               0,
+               0
+            ],
+            "qp_max": [
+               0,
+               0
             ],
             "led_flash": {
                "enable": false,
