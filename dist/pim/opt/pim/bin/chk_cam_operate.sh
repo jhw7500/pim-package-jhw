@@ -100,6 +100,37 @@ get_cam_disconnect_flag() {
     echo $((v & 0xf))
 }
 
+# start_f==0 (시작 마커 미기록) 실패 시점의 관측 사실을 모은다.
+#
+# 이 경로는 mp4 개수를 세지 않는다. 조건은 gstApp 이 $FILE_ 를 쓰지 않았다는 것뿐인데,
+# 마커는 gstApp 이 대표 채널 하나에서만 쓴다(muxSinkBin.cpp). 그래서 대표가 못 뜨면
+# 다른 채널이 정상 녹화 중이어도 여기로 떨어진다. 그 구분이 로그에 없으면 "파일이 안
+# 생겼다"로 오독된다 — 실제로 파일 2개가 생성된 상태에서 그렇게 읽힌 사례가 있다.
+#
+# 마커가 비어 세션(분)을 알 수 없으므로 세션에 의존하지 않는 .part 로 채널을 가른다.
+# .part 는 지금 열려 있는 fragment 뿐이라 "이 채널이 실제로 뜨고 있는가"와 같다.
+#   gstApp 이 여는 이름: <tmp_path>/<vhl>_<YYYYmmdd_HHMMSS>-ch<N>.<muxer>.part
+startup_fail_detail() {
+    local n var drv_disc en=() disc=() opened=() nofrag=()
+    drv_disc=$(read_driver_disconnect)
+    for n in 0 1 2 3; do
+        [ $(( (drv_disc >> n) & 1 )) -eq 1 ] && disc+=("ch$n")
+        var="cam_ch$n"
+        [[ "${!var}" == *"$ENABLE_VAL"* ]] || continue
+        en+=("ch$n")
+        if compgen -G "${tmp_path}/${vhl_name}_*-ch${n}.${muxer}.part" > /dev/null 2>&1; then
+            opened+=("ch$n")
+        else
+            nofrag+=("ch$n")
+        fi
+    done
+    printf 'en=[%s] disc=[%s] opened=[%s] no_fragment=[%s]' \
+        "$(IFS=,; echo "${en[*]}")" \
+        "$(IFS=,; echo "${disc[*]}")" \
+        "$(IFS=,; echo "${opened[*]}")" \
+        "$(IFS=,; echo "${nofrag[*]}")"
+}
+
 cam_is_disconnected_unified() {
     local state=$(cam_get_state)
     [ "$state" = "degraded" ] || [ "$state" = "recovering" ]
@@ -1368,13 +1399,13 @@ do
             ((retry_boot++))
             retry_total=$(($retry+$retry_boot))
             if [ "$retry_total" -le 5 ]; then
-                logger -p local0.error "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh because driver load fail ($retry/$retry_boot/$retry_total)"
+                logger -p local0.error "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh because driver load fail (retry=$retry boot=$retry_boot total=$retry_total, next: reboot at total>5 if file_chk_reboot=$file_chk_reboot)"
                 cam_request_recovery "driver_load_fail"
                 /opt/pim/bin/init_cam.sh
             else
                 logger -p local0.error "[$KEY][$tag:$LINENO] retry_total $retry_total is over (driver load fail)"
                 if [[ "$file_chk_reboot" == *"$ENABLE_VAL"* ]]; then
-                    logger -p local0.emerg "[$KEY][$tag:$LINENO] rebooting because driver load fail ($retry/$retry_boot/$retry_total)"
+                    logger -p local0.emerg "[$KEY][$tag:$LINENO] rebooting because driver load fail (retry=$retry boot=$retry_boot total=$retry_total)"
                     sleep 1
                     reboot
                 else
@@ -1545,26 +1576,26 @@ do
             miss_str=$(IFS=,; echo "${missing_chs[*]}")
 			logger -p local0.debug "[$KEY][$tag:$LINENO] check_num:$check_num cnt:$file_cnt"
 			if [ "$check_num" -ne "$file_cnt" ]; then
-                logger -p local0.error "[$KEY][$tag:$LINENO] ${muxer},srt file chk fail: en=[${en_str}] disc=[${disc_str}] chk=[${chk_str}] miss=[${miss_str}] srt=[${srt_status}] ($retry/$retry_boot/$retry_total)"
+                logger -p local0.error "[$KEY][$tag:$LINENO] ${muxer},srt file chk fail: en=[${en_str}] disc=[${disc_str}] chk=[${chk_str}] miss=[${miss_str}] srt=[${srt_status}] (retry=$retry boot=$retry_boot total=$retry_total)"
                 start_f=0
                 echo "NG" > $FILE_CHECK
                 cam_disconnect_flag=$(get_cam_disconnect_flag)
                 if in_init_cooldown || cam_in_init_cooldown "$init_cooldown_sec"; then
-                    logger -p local0.notice "[$KEY][$tag:$LINENO] skip retry: in init cooldown ($retry/$retry_boot/$retry_total)"
+                    logger -p local0.notice "[$KEY][$tag:$LINENO] skip retry: in init cooldown (retry=$retry boot=$retry_boot total=$retry_total)"
                 elif (( cam_disconnect_flag == 0x0 )); then
                     ((retry++))
                     retry_total=$(($retry+$retry_boot))
                     if [ "$retry_total" -le 3 ]; then
-                        logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/kill_test.sh ($retry/$retry_boot/$retry_total)"
+                        logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/kill_test.sh (retry=$retry boot=$retry_boot total=$retry_total, next: init_cam at total>3)"
                         /opt/pim/bin/kill_test.sh
                     elif [ "$retry_total" -le 5 ]; then
-                        logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh ($retry/$retry_boot/$retry_total)"
+                        logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh (retry=$retry boot=$retry_boot total=$retry_total, next: reboot at total>5 if file_chk_reboot=$file_chk_reboot)"
                         cam_request_recovery "file_check_fail"
                         /opt/pim/bin/init_cam.sh
                     else
                         logger -p local0.error "[$KEY][$tag:$LINENO] retry total $retry_total is over"
                         if [[ "$file_chk_reboot" == *"$ENABLE_VAL"* ]]; then
-                            logger -p local0.emerg "[$KEY][$tag:$LINENO] rebooting because file check fail ($retry/$retry_boot/$retry_total)"
+                            logger -p local0.emerg "[$KEY][$tag:$LINENO] rebooting because file check fail (retry=$retry boot=$retry_boot total=$retry_total)"
                             sleep 1
                             #creboot
                             reboot
@@ -1608,7 +1639,10 @@ do
 
     if [ "$start_f" -eq 0 ]; then
         if [ "$timer" -ge "$rst_time" ]; then 
-            logger -p local0.error "[$KEY][$tag:$LINENO] $app all file not create($timer >= $rst_time), $FILE_:$startTime"
+            # 마커가 비었다는 것이 조건이므로 $startTime 은 항상 빈 값이다(1418 참조).
+            # 빈 값을 찍어 봐야 정보가 없으니, 대신 무엇이 관측됐는지를 남긴다.
+            session_now=$(cat "$SESSION_FILE_" 2>/dev/null | tr -d '\n')
+            logger -p local0.error "[$KEY][$tag:$LINENO] $app no start marker: $(startup_fail_detail) marker=$FILE_(empty) session=[${session_now:-none}] timer=${timer}s >= rst_time=${rst_time}s (csi1_en=$csi1_en csi2_en=$csi2_en)"
             timer=0
             start_f=0
             if [ "$csi1_en" -eq 0 ] && [ "$csi2_en" -eq 0 ]; then
@@ -1619,21 +1653,23 @@ do
             echo "NG" > $FILE_CHECK
             cam_disconnect_flag=$(get_cam_disconnect_flag)
             if in_init_cooldown || cam_in_init_cooldown "$init_cooldown_sec"; then
-                logger -p local0.notice "[$KEY][$tag:$LINENO] skip retry_boot: in init cooldown ($retry/$retry_boot/$retry_total)"
+                logger -p local0.notice "[$KEY][$tag:$LINENO] skip retry_boot: in init cooldown (retry=$retry boot=$retry_boot total=$retry_total)"
             elif (( cam_disconnect_flag == 0x0 )); then
                 ((retry_boot++))
                 retry_total=$(($retry+$retry_boot))
                 if [ "$retry_total" -le 2 ]; then
-                    logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/kill_test.sh ($retry/$retry_boot/$retry_total)"
+                    # 카운터만 찍으면 지금이 사다리의 어디인지 알 수 없다. 다음 단계를
+                    # 같이 남겨 재부팅이 임박했는지 로그만으로 보이게 한다.
+                    logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/kill_test.sh (retry=$retry boot=$retry_boot total=$retry_total, next: init_cam at total>2)"
                     /opt/pim/bin/kill_test.sh
                 elif [ "$retry_total" -le 4 ]; then
-                    logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh ($retry/$retry_boot/$retry_total)"
+                    logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh (retry=$retry boot=$retry_boot total=$retry_total, next: reboot at total>4 if file_chk_reboot=$file_chk_reboot)"
                     cam_request_recovery "startup_fail"
                     /opt/pim/bin/init_cam.sh
                 else
                     logger -p local0.error "[$KEY][$tag:$LINENO] retry_total $retry_total is over"
                     if [[ "$file_chk_reboot" == *"$ENABLE_VAL"* ]]; then
-                        logger -p local0.emerg "[$KEY][$tag:$LINENO] rebooting because all file not create ($retry/$retry_boot/$retry_total)"
+                        logger -p local0.emerg "[$KEY][$tag:$LINENO] rebooting because no start marker (retry=$retry boot=$retry_boot total=$retry_total)"
                         sleep 1
                         reboot
                     else
