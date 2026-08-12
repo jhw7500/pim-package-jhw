@@ -1,0 +1,6 @@
+           CPU0       CPU1       CPU2       CPU3
+ 40:        100        100        100        100  GICv3  72 Level     32e50000.csi
+ 41:         50         50         50         50  GICv3  73 Level     32e02000.isi
+ 42:        200        200        200        200  GICv3  74 Level     32e40000.csi
+ 43:         80         80         80         80  GICv3  75 Level     32e00000.isi
+IPI0:       100         99         98         97  Rescheduling interrupts

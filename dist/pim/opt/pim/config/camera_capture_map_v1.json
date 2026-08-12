@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "domains": [
+    {
+      "id": "ch01",
+      "scope_id": "csi1",
+      "channels": [0, 1],
+      "csi_irq": "32e50000.csi",
+      "isi_irq": "32e02000.isi",
+      "video_node": "/dev/video4",
+      "csi_irqs_per_frame": 2
+    },
+    {
+      "id": "ch23",
+      "scope_id": "csi0",
+      "channels": [2, 3],
+      "csi_irq": "32e40000.csi",
+      "isi_irq": "32e00000.isi",
+      "video_node": "/dev/video3",
+      "csi_irqs_per_frame": 2
+    }
+  ],
+  "isi_reliable_csi_irq_per_isi_irq": {
+    "minimum": 1.6,
+    "maximum": 2.4
+  }
+}
