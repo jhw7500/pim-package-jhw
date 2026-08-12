@@ -1,0 +1,8 @@
+#!/bin/bash
+# Camera health v1 contract tests. No camera board is required.
+set -eu
+
+cd "$(dirname "$0")"
+python3 schema_test.py
+python3 aggregator_test.py
+bash config_bootstrap_test.sh

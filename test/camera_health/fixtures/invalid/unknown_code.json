@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "producer": "pim-healthd",
+  "boot_id": "boot-a",
+  "pid": 300,
+  "sequence": 1,
+  "observed_monotonic_ms": 100,
+  "status": "FAIL",
+  "observations": [
+    {
+      "block": "capture",
+      "scope": { "kind": "csi", "id": "csi0" },
+      "status": "FAIL",
+      "code": "UNREGISTERED_FAILURE",
+      "count": 1,
+      "evidence": []
+    }
+  ]
+}
