@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from jsonschema import Draft202012Validator
 
@@ -44,6 +44,49 @@ def evidence_value(item: Dict[str, Any], name: str) -> object:
     return next(value["value"] for value in item["evidence"] if value["name"] == name)
 
 
+def expectation_document(
+    active_by_domain: Dict[str, list[int]], boot_id: str = "boot-cli"
+) -> Dict[str, Any]:
+    possible = {"ch01": [0, 1], "ch23": [2, 3]}
+    items = []
+    modes = []
+    configured_mask = 0
+    for domain_id in ("ch01", "ch23"):
+        active = active_by_domain.get(domain_id, [])
+        mode = {0: "disabled", 1: "single", 2: "dual-wide"}[len(active)]
+        if active:
+            modes.append(mode)
+        mask = sum(1 << channel for channel in active)
+        configured_mask |= mask
+        items.append(
+            {
+                "id": domain_id,
+                "enabled": bool(active),
+                "mode": mode,
+                "possible_channels": possible[domain_id],
+                "active_channels": active,
+                "configured_channel_mask": mask,
+                "expected_format": {"width": 1920, "height": 1080, "fps": 30},
+            }
+        )
+    if not modes:
+        stream_mode = "unknown"
+    elif all(mode == "dual-wide" for mode in modes):
+        stream_mode = "dual-wide"
+    elif all(mode == "single" for mode in modes):
+        stream_mode = "single"
+    else:
+        stream_mode = "independent"
+    return {
+        "schema": 1,
+        "boot_id": boot_id,
+        "config_sha256": "a" * 64,
+        "configured_channel_mask": configured_mask,
+        "stream_mode": stream_mode,
+        "domains": items,
+    }
+
+
 class Tests:
     def __init__(self) -> None:
         self.passed = 0
@@ -59,7 +102,13 @@ class Tests:
             self.failed += 1
             print(f"  FAIL {label}", file=sys.stderr)
 
-    def snapshot(self, after_name: str, enabled: set[str], nodes: Path) -> Dict[str, Any]:
+    def snapshot(
+        self,
+        after_name: str,
+        enabled: set[str],
+        nodes: Path,
+        expectations: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         after = probe.parse_interrupts((FIXTURES / after_name).read_text())
         return probe.build_snapshot(
             self.mapping,
@@ -71,6 +120,7 @@ class Tests:
             "boot-a",
             1,
             1000,
+            expectations,
         )
 
     def run(self) -> int:
@@ -97,6 +147,7 @@ class Tests:
             self.missing_irq_test(nodes)
             self.no_expectation_test(nodes)
             self.cli_test(nodes)
+            self.expectation_cli_test(nodes)
         print()
         print(f"camera capture probe: {self.passed} passed / {self.failed} failed")
         return 1 if self.failed else 0
@@ -223,6 +274,98 @@ class Tests:
         )
         self.check(oct(output.stat().st_mode & 0o777) == "0o640", "CLI output mode is 0640")
         self.check(not list(nodes.glob(".pim-probe.json.*")), "CLI atomic write leaves no temporary")
+
+    def expectation_cli_test(self, nodes: Path) -> None:
+        expectation_path = nodes / "config-expectation.json"
+        expectation = expectation_document({"ch01": [0], "ch23": []})
+        expectation_path.write_text(json.dumps(expectation), encoding="utf-8")
+        output = nodes / "pim-probe-expectation.json"
+        boot_id = nodes / "boot_id"
+        subprocess.run(
+            [
+                sys.executable,
+                str(MODULE_PATH),
+                "--once",
+                "--mapping",
+                str(MAPPING_PATH),
+                "--interrupts",
+                str(FIXTURES / "before.txt"),
+                "--interrupts-after",
+                str(FIXTURES / "after_good.txt"),
+                "--node-root",
+                str(nodes),
+                "--boot-id-file",
+                str(boot_id),
+                "--output",
+                str(output),
+                "--expectation",
+                str(expectation_path),
+                "--interval-ms",
+                "1000",
+            ],
+            check=True,
+        )
+        result = load(output)
+        ch01 = by_block(result, "csi1")
+        ch23 = by_block(result, "csi0")
+        self.check(
+            ch01["csi2"]["scope"]["channels"] == [0],
+            "single-channel expectation narrows CSI scope to the active channel",
+        )
+        self.check(
+            "channels" not in ch23["csi2"]["scope"],
+            "disabled capture domain does not claim inactive channel scope",
+        )
+        self.check(
+            result["stream_mode"] == "single"
+            and result["producer_data"]["config_sha256"] == "a" * 64,
+            "capture snapshot carries validated stream mode and config generation",
+        )
+        schema_errors = list(Draft202012Validator(load(SCHEMA_PATH)).iter_errors(result))
+        self.check(not schema_errors, "expectation-driven output validates against health v1 schema")
+
+        available = {
+            str(domain["id"]): set(domain["channels"])
+            for domain in self.mapping["domains"]
+        }
+        stale_path = nodes / "stale-expectation.json"
+        stale_path.write_text(
+            json.dumps(expectation_document({"ch01": [0]}, boot_id="old-boot")),
+            encoding="utf-8",
+        )
+        try:
+            probe.load_expectation(stale_path, "boot-cli", available)
+        except probe.ProbeError:
+            self.check(True, "expectation from another boot is rejected")
+        else:
+            self.check(False, "expectation from another boot is rejected")
+
+        conflict = subprocess.run(
+            [
+                sys.executable,
+                str(MODULE_PATH),
+                "--once",
+                "--mapping",
+                str(MAPPING_PATH),
+                "--interrupts",
+                str(FIXTURES / "before.txt"),
+                "--interrupts-after",
+                str(FIXTURES / "after_good.txt"),
+                "--node-root",
+                str(nodes),
+                "--boot-id-file",
+                str(boot_id),
+                "--output",
+                str(nodes / "conflict.json"),
+                "--expectation",
+                str(expectation_path),
+                "--enabled-domains",
+                "ch23",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        self.check(conflict.returncode != 0, "conflicting manual domain override is rejected")
 
 
 if __name__ == "__main__":

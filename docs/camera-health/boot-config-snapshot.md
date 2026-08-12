@@ -15,6 +15,10 @@ Phase 0.5에서는 producer만 additive하게 배포한다. 기존 runtime consu
 경로를 사용할 수 있으며, 각 consumer를 `/tmp/config`로 바꾸는 PR에서
 `Requires/After=pim-camera-config.service`를 함께 추가한다.
 
+비활성 shadow unit인 `camera-capture-probe.service`만 이 snapshot으로부터
+`/run/pim-camera/config-expectation.json`을 먼저 생성한다. 이 경로는 IRQ 관측 범위를
+정할 뿐 기존 camera start/stop/recovery에는 연결되지 않는다.
+
 ## transaction
 
 1. boot ID와 canonical 두 JSON을 검증한다.

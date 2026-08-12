@@ -28,6 +28,7 @@ boot source는 `config_guard.sh`가 검증한 canonical
 | `restart_app.sh` | shared 최신 edgeconf, process start 후 cache | `/tmp/config/edgeconf_pim.json` | supervisor start |
 | `BG_Check_for_pim.sh` | shared edgeconf+ord, process start | `/tmp/config` 두 파일 | BG start |
 | `cam_channel_resolve.sh` | `EDGECONF_DIR=/root/shared_v` 기본 | 기본을 `/tmp/config`, explicit override 유지 | 매 diagnostic invocation |
+| `camera_config_expectation.py` | 신규 `/tmp/config` 전용 shadow consumer | 현재 boot READY 확인 후 capture 기대값 publish | capture probe start |
 | ORD | `ord/util.h` compile-time shared path | `/tmp/config` canonical paths | ORD restart |
 | VCM | `vcm/util.h` compile-time shared path | `/tmp/config` canonical paths | VCM restart |
 | gstApp/streamApp/PIMCAM | 외부 저장소 inventory 필요 | `/tmp/config` 고정 + config hash | app restart |
