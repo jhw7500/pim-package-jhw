@@ -1,0 +1,17 @@
+[Unit]
+Description=PIM Legacy versus Camera Health v1 Shadow Comparator
+After=pim-camera-config.service camera-health-shadow.service camera-capture-probe.service
+ConditionPathExists=/tmp/config/READY
+ConditionPathExists=/run/pim-camera/aggregate-shadow.json
+StartLimitIntervalSec=60s
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStartPre=/opt/pim/bin/camera_config_expectation.py
+ExecStart=/opt/pim/bin/camera_health_shadow_compare.py
+Restart=on-failure
+RestartSec=3s
+
+# Deliberately no [Install]. This reader never owns legacy flags or recovery and
+# is enabled only for an explicitly approved shadow-soak deployment.
