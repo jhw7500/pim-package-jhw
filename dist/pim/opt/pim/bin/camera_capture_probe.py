@@ -105,13 +105,16 @@ def observation(
     items: Sequence[Mapping[str, Any]],
     root_cause: Optional[bool] = None,
 ) -> Dict[str, Any]:
+    scope: Dict[str, Any] = {
+        "kind": "csi",
+        "id": domain["scope_id"],
+    }
+    scope_channels = domain.get("_scope_channels")
+    if isinstance(scope_channels, list) and scope_channels:
+        scope["channels"] = list(scope_channels)
     item: Dict[str, Any] = {
         "block": block,
-        "scope": {
-            "kind": "csi",
-            "id": domain["scope_id"],
-            "channels": list(domain["channels"]),
-        },
+        "scope": scope,
         "status": status,
         "code": code,
         "count": 1 if status == "FAIL" else 0,
@@ -259,17 +262,26 @@ def build_snapshot(
     boot_id: str,
     sequence: int,
     now_ms: int,
+    expectation_domains: Optional[Mapping[str, Mapping[str, Any]]] = None,
 ) -> Dict[str, Any]:
     ratio = mapping["isi_reliable_csi_irq_per_isi_irq"]
+    expectations = expectation_domains or {}
     observations = []
     for domain in mapping["domains"]:
-        video_path = node_root / str(domain["video_node"]).lstrip("/")
+        domain_id = str(domain["id"])
+        context = dict(domain)
+        expectation = expectations.get(domain_id)
+        if expectation is not None:
+            context["_scope_channels"] = list(expectation["active_channels"])
+        elif domain_id in enabled_domains:
+            context["_scope_channels"] = list(domain["channels"])
+        video_path = node_root / str(context["video_node"]).lstrip("/")
         csi, capture = classify_domain(
-            domain,
+            context,
             before,
             after,
             elapsed_ms,
-            str(domain["id"]) in enabled_domains,
+            domain_id in enabled_domains,
             video_path.exists(),
             float(ratio["minimum"]),
             float(ratio["maximum"]),
@@ -298,6 +310,87 @@ def build_snapshot(
     }
 
 
+def load_expectation(
+    path: Path,
+    boot_id: str,
+    available_domains: Mapping[str, Set[int]],
+) -> Tuple[Set[str], Dict[str, Any], str, str]:
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ProbeError(f"expectation unavailable: {path}: {exc}") from exc
+    if not isinstance(document, dict) or document.get("schema") != 1:
+        raise ProbeError("expectation schema must be 1")
+    if document.get("boot_id") != boot_id:
+        raise ProbeError("expectation belongs to another boot")
+    domains = document.get("domains")
+    if not isinstance(domains, list):
+        raise ProbeError("expectation domains must be an array")
+    indexed: Dict[str, Any] = {}
+    enabled: Set[str] = set()
+    for item in domains:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+            raise ProbeError("invalid expectation domain")
+        domain_id = item["id"]
+        if domain_id in indexed:
+            raise ProbeError(f"duplicate expectation domain: {domain_id}")
+        active_channels = item.get("active_channels")
+        if (
+            not isinstance(active_channels, list)
+            or any(not isinstance(channel, int) or isinstance(channel, bool) or channel < 0 or channel > 3 for channel in active_channels)
+            or len(set(active_channels)) != len(active_channels)
+        ):
+            raise ProbeError(f"invalid active channels for {domain_id}")
+        if domain_id not in available_domains:
+            raise ProbeError(f"unknown expectation domain: {domain_id}")
+        if not set(active_channels) <= available_domains[domain_id]:
+            raise ProbeError(f"active channels do not belong to {domain_id}")
+        possible_channels = item.get("possible_channels")
+        if (
+            not isinstance(possible_channels, list)
+            or possible_channels != sorted(available_domains[domain_id])
+        ):
+            raise ProbeError(f"possible channels do not match mapping for {domain_id}")
+        enabled_flag = item.get("enabled")
+        if not isinstance(enabled_flag, bool) or enabled_flag != bool(active_channels):
+            raise ProbeError(f"invalid enabled flag for {domain_id}")
+        expected_mode = {0: "disabled", 1: "single", 2: "dual-wide"}.get(len(active_channels))
+        if item.get("mode") != expected_mode:
+            raise ProbeError(f"invalid mode for {domain_id}")
+        expected_mask = sum(1 << channel for channel in active_channels)
+        if item.get("configured_channel_mask") != expected_mask:
+            raise ProbeError(f"invalid configured channel mask for {domain_id}")
+        indexed[domain_id] = dict(item)
+        if enabled_flag:
+            enabled.add(domain_id)
+    if set(indexed) != set(available_domains):
+        missing = set(available_domains) - set(indexed)
+        raise ProbeError(f"expectation missing domain(s): {','.join(sorted(missing))}")
+    configured_mask = sum(
+        1 << channel
+        for item in indexed.values()
+        for channel in item["active_channels"]
+    )
+    if document.get("configured_channel_mask") != configured_mask:
+        raise ProbeError("expectation configured channel mask is inconsistent")
+    config_hash = document.get("config_sha256")
+    if not isinstance(config_hash, str) or re.fullmatch(r"[0-9a-f]{64}", config_hash) is None:
+        raise ProbeError("expectation config hash is invalid")
+    enabled_modes = [indexed[domain_id]["mode"] for domain_id in sorted(enabled)]
+    if not enabled_modes:
+        expected_stream_mode = "unknown"
+    elif all(mode == "dual-wide" for mode in enabled_modes):
+        expected_stream_mode = "dual-wide"
+    elif all(mode == "single" for mode in enabled_modes):
+        expected_stream_mode = "single"
+    else:
+        expected_stream_mode = "independent"
+    stream_mode = document.get("stream_mode")
+    if stream_mode != expected_stream_mode:
+        raise ProbeError("expectation stream mode is inconsistent")
+    return enabled, indexed, config_hash, stream_mode
+
+
 def parse_domains(value: str, available: Set[str]) -> Set[str]:
     requested = {item for item in value.split(",") if item}
     unknown = requested - available
@@ -315,6 +408,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--node-root", type=Path, default=Path("/"))
     parser.add_argument("--boot-id-file", type=Path, default=Path("/proc/sys/kernel/random/boot_id"))
     parser.add_argument("--output", type=Path, default=Path("/run/pim-camera/pim-probe.json"))
+    parser.add_argument("--expectation", type=Path)
     parser.add_argument("--enabled-domains", default="")
     parser.add_argument("--interval-ms", type=int, default=1000)
     parser.add_argument("--once", action="store_true")
@@ -326,11 +420,27 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.interval_ms < 1:
         raise SystemExit("interval must be positive")
     mapping = load_mapping(args.mapping)
-    available = {str(domain["id"]) for domain in mapping["domains"]}
-    enabled = parse_domains(args.enabled_domains, available)
+    available_domains = {
+        str(domain["id"]): set(domain["channels"])
+        for domain in mapping["domains"]
+    }
+    available = set(available_domains)
     boot_id = args.boot_id_file.read_text(encoding="utf-8").strip()
     if not boot_id:
         raise SystemExit("boot ID is empty")
+    explicit_enabled = parse_domains(args.enabled_domains, available)
+    expectation_domains: Dict[str, Any] = {}
+    config_hash: Optional[str] = None
+    stream_mode: Optional[str] = None
+    if args.expectation is not None:
+        expected_enabled, expectation_domains, config_hash, stream_mode = load_expectation(
+            args.expectation, boot_id, available_domains
+        )
+        if explicit_enabled and explicit_enabled != expected_enabled:
+            raise ProbeError("explicit enabled domains conflict with expectation")
+        enabled = expected_enabled
+    else:
+        enabled = explicit_enabled
     stopped = False
     sequence = 0
 
@@ -353,8 +463,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         sequence += 1
         now_ms = time.monotonic_ns() // 1_000_000
         document = build_snapshot(
-            mapping, before, after, elapsed_ms, enabled, args.node_root, boot_id, sequence, now_ms
+            mapping,
+            before,
+            after,
+            elapsed_ms,
+            enabled,
+            args.node_root,
+            boot_id,
+            sequence,
+            now_ms,
+            expectation_domains,
         )
+        if config_hash is not None:
+            document["producer_data"]["config_sha256"] = config_hash
+        if stream_mode is not None:
+            document["stream_mode"] = stream_mode
         atomic_write(args.output, document)
         if args.once or args.interrupts_after is not None:
             break
