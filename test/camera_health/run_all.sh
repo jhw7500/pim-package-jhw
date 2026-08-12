@@ -4,5 +4,6 @@ set -eu
 
 cd "$(dirname "$0")"
 python3 schema_test.py
+python3 capture_probe_test.py
 python3 aggregator_test.py
 bash config_bootstrap_test.sh
