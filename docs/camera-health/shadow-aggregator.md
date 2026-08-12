@@ -42,3 +42,7 @@ cat /run/pim-camera/aggregate-shadow.json
 
 `camera-health-shadow.service`에는 의도적으로 `[Install]`이 없다. max9296와 gstApp
 producer가 배포되고 보드 soak가 승인된 뒤에만 별도 change로 enable한다.
+
+MAX9296 producer package와 수동 보드 gate는
+[`max9296-producer.md`](max9296-producer.md)를 따른다. 현재
+`camera-max9296-health.service`도 static이며 package 설치만으로 시작되지 않는다.

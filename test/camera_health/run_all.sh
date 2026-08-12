@@ -6,6 +6,7 @@ cd "$(dirname "$0")"
 python3 schema_test.py
 python3 config_expectation_test.py
 python3 capture_probe_test.py
+python3 max9296_producer_test.py
 python3 aggregator_test.py
 python3 shadow_compare_test.py
 bash config_bootstrap_test.sh
