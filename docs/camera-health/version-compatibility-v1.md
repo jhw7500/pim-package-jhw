@@ -32,7 +32,7 @@ package dependency/capability gate가 recovery enable을 거부해야 한다.
 1. PIM boot config producer를 additive 배포하고 `/tmp/config/READY`만 검증한다.
 2. max9296 v1 관측 ABI를 배포하되 legacy `link_status`를 유지한다.
 3. gstApp v1 producer를 배포하되 legacy marker를 유지한다.
-4. PIM shadow consumer를 배포한다.
+4. PIM shadow consumer와 legacy/v1 comparator를 비활성 상태로 배포한다.
 5. 7일 soak 또는 fault matrix 100회 후 판정권을 전환한다.
 6. recovery는 gstApp→module→hard-reset 순서로 별도 enable한다.
 7. 한 릴리스 rollback 기간 뒤에만 legacy surface 제거를 검토한다.
