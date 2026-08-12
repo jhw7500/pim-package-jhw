@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "producer": "max9296",
+  "boot_id": "f37e65b6-9d83-4bba-a722-79f10825d607",
+  "pid": 0,
+  "sequence": 42,
+  "observed_monotonic_ms": 120500,
+  "status": "FAIL",
+  "stream_mode": "dual-wide",
+  "channel_masks": {
+    "configured_channel_mask": 3,
+    "physical_present_mask": 2,
+    "stream_domain_active_mask": 0
+  },
+  "observations": [
+    {
+      "block": "deserializer",
+      "scope": { "kind": "global", "id": "max9296-0" },
+      "status": "OK",
+      "code": "NONE",
+      "count": 0,
+      "evidence": [
+        { "name": "device_id", "source": "i2c-1@0x48", "value": "0x94" }
+      ]
+    },
+    {
+      "block": "gmsl_link",
+      "scope": { "kind": "link", "id": "phy-a", "channels": [0] },
+      "status": "FAIL",
+      "code": "GMSL_LINK_DOWN",
+      "count": 3,
+      "first_seen_monotonic_ms": 118500,
+      "last_seen_monotonic_ms": 120500,
+      "root_cause": true,
+      "action_scope": "camera-domain",
+      "evidence": [
+        { "name": "rx3_raw", "source": "max9296-0/reg-0x03", "value": "0x00" }
+      ]
+    },
+    {
+      "block": "serializer",
+      "scope": { "kind": "channel", "id": "ch0", "channels": [0] },
+      "status": "BLOCKED",
+      "code": "REMOTE_PATH_UNAVAILABLE",
+      "count": 0,
+      "blocked_by": ["gmsl_link"],
+      "evidence": []
+    },
+    {
+      "block": "capture",
+      "scope": { "kind": "pair", "id": "csi0-dual", "channels": [0, 1] },
+      "status": "BLOCKED",
+      "code": "BLOCKED_BY_PAIR",
+      "count": 0,
+      "blocked_by": ["gmsl_link"],
+      "evidence": []
+    }
+  ],
+  "producer_data": {
+    "health_sequence_before": 42,
+    "health_sequence_after": 42
+  }
+}

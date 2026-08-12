@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "producer": "max9296",
+  "boot_id": "f37e65b6-9d83-4bba-a722-79f10825d607",
+  "pid": 0,
+  "sequence": 44,
+  "observed_monotonic_ms": 122000,
+  "status": "FAIL",
+  "observations": [
+    {
+      "block": "serializer",
+      "scope": { "kind": "channel", "id": "ch0" },
+      "status": "FAIL",
+      "code": "SER_DEVICE_ID_FAIL",
+      "count": 2,
+      "root_cause": true,
+      "evidence": [
+        { "name": "max9295_device_id_ack", "source": "remote-control-tunnel/ser", "value": false },
+        { "name": "ap1302_ack", "source": "remote-control-tunnel/isp", "value": true }
+      ]
+    },
+    {
+      "block": "isp",
+      "scope": { "kind": "channel", "id": "ch0" },
+      "status": "OK",
+      "code": "NONE",
+      "count": 0,
+      "evidence": [
+        { "name": "hinf_frame_delta", "source": "ap1302/R0x0002", "value": 30, "unit": "frames/s" }
+      ]
+    },
+    {
+      "block": "sensor",
+      "scope": { "kind": "channel", "id": "ch0" },
+      "status": "OK",
+      "code": "NONE",
+      "count": 0,
+      "evidence": [
+        { "name": "chip_id", "source": "ar0234/static-readback", "value": "0x0A56" }
+      ]
+    }
+  ]
+}

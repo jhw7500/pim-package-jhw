@@ -1,0 +1,16 @@
+[Unit]
+Description=PIM Camera Boot Configuration Snapshot
+Requires=pim-config-guard.service
+After=pim-config-guard.service
+Before=cam-operate.service ord-operate.service vsd-operate.service
+RequiresMountsFor=/root/shared_v
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/pim/bin/camera_config_bootstrap.sh
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

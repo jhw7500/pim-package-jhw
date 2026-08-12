@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "producer": "max9296",
+  "boot_id": "boot-a",
+  "pid": 0,
+  "sequence": 1,
+  "observed_monotonic_ms": 100,
+  "status": "FAIL",
+  "observations": [
+    {
+      "block": "serdes",
+      "scope": { "kind": "channel", "id": "ch0" },
+      "status": "FAIL",
+      "code": "GMSL_LINK_DOWN",
+      "count": 1,
+      "evidence": []
+    }
+  ]
+}
