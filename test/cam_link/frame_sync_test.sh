@@ -59,6 +59,16 @@ if [ -f "$f" ]; then v=0x0012; else v=0x0016; : > "$f"; fi
 printf '[stub] ch=%s reg=%s val=%s\n' "$1" "$2" "$v"
 EOF
             ;;
+        stall)  # step 과 같되 두 번째 표본의 ch0 읽기만 1초 지연 (v4l2-ctl 스톨)
+            cat > "$1" <<'EOF'
+#!/bin/bash
+f="$FS_STATE/ch$1"; n=0
+[ -f "$f" ] && n=$(cat "$f")
+[ "$1" = "0" ] && [ "$n" = "1" ] && sleep 1
+printf '[stub] ch=%s reg=%s val=0x%04x\n' "$1" "$2" "$((n & 0xffff))"
+echo $((n + 1)) > "$f"
+EOF
+            ;;
     esac
     chmod +x "$1"
 }
@@ -79,6 +89,21 @@ t_eq "  결과가 MATCH" "$(grep -c 'result=MATCH' "$WORK/out.txt")" "1"
 t_eq "불가능한 backward jump → exit 4" "$(run_sync reset 2)" "4"
 t_eq "  결과가 RESET_OR_INVALID" "$(grep -c 'result=RESET_OR_INVALID' "$WORK/out.txt")" "1"
 t_eq "  drift 가 NA 로 낮춰진다" "$(grep -c 'drift=NA' "$WORK/out.txt")" "4"
+
+# ── 멈춘 read 의 관측 시각 ──────────────────────────────────────────────────
+# cam_dma_read.sh 는 timeout 없는 v4l2-ctl 을 두 번 호출한다. 카메라가 물리면
+# 읽기 하나가 크게 지연되는데, 이건 이 진단을 돌리는 바로 그 상황이다. 읽기
+# "시작" 시각으로 간격을 재면 실제 카운터 관측 간격과 어긋나 정상 증가를
+# RESET_OR_INVALID 로 죽이거나 불가능한 증가를 통과시킨다. 관측 시각은 읽기
+# 중간점이어야 한다.
+#
+# ch0 의 두 번째 읽기만 1초 멈춘다. 중간점 기준이면 표본1→2 간격에 지연의
+# 절반(~0.5 s)이 들어가 max_step 이 크게 오르고, 시작 시각 기준이면 간격이
+# 그대로 0.2 s 라 max_step 이 30대에 머문다.
+t_eq "지연된 read 도 판정을 완료한다" "$(run_sync stall 3)" "0"
+stall_max_step=$(sed -nE 's/.*sample=2 ch=0 .*max_step=([0-9]+).*/\1/p' "$WORK/out.txt")
+[ -n "$stall_max_step" ] && (( stall_max_step > 60 )) && r=0 || r=1
+t_eq "  멈춘 읽기의 관측 간격이 반영된다 (max_step=$stall_max_step)" "$r" "0"
 
 # ── 벽시계 점프 내성 ────────────────────────────────────────────────────────
 # 이 패키지는 update_time_sync.sh 와 fake-hwclock.sh 로 벽시계를 움직인다.

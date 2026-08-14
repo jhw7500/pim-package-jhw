@@ -84,6 +84,7 @@ read_frame_count() {
         die "DMA read failed for ch$channel"
     }
     READ_END_NS=$(now_ns) || die "date +%s%N is not supported"
+    READ_END_MONO_NS=$(mono_ns) || die "/proc/uptime is not readable"
 
     value_hex=$(printf "%s\n" "$output" |
         sed -nE 's/.*[[:space:]]val=(0x[0-9a-fA-F]{1,4})([[:space:]].*)?$/\1/p' |
@@ -151,9 +152,15 @@ for ((sample = 1; sample <= SAMPLES; sample++)); do
         CURRENT[$channel]=$READ_VALUE
         READ_NS[$channel]=$((READ_END_NS - READ_START_NS))
         MID_NS[$channel]=$((READ_START_NS + READ_NS[$channel] / 2))
-        # The monotonic sample time is not refined to the read midpoint: the
-        # refinement is ~1.5 ms, well under the 10 ms resolution of the source.
-        SAMPLE_MONO_NS[$channel]=$READ_START_MONO_NS
+        # Timestamp the read midpoint, not its launch. cam_dma_read.sh runs two
+        # v4l2-ctl invocations with no timeout, so a wedged camera - exactly
+        # when this diagnostic gets run - can stall one read for far longer than
+        # the others. Start-to-start elapsed time then no longer matches the
+        # interval between the counter observations themselves, which both
+        # rejects legitimate advances as RESET_OR_INVALID and admits implausible
+        # ones. On a healthy read the midpoint lands in the same 10 ms bucket as
+        # the start, so this costs nothing in the normal case.
+        SAMPLE_MONO_NS[$channel]=$(((READ_START_MONO_NS + READ_END_MONO_NS) / 2))
     done
 
     SWEEP_END_NS=$(now_ns) || die "date +%s%N is not supported"
