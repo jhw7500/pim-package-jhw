@@ -357,6 +357,7 @@ V4L2 DMA 컨트롤을 편리하게 사용하기 위한 헬퍼 스크립트가 �
 |----------|------|------|
 | `cam_dma_read.sh` | `/opt/pim/bin/` | V4L2 DMA 레지스터 읽기 |
 | `cam_dma_write.sh` | `/opt/pim/bin/` | V4L2 DMA 레지스터 쓰기 |
+| `cam_sensor_frame_sync.sh` | `/opt/pim/bin/` | AR0234 FRAME_COUNT 채널 간 증분 비교 |
 | `cam_ap1302_dma_verify.sh` | `/opt/pim/bin/` | I2C 직접 DMA read/write (교차 검증용) |
 | `cam_ar0234_led_flash_read.sh` | `/opt/pim/bin/` | I2C 직접 LED flash 읽기 |
 | `cam_ar0234_led_flash_write.sh` | `/opt/pim/bin/` | I2C 직접 LED flash 쓰기 |
@@ -405,6 +406,58 @@ cam_dma_read.sh 0 0x3070           # val=0x0000 → PASS
 주의사항:
 - DMA 읽기/쓰기는 카메라 스트리밍 중에도 사용할 수 있다
 - DMA 접근은 AP1302 ISP 동작에 영향을 주지 않는다
+
+### 8.4 센서 프레임 카운터 동기 비교
+
+AR0234 `R0x303A FRAME_COUNT`를 반복해서 읽고, 첫 측정 이후 각 채널의
+누적 증가량을 비교한다. 16비트 카운터의 `0xffff` 순환은 자동 처리한다.
+
+> **현재 제품 환경의 측정 한계:** AP1302 DMA/SIPM 경유 시험에서는 이
+> 레지스터가 `0x0000` 또는 `0xffff`로 반복 관측되어
+> `RESET_OR_INVALID`로 판정됐다. SIPM 오류가 없더라도 이 값만 반복되면
+> 유효한 프레임 카운터로 간주하지 않으며, 센서 동기 판정에 사용해서는
+> 안 된다. 이 스크립트는 카운터가 경과시간상 가능한 값으로 연속 증가하는
+> 장치와 펌웨어에서만 프레임 수 비교 진단으로 사용한다.
+
+```bash
+# 전 채널, 1초 간격, baseline 포함 10회
+cam_sensor_frame_sync.sh
+
+# 한 AP1302에 연결된 ch0/ch1만 0.5초 간격으로 20회
+cam_sensor_frame_sync.sh 0,1 0.5 20
+
+# 두 AP1302를 포함한 전 채널을 2초 간격으로 30회
+cam_sensor_frame_sync.sh 0,1,2,3 2 30
+```
+
+결과 의미:
+
+- `MATCH`: 모든 채널의 누적 프레임 증가량이 같다
+- `NEAR`: 1프레임 차이. 순차 DMA 읽기가 프레임 경계를 넘었을 수 있어 재측정 필요
+- `MISMATCH`: 누적 증가량 차이가 2프레임 이상
+- `NO_PROGRESS`: 측정 중 어느 채널도 프레임 카운터가 증가하지 않음
+- `RESET_OR_INVALID`: 모듈러 증가량이 경과시간의 물리적 상한을 초과함. 센서
+  카운터 재초기화 또는 DMA 무효 읽기가 있었으므로 동기 판정에서 제외
+
+`raw_offset`은 현재 16비트 카운터의 기준 채널 대비 차이이고, `drift`는
+baseline 이후 누적 증가량 차이다. 센서 초기화 시점이 다를 수 있으므로 동기
+유지 판정에는 `raw_offset`보다 `drift`를 우선한다. `read_window_ms`가 한 프레임
+주기보다 길면 같은 순간의 카운터를 읽은 것이 아니므로 프레임 위상 판정에는
+사용할 수 없다. 이 측정은 프레임 수 일치 여부를 확인하며 노출/라인 위상까지
+증명하지는 않는다.
+
+정상 wrap은 이전 값과 현재 값의 모듈러 증가량이 경과시간상 가능한 경우에만
+인정한다. 예를 들어 `0xfffe → 0x0000`은 2프레임 증가지만 `0x0016 → 0x0012`는
+65532프레임 증가가 되어 `RESET_OR_INVALID`로 분류된다. 이때 `valid_total`은
+연속성이 확인된 구간만 합산하고 `drift=NA`로 바뀐다. 최종 결과도
+`MISMATCH` 대신 `RESET_OR_INVALID`가 되어 잘못된 65536프레임 누적을 방지한다.
+
+증가량의 기본 물리 상한은 120fps와 측정 오차 여유 8프레임이다. 다른 센서
+조건에서는 환경변수로 조정할 수 있다.
+
+```bash
+MAX_SENSOR_FPS=60 FRAME_STEP_MARGIN=8 cam_sensor_frame_sync.sh 0,1 1 30
+```
 
 ## 9) MCP4018 가변저항
 
