@@ -3,6 +3,7 @@
 tag=$(basename "$0")
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 DMA_READ="${CAM_DMA_READ:-$SCRIPT_DIR/cam_dma_read.sh}"
+UPTIME_PATH="${CAM_UPTIME_PATH:-/proc/uptime}"
 FRAME_COUNT_REG=0x303a
 MAX_SENSOR_FPS=${MAX_SENSOR_FPS:-120}
 FRAME_STEP_MARGIN=${FRAME_STEP_MARGIN:-8}
@@ -11,6 +12,9 @@ show_help() {
     echo "Usage: $tag [channels] [interval_sec] [samples]"
     echo "  channels     : comma-separated channel list (default: 0,1,2,3)"
     echo "  interval_sec : delay between sweeps (default: 1)"
+    echo "                 intervals are timed on /proc/uptime, whose resolution"
+    echo "                 is 10 ms; keep this at or above 0.1 for a meaningful"
+    echo "                 plausibility ceiling"
     echo "  samples      : number of sweeps including baseline, minimum 2 (default: 10)"
     echo
     echo "Reads AR0234 R0x303A FRAME_COUNT through the existing V4L2 DMA controls."
@@ -36,12 +40,35 @@ die() {
     exit 1
 }
 
+# Wall clock. Used only for durations inside a single sweep, where the sub-
+# millisecond resolution matters and a clock step is not a realistic risk.
 now_ns() {
     local value
 
     value=$(date +%s%N) || return 1
     [[ "$value" =~ ^[0-9]+$ ]] || return 1
     printf "%s\n" "$value"
+}
+
+# Monotonic clock. /proc/uptime is not affected by NTP steps or `date -s`, both
+# of which this package performs: update_time_sync.sh restarts systemd-timesyncd
+# and enables NTP, and fake-hwclock.sh calls `date -s` directly. A forward wall
+# step inflates the elapsed time between samples, which inflates the plausibility
+# ceiling and admits an implausible counter advance as if it were real; a
+# backward step used to abort the run outright. Resolution is 10 ms, which is far
+# below the sample interval this bounds, and the value is built with integer
+# arithmetic because a 64-bit nanosecond uptime exceeds float precision.
+mono_ns() {
+    local raw seconds fraction
+
+    read -r raw _ < "$UPTIME_PATH" || return 1
+    [[ "$raw" =~ ^([0-9]+)\.([0-9]{1,9})$ ]] || return 1
+    seconds=${BASH_REMATCH[1]}
+    fraction=${BASH_REMATCH[2]}
+    while (( ${#fraction} < 9 )); do
+        fraction="${fraction}0"
+    done
+    printf "%s\n" "$((10#$seconds * 1000000000 + 10#$fraction))"
 }
 
 format_ms() {
@@ -54,11 +81,13 @@ read_frame_count() {
     local output value_hex
 
     READ_START_NS=$(now_ns) || die "date +%s%N is not supported"
+    READ_START_MONO_NS=$(mono_ns) || die "/proc/uptime is not readable"
     output=$("$DMA_READ" "$channel" "$FRAME_COUNT_REG" 2>&1) || {
         echo "$output" >&2
         die "DMA read failed for ch$channel"
     }
     READ_END_NS=$(now_ns) || die "date +%s%N is not supported"
+    READ_END_MONO_NS=$(mono_ns) || die "/proc/uptime is not readable"
 
     value_hex=$(printf "%s\n" "$output" |
         sed -nE 's/.*[[:space:]]val=(0x[0-9a-fA-F]{1,4})([[:space:]].*)?$/\1/p' |
@@ -96,8 +125,9 @@ FRAME_STEP_MARGIN=$((10#$FRAME_STEP_MARGIN))
 IFS=',' read -r -a CHANNELS <<<"$CHANNEL_LIST"
 (( ${#CHANNELS[@]} >= 2 )) || die "at least two channels are required"
 
-declare -A SEEN PREV STEP TOTAL CURRENT MID_NS READ_NS LAST_MID_NS
+declare -A SEEN PREV STEP TOTAL CURRENT MID_NS READ_NS
 declare -A HAVE_PREV INVALID_COUNT CONTINUITY STATUS REASON MAX_STEP
+declare -A SAMPLE_MONO_NS LAST_SAMPLE_MONO_NS
 
 for channel in "${CHANNELS[@]}"; do
     [[ "$channel" =~ ^[0-3]$ ]] || die "invalid channel: $channel (expected 0..3)"
@@ -125,6 +155,15 @@ for ((sample = 1; sample <= SAMPLES; sample++)); do
         CURRENT[$channel]=$READ_VALUE
         READ_NS[$channel]=$((READ_END_NS - READ_START_NS))
         MID_NS[$channel]=$((READ_START_NS + READ_NS[$channel] / 2))
+        # Timestamp the read midpoint, not its launch. cam_dma_read.sh runs two
+        # v4l2-ctl invocations with no timeout, so a wedged camera - exactly
+        # when this diagnostic gets run - can stall one read for far longer than
+        # the others. Start-to-start elapsed time then no longer matches the
+        # interval between the counter observations themselves, which both
+        # rejects legitimate advances as RESET_OR_INVALID and admits implausible
+        # ones. On a healthy read the midpoint lands in the same 10 ms bucket as
+        # the start, so this costs nothing in the normal case.
+        SAMPLE_MONO_NS[$channel]=$(((READ_START_MONO_NS + READ_END_MONO_NS) / 2))
     done
 
     SWEEP_END_NS=$(now_ns) || die "date +%s%N is not supported"
@@ -136,8 +175,8 @@ for ((sample = 1; sample <= SAMPLES; sample++)); do
         MAX_STEP[$channel]=0
 
         if (( HAVE_PREV[$channel] )); then
-            elapsed_ns=$((MID_NS[$channel] - LAST_MID_NS[$channel]))
-            (( elapsed_ns > 0 )) || die "non-increasing timestamp for ch$channel"
+            elapsed_ns=$((SAMPLE_MONO_NS[$channel] - LAST_SAMPLE_MONO_NS[$channel]))
+            (( elapsed_ns >= 0 )) || die "monotonic clock went backwards for ch$channel"
 
             step=$(( (CURRENT[$channel] - PREV[$channel]) & 0xffff ))
             max_step=$(( (elapsed_ns * MAX_SENSOR_FPS + 999999999) / 1000000000 + FRAME_STEP_MARGIN ))
@@ -160,7 +199,7 @@ for ((sample = 1; sample <= SAMPLES; sample++)); do
         fi
 
         PREV[$channel]=${CURRENT[$channel]}
-        LAST_MID_NS[$channel]=${MID_NS[$channel]}
+        LAST_SAMPLE_MONO_NS[$channel]=${SAMPLE_MONO_NS[$channel]}
         HAVE_PREV[$channel]=1
     done
 
