@@ -32,7 +32,6 @@ printf 'not-a-number\n' > "$WORK/uptime"
 UPTIME_PATH="$WORK/uptime" mono_ns >/dev/null 2>&1 && r=0 || r=1
 t_eq "형식 위반은 실패 반환" "$r" "1"
 
-printf '12.34 56.78\n' > "$WORK/real_uptime"
 a=$(UPTIME_PATH=/proc/uptime mono_ns)
 b=$(UPTIME_PATH=/proc/uptime mono_ns)
 [ -n "$a" ] && [ -n "$b" ] && (( b >= a )) && r=0 || r=1
