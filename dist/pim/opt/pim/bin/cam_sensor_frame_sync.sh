@@ -12,6 +12,9 @@ show_help() {
     echo "Usage: $tag [channels] [interval_sec] [samples]"
     echo "  channels     : comma-separated channel list (default: 0,1,2,3)"
     echo "  interval_sec : delay between sweeps (default: 1)"
+    echo "                 intervals are timed on /proc/uptime, whose resolution"
+    echo "                 is 10 ms; keep this at or above 0.1 for a meaningful"
+    echo "                 plausibility ceiling"
     echo "  samples      : number of sweeps including baseline, minimum 2 (default: 10)"
     echo
     echo "Reads AR0234 R0x303A FRAME_COUNT through the existing V4L2 DMA controls."

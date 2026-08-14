@@ -77,6 +77,10 @@ printf '[stub] ch=%s reg=%s val=0x%04x\n' "$1" "$2" "$((n & 0xffff))"
 echo $((n + 1)) > "$f"
 EOF
             ;;
+        *)
+            echo "unknown stub mode: $2" >&2
+            return 1
+            ;;
     esac
     chmod +x "$1"
 }
@@ -125,6 +129,9 @@ t_eq "경과시간 0 에서 같은 증가는 fail-closed" "$(run_sync leap 3 "${
 # 그대로 0.2 s 라 max_step 이 30대에 머문다.
 t_eq "지연된 read 도 판정을 완료한다" "$(run_sync stall 3)" "0"
 stall_max_step=$(sed -nE 's/.*sample=2 ch=0 .*max_step=([0-9]+).*/\1/p' "$WORK/out.txt")
+# 임계값 60 은 두 구현을 가르는 구간의 한가운데다. 실측: 시작 시각 기준 38,
+# 중간점 기준 98~116. 낮추면(예: 30) 시작 시각 기준도 통과해 이 테스트가
+# 판별력을 잃는다. 올리면 스케줄링 지연에 취약해진다.
 [ -n "$stall_max_step" ] && (( stall_max_step > 60 )) && r=0 || r=1
 t_eq "  멈춘 읽기의 관측 간격이 반영된다 (max_step=$stall_max_step)" "$r" "0"
 
