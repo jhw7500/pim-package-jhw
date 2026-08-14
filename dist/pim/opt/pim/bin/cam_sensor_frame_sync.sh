@@ -21,7 +21,9 @@ show_help() {
     echo "It reports the 16-bit raw counter, per-sweep advance, cumulative advance,"
     echo "and cumulative drift relative to the first requested channel."
     echo "Implausible modular advances are reported as RESET_OR_INVALID instead of"
-    echo "being mistaken for a 65536-frame counter wrap."
+    echo "being mistaken for a 65536-frame counter wrap. A run whose every read is"
+    echo "0x0000 or 0xffff is also RESET_OR_INVALID: the register never answered,"
+    echo "so it says nothing about whether the sensors produced frames."
     echo
     echo "Examples:"
     echo "  $tag                    # ch0..3, 1 second, 10 samples"
@@ -142,6 +144,14 @@ done
 
 REF_CHANNEL=${CHANNELS[0]}
 
+# Measured on pim-camera-v016: this register only ever returns 0x0000 or 0xffff
+# through the AP1302 DMA tunnel - 0xffff while idle, alternating while
+# streaming - although 0x3000 (chip id) and 0x300a (frame_length_lines) read
+# real, per-channel-distinct values on the same path. Only the two extremes of a
+# 16-bit read means the register is not answering, so any total derived from it
+# is meaningless. Track whether a value outside the sentinel set is ever seen.
+SENTINEL_ONLY=1
+
 echo "[$tag] reg=$FRAME_COUNT_REG channels=$CHANNEL_LIST interval_sec=$INTERVAL_SEC samples=$SAMPLES reference=ch$REF_CHANNEL"
 echo "[$tag] plausibility max_sensor_fps=$MAX_SENSOR_FPS frame_step_margin=$FRAME_STEP_MARGIN"
 echo "[$tag] note: counters prove frame-count agreement, not exposure/line phase; read_window_ms quantifies sequential-read uncertainty"
@@ -153,6 +163,9 @@ for ((sample = 1; sample <= SAMPLES; sample++)); do
     for channel in "${CHANNELS[@]}"; do
         read_frame_count "$channel"
         CURRENT[$channel]=$READ_VALUE
+        if (( READ_VALUE != 0 && READ_VALUE != 0xffff )); then
+            SENTINEL_ONLY=0
+        fi
         READ_NS[$channel]=$((READ_END_NS - READ_START_NS))
         MID_NS[$channel]=$((READ_START_NS + READ_NS[$channel] / 2))
         # Timestamp the read midpoint, not its launch. cam_dma_read.sh runs two
@@ -242,7 +255,12 @@ for channel in "${CHANNELS[@]}"; do
 done
 
 drift_span=$((max_total - min_total))
-if (( invalid_total > 0 )); then
+if (( SENTINEL_ONLY )); then
+    # A stuck sentinel would otherwise land in NO_PROGRESS, which asserts that
+    # the sensors produced no frames. That is a claim about the hardware, and a
+    # register that never answers cannot support it.
+    result=RESET_OR_INVALID
+elif (( invalid_total > 0 )); then
     result=RESET_OR_INVALID
 elif (( max_total == 0 )); then
     result=NO_PROGRESS
@@ -255,13 +273,17 @@ else
 fi
 
 if [[ "$result" == "RESET_OR_INVALID" ]]; then
-    echo "[$tag] result=$result invalid_total=$invalid_total drift_span=NA min_valid_total=$min_total max_valid_total=$max_total"
+    echo "[$tag] result=$result sentinel_only=$SENTINEL_ONLY invalid_total=$invalid_total drift_span=NA min_valid_total=$min_total max_valid_total=$max_total"
 else
-    echo "[$tag] result=$result invalid_total=$invalid_total drift_span=$drift_span min_valid_total=$min_total max_valid_total=$max_total"
+    echo "[$tag] result=$result sentinel_only=$SENTINEL_ONLY invalid_total=$invalid_total drift_span=$drift_span min_valid_total=$min_total max_valid_total=$max_total"
 fi
 case "$result" in
     RESET_OR_INVALID)
-        echo "[$tag] interpretation: at least one counter reset or DMA read was implausible; do not use totals to judge synchronization"
+        if (( SENTINEL_ONLY )); then
+            echo "[$tag] interpretation: every read returned 0x0000 or 0xffff, so this register never answered on this path; this says nothing about whether the sensors produced frames"
+        else
+            echo "[$tag] interpretation: at least one counter reset or DMA read was implausible; do not use totals to judge synchronization"
+        fi
         exit 4
         ;;
     NO_PROGRESS)

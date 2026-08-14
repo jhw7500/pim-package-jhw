@@ -77,6 +77,25 @@ printf '[stub] ch=%s reg=%s val=0x%04x\n' "$1" "$2" "$((n & 0xffff))"
 echo $((n + 1)) > "$f"
 EOF
             ;;
+        sffff)  # 실측(비스트리밍): 0xffff 고정
+            printf '#!/bin/bash\nprintf "[stub] ch=%%s reg=%%s val=0xffff\\n" "$1" "$2"\n' > "$1"
+            ;;
+        szero)  # 0x0000 고정
+            printf '#!/bin/bash\nprintf "[stub] ch=%%s reg=%%s val=0x0000\\n" "$1" "$2"\n' > "$1"
+            ;;
+        salt)   # 실측(스트리밍): 0x0000 <-> 0xffff 교대
+            cat > "$1" <<'EOF'
+#!/bin/bash
+f="$FS_STATE/ch$1"; n=0
+[ -f "$f" ] && n=$(cat "$f")
+if [ $((n % 2)) -eq 0 ]; then v=0x0000; else v=0xffff; fi
+printf '[stub] ch=%s reg=%s val=%s\n' "$1" "$2" "$v"
+echo $((n + 1)) > "$f"
+EOF
+            ;;
+        stuck)  # sentinel 이 아닌 값에 멈춤 — NO_PROGRESS 가 살아있는지 확인
+            printf '#!/bin/bash\nprintf "[stub] ch=%%s reg=%%s val=0x1234\\n" "$1" "$2"\n' > "$1"
+            ;;
         *)
             echo "unknown stub mode: $2" >&2
             return 1
@@ -101,6 +120,27 @@ t_eq "  결과가 MATCH" "$(grep -c 'result=MATCH' "$WORK/out.txt")" "1"
 t_eq "불가능한 backward jump → exit 4" "$(run_sync reset 2)" "4"
 t_eq "  결과가 RESET_OR_INVALID" "$(grep -c 'result=RESET_OR_INVALID' "$WORK/out.txt")" "1"
 t_eq "  drift 가 NA 로 낮춰진다" "$(grep -c 'drift=NA' "$WORK/out.txt")" "4"
+
+# ── sentinel 전용 관측 ──────────────────────────────────────────────────────
+# pim-camera-v016 실측: 0x303A 는 AP1302 DMA 터널로 0x0000/0xffff 만 돌려준다
+# (유휴 시 0xffff 고정, 스트리밍 중 교대). 같은 경로에서 0x3000(chip id)과
+# 0x300a(frame_length_lines)는 채널마다 다른 실제 값을 낸다. 즉 레지스터가
+# 응답하지 않는 것이지 센서가 멈춘 게 아니다.
+#
+# 고정 sentinel 은 step 이 0 이라 예전에는 NO_PROGRESS("센서가 프레임을 내지
+# 않았다")로 떨어졌다. 그건 뒷받침할 수 없는 하드웨어 주장이다.
+t_eq "0xffff 고정은 RESET_OR_INVALID" "$(run_sync sffff 3)" "4"
+t_eq "  sentinel_only 로 표시된다" "$(grep -c 'sentinel_only=1' "$WORK/out.txt")" "1"
+t_eq "  NO_PROGRESS 로 오판하지 않는다" "$(grep -c 'result=NO_PROGRESS' "$WORK/out.txt")" "0"
+t_eq "0x0000 고정도 RESET_OR_INVALID" "$(run_sync szero 3)" "4"
+t_eq "0x0000<->0xffff 교대도 RESET_OR_INVALID" "$(run_sync salt 3)" "4"
+
+# 과잉 발동 방지: 정상 카운터는 0x0000 에서 시작해도 sentinel 로 보지 않는다.
+t_eq "정상 증가는 sentinel 로 보지 않는다" "$(run_sync step 3)" "0"
+t_eq "  sentinel_only=0" "$(grep -c 'sentinel_only=0' "$WORK/out.txt")" "1"
+
+# sentinel 이 아닌 값에 멈추면 NO_PROGRESS 가 여전히 옳은 판정이다.
+t_eq "sentinel 아닌 값에 멈추면 NO_PROGRESS" "$(run_sync stuck 3)" "3"
 
 # ── 경과시간 0 (같은 10 ms 버킷) ────────────────────────────────────────────
 # /proc/uptime 해상도는 10 ms 다. 두 표본이 같은 버킷에 떨어지면 elapsed_ns 가
