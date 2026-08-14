@@ -23,9 +23,21 @@ ladder는 변경하지 않는다.
 - gstApp producer는 이 단계의 필수 조건이 아니다. 없으면 aggregator에서 해당
   producer만 stale/unknown이다.
 
-shallow driver ABI는 AR0234 deep DMA를 실행하지 않는다. 따라서 정상 링크에서도
-Sensor observation은 `UNKNOWN/PRODUCER_STALE`이고 aggregate는 `DEGRADED`일 수 있다.
-이를 장애나 reset 조건으로 사용하면 안 된다.
+shallow driver ABI는 AR0234 deep DMA를 실행하지 않는다. 따라서 enabled 채널에
+대해 sensor observation을 **아예 내보내지 않는다.** probe가 없다는 사실은
+snapshot마다 `producer_data.sensor_probe = "shallow-only"`로 한 번만 선언한다.
+
+이전 구현은 이 자리에 `UNKNOWN/PRODUCER_STALE`을 넣었는데, `sensor`가 legacy
+비교 대상 블록이라 정상 하드웨어에서도 top-level status가 영원히 `UNKNOWN`이
+되고 legacy/v1 비교가 영원히 `INCONCLUSIVE`로 고정됐다. 관측하지 않은 것을
+"모른다"는 증거로 발행하면 안 된다.
+
+링크가 끊겨 ISP 경로가 막힌 경우에는 sensor observation을
+`BLOCKED/REMOTE_PATH_UNAVAILABLE`로 계속 발행한다. 이건 실제 관측 결과다.
+
+producer는 driver sequence가 실제로 진행했을 때만 `sequence`와
+`observed_monotonic_ms`를 갱신한다. driver가 읽히지만 갱신을 멈추면 evidence가
+나이를 먹어 aggregator TTL이 `PRODUCER_STALE`을 정상적으로 발동시킨다.
 
 ## 오프보드 완료 기준
 

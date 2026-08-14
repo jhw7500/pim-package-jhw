@@ -332,7 +332,7 @@ def isp_observation(channel: Mapping[str, Any]) -> Dict[str, Any]:
     )
 
 
-def sensor_observation(channel: Mapping[str, Any]) -> Dict[str, Any]:
+def sensor_observation(channel: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
     channel_id = int(channel["channel"])
     status = channel["sensor"]["status"]
     items = [evidence("probe", "max9296/health_raw", channel["sensor"].get("probe"))]
@@ -346,15 +346,13 @@ def sensor_observation(channel: Mapping[str, Any]) -> Dict[str, Any]:
             blocked_by=["isp"],
             root_cause=False,
         )
-    return observation(
-        "sensor",
-        scope("channel", f"ch{channel_id}", [channel_id]),
-        "UNKNOWN",
-        "PRODUCER_STALE",
-        items,
-        root_cause=False,
-        reason_detail="AR0234 static DMA probe is not part of the shallow ABI",
-    )
+    # The shallow ABI never probes the AR0234, so there is no sensor evidence to
+    # report for an enabled channel. Reporting UNKNOWN/PRODUCER_STALE here made
+    # every healthy snapshot UNKNOWN at the top level and pinned the legacy/v1
+    # comparison to INCONCLUSIVE forever, because "sensor" is a comparable
+    # block. The missing probe is already declared once per snapshot as
+    # producer_data.sensor_probe, so emit nothing instead of false evidence.
+    return None
 
 
 def convert(
@@ -423,9 +421,11 @@ def convert(
                     link_observation(channel),
                     serializer_observation(channel),
                     isp_observation(channel),
-                    sensor_observation(channel),
                 )
             )
+            sensor = sensor_observation(channel)
+            if sensor is not None:
+                observations.append(sensor)
 
         if raw["streaming"]:
             progressing = [
@@ -479,6 +479,39 @@ def convert(
             "source_sequences": source_sequences,
             "sensor_probe": "shallow-only",
         },
+    }
+
+
+def source_sequences_of(raw_documents: Sequence[Mapping[str, Any]]) -> Dict[str, int]:
+    """Return the per-adapter driver sequence numbers of one sampling round."""
+    return {
+        f"i2c{int(document['adapter'])}": int(document["sequence"])
+        for document in raw_documents
+    }
+
+
+def publication_state(
+    previous: Optional[Mapping[str, Any]],
+    sources: Mapping[str, int],
+    now_ms: int,
+) -> Dict[str, Any]:
+    """Decide the sequence and observation time for one publication.
+
+    The driver can keep returning a readable but unchanged health_raw document,
+    for example when its sampling logic stalls. Restamping observed_monotonic_ms
+    on every iteration would make that stale hardware evidence look perpetually
+    fresh, so the aggregator TTL would never expire and PRODUCER_STALE would
+    never fire. Advance the sequence and the observation time only when the
+    driver sequences actually moved; otherwise republish the previous ones and
+    let the evidence age.
+    """
+    if previous is None or previous["sources"] != sources:
+        sequence = 0 if previous is None else int(previous["sequence"])
+        return {"sequence": sequence + 1, "observed_ms": now_ms, "sources": dict(sources)}
+    return {
+        "sequence": int(previous["sequence"]),
+        "observed_ms": int(previous["observed_ms"]),
+        "sources": dict(previous["sources"]),
     }
 
 
@@ -540,7 +573,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if not inputs:
         raise SystemExit("no max9296 health_raw inputs found")
     stopped = False
-    sequence = 0
+    published: Optional[Dict[str, Any]] = None
 
     def stop(_signum: int, _frame: object) -> None:
         nonlocal stopped
@@ -562,9 +595,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 return 65
             time.sleep(args.interval_ms / 1000.0)
             continue
-        sequence += 1
-        now_ms = time.monotonic_ns() // 1_000_000
-        atomic_write(args.output, convert(raw, boot_id, sequence, now_ms))
+        published = publication_state(
+            published,
+            source_sequences_of(raw),
+            time.monotonic_ns() // 1_000_000,
+        )
+        atomic_write(
+            args.output,
+            convert(raw, boot_id, published["sequence"], published["observed_ms"]),
+        )
         if args.once:
             break
         time.sleep(args.interval_ms / 1000.0)

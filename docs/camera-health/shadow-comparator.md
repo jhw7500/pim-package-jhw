@@ -29,6 +29,14 @@ the aggregate but are not called a disagreement with the legacy physical-link
 mask. This avoids classifying a storage-only failure as a new camera-link false
 positive.
 
+Because these blocks are comparable, an `UNKNOWN` in any of them forces the
+whole camera status to `UNKNOWN` and the verdict to `INCONCLUSIVE`. A producer
+must therefore not publish an observation for a block it never probed. The
+MAX9296 shallow ABI does not probe the AR0234, so it emits no sensor
+observation for an enabled channel and declares the gap once per snapshot as
+`producer_data.sensor_probe`. Publishing `UNKNOWN` there instead pinned every
+comparison to `INCONCLUSIVE` regardless of hardware state.
+
 The comparison uses `configured_channel_mask` only to limit active channels.
 It does not substitute that mask for physical presence. In dual-wide mode a
 one-link physical failure may appear as a two-channel legacy mask while v1
