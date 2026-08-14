@@ -3,6 +3,7 @@
 tag=$(basename "$0")
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 DMA_READ="${CAM_DMA_READ:-$SCRIPT_DIR/cam_dma_read.sh}"
+UPTIME_PATH="${CAM_UPTIME_PATH:-/proc/uptime}"
 FRAME_COUNT_REG=0x303a
 MAX_SENSOR_FPS=${MAX_SENSOR_FPS:-120}
 FRAME_STEP_MARGIN=${FRAME_STEP_MARGIN:-8}
@@ -36,12 +37,35 @@ die() {
     exit 1
 }
 
+# Wall clock. Used only for durations inside a single sweep, where the sub-
+# millisecond resolution matters and a clock step is not a realistic risk.
 now_ns() {
     local value
 
     value=$(date +%s%N) || return 1
     [[ "$value" =~ ^[0-9]+$ ]] || return 1
     printf "%s\n" "$value"
+}
+
+# Monotonic clock. /proc/uptime is not affected by NTP steps or `date -s`, both
+# of which this package performs: update_time_sync.sh restarts systemd-timesyncd
+# and enables NTP, and fake-hwclock.sh calls `date -s` directly. A forward wall
+# step inflates the elapsed time between samples, which inflates the plausibility
+# ceiling and admits an implausible counter advance as if it were real; a
+# backward step used to abort the run outright. Resolution is 10 ms, which is far
+# below the sample interval this bounds, and the value is built with integer
+# arithmetic because a 64-bit nanosecond uptime exceeds float precision.
+mono_ns() {
+    local raw seconds fraction
+
+    read -r raw _ < "$UPTIME_PATH" || return 1
+    [[ "$raw" =~ ^([0-9]+)\.([0-9]{1,9})$ ]] || return 1
+    seconds=${BASH_REMATCH[1]}
+    fraction=${BASH_REMATCH[2]}
+    while (( ${#fraction} < 9 )); do
+        fraction="${fraction}0"
+    done
+    printf "%s\n" "$((10#$seconds * 1000000000 + 10#$fraction))"
 }
 
 format_ms() {
@@ -54,6 +78,7 @@ read_frame_count() {
     local output value_hex
 
     READ_START_NS=$(now_ns) || die "date +%s%N is not supported"
+    READ_START_MONO_NS=$(mono_ns) || die "/proc/uptime is not readable"
     output=$("$DMA_READ" "$channel" "$FRAME_COUNT_REG" 2>&1) || {
         echo "$output" >&2
         die "DMA read failed for ch$channel"
@@ -96,8 +121,9 @@ FRAME_STEP_MARGIN=$((10#$FRAME_STEP_MARGIN))
 IFS=',' read -r -a CHANNELS <<<"$CHANNEL_LIST"
 (( ${#CHANNELS[@]} >= 2 )) || die "at least two channels are required"
 
-declare -A SEEN PREV STEP TOTAL CURRENT MID_NS READ_NS LAST_MID_NS
+declare -A SEEN PREV STEP TOTAL CURRENT MID_NS READ_NS
 declare -A HAVE_PREV INVALID_COUNT CONTINUITY STATUS REASON MAX_STEP
+declare -A SAMPLE_MONO_NS LAST_SAMPLE_MONO_NS
 
 for channel in "${CHANNELS[@]}"; do
     [[ "$channel" =~ ^[0-3]$ ]] || die "invalid channel: $channel (expected 0..3)"
@@ -125,6 +151,9 @@ for ((sample = 1; sample <= SAMPLES; sample++)); do
         CURRENT[$channel]=$READ_VALUE
         READ_NS[$channel]=$((READ_END_NS - READ_START_NS))
         MID_NS[$channel]=$((READ_START_NS + READ_NS[$channel] / 2))
+        # The monotonic sample time is not refined to the read midpoint: the
+        # refinement is ~1.5 ms, well under the 10 ms resolution of the source.
+        SAMPLE_MONO_NS[$channel]=$READ_START_MONO_NS
     done
 
     SWEEP_END_NS=$(now_ns) || die "date +%s%N is not supported"
@@ -136,8 +165,8 @@ for ((sample = 1; sample <= SAMPLES; sample++)); do
         MAX_STEP[$channel]=0
 
         if (( HAVE_PREV[$channel] )); then
-            elapsed_ns=$((MID_NS[$channel] - LAST_MID_NS[$channel]))
-            (( elapsed_ns > 0 )) || die "non-increasing timestamp for ch$channel"
+            elapsed_ns=$((SAMPLE_MONO_NS[$channel] - LAST_SAMPLE_MONO_NS[$channel]))
+            (( elapsed_ns >= 0 )) || die "monotonic clock went backwards for ch$channel"
 
             step=$(( (CURRENT[$channel] - PREV[$channel]) & 0xffff ))
             max_step=$(( (elapsed_ns * MAX_SENSOR_FPS + 999999999) / 1000000000 + FRAME_STEP_MARGIN ))
@@ -160,7 +189,7 @@ for ((sample = 1; sample <= SAMPLES; sample++)); do
         fi
 
         PREV[$channel]=${CURRENT[$channel]}
-        LAST_MID_NS[$channel]=${MID_NS[$channel]}
+        LAST_SAMPLE_MONO_NS[$channel]=${SAMPLE_MONO_NS[$channel]}
         HAVE_PREV[$channel]=1
     done
 

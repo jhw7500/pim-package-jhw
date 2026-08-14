@@ -18,6 +18,7 @@ TESTS=(
     flag_e2e_test.sh
     disconnect_log_test.sh
     mcp4018_addr_test.sh
+    frame_sync_test.sh
 )
 
 fail=0
