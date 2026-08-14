@@ -23,9 +23,18 @@ ladder는 변경하지 않는다.
 - gstApp producer는 이 단계의 필수 조건이 아니다. 없으면 aggregator에서 해당
   producer만 stale/unknown이다.
 
-shallow driver ABI는 AR0234 deep DMA를 실행하지 않는다. 따라서 enabled 채널에
-대해 sensor observation을 **아예 내보내지 않는다.** probe가 없다는 사실은
-snapshot마다 `producer_data.sensor_probe = "shallow-only"`로 한 번만 선언한다.
+shallow driver ABI는 AR0234 deep DMA를 실행하지 않는다. 따라서 raw sensor
+status가 `UNKNOWN`인 enabled 채널에 대해서는 sensor observation을 **아예
+내보내지 않는다.** probe가 없다는 사실은 snapshot마다
+`producer_data.sensor_probe = "shallow-only"`로 한 번만 선언한다.
+
+**`UNKNOWN`이 아닌 status는 버리지 않는다.** `load_raw()`는 sensor status로
+`VALID_RAW_STATUS` 전체를 허용하므로, 센서를 실제로 probe하는 driver revision이
+`FAIL`을 보고할 수 있다. 이를 조건 없이 생략하면 진짜 센서 고장이 정상 snapshot으로
+둔갑한다. 그래서 해석할 수 없는 status는 `UNKNOWN/PRODUCER_MALFORMED`로 남겨
+비교를 `INCONCLUSIVE`에 묶어 둔다. shallow 증거로는 센서 판정을 뒷받침할 수 없으므로
+driver의 `FAIL`을 그대로 전달하지는 않는다. exporter가 더 깊은 ABI를 해석할 수 있게
+되면 그때 정식 sensor 판정으로 승격한다.
 
 이전 구현은 이 자리에 `UNKNOWN/PRODUCER_STALE`을 넣었는데, `sensor`가 legacy
 비교 대상 블록이라 정상 하드웨어에서도 top-level status가 영원히 `UNKNOWN`이

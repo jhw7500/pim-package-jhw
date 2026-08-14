@@ -127,6 +127,8 @@ class Tests:
             self.package_integration(Path(temporary))
         with tempfile.TemporaryDirectory(prefix="pim-max9296-seam.") as temporary:
             self.shadow_seam(Path(temporary))
+        with tempfile.TemporaryDirectory(prefix="pim-max9296-deep.") as temporary:
+            self.unexpected_sensor_status(Path(temporary))
         self.stalled_source_freshness()
         self.unit_contract()
         print()
@@ -321,6 +323,81 @@ class Tests:
         self.check(
             stale_state["code"] == "PRODUCER_STALE",
             "aggregator can still expire the producer past its TTL",
+        )
+
+    def unexpected_sensor_status(self, root: Path) -> None:
+        """A driver-reported sensor verdict must never be silently dropped.
+
+        load_raw() accepts every VALID_RAW_STATUS for the sensor block, so a
+        driver revision that starts probing the AR0234 can report FAIL. Skipping
+        the observation for anything other than the shallow UNKNOWN would turn
+        that failure into a healthy snapshot.
+        """
+        probing = channel(0, True, "B")
+        probing["sensor"] = {"status": "FAIL", "probe": "DEEP_CHIP_ID"}
+        raw_path = root / "i2c2-health.json"
+        raw_path.write_text(
+            json.dumps(
+                raw_device(2, 0, [probing, channel(1, True, "A")], "dual-wide", True)
+            ),
+            encoding="utf-8",
+        )
+        boot_id = root / "boot_id"
+        boot_id.write_text("boot-deep\n", encoding="utf-8")
+        output = root / "max9296.json"
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(PRODUCER),
+                "--once",
+                "--boot-id-file",
+                str(boot_id),
+                "--output",
+                str(output),
+                "--input",
+                str(raw_path),
+            ],
+            check=False,
+        )
+        self.check(completed.returncode == 0, "producer accepts a deeper sensor status")
+
+        snapshot = json.loads(output.read_text(encoding="utf-8"))
+        schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+        self.check(
+            not list(Draft202012Validator(schema).iter_errors(snapshot)),
+            "deeper sensor status still validates against health-v1 schema",
+        )
+        sensors = [
+            item for item in snapshot["observations"] if item["block"] == "sensor"
+        ]
+        self.check(
+            [item["scope"]["id"] for item in sensors] == ["ch0"],
+            "an uninterpretable sensor status is still reported",
+        )
+        self.check(
+            len(sensors) == 1
+            and sensors[0]["status"] == "UNKNOWN"
+            and sensors[0]["code"] == "PRODUCER_MALFORMED",
+            "shallow ABI does not forward a sensor verdict it cannot substantiate",
+        )
+        self.check(
+            snapshot["status"] != "OK",
+            "a dropped sensor verdict cannot make the snapshot healthy",
+        )
+
+        domain_scopes = {"ch01": {0, 1}, "ch23": {2, 3}}
+        camera_status = comparator.v1_camera_status(snapshot, 0x3, domain_scopes)
+        verdict, _reason = comparator.classify(
+            {"state": "OK", "active_camera_mask": 0, "maintenance_flags": []},
+            snapshot,
+            {"state": "OK", "complete": True},
+            camera_status,
+            0,
+            False,
+        )
+        self.check(
+            verdict != "AGREE_HEALTHY",
+            "comparison stays inconclusive instead of agreeing on health",
         )
 
     def stalled_source_freshness(self) -> None:
