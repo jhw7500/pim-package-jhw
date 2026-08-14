@@ -417,7 +417,7 @@ class Tests:
                 encoding="utf-8",
             )
             other_output = root / f"max9296-{slug}.json"
-            subprocess.run(
+            probe_run = subprocess.run(
                 [
                     sys.executable,
                     str(PRODUCER),
@@ -431,6 +431,9 @@ class Tests:
                 ],
                 check=False,
             )
+            if probe_run.returncode != 0 or not other_output.exists():
+                self.check(False, f"producer crashed on sensor status {raw_status}")
+                continue
             other = json.loads(other_output.read_text(encoding="utf-8"))
             observed = [
                 item for item in other["observations"] if item["block"] == "sensor"
