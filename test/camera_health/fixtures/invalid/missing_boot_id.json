@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "producer": "gstApp",
+  "pid": 10,
+  "sequence": 1,
+  "observed_monotonic_ms": 100,
+  "status": "OK",
+  "observations": []
+}

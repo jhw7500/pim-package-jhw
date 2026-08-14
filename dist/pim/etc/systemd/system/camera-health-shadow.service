@@ -1,0 +1,15 @@
+[Unit]
+Description=PIM Camera Health Shadow Aggregator
+After=pim-camera-config.service
+ConditionPathExists=/tmp/config/READY
+StartLimitIntervalSec=60s
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/opt/pim/bin/camera_healthd.py
+Restart=on-failure
+RestartSec=3s
+
+# Deliberately no [Install] section in shadow preparation phase. The package
+# does not enable or start this unit until producer soak is explicitly approved.

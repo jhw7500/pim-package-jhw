@@ -1,0 +1,14 @@
+[Unit]
+Description=PIM MAX9296 Read-only Camera Health Producer
+After=cam-operate.service
+StartLimitIntervalSec=60s
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/opt/pim/bin/max9296_health_export.py --interval-ms 1000
+Restart=on-failure
+RestartSec=3s
+
+# Deliberately no [Install] section. This phase packages the producer but does
+# not enable or start it until the target health_raw ABI passes board tests.

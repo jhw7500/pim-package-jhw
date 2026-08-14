@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "producer": "gstApp",
+  "boot_id": "f37e65b6-9d83-4bba-a722-79f10825d607",
+  "pid": 1274,
+  "sequence": 103,
+  "observed_monotonic_ms": 121000,
+  "status": "OK",
+  "stream_mode": "independent",
+  "channel_masks": {
+    "configured_channel_mask": 3,
+    "physical_present_mask": 3,
+    "stream_domain_active_mask": 3
+  },
+  "observations": [
+    {
+      "block": "gstreamer",
+      "scope": { "kind": "channel", "id": "ch0" },
+      "status": "OK",
+      "code": "NONE",
+      "count": 0,
+      "evidence": [
+        { "name": "v4l2src_buffer_delta", "source": "v4l2src:src-pad", "value": 30, "unit": "buffers/s" },
+        { "name": "encoder_output_delta", "source": "encoder:src-pad", "value": 30, "unit": "buffers/s" }
+      ]
+    },
+    {
+      "block": "recording",
+      "scope": { "kind": "channel", "id": "ch0" },
+      "status": "OK",
+      "code": "NONE",
+      "count": 0,
+      "evidence": [
+        { "name": "fragment_growth", "source": "/mnt/ramdisk/ch0.mp4.part", "value": 1048576, "unit": "bytes/s" }
+      ]
+    }
+  ]
+}

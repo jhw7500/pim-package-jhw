@@ -1,0 +1,16 @@
+[Unit]
+Description=PIM Camera CSI2/ISI Read-only Probe
+After=pim-camera-config.service
+ConditionPathExists=/tmp/config/READY
+StartLimitIntervalSec=60s
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStartPre=/opt/pim/bin/camera_config_expectation.py
+ExecStart=/opt/pim/bin/camera_capture_probe.py --expectation /run/pim-camera/config-expectation.json
+Restart=on-failure
+RestartSec=3s
+
+# Intentionally no [Install] section. Domain expectation must be wired from the
+# validated camera config before this producer can be enabled on target.

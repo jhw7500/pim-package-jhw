@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pim.local/schema/camera-health-v1.json",
+  "title": "PIM Camera Health Producer Snapshot v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "producer",
+    "boot_id",
+    "pid",
+    "sequence",
+    "observed_monotonic_ms",
+    "status",
+    "observations"
+  ],
+  "properties": {
+    "schema": { "const": 1 },
+    "producer": {
+      "enum": ["max9296", "gstApp", "pim-healthd"]
+    },
+    "boot_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "pid": { "type": "integer", "minimum": 0 },
+    "sequence": { "type": "integer", "minimum": 0 },
+    "observed_monotonic_ms": { "type": "integer", "minimum": 0 },
+    "status": { "$ref": "#/$defs/blockStatus" },
+    "overall_status": {
+      "enum": ["HEALTHY", "DEGRADED", "FAILED", "RECOVERING"]
+    },
+    "stream_mode": {
+      "enum": ["single", "independent", "dual-wide", "unknown"]
+    },
+    "channel_masks": { "$ref": "#/$defs/channelMasks" },
+    "observations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/observation" }
+    },
+    "producer_data": {
+      "type": "object",
+      "description": "Version-1 producer-specific extension point. Consumers must ignore unknown keys."
+    }
+  },
+  "$defs": {
+    "blockStatus": {
+      "enum": ["OK", "FAIL", "UNKNOWN", "STARTING", "BLOCKED", "N/A"]
+    },
+    "block": {
+      "enum": [
+        "sensor",
+        "isp",
+        "serializer",
+        "gmsl_link",
+        "deserializer",
+        "csi2",
+        "capture",
+        "gstreamer",
+        "recording"
+      ]
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": {
+          "enum": [
+            "channel",
+            "link",
+            "pair",
+            "csi",
+            "camera-domain",
+            "global"
+          ]
+        },
+        "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "channels": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0, "maximum": 3 },
+          "uniqueItems": true,
+          "minItems": 1
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "source", "value"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 96 },
+        "source": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "value": {
+          "type": ["string", "integer", "number", "boolean", "null"]
+        },
+        "unit": { "type": "string", "maxLength": 32 },
+        "semantics": { "type": "string", "maxLength": 256 }
+      }
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["block", "scope", "status", "code", "count", "evidence"],
+      "properties": {
+        "block": { "$ref": "#/$defs/block" },
+        "scope": { "$ref": "#/$defs/scope" },
+        "status": { "$ref": "#/$defs/blockStatus" },
+        "code": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+        },
+        "count": { "type": "integer", "minimum": 0 },
+        "errno": { "type": ["integer", "null"] },
+        "first_seen_monotonic_ms": { "type": "integer", "minimum": 0 },
+        "last_seen_monotonic_ms": { "type": "integer", "minimum": 0 },
+        "root_cause": { "type": "boolean" },
+        "blocked_by": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/block" },
+          "uniqueItems": true
+        },
+        "action_scope": {
+          "enum": ["none", "process", "pipeline", "link", "pair", "capture-domain", "camera-domain", "reboot"]
+        },
+        "reason_detail": { "type": "string", "maxLength": 512 },
+        "evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/evidence" }
+        }
+      }
+    },
+    "channelMasks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "configured_channel_mask",
+        "physical_present_mask",
+        "stream_domain_active_mask"
+      ],
+      "properties": {
+        "configured_channel_mask": { "type": "integer", "minimum": 0, "maximum": 15 },
+        "physical_present_mask": { "type": "integer", "minimum": 0, "maximum": 15 },
+        "stream_domain_active_mask": { "type": "integer", "minimum": 0, "maximum": 15 }
+      }
+    }
+  }
+}

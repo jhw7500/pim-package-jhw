@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "producer": "gstApp",
+  "boot_id": "boot-a",
+  "pid": 99,
+  "sequence": 1,
+  "observed_monotonic_ms": 100,
+  "status": "OK",
+  "observations": [
+    {
+      "block": "gstreamer",
+      "scope": { "kind": "channel", "id": "ch0" },
+      "status": "OK",
+      "code": "GSTREAMER_PIPELINE_ERROR",
+      "count": 0,
+      "evidence": []
+    }
+  ]
+}
