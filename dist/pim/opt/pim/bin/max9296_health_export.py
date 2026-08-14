@@ -346,13 +346,39 @@ def sensor_observation(channel: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
             blocked_by=["isp"],
             root_cause=False,
         )
-    # The shallow ABI never probes the AR0234, so there is no sensor evidence to
-    # report for an enabled channel. Reporting UNKNOWN/PRODUCER_STALE here made
-    # every healthy snapshot UNKNOWN at the top level and pinned the legacy/v1
-    # comparison to INCONCLUSIVE forever, because "sensor" is a comparable
-    # block. The missing probe is already declared once per snapshot as
-    # producer_data.sensor_probe, so emit nothing instead of false evidence.
-    return None
+    if status == "UNKNOWN":
+        # The shallow ABI never probes the AR0234, so there is no sensor
+        # evidence to report for an enabled channel. Reporting
+        # UNKNOWN/PRODUCER_STALE here made every healthy snapshot UNKNOWN at the
+        # top level and pinned the legacy/v1 comparison to INCONCLUSIVE forever,
+        # because "sensor" is a comparable block. The missing probe is already
+        # declared once per snapshot as producer_data.sensor_probe, so emit
+        # nothing instead of false evidence.
+        return None
+    # load_raw() accepts any VALID_RAW_STATUS here, so a driver revision that
+    # starts probing the sensor can report OK/FAIL/STARTING/N/A. Dropping those
+    # would turn a real sensor failure into a healthy snapshot, so keep them
+    # visible. The shallow contract cannot substantiate a sensor verdict, hence
+    # UNKNOWN rather than a forwarded FAIL: the comparison stays INCONCLUSIVE
+    # until the exporter learns how to interpret the deeper ABI.
+    #
+    # The full raw-status mapping is therefore:
+    #   BLOCKED             -> BLOCKED/REMOTE_PATH_UNAVAILABLE (real observation)
+    #   UNKNOWN             -> no observation (shallow ABI probed nothing)
+    #   OK/FAIL/STARTING/N/A -> UNKNOWN/PRODUCER_MALFORMED (uninterpretable)
+    #
+    # OK must stay in the last row. Forwarding it as OK/NONE would let a
+    # producer that never probed the sensor assert that the sensor is healthy,
+    # which is the fail-open this branch exists to prevent.
+    return observation(
+        "sensor",
+        scope("channel", f"ch{channel_id}", [channel_id]),
+        "UNKNOWN",
+        "PRODUCER_MALFORMED",
+        items,
+        root_cause=False,
+        reason_detail=f"shallow ABI cannot interpret sensor status {status}",
+    )
 
 
 def convert(
