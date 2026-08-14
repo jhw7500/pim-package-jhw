@@ -444,6 +444,10 @@ class Tests:
                 and observed[0]["code"] == "PRODUCER_MALFORMED",
                 f"raw sensor {raw_status} is not accepted as a sensor verdict",
             )
+            self.check(
+                other["status"] != "OK",
+                f"raw sensor {raw_status} cannot make the snapshot healthy",
+            )
 
     def stalled_source_freshness(self) -> None:
         """A stalled driver must age out instead of looking fresh forever."""

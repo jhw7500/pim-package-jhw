@@ -356,7 +356,7 @@ def sensor_observation(channel: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
         # nothing instead of false evidence.
         return None
     # load_raw() accepts any VALID_RAW_STATUS here, so a driver revision that
-    # starts probing the sensor can report OK/FAIL/STARTING/N-A. Dropping those
+    # starts probing the sensor can report OK/FAIL/STARTING/N/A. Dropping those
     # would turn a real sensor failure into a healthy snapshot, so keep them
     # visible. The shallow contract cannot substantiate a sensor verdict, hence
     # UNKNOWN rather than a forwarded FAIL: the comparison stays INCONCLUSIVE
