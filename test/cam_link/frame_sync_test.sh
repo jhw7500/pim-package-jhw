@@ -59,6 +59,15 @@ if [ -f "$f" ]; then v=0x0012; else v=0x0016; : > "$f"; fi
 printf '[stub] ch=%s reg=%s val=%s\n' "$1" "$2" "$v"
 EOF
             ;;
+        leap)   # 표본마다 20씩 증가 — 정상 간격에선 통과, 경과시간 0 에선 상한 초과
+            cat > "$1" <<'EOF'
+#!/bin/bash
+f="$FS_STATE/ch$1"; n=0
+[ -f "$f" ] && n=$(cat "$f")
+printf '[stub] ch=%s reg=%s val=0x%04x\n' "$1" "$2" "$(((n * 20) & 0xffff))"
+echo $((n + 1)) > "$f"
+EOF
+            ;;
         stall)  # step 과 같되 두 번째 표본의 ch0 읽기만 1초 지연 (v4l2-ctl 스톨)
             cat > "$1" <<'EOF'
 #!/bin/bash
@@ -89,6 +98,21 @@ t_eq "  결과가 MATCH" "$(grep -c 'result=MATCH' "$WORK/out.txt")" "1"
 t_eq "불가능한 backward jump → exit 4" "$(run_sync reset 2)" "4"
 t_eq "  결과가 RESET_OR_INVALID" "$(grep -c 'result=RESET_OR_INVALID' "$WORK/out.txt")" "1"
 t_eq "  drift 가 NA 로 낮춰진다" "$(grep -c 'drift=NA' "$WORK/out.txt")" "4"
+
+# ── 경과시간 0 (같은 10 ms 버킷) ────────────────────────────────────────────
+# /proc/uptime 해상도는 10 ms 다. 두 표본이 같은 버킷에 떨어지면 elapsed_ns 가
+# 0 이 되고 max_step 은 FRAME_STEP_MARGIN 만 남는다. 기본 간격(0.2 s)에서는
+# 사실상 일어나지 않지만, 일어나더라도 상한이 좁아지는 쪽이라 fail-closed 여야
+# 한다. uptime 원본을 고정 파일로 주입해 그 경계를 명시적으로 고정한다.
+printf '1000.00 2000.00\n' > "$WORK/frozen_uptime"
+FROZEN=(env "CAM_UPTIME_PATH=$WORK/frozen_uptime")
+
+t_eq "경과시간 0 에서도 소폭 증가는 통과" "$(run_sync step 3 "${FROZEN[@]}")" "0"
+t_eq "  상한이 FRAME_STEP_MARGIN 으로 좁혀진다" \
+    "$(sed -nE 's/.*sample=2 ch=0 .*max_step=([0-9]+).*/\1/p' "$WORK/out.txt")" "8"
+
+t_eq "정상 간격에서 20프레임 증가는 통과" "$(run_sync leap 3)" "0"
+t_eq "경과시간 0 에서 같은 증가는 fail-closed" "$(run_sync leap 3 "${FROZEN[@]}")" "4"
 
 # ── 멈춘 read 의 관측 시각 ──────────────────────────────────────────────────
 # cam_dma_read.sh 는 timeout 없는 v4l2-ctl 을 두 번 호출한다. 카메라가 물리면
