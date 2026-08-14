@@ -400,6 +400,48 @@ class Tests:
             "comparison stays inconclusive instead of agreeing on health",
         )
 
+        # OK is the dangerous one: forwarding it as OK/NONE would let a producer
+        # that never probed the sensor assert sensor health, which is exactly
+        # the fail-open this branch prevents. Lock every uninterpretable status.
+        for raw_status in ("OK", "STARTING", "N/A"):
+            slug = raw_status.replace("/", "")
+            probed = channel(0, True, "B")
+            probed["sensor"] = {"status": raw_status, "probe": "DEEP_CHIP_ID"}
+            other_raw = root / f"i2c2-{slug}.json"
+            other_raw.write_text(
+                json.dumps(
+                    raw_device(
+                        2, 0, [probed, channel(1, True, "A")], "dual-wide", True
+                    )
+                ),
+                encoding="utf-8",
+            )
+            other_output = root / f"max9296-{slug}.json"
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(PRODUCER),
+                    "--once",
+                    "--boot-id-file",
+                    str(boot_id),
+                    "--output",
+                    str(other_output),
+                    "--input",
+                    str(other_raw),
+                ],
+                check=False,
+            )
+            other = json.loads(other_output.read_text(encoding="utf-8"))
+            observed = [
+                item for item in other["observations"] if item["block"] == "sensor"
+            ]
+            self.check(
+                len(observed) == 1
+                and observed[0]["status"] == "UNKNOWN"
+                and observed[0]["code"] == "PRODUCER_MALFORMED",
+                f"raw sensor {raw_status} is not accepted as a sensor verdict",
+            )
+
     def stalled_source_freshness(self) -> None:
         """A stalled driver must age out instead of looking fresh forever."""
         self.check(

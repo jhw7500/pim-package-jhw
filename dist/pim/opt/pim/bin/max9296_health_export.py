@@ -361,6 +361,15 @@ def sensor_observation(channel: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
     # visible. The shallow contract cannot substantiate a sensor verdict, hence
     # UNKNOWN rather than a forwarded FAIL: the comparison stays INCONCLUSIVE
     # until the exporter learns how to interpret the deeper ABI.
+    #
+    # The full raw-status mapping is therefore:
+    #   BLOCKED             -> BLOCKED/REMOTE_PATH_UNAVAILABLE (real observation)
+    #   UNKNOWN             -> no observation (shallow ABI probed nothing)
+    #   OK/FAIL/STARTING/NA -> UNKNOWN/PRODUCER_MALFORMED (uninterpretable)
+    #
+    # OK must stay in the last row. Forwarding it as OK/NONE would let a
+    # producer that never probed the sensor assert that the sensor is healthy,
+    # which is the fail-open this branch exists to prevent.
     return observation(
         "sensor",
         scope("channel", f"ch{channel_id}", [channel_id]),
