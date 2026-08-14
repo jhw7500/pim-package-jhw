@@ -329,6 +329,26 @@ def self_cli_test(work: Path, tests: Tests) -> None:
         "atomic writer leaves no temporary output",
     )
 
+    # The boot ID is read once at startup. An unreadable or empty file must end
+    # the process with a diagnosable message instead of an unhandled
+    # SnapshotError, which is what killed the daemon mid-run when the read lived
+    # inside the polling loop.
+    for label, prepare in (
+        ("empty", lambda path: path.write_text("\n", encoding="utf-8")),
+        ("missing", lambda path: path.unlink()),
+    ):
+        boot_file.write_text(BOOT_ID, encoding="utf-8")
+        prepare(boot_file)
+        failed = subprocess.run(command, check=False, capture_output=True, text=True)
+        tests.check(
+            failed.returncode != 0,
+            f"{label} boot ID file fails at startup",
+        )
+        tests.check(
+            "cannot read boot ID" in failed.stderr and "Traceback" not in failed.stderr,
+            f"{label} boot ID file reports a diagnosable startup error",
+        )
+
 
 if __name__ == "__main__":
     raise SystemExit(Tests().run())

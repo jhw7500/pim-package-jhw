@@ -470,6 +470,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.ttl_ms < 1 or args.interval_ms < 1:
         raise SystemExit("ttl and interval must be positive")
     registry = load_registry(args.registry)
+    # The boot ID cannot change while this boot lasts, so read it once at
+    # startup. Reading it inside the loop tied daemon liveness to a file read on
+    # every iteration: read_boot_id() raises SnapshotError, the loop had no
+    # handler, and a single failed read killed the aggregator mid-run.
+    try:
+        boot_id = read_boot_id(args.boot_id_file)
+    except (SnapshotError, OSError) as exc:
+        raise SystemExit(f"cannot read boot ID: {exc}") from exc
     stopped = False
 
     def stop(_signum: int, _frame: object) -> None:
@@ -479,7 +487,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     while not stopped:
-        boot_id = read_boot_id(args.boot_id_file)
         now_ms = (
             args.now_monotonic_ms
             if args.now_monotonic_ms is not None
