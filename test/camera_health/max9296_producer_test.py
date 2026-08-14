@@ -448,6 +448,18 @@ class Tests:
                 other["status"] != "OK",
                 f"raw sensor {raw_status} cannot make the snapshot healthy",
             )
+            other_verdict, _ = comparator.classify(
+                {"state": "OK", "active_camera_mask": 0, "maintenance_flags": []},
+                other,
+                {"state": "OK", "complete": True},
+                comparator.v1_camera_status(other, 0x3, domain_scopes),
+                0,
+                False,
+            )
+            self.check(
+                other_verdict != "AGREE_HEALTHY",
+                f"raw sensor {raw_status} cannot produce AGREE_HEALTHY",
+            )
 
     def stalled_source_freshness(self) -> None:
         """A stalled driver must age out instead of looking fresh forever."""
