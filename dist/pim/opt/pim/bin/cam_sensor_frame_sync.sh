@@ -129,7 +129,7 @@ IFS=',' read -r -a CHANNELS <<<"$CHANNEL_LIST"
 
 declare -A SEEN PREV STEP TOTAL CURRENT MID_NS READ_NS
 declare -A HAVE_PREV INVALID_COUNT CONTINUITY STATUS REASON MAX_STEP
-declare -A SAMPLE_MONO_NS LAST_SAMPLE_MONO_NS
+declare -A SAMPLE_MONO_NS LAST_SAMPLE_MONO_NS SENTINEL_ONLY
 
 for channel in "${CHANNELS[@]}"; do
     [[ "$channel" =~ ^[0-3]$ ]] || die "invalid channel: $channel (expected 0..3)"
@@ -140,6 +140,7 @@ for channel in "${CHANNELS[@]}"; do
     CONTINUITY[$channel]=1
     STEP[$channel]=0
     TOTAL[$channel]=0
+    SENTINEL_ONLY[$channel]=1
 done
 
 REF_CHANNEL=${CHANNELS[0]}
@@ -149,8 +150,12 @@ REF_CHANNEL=${CHANNELS[0]}
 # streaming - although 0x3000 (chip id) and 0x300a (frame_length_lines) read
 # real, per-channel-distinct values on the same path. Only the two extremes of a
 # 16-bit read means the register is not answering, so any total derived from it
-# is meaningless. Track whether a value outside the sentinel set is ever seen.
-SENTINEL_ONLY=1
+# is meaningless.
+#
+# Tracked per channel, not per run. A run-wide flag would be cleared by one
+# healthy channel, leaving a silent channel to look like a valid zero-advance
+# counter; its peer's real advance would then be reported as MISMATCH - an
+# out-of-sync claim built on a register that never answered.
 
 echo "[$tag] reg=$FRAME_COUNT_REG channels=$CHANNEL_LIST interval_sec=$INTERVAL_SEC samples=$SAMPLES reference=ch$REF_CHANNEL"
 echo "[$tag] plausibility max_sensor_fps=$MAX_SENSOR_FPS frame_step_margin=$FRAME_STEP_MARGIN"
@@ -164,7 +169,7 @@ for ((sample = 1; sample <= SAMPLES; sample++)); do
         read_frame_count "$channel"
         CURRENT[$channel]=$READ_VALUE
         if (( READ_VALUE != 0 && READ_VALUE != 0xffff )); then
-            SENTINEL_ONLY=0
+            SENTINEL_ONLY[$channel]=0
         fi
         READ_NS[$channel]=$((READ_END_NS - READ_START_NS))
         MID_NS[$channel]=$((READ_START_NS + READ_NS[$channel] / 2))
@@ -247,18 +252,24 @@ done
 min_total=${TOTAL[${CHANNELS[0]}]}
 max_total=$min_total
 invalid_total=0
+sentinel_channels=""
 for channel in "${CHANNELS[@]}"; do
     (( TOTAL[$channel] < min_total )) && min_total=${TOTAL[$channel]}
     (( TOTAL[$channel] > max_total )) && max_total=${TOTAL[$channel]}
     invalid_total=$((invalid_total + INVALID_COUNT[$channel]))
-    echo "[$tag] channel_summary ch=$channel invalid_count=${INVALID_COUNT[$channel]} continuity=${CONTINUITY[$channel]} valid_total=${TOTAL[$channel]}"
+    if (( SENTINEL_ONLY[$channel] )); then
+        sentinel_channels="${sentinel_channels}${sentinel_channels:+,}ch$channel"
+    fi
+    echo "[$tag] channel_summary ch=$channel invalid_count=${INVALID_COUNT[$channel]} continuity=${CONTINUITY[$channel]} valid_total=${TOTAL[$channel]} sentinel_only=${SENTINEL_ONLY[$channel]}"
 done
 
 drift_span=$((max_total - min_total))
-if (( SENTINEL_ONLY )); then
-    # A stuck sentinel would otherwise land in NO_PROGRESS, which asserts that
-    # the sensors produced no frames. That is a claim about the hardware, and a
-    # register that never answers cannot support it.
+if [[ -n "$sentinel_channels" ]]; then
+    # Any silent channel invalidates the whole comparison. On its own it would
+    # otherwise land in NO_PROGRESS, which asserts that the sensors produced no
+    # frames; alongside an advancing peer it would produce MISMATCH, which
+    # asserts the channels disagree. Both are hardware claims, and a register
+    # that never answers cannot support either.
     result=RESET_OR_INVALID
 elif (( invalid_total > 0 )); then
     result=RESET_OR_INVALID
@@ -273,13 +284,13 @@ else
 fi
 
 if [[ "$result" == "RESET_OR_INVALID" ]]; then
-    echo "[$tag] result=$result sentinel_only=$SENTINEL_ONLY invalid_total=$invalid_total drift_span=NA min_valid_total=$min_total max_valid_total=$max_total"
+    echo "[$tag] result=$result sentinel_only=${sentinel_channels:-none} invalid_total=$invalid_total drift_span=NA min_valid_total=$min_total max_valid_total=$max_total"
 else
-    echo "[$tag] result=$result sentinel_only=$SENTINEL_ONLY invalid_total=$invalid_total drift_span=$drift_span min_valid_total=$min_total max_valid_total=$max_total"
+    echo "[$tag] result=$result sentinel_only=${sentinel_channels:-none} invalid_total=$invalid_total drift_span=$drift_span min_valid_total=$min_total max_valid_total=$max_total"
 fi
 case "$result" in
     RESET_OR_INVALID)
-        if (( SENTINEL_ONLY )); then
+        if [[ -n "$sentinel_channels" ]]; then
             echo "[$tag] interpretation: every read returned 0x0000 or 0xffff, so this register never answered on this path; this says nothing about whether the sensors produced frames"
         else
             echo "[$tag] interpretation: at least one counter reset or DMA read was implausible; do not use totals to judge synchronization"

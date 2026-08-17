@@ -96,6 +96,19 @@ EOF
         stuck)  # sentinel 이 아닌 값에 멈춤 — NO_PROGRESS 가 살아있는지 확인
             printf '#!/bin/bash\nprintf "[stub] ch=%%s reg=%%s val=0x1234\\n" "$1" "$2"\n' > "$1"
             ;;
+        mixed)  # ch0 만 sentinel 고정, 나머지는 정상 증가
+            cat > "$1" <<'EOF'
+#!/bin/bash
+if [ "$1" = "0" ]; then
+    printf '[stub] ch=%s reg=%s val=0xffff\n' "$1" "$2"
+    exit 0
+fi
+f="$FS_STATE/ch$1"; n=0
+[ -f "$f" ] && n=$(cat "$f")
+printf '[stub] ch=%s reg=%s val=0x%04x\n' "$1" "$2" "$((n & 0xffff))"
+echo $((n + 1)) > "$f"
+EOF
+            ;;
         *)
             echo "unknown stub mode: $2" >&2
             return 1
@@ -129,18 +142,32 @@ t_eq "  drift 가 NA 로 낮춰진다" "$(grep -c 'drift=NA' "$WORK/out.txt")" "
 #
 # 고정 sentinel 은 step 이 0 이라 예전에는 NO_PROGRESS("센서가 프레임을 내지
 # 않았다")로 떨어졌다. 그건 뒷받침할 수 없는 하드웨어 주장이다.
+result_sentinel() { sed -nE 's/.*result=[A-Z_]+ sentinel_only=([^ ]+).*/\1/p' "$WORK/out.txt"; }
+
 t_eq "0xffff 고정은 RESET_OR_INVALID" "$(run_sync sffff 3)" "4"
-t_eq "  sentinel_only 로 표시된다" "$(grep -c 'sentinel_only=1' "$WORK/out.txt")" "1"
+t_eq "  모든 채널이 sentinel 로 기록된다" "$(result_sentinel)" "ch0,ch1,ch2,ch3"
 t_eq "  NO_PROGRESS 로 오판하지 않는다" "$(grep -c 'result=NO_PROGRESS' "$WORK/out.txt")" "0"
+
 t_eq "0x0000 고정도 RESET_OR_INVALID" "$(run_sync szero 3)" "4"
+t_eq "  sentinel 채널이 기록된다" "$(result_sentinel)" "ch0,ch1,ch2,ch3"
+
 t_eq "0x0000<->0xffff 교대도 RESET_OR_INVALID" "$(run_sync salt 3)" "4"
+t_eq "  sentinel 채널이 기록된다" "$(result_sentinel)" "ch0,ch1,ch2,ch3"
 
 # 과잉 발동 방지: 정상 카운터는 0x0000 에서 시작해도 sentinel 로 보지 않는다.
 t_eq "정상 증가는 sentinel 로 보지 않는다" "$(run_sync step 3)" "0"
-t_eq "  sentinel_only=0" "$(grep -c 'sentinel_only=0' "$WORK/out.txt")" "1"
+t_eq "  sentinel 채널 없음" "$(result_sentinel)" "none"
 
 # sentinel 이 아닌 값에 멈추면 NO_PROGRESS 가 여전히 옳은 판정이다.
 t_eq "sentinel 아닌 값에 멈추면 NO_PROGRESS" "$(run_sync stuck 3)" "3"
+
+# 채널별 추적이어야 하는 이유. run 전체 플래그면 정상 채널 하나가 플래그를 지워,
+# 침묵한 채널이 "증가량 0인 정상 카운터"로 취급된다. 그러면 옆 채널의 실제 증가가
+# MISMATCH(exit 2) 로 보고된다 — 응답하지 않는 레지스터로 "채널이 어긋났다"고
+# 단정하는 것이다.
+t_eq "한 채널만 침묵해도 비교는 무효" "$(run_sync mixed 3)" "4"
+t_eq "  침묵한 채널만 지목된다" "$(result_sentinel)" "ch0"
+t_eq "  MISMATCH 로 오판하지 않는다" "$(grep -c 'result=MISMATCH' "$WORK/out.txt")" "0"
 
 # ── 경과시간 0 (같은 10 ms 버킷) ────────────────────────────────────────────
 # /proc/uptime 해상도는 10 ms 다. 두 표본이 같은 버킷에 떨어지면 elapsed_ns 가
