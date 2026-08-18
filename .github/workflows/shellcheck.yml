@@ -43,15 +43,28 @@ jobs:
             build.sh
           )
 
-          for dir in tools upgrade_file docker; do
+          # 기존 오류가 남아 있어 아직 넣지 못한 파일. 넣는 순간 CI 가 빨개진다.
+          # automnt_sd_for_emmc_boot.sh 는 SC2144 3건 - `[ -d /sys/.../mmc1:*/... ]`
+          # 처럼 glob 을 -d 에 넘긴다. glob 이 두 개 이상 매칭되면 test 가
+          # "too many arguments" 로 실패하므로 실제 결함이지만, 부팅 시 SD 마운트
+          # 경로라 보드 없이 고칠 수 없다. 별도 변경으로 다룬다.
+          exclude=(
+            dist/pim/opt/pim/bin/automnt_sd_for_emmc_boot.sh
+          )
+
+          for dir in tools upgrade_file docker dist/pim/opt/pim/bin test; do
             if [ -d "$dir" ]; then
               while IFS= read -r -d '' f; do
-                files+=("$f")
+                skip=0
+                for e in "${exclude[@]}"; do
+                  [ "$f" = "$e" ] && skip=1 && break
+                done
+                [ "$skip" -eq 0 ] && files+=("$f")
               done < <(find "$dir" -name '*.sh' -type f -print0)
             fi
           done
 
-          echo "Checking ${#files[@]} files..."
+          echo "Checking ${#files[@]} files (excluded ${#exclude[@]})..."
           shellcheck -x -s bash -S error -f gcc "${files[@]}"
 
       - name: Summary
