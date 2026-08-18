@@ -250,7 +250,7 @@ observed_monotonic_ms 364682001  vs  /proc/uptime 364682850   (기준 시계 일
 
 #### 남은 잡음 2건
 
-**(a) `capture` 블록의 `UNKNOWN/ISI_ACTIVITY_UNRELIABLE` — production enable 의 실질 장애물**
+**(a) `capture` 블록의 `UNKNOWN/ISI_ACTIVITY_UNRELIABLE` — 원인 규명 후 수정됨**
 
 `camera_capture_probe.py` 는 raw CSI/ISI IRQ 비율이 1.6–2.4 밖이면 이 코드를 낸다.
 2차 실측(480초, 474샘플)에서 **474샘플 중 203샘플이 이 사유로 `DEGRADED`** 였다.
@@ -304,9 +304,10 @@ production enable 을 검토하기 전에 남은 것:
 2. ~~gstApp producer 를 붙인 상태에서 aggregate 가 `DEGRADED` 를 벗어나는지 확인한다.~~
    **2026-08-18 확인 완료** — 위 "3-producer 실측 결과" 참조. 세 producer 를 모두 채우면
    `HEALTHY` 에 도달한다(420초 중 417초).
-3. `capture` 블록의 `ISI_ACTIVITY_UNRELIABLE` 잡음을 처리한다. 지금은 474샘플 중 203샘플이
-   이 사유만으로 `DEGRADED` 라, 이 상태로 소비자를 붙이면 정상 운용이 상시 열화로 보인다.
-   위 "남은 잡음 (a)" 의 세 선택지 중 하나를 정해야 한다.
+3. ~~`capture` 블록의 `ISI_ACTIVITY_UNRELIABLE` 잡음을 처리한다.~~ **처리했다** —
+   비율 이탈을 `UNKNOWN` 이 아니라 evidence 로만 기록하도록 바꿨다. 근거는
+   [`capture-probe.md`](capture-probe.md) 참조: 이 값은 카메라가 아니라 부하를 재고
+   있고, 같은 구간에서 인코더에 도달한 프레임은 전혀 줄지 않았다(+0.03%).
 4. gstApp `PRODUCER_MALFORMED` 단발(약 900샘플 중 1회)의 사유를 확정한다. 사유 문자열을
    기록하는 관측을 붙여 재현한다.
 5. 위가 끝나야 unit enable 과 `cam-operate` dependency 편입을 논의할 수 있다.

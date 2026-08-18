@@ -16,7 +16,9 @@
 - CSI2 frame rate는 raw CSI IRQ delta를 2로 나눠 계산한다.
 - ISI IRQ는 activity evidence다. raw CSI/ISI ratio가 1.6–2.4 범위일 때만 현재
   mapping에서 frame-like evidence로 신뢰한다.
-- 범위 밖 ISI activity는 `UNKNOWN/ISI_ACTIVITY_UNRELIABLE`이며 CSI2 OK를 지우지 않는다.
+- 범위 밖 ISI activity는 `capture` 판정을 바꾸지 않는다. 비신뢰 사실은
+  `isi_frame_semantics_reliable` evidence 로만 나간다. 아래 "ISI 비율 게이트는 카메라가
+  아니라 부하를 잰다" 절 참조 — 예전에는 여기서 `UNKNOWN/ISI_ACTIVITY_UNRELIABLE` 을 냈다.
 
 ## 판정 제한
 
@@ -67,8 +69,17 @@ aggregate 를 `DEGRADED` 로 떨어뜨렸다.
 **창을 늘려도 해결되지 않는다.** 분산이 아니라 중심이 이동하기 때문이다. 10초 창에서도
 72–90% 다. 디바운스도 부분적이다 — 이탈 구간이 최대 12초까지 이어진다.
 
-미확인으로 남는 것: 늘어난 ISI 인터럽트가 프레임 손실을 뜻하는지는 확인하지 않았다.
-녹화된 프레임 수를 세지 않았고, CSI 30/s 와 정상적인 fragment 종료만 확인했다.
+**늘어난 ISI 인터럽트는 프레임 손실이 아니다.** gstApp 이 publish 하는
+`enc_queue_input`(인코더 큐에 실제로 도달한 버퍼 누적)으로 확인했다. 같은 세션 안에서
+producer 유무만 바꿔 각 240초를 쟀다.
+
+| 구간 | CSI | ISI | 프레임당 ISI | 채널별 enc 도달 |
+|---|---|---|---|---|
+| producer 없음 | 14.99 fps | 15.37/s | 1.025 | 14.94/s |
+| producer 3종 | 14.98 fps | 16.55/s | 1.104 | 14.94/s |
+
+ISI 인터럽트가 프레임당 7.7% 늘어나는 동안 **인코더에 도달한 프레임은 4채널 모두
+동일**했다(변화 +0.03%). ISI 는 프레임당 인터럽트를 더 올릴 뿐 프레임을 흘리지 않는다.
 
 주의 — 위 480초 soak 당시 probe 가 기록한 `csi_irq_delta` 는 9–13(4.5–6.5 fps)이었다.
 그건 이 보드의 정상 상태가 아니라 **관측 하니스가 만든 인공물**이다. 그 soak 의 샘플러는
@@ -91,10 +102,14 @@ aggregator 는 관측 하나라도 `UNKNOWN` 이면 전체를 `DEGRADED` 로 내
 2. ~~연속 K회 이탈에만 `UNKNOWN`(디바운스)~~ — **부분적.** 이탈 구간이 최대 12초까지
    이어져 K 를 그만큼 키우면 진짜 정지 감지도 함께 둔해진다.
 3. **`capture` 를 `UNKNOWN` 으로 내리지 않고 evidence 에 비신뢰 사실만 기록한다.**
-   `:218-219` 만 바꾸면 된다. 유일하게 원인에 맞는 선택지다 — 이 값은 카메라 건강이
-   아니라 부하를 재고 있고, `isi_delta > 0` 자체가 capture 경로가 움직인다는 증거이며,
+   → **채택했다.** 유일하게 원인에 맞는 선택지다 — 이 값은 카메라 건강이 아니라 부하를
+   재고 있고, `isi_delta > 0` 자체가 capture 경로가 프레임을 나른다는 증거이며(위 표),
    진짜 정지(`isi_delta == 0`)는 바로 위 분기에서 이미 `CAPTURE_PATH_STALL` 로 잡힌다.
-   즉 "움직이는 건 알지만 몇 fps 인지는 말 못 한다"를 정확히 표현하게 된다.
+   확신도는 `isi_frame_semantics_reliable` evidence 로 그대로 나가므로 정보는 잃지 않는다.
+
+   `ISI_ACTIVITY_UNRELIABLE` 코드 자체는 레지스트리에 남긴다. 세 저장소를 동시에 교체할
+   수 없으므로([`version-compatibility-v1.md`](version-compatibility-v1.md)), 아직 그
+   코드를 내는 probe 버전의 snapshot 이 레지스트리 미등록으로 통째로 거부되면 안 된다.
 
 ## enable 금지 조건
 
