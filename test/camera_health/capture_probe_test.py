@@ -205,13 +205,12 @@ class Tests:
             ch01["capture"]["status"] == "OK" and ch01["capture"]["code"] == "NONE",
             "out-of-range ISI ratio does not degrade capture",
         )
-        evidence = {item["name"]: item["value"] for item in ch01["capture"]["evidence"]}
         self.check(
-            evidence.get("isi_frame_semantics_reliable") is False,
+            evidence_value(ch01["capture"], "isi_frame_semantics_reliable") is False,
             "unreliable ratio is still reported as evidence",
         )
         self.check(
-            evidence.get("isi_irq_delta", 0) > 0,
+            evidence_value(ch01["capture"], "isi_irq_delta") > 0,
             "ISI activity itself is the evidence that capture is moving",
         )
         self.check(
