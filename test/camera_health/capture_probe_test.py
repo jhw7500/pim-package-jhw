@@ -194,13 +194,31 @@ class Tests:
         (nodes / "dev/video4").touch()
 
     def unreliable_isi_test(self, nodes: Path) -> None:
+        # 비율이 게이트 밖이어도 capture 는 OK 다. 이 값은 매핑 확신도지 카메라
+        # 건강이 아니고, UNKNOWN 으로 내면 aggregator 가 전체를 DEGRADED 로 내린다.
+        # 보드에서 정상 운용의 40% 가 그렇게 찍혔고, 같은 구간에서 인코더에 도달한
+        # 프레임은 전혀 줄지 않았다(+0.03%). 확신도는 evidence 로만 나가야 한다.
         result = self.snapshot("after_unreliable_isi.txt", {"ch01"}, nodes)
         ch01 = by_block(result, "csi1")
         self.check(ch01["csi2"]["status"] == "OK", "unreliable ISI does not degrade CSI2")
         self.check(
-            ch01["capture"]["status"] == "UNKNOWN"
-            and ch01["capture"]["code"] == "ISI_ACTIVITY_UNRELIABLE",
-            "out-of-range ISI ratio is activity-only UNKNOWN",
+            ch01["capture"]["status"] == "OK" and ch01["capture"]["code"] == "NONE",
+            "out-of-range ISI ratio does not degrade capture",
+        )
+        self.check(
+            evidence_value(ch01["capture"], "isi_frame_semantics_reliable") is False,
+            "unreliable ratio is still reported as evidence",
+        )
+        self.check(
+            evidence_value(ch01["capture"], "isi_irq_delta") > 0,
+            "ISI activity itself is the evidence that capture is moving",
+        )
+        self.check(
+            all(
+                item["code"] != "ISI_ACTIVITY_UNRELIABLE"
+                for item in result["observations"]
+            ),
+            "ISI_ACTIVITY_UNRELIABLE is no longer emitted",
         )
 
     def counter_reset_test(self, nodes: Path) -> None:

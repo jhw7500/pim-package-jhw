@@ -19,6 +19,9 @@
 - 범위 밖 ISI activity는 `capture` 판정을 바꾸지 않는다. 비신뢰 사실은
   `isi_frame_semantics_reliable` evidence 로만 나간다. 아래 "ISI 비율 게이트는 카메라가
   아니라 부하를 잰다" 절 참조 — 예전에는 여기서 `UNKNOWN/ISI_ACTIVITY_UNRELIABLE` 을 냈다.
+- **`ISI_ACTIVITY_UNRELIABLE` 은 레지스트리에 남아 있지만 현재 probe 는 발행하지 않는다.**
+  이 코드로 모니터링/alerting 을 걸면 영원히 조용한 신호를 기다리게 된다. 비율 신뢰도를
+  보려면 `isi_frame_semantics_reliable` evidence 를 쓴다.
 
 ## 판정 제한
 
