@@ -88,6 +88,36 @@ jq . /run/pim-camera/aggregate-shadow.json
 Gate A 실패 시 unit을 시작하지 않고 raw JSON, `dmesg`, adapter별 read latency만
 수집한다.
 
+
+### Gate A 실행 결과 (2026-08-18, pim-camera-v016)
+
+통과. 도구는 패키지를 설치하지 않고 `/tmp` 에서만 실행했다.
+
+| 기준 | 결과 |
+|---|---|
+| 두 sysfs read + exporter 3초 이내 | 13.1 ms + 9.9 ms + 324.7 ms = **약 0.35초** (aggregator 282 ms 별도) |
+| `boot_id`, sequence, 세 mask 유효 | UUID 36자, seq=1, 세 mask 모두 `15` |
+| configured channel / RX3 A/B 물리 매핑 일치 | 아래 표 |
+| `legacy_write=false`, `recovery_requested=false` | 둘 다 `false` |
+| 전후 camera PID·stream·GPIO 불변 | PID 동일, video 노드 동일, gpio131/132/133 = `0/0/1` 동일 |
+| 새 I2C retry / journal flood 없음 | dmesg i2c 오류 `865 → 865`, 라인 수 `1158 → 1158` |
+
+실측 물리 매핑:
+
+| adapter | `configured_global_mask` | 채널 | phy |
+|---|---|---|---|
+| i2c1 | `0b1100` | ch2 / ch3 | B / A |
+| i2c2 | `0b0011` | ch0 / ch1 | B / A |
+
+`rx3=0x66`, `link_a_up`/`link_b_up` 양쪽 true, 합산 mask `0b1111`.
+
+producer snapshot 의 `status` 는 `OK` 였고 **sensor observation 은 발행되지 않았다**(관측 14개 =
+deserializer×2 + gmsl_link×4 + isp×4 + serializer×4). shallow ABI 가 AR0234 를 probe 하지
+않는다는 사실은 `producer_data.sensor_probe = "shallow-only"` 로만 선언된다. 이전 구현처럼
+sensor 에 `UNKNOWN` 을 발행했다면 top-level status 가 영원히 `UNKNOWN` 이 됐을 자리다.
+
+aggregate 는 `DEGRADED` 였다. gstApp / pim-healthd producer 가 없어 `PRODUCER_STALE` 이기
+때문이며, 이 단계에서 예상된 상태다. `root_causes` 는 비어 있었다.
 ## 보드 Gate B: 수동 shadow soak
 
 Gate A 통과 후에만 enable하지 않고 현재 boot에서 수동 시작한다.
@@ -116,9 +146,67 @@ systemctl stop camera-health-shadow.service camera-max9296-health.service
 systemctl is-enabled camera-max9296-health.service  # static 예상
 ```
 
+
+### Gate B 실행 결과 (2026-08-18, pim-camera-v016)
+
+systemd unit 없이 `/tmp` 바이너리로 수행했다. 패키지는 설치하지 않았다.
+
+**항목 1·5·6 — soak 75분 / 3300 샘플**
+
+| | 구간 A (idle 30분) | 구간 B2 (streaming 25분) |
+|---|---|---|
+| producer status | `OK` 1800/1800 | `OK` 1500/1500 |
+| producer code | `NONE` 1800 | `NONE` 1500 |
+| `age_ms` | p50 546 / p99 1020 | p50 518 / p99 1017 |
+| TTL(3000) 초과 | 0건 | 0건 |
+| adapter1 read | p50 9.95 ms / p99 12.65 ms | p50 12.30 ms / p99 33.17 ms |
+| adapter2 read | p50 9.19 ms / p99 11.55 ms | p50 12.22 ms / p99 25.18 ms |
+
+kernel reset 0건, 재부팅 0건.
+
+**legacy flag 미소유는 구간 분리로 확정했다.** 구간 A 는 카메라가 꺼져 있어 legacy 소유자
+(`chk_cam_operate.sh`)가 돌지 않는다. 그 30분 동안 `/tmp/bg_chk_flag.bin` 의 고유 mtime 은
+**1개**였다. 구간 B2 의 1160회 갱신은 정상 소유자의 몫이다. 파일 내용은 전 구간 `0` 고정.
+
+**항목 2** — `cam_dma_read.sh` 로 V4L2 control set+get 을 반복해 producer 의 sysfs 접근과
+같은 I2C 경로에서 경합시켰다. busy 가 hardware FAIL 로 바뀐 샘플은 없었다.
+
+**항목 4 — module unbind/rebind**
+
+`cam_hard_reset.sh -s` (rmmod + SoC CSI2/ISI unbind/bind + modprobe) 를 producer 실행 중에
+수행했다. exit 0, exporter 생존, sequence 20 → 122 연속 진행, `health_raw` 경로가 동일하게
+(`1-0048`, `2-0048`) 돌아왔다. exporter 는 `discover_inputs()` 로 경로를 시작 시 한 번만
+캐시하므로 i2c 번호가 바뀌면 영구히 깨지는데, 그런 일은 없었다.
+
+**항목 3 — cable 제거/재연결 12회**
+
+| 뽑은 채널 | 회차 | 대상+peer `FAIL` | 반대 MAX9296 | 관측 `physical_present_mask` |
+|---|---|---|---|---|
+| ch0 (i2c2) | 5 | ch0·ch1 | ch2·ch3 **0초** | `14` = `0b1110` |
+| ch1 (i2c2) | 3 | ch1·ch0 | ch2·ch3 **0초** | `13` = `0b1101` |
+| ch2 (i2c1) | 3 | ch2·ch3 | ch0·ch1 **0초** | `11` = `0b1011` |
+| ch3 (i2c1) | 1 | ch3·ch2 | ch0·ch1 **0초** | `7` = `0b0111` |
+
+케이블을 뽑으면 `init_cam.sh` 가 `rmmod`/`modprobe` 로 모듈을 리로드하므로 **4채널이 물리적으로
+전부 내려간다.** 그런데도 producer 는 무관한 MAX9296 을 링크 실패로 판정하지 않고
+`BLOCKED/REMOTE_PATH_UNAVAILABLE` 만 기록했다. 12회 전체에서 반대 deserializer 의 `FAIL`
+오판은 **0초**다. 공유 domain 도 정확히 해제된다(예: ch2 제거 시 `phys=11`, `active=3`).
+
+producer 정상 비율은 93~95% 였고, 나머지는 모듈이 `rmmod` 된 구간의 `PRODUCER_STALE` 이다.
+소스가 없으니 정확한 판정이며 모듈 복귀 후 자동 회복했다.
+
+**축소·주의 사항**
+
+- 회차를 doc 원문(각 10회)에서 5·3·3·1회로 줄여 실행했다.
+- 이 보드의 journald 는 `Storage=volatile`, `RuntimeMaxUse=1M` 이라 **약 16분치만 보존**한다.
+  긴 창을 끝에서 집계하면 앞부분이 이미 회전으로 사라져 과소 집계된다. 실제로 첫 FPS 집계가
+  이 때문에 저하처럼 보였고, 분당 히스토그램으로 재확인해 `4/분` 일정(4채널 × 1파일/분)임을
+  확인했다. 저널 기반 측정은 창을 짧게 끊거나 즉시 집계해야 한다.
+
 ## 이번 단계의 정지점
 
-Gate B 결과를 검토할 때까지 다음 작업은 시작하지 않는다.
+Gate A 와 Gate B 는 2026-08-18 에 통과했다(위 결과 참조). 다만 Gate B 는 회차를 축소해
+실행했으므로, 아래 작업은 **축소분 보완과 별도 승인 전까지** 시작하지 않는다.
 
 - unit 자동 enable 또는 `cam-operate` dependency 편입
 - producer 상태를 기존 error counter/recovery 입력으로 사용
@@ -129,3 +217,11 @@ Gate B 결과를 검토할 때까지 다음 작업은 시작하지 않는다.
 Gate B가 안정적이면 다음 change에서 장시간 fault matrix와 counter-only shadow
 판정을 추가한다. destructive recovery 전환은 각 link fault 100회, module
 unbind/rebind, dual-wide pair 영향 및 설정 reload lifecycle까지 별도로 통과해야 한다.
+
+production enable 을 검토하기 전에 남은 것:
+
+1. cable 시험 회차를 doc 원문 기준(각 10회)으로 채운다. 현재 ch0 5 / ch1 3 / ch2 3 / ch3 1 회다.
+2. gstApp producer 를 붙인 상태에서 aggregate 가 `DEGRADED` 를 벗어나는지 확인한다. 지금은
+   producer 부재로 인한 `PRODUCER_STALE` 때문에 `DEGRADED` 가 고정이라, 진짜 열화와
+   구분되지 않는다.
+3. 위 두 가지가 끝나야 unit enable 과 `cam-operate` dependency 편입을 논의할 수 있다.
