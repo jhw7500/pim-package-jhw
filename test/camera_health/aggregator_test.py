@@ -74,6 +74,18 @@ def snapshot(
     producer: str, observations: Iterable[Dict[str, Any]], sequence: int = 1
 ) -> Dict[str, Any]:
     items = list(observations)
+    # 최상위 status 는 관측과 모순되면 안 된다. aggregator 는 status="OK" 인데
+    # OK/N/A 가 아닌 관측이 섞여 있으면 스냅샷 전체를 PRODUCER_MALFORMED 로 버린다.
+    # 헬퍼가 이 규칙을 지켜야, UNKNOWN/STARTING 을 다루는 시험이 의도와 달리
+    # malformed 경로를 밟는 일이 생기지 않는다.
+    if any(item["status"] == "FAIL" for item in items):
+        status = "FAIL"
+    elif any(item["status"] == "STARTING" for item in items):
+        status = "STARTING"
+    elif any(item["status"] not in {"OK", "N/A"} for item in items):
+        status = "UNKNOWN"
+    else:
+        status = "OK"
     return {
         "schema": 1,
         "producer": producer,
@@ -81,7 +93,7 @@ def snapshot(
         "pid": 100,
         "sequence": sequence,
         "observed_monotonic_ms": NOW_MS - 500,
-        "status": "FAIL" if any(item["status"] == "FAIL" for item in items) else "OK",
+        "status": status,
         "observations": items,
     }
 
@@ -367,9 +379,10 @@ class Tests:
             result["overall_status"] == "DEGRADED",
             "a missing producer degrades the aggregate even when hardware is fine",
         )
+        gst_state = state.get("gstApp", {})
         self.check(
-            state["gstApp"]["code"] == "PRODUCER_STALE"
-            and state["gstApp"]["reason"] == "missing",
+            gst_state.get("code") == "PRODUCER_STALE"
+            and gst_state.get("reason") == "missing",
             "the missing producer is named rather than silently dropped",
         )
         self.check(
@@ -399,19 +412,21 @@ class Tests:
         # producer 자체가 신선해도 관측 하나가 UNKNOWN 이면 전체가 DEGRADED 다.
         # gstApp producer 가 정상 운용 중 "모르겠다"를 내지 않도록 설계된 이유가
         # 이것이다 - producer state 가 OK 인 것과 aggregate 가 HEALTHY 인 것은 다르다.
-        unknown = snapshot(
-            "gstApp",
-            [
-                observation("gstreamer", "OK", "NONE"),
-                observation("recording", "UNKNOWN", "IRQ_SOURCE_MISSING", "mnt", "global"),
-            ],
+        write(
+            work / "gstApp.json",
+            snapshot(
+                "gstApp",
+                [
+                    observation("gstreamer", "OK", "NONE"),
+                    observation("recording", "UNKNOWN", "IRQ_SOURCE_MISSING", "mnt", "global"),
+                ],
+            ),
         )
-        unknown["status"] = "UNKNOWN"
-        write(work / "gstApp.json", unknown)
         result = self.aggregate(work)
         state = {item["producer"]: item for item in result["producers"]}
         self.check(
-            state["gstApp"]["state"] == "OK" and result["overall_status"] == "DEGRADED",
+            state.get("gstApp", {}).get("state") == "OK"
+            and result["overall_status"] == "DEGRADED",
             "one UNKNOWN observation degrades the aggregate despite a fresh producer",
         )
 
