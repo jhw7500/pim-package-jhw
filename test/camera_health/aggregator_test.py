@@ -74,6 +74,18 @@ def snapshot(
     producer: str, observations: Iterable[Dict[str, Any]], sequence: int = 1
 ) -> Dict[str, Any]:
     items = list(observations)
+    # 최상위 status 는 관측과 모순되면 안 된다. aggregator 는 status="OK" 인데
+    # OK/N/A 가 아닌 관측이 섞여 있으면 스냅샷 전체를 PRODUCER_MALFORMED 로 버린다.
+    # 헬퍼가 이 규칙을 지켜야, UNKNOWN/STARTING 을 다루는 시험이 의도와 달리
+    # malformed 경로를 밟는 일이 생기지 않는다.
+    if any(item["status"] == "FAIL" for item in items):
+        status = "FAIL"
+    elif any(item["status"] == "STARTING" for item in items):
+        status = "STARTING"
+    elif any(item["status"] not in {"OK", "N/A"} for item in items):
+        status = "UNKNOWN"
+    else:
+        status = "OK"
     return {
         "schema": 1,
         "producer": producer,
@@ -81,7 +93,7 @@ def snapshot(
         "pid": 100,
         "sequence": sequence,
         "observed_monotonic_ms": NOW_MS - 500,
-        "status": "FAIL" if any(item["status"] == "FAIL" for item in items) else "OK",
+        "status": status,
         "observations": items,
     }
 
@@ -120,6 +132,7 @@ class Tests:
             self.stale_malformed_test(work)
             self.root_cause_test(work)
             self.disabled_and_boot_test(work)
+            self.full_producer_set_test(work)
             self_cli_test(work, self)
         print()
         print(f"camera health aggregator: {self.passed} passed / {self.failed} failed")
@@ -287,6 +300,134 @@ class Tests:
         self.check(
             ("gstreamer", "GSTREAMER_PIPELINE_ERROR") not in roots(result),
             "previous-boot failure cannot become current root",
+        )
+
+    def full_producer_set_test(self, work: Path) -> None:
+        # 이 시험이 고정하는 성질: aggregate 가 HEALTHY 에 도달하려면 세 producer
+        # 가 모두 신선하고 어떤 관측도 UNKNOWN/BLOCKED 가 아니어야 한다.
+        #
+        # 보드 Gate B 에서 aggregate 가 계속 DEGRADED 였던 이유는 하드웨어가 아니라
+        # gstApp / pim-healthd producer 부재의 PRODUCER_STALE 이었다. 그 상태에서는
+        # 진짜 열화와 producer 부재를 구분할 수 없어 shadow 를 production 으로 켤 수
+        # 없다. HEALTHY 가 도달 가능한 상태임을 여기서 못 박아, producer 를 붙이는
+        # 작업이 되돌려지면 CI 에서 잡히게 한다.
+        self.clear(work)
+        write(
+            work / "max9296.json",
+            snapshot(
+                "max9296",
+                [
+                    observation("sensor", "OK", "NONE"),
+                    observation("isp", "OK", "NONE"),
+                    observation("serializer", "OK", "NONE"),
+                    observation("gmsl_link", "OK", "NONE", "phy-a", "link", channels=[0]),
+                    observation("deserializer", "OK", "NONE", "max9296-0", "global"),
+                ],
+            ),
+        )
+        write(
+            work / "pim-probe.json",
+            snapshot(
+                "pim-healthd",
+                [
+                    observation("csi2", "OK", "NONE", "csi0", "csi"),
+                    observation("capture", "OK", "NONE", "csi0-dual", "pair", channels=[0, 1]),
+                ],
+            ),
+        )
+        write(
+            work / "gstApp.json",
+            snapshot(
+                "gstApp",
+                [
+                    observation("gstreamer", "OK", "NONE"),
+                    observation("recording", "OK", "NONE", "mnt", "global"),
+                ],
+            ),
+        )
+
+        result = self.aggregate(work)
+        state = {item["producer"]: item for item in result["producers"]}
+        self.check(
+            result["overall_status"] == "HEALTHY" and result["status"] == "OK",
+            "three fresh producers with no UNKNOWN reach HEALTHY",
+        )
+        self.check(
+            {
+                name
+                for name, item in state.items()
+                if item["state"] == "OK" and item["code"] == "NONE"
+            }
+            == {"max9296", "gstApp", "pim-healthd"},
+            "every contract producer is accounted for",
+        )
+        self.check(
+            {item["block"] for item in result["observations"]} == set(healthd.BLOCKS),
+            "the three producers together cover all nine blocks",
+        )
+        self.check(
+            result["legacy_write"] is False and result["recovery_requested"] is False,
+            "HEALTHY aggregate still owns no legacy flag or recovery",
+        )
+
+        # gstApp 만 사라지면 하드웨어가 멀쩡하고 나머지 두 producer 가 OK 인데도
+        # 전체가 DEGRADED 로 내려간다. 보드에서 관측된 상태가 정확히 이것이다.
+        (work / "gstApp.json").unlink()
+        result = self.aggregate(work)
+        state = {item["producer"]: item for item in result["producers"]}
+        self.check(
+            result["overall_status"] == "DEGRADED",
+            "a missing producer degrades the aggregate even when hardware is fine",
+        )
+        gst_state = state.get("gstApp", {})
+        self.check(
+            gst_state.get("code") == "PRODUCER_STALE"
+            and gst_state.get("reason") == "missing",
+            "the missing producer is named rather than silently dropped",
+        )
+        self.check(
+            not result["root_causes"],
+            "producer absence is never a hardware root cause",
+        )
+
+        # 꺼진 채널(N/A/DISABLED)은 열화가 아니다. gstApp producer 는 녹화가 비활성인
+        # 채널에 이 상태를 내므로, 이게 DEGRADED 로 세어지면 정상 운용이 영원히
+        # HEALTHY 에 도달하지 못한다.
+        write(
+            work / "gstApp.json",
+            snapshot(
+                "gstApp",
+                [
+                    observation("gstreamer", "OK", "NONE"),
+                    observation("recording", "OK", "NONE", "mnt", "global"),
+                    observation("gstreamer", "N/A", "DISABLED", "ch3"),
+                ],
+            ),
+        )
+        self.check(
+            self.aggregate(work)["overall_status"] == "HEALTHY",
+            "a disabled channel does not degrade the aggregate",
+        )
+
+        # producer 자체가 신선해도 관측 하나가 UNKNOWN 이면 전체가 DEGRADED 다.
+        # gstApp producer 가 정상 운용 중 "모르겠다"를 내지 않도록 설계된 이유가
+        # 이것이다 - producer state 가 OK 인 것과 aggregate 가 HEALTHY 인 것은 다르다.
+        write(
+            work / "gstApp.json",
+            snapshot(
+                "gstApp",
+                [
+                    observation("gstreamer", "OK", "NONE"),
+                    observation("recording", "UNKNOWN", "IRQ_SOURCE_MISSING", "mnt", "global"),
+                ],
+            ),
+        )
+        result = self.aggregate(work)
+        state = {item["producer"]: item for item in result["producers"]}
+        self.check(
+            state.get("gstApp", {}).get("state") == "OK"
+            and result["overall_status"] == "DEGRADED",
+            "one UNKNOWN observation degrades the aggregate despite a fresh producer",
         )
 
 
