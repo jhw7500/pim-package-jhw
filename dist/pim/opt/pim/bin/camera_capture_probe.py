@@ -215,11 +215,36 @@ def classify_domain(
             observation("csi2", domain, "OK", "NONE", common),
             observation("capture", domain, "UNKNOWN", "CAPTURE_PATH_STALL", common, False),
         )
-    capture_code = "NONE" if ratio_reliable else "ISI_ACTIVITY_UNRELIABLE"
-    capture_status = "OK" if ratio_reliable else "UNKNOWN"
+    # 여기까지 왔으면 CSI 도 ISI 도 진행 중이다. capture 경로는 프레임을 나르고
+    # 있고, 비율은 그 활동을 프레임률로 환산해도 되는지만 정한다. 그건 매핑
+    # 확신도지 카메라 건강이 아니다.
+    #
+    # 이전 구현은 비율이 게이트 밖이면 UNKNOWN/ISI_ACTIVITY_UNRELIABLE 을 냈다.
+    # aggregator 는 관측 하나라도 UNKNOWN 이면 전체를 DEGRADED 로 내리므로, 그
+    # 판정은 자기 확신도를 시스템 건강으로 번역하는 셈이었다. 보드 실측에서
+    # 대가가 드러났다(2026-08-18, pim-camera-v016):
+    #
+    #   - 1Hz 유저스페이스 프로세스가 하나만 붙어도 ISI 인터럽트가 프레임당
+    #     1.03 -> 1.10~1.20 회로 늘어 비율 중심이 1.94 -> 1.63 으로 이동한다.
+    #     게이트 하한이 1.6 이라 정상 운용의 40% 가 DEGRADED 로 찍혔다. 어느
+    #     producer 인지는 무관하고 셋 중 하나만 돌려도 효과가 같았다.
+    #   - 같은 구간에서 CSI 는 14.98~14.99 fps 로 불변이고, 인코더 큐에 도달한
+    #     프레임도 채널당 14.94/s 로 동일했다(P1 대비 +0.03%). 프레임 손실은 없다.
+    #
+    # 즉 비율 이탈은 부하 신호지 열화가 아니다. 창을 늘려도 분산이 아니라 중심이
+    # 이동한 것이라 해결되지 않는다(10초 창에서도 72~90%).
+    #
+    # 확신도는 evidence(isi_frame_semantics_reliable)로 그대로 나가므로 정보는
+    # 잃지 않는다. 진짜 정지는 위쪽 분기가 이미 잡는다 - video node 없음은
+    # CAPTURE_NODE_MISSING, csi_delta == 0 은 CSI2_NO_PROGRESS, isi_delta == 0 은
+    # CAPTURE_PATH_STALL 이다.
+    #
+    # ISI_ACTIVITY_UNRELIABLE 은 레지스트리에 남겨 둔다. 세 저장소를 동시에 교체할
+    # 수 없으므로, 아직 그 코드를 내는 probe 버전의 snapshot 이 레지스트리 미등록
+    # 으로 통째로 거부되면 안 된다.
     return (
         observation("csi2", domain, "OK", "NONE", common),
-        observation("capture", domain, capture_status, capture_code, common),
+        observation("capture", domain, "OK", "NONE", common),
     )
 
 
