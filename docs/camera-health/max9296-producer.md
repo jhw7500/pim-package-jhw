@@ -203,6 +203,82 @@ producer 정상 비율은 93~95% 였고, 나머지는 모듈이 `rmmod` 된 구�
   이 때문에 저하처럼 보였고, 분당 히스토그램으로 재확인해 `4/분` 일정(4채널 × 1파일/분)임을
   확인했다. 저널 기반 측정은 창을 짧게 끊거나 즉시 집계해야 한다.
 
+### 3-producer 실측 결과 (2026-08-18, pim-camera-v016)
+
+아래 "남은 조건" 2번을 확인한 실측이다. 질문은 하나였다 — gstApp producer 를 붙이면
+aggregate 가 `DEGRADED` 를 벗어나는가.
+
+패키지는 설치하지 않았다. producer 3종은 `/tmp` 에서 실행하고, `/usr/local/bin/gstApp`
+만 health producer 를 포함한 빌드로 잠시 교체한 뒤 원본으로 복원했다(sha 앞 16자로
+교체·복원 양쪽을 로그에 남겼다).
+
+**`HEALTHY` 도달을 확인했다.** 420초 관측 중 417초가 `HEALTHY` 였다.
+
+```
+overall_status = HEALTHY   status = OK   mode = shadow
+legacy_write = false   recovery_requested = false
+stream_mode = dual-wide
+channel_masks = configured 15 / physical 15 / stream_domain_active 15
+producers   max9296      OK/NONE  age 369 ms
+            gstApp       OK/NONE  age 148 ms
+            pim-healthd  OK/NONE  age 817 ms
+```
+
+관측된 블록은 9개가 아니라 **8개**다. `sensor` 는 shallow ABI 가 해석할 수 없을 때
+관측 자체를 내지 않는다(PR #24 → #25). 이 설계가 아니었다면 `sensor` 가 상시
+`UNKNOWN` 이라 `HEALTHY` 는 원리적으로 도달 불가였다.
+
+#### 이 실측이 잡은 gstApp producer 결함
+
+기동 구간에 gstApp 은 `recording` 을 `STARTING` 으로 내면서 최상위 `status` 를 `"OK"`
+로 적고 있었다. aggregator 는 `status="OK"` 인데 OK/N/A 아닌 관측이 섞이면 스냅샷을
+통째로 `PRODUCER_MALFORMED` 로 버린다. 즉 **첫 녹화 파일이 닫히기 전까지 producer 가
+아예 없는 것과 같았다.** 수정본으로 그 구간을 보드에서 직접 확인했다:
+
+```
+status = STARTING                       <- 수정 전에는 "OK"
+recording  ch0..ch3  STARTING/NONE
+gstreamer  ch0..ch3  OK/NONE
+observed_monotonic_ms 364682001  vs  /proc/uptime 364682850   (기준 시계 일치)
+```
+
+#### 남은 잡음 2건
+
+**(a) `capture` 블록의 `UNKNOWN/ISI_ACTIVITY_UNRELIABLE` — production enable 의 실질 장애물**
+
+`camera_capture_probe.py` 는 raw CSI/ISI IRQ 비율이 1.6–2.4 밖이면 이 코드를 낸다.
+2차 실측(480초, 474샘플)에서 **474샘플 중 203샘플이 이 사유로 `DEGRADED`** 였다.
+1차에서 2회로 보였던 것은 1Hz 샘플러가 1Hz aggregate 를 앨리어싱해 과소집계한 탓이다.
+
+원인은 하드웨어가 아니라 통계다. 이 보드의 실측 프레임률이 낮아 1초 창의 IRQ delta 가
+한 자릿수이고, 그 상태에서는 양자화만으로 비율이 게이트 밖으로 나간다:
+
+| domain | csi_irq_delta | isi_irq_delta | 비율 | 판정 |
+|---|---|---|---|---|
+| csi1 | 13 | 8 | 1.625 | 게이트 안(간신히) |
+| csi0 | 9 | 7 | 1.286 | 게이트 밖 → `UNKNOWN` |
+
+`csi_irqs_per_frame=2` 이므로 프레임률은 4.5–6.5 fps 수준이다. 창이 1초인 한 이 잡음은
+없어지지 않는다. 게다가 이 producer 의 문서는 "ISI 비신뢰가 CSI2 OK 를 지우지 않는다"
+고 명시하는데, 관측을 `UNKNOWN` 으로 내는 순간 aggregator 규칙상 **전체가 `DEGRADED`**
+가 되어 그 의도가 무너진다.
+
+선택지는 세 가지이며 결정 전까지 production enable 은 보류한다.
+
+1. 샘플 창을 늘린다(예: 5초). delta 가 5배가 되어 양자화 잡음이 줄어든다.
+2. 연속 K회 이탈에만 `UNKNOWN` 을 낸다(디바운스).
+3. `capture` 를 `UNKNOWN` 으로 내리지 않고 evidence 에만 비신뢰를 기록한다. 문서가
+   이미 선언한 의도("CSI2 OK 를 지우지 않는다")에 가장 가깝다.
+
+**(b) gstApp `PRODUCER_MALFORMED` 1회 — 원인 미확정**
+
+1차 420초에서 1초간 발생했다. 2차 480초(474샘플)에서는 재현되지 않았고, 개발 호스트에서
+1Hz publisher 와 aggregator 를 239초 경합시킨 재현 시도도 0건이었다. `camera_healthd.py`
+가 루프 앞에서 `now_ms` 를 찍고 그 뒤에 파일을 읽으므로 그 사이에 publish 가 끼면
+`age_ms < 0` → `future_monotonic_time` 이 되는 경로는 코드상 존재하지만, **이번에
+관측된 1회가 그 경로였는지는 확인하지 못했다.** 사유 문자열을 잡는 관측을 다음에
+붙여야 한다. 빈도는 약 900샘플 중 1회다.
+
 ## 이번 단계의 정지점
 
 Gate A 와 Gate B 는 2026-08-18 에 통과했다(위 결과 참조). 다만 Gate B 는 회차를 축소해
@@ -221,7 +297,12 @@ unbind/rebind, dual-wide pair 영향 및 설정 reload lifecycle까지 별도로
 production enable 을 검토하기 전에 남은 것:
 
 1. cable 시험 회차를 doc 원문 기준(각 10회)으로 채운다. 현재 ch0 5 / ch1 3 / ch2 3 / ch3 1 회다.
-2. gstApp producer 를 붙인 상태에서 aggregate 가 `DEGRADED` 를 벗어나는지 확인한다. 지금은
-   producer 부재로 인한 `PRODUCER_STALE` 때문에 `DEGRADED` 가 고정이라, 진짜 열화와
-   구분되지 않는다.
-3. 위 두 가지가 끝나야 unit enable 과 `cam-operate` dependency 편입을 논의할 수 있다.
+2. ~~gstApp producer 를 붙인 상태에서 aggregate 가 `DEGRADED` 를 벗어나는지 확인한다.~~
+   **2026-08-18 확인 완료** — 위 "3-producer 실측 결과" 참조. 세 producer 를 모두 채우면
+   `HEALTHY` 에 도달한다(420초 중 417초).
+3. `capture` 블록의 `ISI_ACTIVITY_UNRELIABLE` 잡음을 처리한다. 지금은 474샘플 중 203샘플이
+   이 사유만으로 `DEGRADED` 라, 이 상태로 소비자를 붙이면 정상 운용이 상시 열화로 보인다.
+   위 "남은 잡음 (a)" 의 세 선택지 중 하나를 정해야 한다.
+4. gstApp `PRODUCER_MALFORMED` 단발(약 900샘플 중 1회)의 사유를 확정한다. 사유 문자열을
+   기록하는 관측을 붙여 재현한다.
+5. 위가 끝나야 unit enable 과 `cam-operate` dependency 편입을 논의할 수 있다.
