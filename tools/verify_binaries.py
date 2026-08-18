@@ -105,7 +105,8 @@ def check_entry(entry: Dict[str, Any]) -> Tuple[List[Finding], Dict[str, str]]:
     path_str = entry["path"]
     path = ROOT / path_str
     findings: List[Finding] = []
-    row = {"path": path_str, "sha256": "-", "mode": "-", "arch": "-", "strings": "-"}
+    row = {"path": path_str, "sha256": "-", "size": "-", "mode": "-",
+           "arch": "-", "strings": "-"}
 
     if not path.is_file():
         findings.append(Finding(path_str, "missing", "매니페스트에 있는데 파일이 없다"))
@@ -134,9 +135,18 @@ def check_entry(entry: Dict[str, Any]) -> Tuple[List[Finding], Dict[str, str]]:
 
     expected_size = entry.get("size")
     actual_size = path.stat().st_size if is_real else pointer_size(path)
-    if expected_size and actual_size and actual_size != expected_size:
+    if not expected_size:
+        row["size"] = "미등록"
+    elif actual_size is None:
+        findings.append(Finding(
+            path_str, "size", "크기를 읽지 못했다 — LFS 포인터가 손상됐을 수 있다"))
+        row["size"] = "읽기 실패"
+    elif actual_size != expected_size:
         findings.append(Finding(
             path_str, "size", f"기대 {expected_size} / 실제 {actual_size} 바이트"))
+        row["size"] = f"불일치 {actual_size}"
+    else:
+        row["size"] = "OK"
 
     expected_mode = entry.get("mode")
     actual_mode = index_mode(path_str)
@@ -192,8 +202,11 @@ def unregistered(known: List[str]) -> List[str]:
 def emit_annotation(finding: Finding) -> None:
     if os.environ.get("GITHUB_ACTIONS") != "true":
         return
-    detail = finding.detail.replace("\n", " ")
-    print(f"::warning file={finding.path}::[{finding.kind}] {detail}")
+    # Actions 워크플로우 명령은 %, \r, \n 을 인코딩해야 파싱이 깨지지 않는다.
+    detail = (finding.detail.replace("%", "%25")
+              .replace("\r", " ").replace("\n", " "))
+    path = finding.path.replace("%", "%25").replace(",", "%2C")
+    print(f"::warning file={path}::[{finding.kind}] {detail}")
 
 
 def main() -> int:
@@ -205,6 +218,8 @@ def main() -> int:
     args = parser.parse_args()
 
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
+    if manifest.get("schema") != 1:
+        raise SystemExit(f"지원하지 않는 매니페스트 schema: {manifest.get('schema')}")
     entries = manifest["binaries"]
 
     findings: List[Finding] = []
@@ -222,7 +237,7 @@ def main() -> int:
     print("=== 바이너리 검증 ===")
     for row in rows:
         print(f"  {row['path']}")
-        print(f"      sha256 {row['sha256']}   mode {row['mode']}   "
+        print(f"      sha256 {row['sha256']}   size {row['size']}   mode {row['mode']}   "
               f"arch {row['arch']}   strings {row['strings']}")
     sys.stdout.flush()
 
@@ -238,10 +253,11 @@ def main() -> int:
     if summary_path:
         with open(summary_path, "a", encoding="utf-8") as stream:
             stream.write("## 바이너리 검증\n\n")
-            stream.write("| 파일 | sha256 | mode | arch | strings |\n|---|---|---|---|---|\n")
+            stream.write("| 파일 | sha256 | size | mode | arch | strings |\n"
+                         "|---|---|---|---|---|---|\n")
             for row in rows:
-                stream.write(f"| `{row['path']}` | {row['sha256']} | {row['mode']} "
-                             f"| {row['arch']} | {row['strings']} |\n")
+                stream.write(f"| `{row['path']}` | {row['sha256']} | {row['size']} "
+                             f"| {row['mode']} | {row['arch']} | {row['strings']} |\n")
             if findings:
                 stream.write(f"\n**경고 {len(findings)}건** (차단하지 않음)\n\n")
                 for finding in findings:

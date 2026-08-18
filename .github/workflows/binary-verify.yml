@@ -40,10 +40,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: false
-          # LFS 를 받지 않는다. `.ko` 는 포인터로 남지만 포인터의 `oid sha256:` 가
-          # 곧 내용 해시라 무결성 대조에는 충분하고, 대역폭을 쓰지 않는다.
-          # 대신 아키텍처·심볼 검사는 실제 파일이 있는 것만 수행된다.
-          lfs: false
+          # LFS 를 받는다. 포인터의 `oid sha256:` 만으로도 무결성 대조는 되지만,
+          # 그러면 `.ko` 는 arch·심볼 검사가 생략된다 — 이 검사를 만들게 한 지적이
+          # 하필 `.ko`(#31) 였으므로 가장 필요한 곳이 비는 셈이다. 받는 양은 1.4MB
+          # 남짓이고 이 워크플로우는 바이너리 경로가 바뀔 때만 돈다.
+          # 포인터 처리 코드는 그대로 두어, LFS 를 못 받는 환경에서도 sha256 대조는
+          # 계속 동작한다.
+          lfs: true
 
       - name: Verify against manifest
         run: python3 tools/verify_binaries.py
