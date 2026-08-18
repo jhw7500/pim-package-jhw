@@ -15,9 +15,13 @@ trap 'rm -rf "$WORK"' EXIT
 
 pass=0
 fail=0
+skipped=0
 
 ok() { pass=$((pass + 1)); printf '  OK   %s\n' "$1"; }
 bad() { fail=$((fail + 1)); printf '  FAIL %s\n' "$1" >&2; }
+# 건너뛴 항목은 pass 로 세지 않는다. 아무것도 검사하지 않았는데 합계가 늘면
+# 요약만 보는 사람에게 실행된 것처럼 보인다.
+skip() { skipped=$((skipped + 1)); printf '  SKIP %s\n' "$1"; }
 
 assert_eq() {
     local label=$1 actual=$2 expected=$3
@@ -234,9 +238,10 @@ if [ -r "$PROC_BOOT_ID" ]; then
     fi
     assert_eq 'procfs READY boot ID' "$(jq -r '.boot_id' "$DEST/READY" 2>/dev/null)" "$real_boot_id"
 else
-    ok 'procfs boot ID unavailable on this host (skipped)'
+    skip 'procfs boot ID: 이 호스트에 /proc/sys/kernel/random/boot_id 가 없다'
 fi
 
 echo
-printf 'camera config bootstrap: %d passed / %d failed\n' "$pass" "$fail"
+printf 'camera config bootstrap: %d passed / %d failed / %d skipped\n' \
+    "$pass" "$fail" "$skipped"
 [ "$fail" -eq 0 ]
