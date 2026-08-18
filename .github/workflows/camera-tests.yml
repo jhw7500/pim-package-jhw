@@ -1,0 +1,103 @@
+name: Camera Tests
+
+# 카메라 진단·health 코드는 이 워크플로우가 생기기 전까지 CI 검증이 전혀 없었다.
+# ShellCheck 워크플로우는 build.sh/tools/upgrade_file/docker 만 보므로
+# dist/pim/opt/pim/bin 과 test 는 범위 밖이었고, 테스트를 실행하는 워크플로우도
+# 없었다. 즉 카메라 변경은 로컬에서 돌린 사람의 성실성에만 의존해 머지됐다.
+#
+# paths 목록은 push/pull_request 양쪽에 중복 기술한다. GitHub Actions 의 YAML
+# anchor 지원이 보장되지 않으므로 의도적으로 중복을 택했다.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'dist/pim/opt/pim/bin/**'
+      - 'dist/pim/opt/pim/config/**'
+      - 'dist/pim/etc/systemd/system/**'
+      - 'dist/pim/DEBIAN/postinst'
+      - 'docs/camera-health/**'
+      - 'test/camera_health/**'
+      - 'test/cam_link/**'
+      - '.github/workflows/camera-tests.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'dist/pim/opt/pim/bin/**'
+      - 'dist/pim/opt/pim/config/**'
+      - 'dist/pim/etc/systemd/system/**'
+      - 'dist/pim/DEBIAN/postinst'
+      - 'docs/camera-health/**'
+      - 'test/camera_health/**'
+      - 'test/cam_link/**'
+      - '.github/workflows/camera-tests.yml'
+  workflow_dispatch:
+
+jobs:
+  camera-tests:
+    name: Camera Test Suites
+    # 다른 워크플로우는 vars 가 'true' 일 때만 도는 opt-in 이다. 테스트는 반대로
+    # 기본 실행하고 명시적으로 끌 수 있게 한다. 변수를 설정하지 않아 조용히
+    # 건너뛰면, 이 워크플로우가 메우려는 공백이 그대로 재현되기 때문이다.
+    if: ${{ vars.CAMERA_TESTS_ENABLED != 'false' }}
+
+    # 타깃 보드(pim-camera-v016)는 Python 3.8.10 이다. 개발 머신은 3.10 이라
+    # 3.9+ 전용 구문이 로컬 검증을 통과하고 보드에서만 깨질 수 있다. CI 는
+    # 보드 버전으로 돌려 그 격차를 막는다. ubuntu-24.04 러너에는 3.8 빌드가
+    # 없으므로 22.04 를 명시한다.
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Set up Python (board version)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          # jsonschema: 테스트 전용. 패키지 entrypoint 는 이걸 쓰지 않는다.
+          python3 -m pip install --quiet jsonschema
+          # jq: config_bootstrap_test.sh, git: package_executable_test.py 가
+          # `git ls-files --stage` 로 실행 비트를 검사한다. 러너 이미지에 이미
+          # 있지만 없을 때 조용히 건너뛰지 않도록 명시적으로 확인한다.
+          missing=()
+          for tool in jq git flock; do
+            command -v "$tool" >/dev/null || missing+=("$tool")
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "installing: ${missing[*]}"
+            sudo apt-get update
+            sudo apt-get install -y "${missing[@]}"
+          fi
+          echo "python3: $(python3 --version)"
+          echo "jq:      $(jq --version)"
+          echo "git:     $(git --version)"
+          echo "flock:   $(flock --version | head -1)"
+
+      # 두 스위트 모두 카메라 보드 없이 동작한다. 실제 I2C/V4L2 장치를 열지 않고
+      # DMA helper 와 /proc/uptime 원본을 환경변수로 주입한다.
+      - name: camera_health suite
+        run: bash test/camera_health/run_all.sh
+
+      - name: cam_link suite
+        run: bash test/cam_link/run_all.sh
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Camera Test Suites"
+            echo ""
+            echo "Python: \`$(python3 --version)\` (타깃 보드와 동일 계열)"
+            echo ""
+            echo "- \`test/camera_health/run_all.sh\` — health-v1 schema, config expectation,"
+            echo "  capture probe, MAX9296 producer, package executable mode, shadow"
+            echo "  aggregator, legacy/v1 comparator, boot config snapshot"
+            echo "- \`test/cam_link/run_all.sh\` — 링크 판정·복구 로직, frame-sync 진단"
+          } >> "$GITHUB_STEP_SUMMARY"
