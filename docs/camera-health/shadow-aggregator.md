@@ -40,6 +40,23 @@ read-only 준비 단계다. 현재 package에서는 unit을 enable/start하지 �
 cat /run/pim-camera/aggregate-shadow.json
 ```
 
+## 세 producer 를 모두 채운 보드 결과 (2026-08-18, pim-camera-v016)
+
+`HEALTHY` 는 도달 가능한 상태다. 420초 중 417초가 `HEALTHY` 였고 세 producer 가 모두
+`OK/NONE` 이었다. 그전까지 aggregate 가 상시 `DEGRADED` 였던 것은 열화가 아니라 gstApp /
+pim-healthd producer 부재로 인한 `PRODUCER_STALE` 이었다.
+
+주의할 점 둘:
+
+- 실제로 관측되는 블록은 9개가 아니라 **8개**다. `sensor` 는 shallow ABI 가 해석할 수 없을
+  때 관측을 내지 않는다. 이 producer 가 `UNKNOWN` 을 냈다면 `HEALTHY` 는 원리적으로 도달
+  불가였다 — **`UNKNOWN` 은 한 건이라도 전체를 `DEGRADED` 로 만든다.**
+- 그 비용을 아직 못 치른 producer 가 하나 남았다. `camera_capture_probe.py` 의
+  `ISI_ACTIVITY_UNRELIABLE` 이 474샘플 중 203샘플에서 나온다.
+  [`capture-probe.md`](capture-probe.md) 참조.
+
+수치와 재현 절차는 [`max9296-producer.md`](max9296-producer.md) 의 "3-producer 실측 결과".
+
 `camera-health-shadow.service`에는 의도적으로 `[Install]`이 없다. max9296와 gstApp
 producer가 배포되고 보드 soak가 승인된 뒤에만 별도 change로 enable한다.
 
