@@ -51,6 +51,10 @@ PRODUCER_FILES = {
 }
 CODE_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 
+# 스냅샷이 우리 시계보다 이만큼까지 앞서는 것은 동시성으로 설명된다. load_snapshot
+# 참조.
+FUTURE_SKEW_TOLERANCE_MS = 250
+
 STORAGE_CODES = {"STORAGE_READ_ONLY", "STORAGE_FULL", "RECORDING_COMMIT_FAIL"}
 NON_ROOT_CODES = {
     "NONE",
@@ -251,6 +255,17 @@ def load_snapshot(
             ):
                 raise SnapshotError("invalid channel_masks")
         age_ms = now_ms - observed
+        # main() 은 루프 앞에서 now_ms 를 한 번 찍고 그 뒤에 producer 파일들을 읽는다.
+        # 그 사이에 producer 가 publish 하면 스냅샷의 observed 가 now_ms 보다 뒤가
+        # 된다. 그건 시계 결함이 아니라 우리가 읽는 동안 더 새 증거가 도착했다는
+        # 뜻이다. 보드에서 356샘플 중 2회 발생했고, 그때마다 aggregate 가 1초씩
+        # DEGRADED 로 떨어졌다(2026-08-18, pim-camera-v016).
+        #
+        # 읽기 구간이 설명할 수 있는 만큼의 미래는 age 0 으로 본다. 진짜 시계 결함
+        # (다른 boot, 엉뚱한 타임스탬프)은 초 단위로 어긋나 이 창에 걸리지 않고,
+        # TTL 보다 훨씬 작아 staleness 를 가리지도 않는다.
+        if -FUTURE_SKEW_TOLERANCE_MS <= age_ms < 0:
+            age_ms = 0
         producer_state["age_ms"] = age_ms
         producer_state["sequence"] = sequence
         if age_ms < 0:

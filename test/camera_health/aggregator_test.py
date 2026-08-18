@@ -133,6 +133,7 @@ class Tests:
             self.root_cause_test(work)
             self.disabled_and_boot_test(work)
             self.full_producer_set_test(work)
+            self.future_skew_test(work)
             self_cli_test(work, self)
         print()
         print(f"camera health aggregator: {self.passed} passed / {self.failed} failed")
@@ -428,6 +429,58 @@ class Tests:
             state.get("gstApp", {}).get("state") == "OK"
             and result["overall_status"] == "DEGRADED",
             "one UNKNOWN observation degrades the aggregate despite a fresh producer",
+        )
+
+
+    def future_skew_test(self, work: Path) -> None:
+        # aggregate() 는 now_ms 를 한 번 받아 세 producer 파일을 차례로 읽는다. 그
+        # 사이에 producer 가 publish 하면 observed 가 now_ms 보다 뒤가 되는데, 그건
+        # 시계 결함이 아니라 읽는 동안 더 새 증거가 도착했다는 뜻이다. 보드에서
+        # 356샘플 중 2회 발생했고 그때마다 aggregate 가 1초씩 DEGRADED 였다.
+        #
+        # 진짜 시계 결함은 초 단위로 어긋나므로, 읽기 구간이 설명할 수 있는 범위만
+        # 신선한 것으로 받아들이고 그 밖은 지금처럼 결함으로 둔다.
+        tolerance = healthd.FUTURE_SKEW_TOLERANCE_MS
+        for label, ahead_ms, expect_ok in (
+            ("just ahead", 1, True),
+            ("at the tolerance boundary", tolerance, True),
+            ("past the tolerance boundary", tolerance + 1, False),
+            ("a full second ahead", 1000, False),
+        ):
+            self.clear(work)
+            document = snapshot("gstApp", [observation("gstreamer", "OK", "NONE")])
+            document["observed_monotonic_ms"] = NOW_MS + ahead_ms
+            write(work / "gstApp.json", document)
+            state = {
+                item["producer"]: item for item in self.aggregate(work)["producers"]
+            }["gstApp"]
+            if expect_ok:
+                self.check(
+                    state["state"] == "OK" and state["code"] == "NONE",
+                    f"a snapshot {label} is fresh, not malformed",
+                )
+                self.check(
+                    state["age_ms"] == 0,
+                    f"a snapshot {label} reports a non-negative age",
+                )
+            else:
+                self.check(
+                    state["code"] == "PRODUCER_MALFORMED"
+                    and state["reason"] == "future_monotonic_time",
+                    f"a snapshot {label} is still rejected as a clock fault",
+                )
+
+        # 관용 범위 안이라도 TTL 판정은 그대로 살아 있어야 한다.
+        self.clear(work)
+        stale = snapshot("gstApp", [observation("gstreamer", "OK", "NONE")])
+        stale["observed_monotonic_ms"] = NOW_MS - TTL_MS - 1
+        write(work / "gstApp.json", stale)
+        state = {
+            item["producer"]: item for item in self.aggregate(work)["producers"]
+        }["gstApp"]
+        self.check(
+            state["code"] == "PRODUCER_STALE" and state["reason"] == "ttl_expired",
+            "the skew tolerance does not weaken TTL expiry",
         )
 
 
