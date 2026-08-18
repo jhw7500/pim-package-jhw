@@ -43,7 +43,7 @@
       "arch": "aarch64",
       "storage": "lfs",
       "source": null,
-      "note": "상위 저장소 commit 미기록. sc16is7xx 는 update_bin.sh 없이 수동 복사하는 경로이고, 이 빌드(2026-03-31)가 production 이며 source 쪽 최신본은 의도적으로 반영하지 않는다. 교체할 일이 생기면 그때 source 를 채운다."
+      "note": "상위 저장소 commit 미기록. sc16is7xx 는 update_bin.sh 없이 수동 복사하는 경로이고, 이 빌드(2026-03-31)가 production 이며 source 쪽 최신본은 의도적으로 반영하지 않는다. 교체할 일이 생기면 그때 source 를 채운다.\nmode 가 100755 인 것은 같은 디렉터리의 max9296.ko(100644)와 어긋나지만 최초 추가(2025-09-18)부터 그랬다. postinst 는 이 파일을 /lib/modules/*/extra/ 로 복사할 뿐이고 모듈 로드에 exec 비트는 필요 없다. 여기서는 현실을 기록한다 — 644 로 적으면 즉시 오경보가 난다. 정리하려면 파일 모드를 바꾸는 별도 변경으로 다룬다."
     },
     {
       "path": "dist/pim/usr/local/bin/streamApp",

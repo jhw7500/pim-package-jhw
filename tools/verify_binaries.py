@@ -37,7 +37,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / ".github/binary-manifest.json"
 
 # 매니페스트에 등록돼 있어야 하는 대상. 여기 걸리는데 매니페스트에 없으면 경고한다.
-TRACKED_PATTERN = re.compile(r"(\.ko|/usr/local/bin/[^/]+)$")
+TRACKED_PATTERN = re.compile(r"^dist/.*?(\.ko|/usr/local/bin/[^/]+)$")
 
 LFS_POINTER_PREFIX = b"version https://git-lfs"
 
@@ -63,7 +63,8 @@ def index_mode(path: str) -> Optional[str]:
 
 def read_content_hash(path: Path) -> Tuple[str, bool]:
     """(sha256, 실제_바이너리인가). LFS 포인터면 oid 를 그대로 쓴다."""
-    head = path.open("rb").read(len(LFS_POINTER_PREFIX))
+    with path.open("rb") as stream:
+        head = stream.read(len(LFS_POINTER_PREFIX))
     if head == LFS_POINTER_PREFIX:
         text = path.read_text(encoding="utf-8", errors="replace")
         found = re.search(r"^oid sha256:([0-9a-f]{64})$", text, re.MULTILINE)
@@ -126,8 +127,10 @@ def check_entry(entry: Dict[str, Any]) -> Tuple[List[Finding], Dict[str, str]]:
             "— 바이너리를 바꾸고 매니페스트를 갱신하지 않았거나, 예기치 않은 변경",
         ))
         row["sha256"] = f"불일치 {actual_sha[:12]}…"
-    else:
+    elif expected_sha:
         row["sha256"] = f"OK {actual_sha[:12]}…"
+    else:
+        row["sha256"] = f"미등록 {actual_sha[:12]}…"
 
     expected_size = entry.get("size")
     actual_size = path.stat().st_size if is_real else pointer_size(path)
