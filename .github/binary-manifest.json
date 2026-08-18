@@ -1,0 +1,85 @@
+{
+  "schema": 1,
+  "note": "추적되는 바이너리의 기대값. tools/verify_binaries.py 가 이 파일과 실제 파일을 대조한다. 불일치는 경고이지 실패가 아니다 — 검증 전 중간 상태로 작업하는 경우가 흔하기 때문이다. 바이너리를 교체하면 이 파일도 같은 커밋에서 갱신한다. 갱신을 빠뜨리면 CI 가 경고로 알려준다. dist/ 밖에 두어 .deb 에 실리지 않는다.",
+  "binaries": [
+    {
+      "path": "dist/pim/usr/local/bin/gstApp",
+      "sha256": "5496487b875a7e5be4b3a5bd9b659244dbdafa7e6518101b0775eb42062d03c3",
+      "size": 1996936,
+      "mode": "100755",
+      "arch": "aarch64",
+      "source": {
+        "repo": "jhw7500/gstApp",
+        "commit": "4579a52",
+        "build": "./make-for-imx8 -j4 (Yocto SDK 5.10-hardknott, cortexa53-crypto-poky-linux)"
+      },
+      "required_strings": [
+        "pim-camera",
+        "GSTREAMER_SOURCE_STALL",
+        "RECORDING_NO_GROWTH"
+      ],
+      "note": "camera-health v1 producer 포함본 (pim#38 / gstApp#41). required_strings 는 producer 가 빠진 빌드가 실리는 것을 막는다. clean 재빌드가 동일 sha 를 내는 것을 확인했다."
+    },
+    {
+      "path": "dist/pim/opt/pim/driver/max9296.ko",
+      "sha256": "36bdbef2f16031ff9393bf1fb94ec3f9f72938a41af85dd23399fa1b127b2348",
+      "size": 895760,
+      "mode": "100644",
+      "arch": "aarch64",
+      "storage": "lfs",
+      "module_version": "2.4",
+      "source": {
+        "repo": "jhw7500/max9296",
+        "commit": "8a142a4",
+        "build": "별도 저장소에서 빌드 후 update_bin.sh"
+      },
+      "note": "health_raw sysfs ABI 포함본 (pim#31). LFS 라 CI 체크아웃에서는 포인터로만 보이며, 포인터의 oid 가 곧 내용 sha256 이라 다운로드 없이 대조된다."
+    },
+    {
+      "path": "dist/pim/opt/pim/driver/sc16is7xx_ext.ko",
+      "sha256": "1b38dd57647123b62674757e89483182555605c246dc7c321ccd7e932b5b6fe2",
+      "size": 550888,
+      "mode": "100755",
+      "arch": "aarch64",
+      "storage": "lfs",
+      "source": null,
+      "note": "상위 저장소 commit 미기록. sc16is7xx 는 update_bin.sh 없이 수동 복사하는 경로이고, 이 빌드(2026-03-31)가 production 이며 source 쪽 최신본은 의도적으로 반영하지 않는다. 교체할 일이 생기면 그때 source 를 채운다.\nmode 가 100755 인 것은 같은 디렉터리의 max9296.ko(100644)와 어긋나지만 최초 추가(2025-09-18)부터 그랬다. postinst 는 이 파일을 /lib/modules/*/extra/ 로 복사할 뿐이고 모듈 로드에 exec 비트는 필요 없다. 여기서는 현실을 기록한다 — 644 로 적으면 즉시 오경보가 난다. 정리하려면 파일 모드를 바꾸는 별도 변경으로 다룬다."
+    },
+    {
+      "path": "dist/pim/usr/local/bin/streamApp",
+      "sha256": "c221f5f6e816a807a3d3c191fea18a4cd1d0dcd6b61bba77bdf5abef43963e00",
+      "size": 54536,
+      "mode": "100755",
+      "arch": "aarch64",
+      "source": null,
+      "note": "상위 저장소·커밋 미기록. gstApp 의 대체 앱(edgeconf VHL_CAM.app 로 선택)이며 현재 운용은 gstApp 이다."
+    },
+    {
+      "path": "dist/pim/usr/local/bin/PIMCAM",
+      "sha256": "4546937ccab7981375a574c92eedcc1e91bd06e19dd3e1479ad8c0fdeb8d4abe",
+      "size": 39808,
+      "mode": "100755",
+      "arch": "aarch64",
+      "source": null,
+      "note": "상위 저장소·커밋 미기록. 마지막 갱신 428fbc2 (2025-11-21). 교체할 일이 생기면 그때 source 를 채운다."
+    },
+    {
+      "path": "dist/pim/usr/local/bin/fw_printenv",
+      "sha256": "3dd064609d5f3090ce4047baacf8d2620783e066a1dcdbb1e263fb4e84126271",
+      "size": 18792,
+      "mode": "100755",
+      "arch": "aarch64",
+      "source": null,
+      "note": "u-boot 환경변수 도구. 2024-03-12(28228a4) 이후 변경 없음. BSP 산출물이라 이 저장소에서 빌드하지 않는다."
+    },
+    {
+      "path": "dist/pim/usr/local/bin/fw_setenv",
+      "sha256": "4d274dca95d24a4600f7178173421ac2e81facfb36cf1dbc4c7c593cff72c31c",
+      "size": 18784,
+      "mode": "100755",
+      "arch": "aarch64",
+      "source": null,
+      "note": "u-boot 환경변수 도구. fw_printenv 와 같은 출처·시점."
+    }
+  ]
+}
