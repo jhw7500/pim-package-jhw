@@ -212,6 +212,31 @@ else
     bad 'postinst enable missing'
 fi
 
+# procfs boot ID. 이 스크립트의 기본 BOOT_ID_FILE 은 /proc/sys/kernel/random/boot_id
+# 인데, procfs 는 stat 크기를 0 으로 보고한다. 예전 코드가 쓰던 `[ -s ]` 는 내용이
+# 멀쩡해도 항상 거짓이라 실제 보드에서 매 boot 마다 실패했다. 위 케이스들이 전부
+# 일반 임시 파일을 주입해서 이 경로를 한 번도 밟지 않았다.
+PROC_BOOT_ID=/proc/sys/kernel/random/boot_id
+if [ -r "$PROC_BOOT_ID" ]; then
+    reset_dest
+    write_source boot-proc
+    real_boot_id=$(tr -d '\r\n' < "$PROC_BOOT_ID")
+    if env \
+        PIM_CAMERA_CONFIG_SOURCE_DIR="$SOURCE" \
+        PIM_CAMERA_CONFIG_DEST_DIR="$DEST" \
+        PIM_CAMERA_CONFIG_BOOT_ID_FILE="$PROC_BOOT_ID" \
+        PIM_CAMERA_CONFIG_LOCK_FILE="$LOCK_FILE" \
+        "$SCRIPT" >/dev/null 2>&1
+    then
+        ok 'procfs boot ID is accepted'
+    else
+        bad 'procfs boot ID rejected (stat size is 0 on procfs)'
+    fi
+    assert_eq 'procfs READY boot ID' "$(jq -r '.boot_id' "$DEST/READY" 2>/dev/null)" "$real_boot_id"
+else
+    ok 'procfs boot ID unavailable on this host (skipped)'
+fi
+
 echo
 printf 'camera config bootstrap: %d passed / %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

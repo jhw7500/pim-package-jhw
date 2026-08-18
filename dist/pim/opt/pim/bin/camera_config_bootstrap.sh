@@ -93,7 +93,11 @@ main() {
         return 1
     }
 
-    [ -s "$BOOT_ID_FILE" ] || {
+    # -s 가 아니라 -r 로 검사한다. 기본값인 /proc/sys/kernel/random/boot_id 는
+    # procfs 라 stat 크기가 0 으로 보고되므로 -s 는 내용이 멀쩡해도 항상 거짓이다.
+    # 그 결과 이 스크립트는 실제 보드에서 매 boot 마다 실패했다. 빈 내용은 바로
+    # 아래 case 문이 이미 걸러낸다.
+    [ -r "$BOOT_ID_FILE" ] || {
         log_error "boot ID unavailable: $BOOT_ID_FILE"
         return 1
     }
