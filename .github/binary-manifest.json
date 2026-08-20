@@ -22,18 +22,23 @@
     },
     {
       "path": "dist/pim/opt/pim/driver/max9296.ko",
-      "sha256": "36bdbef2f16031ff9393bf1fb94ec3f9f72938a41af85dd23399fa1b127b2348",
-      "size": 895760,
+      "sha256": "542ba1f779eb4abb8f8d0b4255b0f4c9a010d499e3f88d1feb65206c9f97be5c",
+      "size": 898208,
       "mode": "100644",
       "arch": "aarch64",
       "storage": "lfs",
-      "module_version": "2.4",
+      "module_version": "2.5",
       "source": {
         "repo": "jhw7500/max9296",
-        "commit": "8a142a4",
-        "build": "별도 저장소에서 빌드 후 update_bin.sh"
+        "commit": "7d5e762",
+        "build": "./make-for-imx8 (Yocto SDK 5.10-hardknott, cortexa53-crypto-poky-linux)"
       },
-      "note": "health_raw sysfs ABI 포함본 (pim#31). LFS 라 CI 체크아웃에서는 포인터로만 보이며, 포인터의 oid 가 곧 내용 sha256 이라 다운로드 없이 대조된다."
+      "note": "병렬 prepare ABI + 전원 참조 인수 수정 포함본 (max9296#18, #22). required_strings 의 max9296_prepare_adopt_power_locked 가 빠지면 벤더 ISI 의 s_power 누수로 prepare 가 영구 EBUSY 인 구버전이다. LFS 라 CI 체크아웃에서는 포인터로만 보이며, 포인터의 oid 가 곧 내용 sha256 이라 다운로드 없이 대조된다.",
+      "required_strings": [
+        "dev_attr_prepare",
+        "max9296_prepare_adopt_power_locked",
+        "dev_attr_health_raw"
+      ]
     },
     {
       "path": "dist/pim/opt/pim/driver/sc16is7xx_ext.ko",
