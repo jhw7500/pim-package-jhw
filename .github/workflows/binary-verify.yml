@@ -16,6 +16,7 @@ on:
       - 'dist/pim/opt/pim/driver/**'
       - '.github/binary-manifest.json'
       - 'tools/verify_binaries.py'
+      - 'test/tools/**'
       - '.github/workflows/binary-verify.yml'
   pull_request:
     branches: [master]
@@ -24,6 +25,7 @@ on:
       - 'dist/pim/opt/pim/driver/**'
       - '.github/binary-manifest.json'
       - 'tools/verify_binaries.py'
+      - 'test/tools/**'
       - '.github/workflows/binary-verify.yml'
   workflow_dispatch:
 
@@ -47,6 +49,12 @@ jobs:
           # 포인터 처리 코드는 그대로 두어, LFS 를 못 받는 환경에서도 sha256 대조는
           # 계속 동작한다.
           lfs: true
+
+      # 대조기 자체가 깨진 것은 매니페스트 불일치와 다른 문제다. 아래 검증은
+      # 일부러 차단하지 않지만, 도구가 거짓말하면 그 비차단 정책이 아무것도
+      # 지켜주지 못한다. 이 테스트는 job 을 실패시킨다.
+      - name: verify_binaries 계약 테스트
+        run: bash test/tools/run_all.sh
 
       - name: Verify against manifest
         run: python3 tools/verify_binaries.py
