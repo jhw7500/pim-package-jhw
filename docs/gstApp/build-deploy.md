@@ -58,8 +58,6 @@ PIM_PACKAGE_DIR=<경로> ./update_bin.sh   # 같은 것을 환경변수로
 `source.commit` 은 **바이너리 내용이 실제로 바뀐 경우에만** 갱신한다. 재빌드 없이
 돌리기만 하면 손대지 않는다 — 의미 없는 diff 가 쌓이지 않게.
 
-단순 `cp`만 수행. build artifact 갱신 후 호출 필수.
-
 ## 업데이트 시 sync 검증 (drift 확인)
 
 `gstApp` 코드 변경 또는 새 빌드 후, 두 트리가 일관 상태인지 다음 3축으로 확인:

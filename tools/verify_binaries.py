@@ -166,6 +166,9 @@ def apply_updates(entries: List[Dict[str, Any]], targets: List[str],
     # 같은 해시를 박으면 기록이 조용히 거짓이 된다.
     if set_commit is not None:
         repos = {(by_path[t].get("source") or {}).get("repo") for t in targets}
+        # 출처 미기록 항목은 여기서 걸러낸다. 남겨두면 None 이 저장소 이름인 척
+        # 섞여 "저장소가 다르다" 로 오진되고, 아래의 정확한 사유에 닿지 못한다.
+        repos.discard(None)
         if len(repos) > 1:
             raise SystemExit(
                 "--set-commit 대상의 상위 저장소가 서로 다르다: "

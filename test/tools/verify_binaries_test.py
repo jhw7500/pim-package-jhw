@@ -59,8 +59,10 @@ def minimal_tree(root: Path, body: str, arch: str = "aarch64") -> Tuple[Path, st
             "source": None,
         }],
     }, indent=2), encoding="utf-8")
+    # mode 측정이 git index 에 의존하므로, 여기서 실패하면 트리가 잘못 구성된 채
+    # 뒤의 검사가 엉뚱한 것을 보게 된다. 조용히 넘기지 않는다.
     for args in (["init", "-q"], ["add", "-A"]):
-        subprocess.run(["git", *args], cwd=str(root), capture_output=True, check=False)
+        subprocess.run(["git", *args], cwd=str(root), capture_output=True, check=True)
     return root / "tools" / SCRIPT.name, target
 
 
@@ -153,6 +155,15 @@ class Tests:
             result = run(manifest, "--update", orphan, "--set-commit", "abc1234")
             self.check(result.returncode == 1,
                        "출처 미기록 항목에 --set-commit 하면 거부")
+
+            # 출처 있는 항목과 섞으면 None 이 저장소 이름인 척 끼어들어
+            # "저장소가 다르다" 로 오진되기 쉽다. 진짜 사유가 나와야 한다.
+            mixed = run(manifest, "--update", GSTAPP, orphan, "--set-commit", "abc1234")
+            report = mixed.stdout + mixed.stderr
+            self.check(mixed.returncode == 1 and "None" not in report,
+                       "출처 미기록 항목이 섞여도 None 을 저장소로 보고하지 않는다")
+            self.check("source" in report,
+                       "그 경우 사유는 출처 미기록임이 드러난다")
 
         self.check(manifest.read_text(encoding="utf-8")
                    == MANIFEST.read_text(encoding="utf-8"),
@@ -259,7 +270,7 @@ class Tests:
             ok_tree, "", arch="aarch64")
         shutil.copy(ROOT / GSTAPP, ok_tree / ok_target)
         subprocess.run(["git", "add", "-A"], cwd=str(ok_tree),
-                       capture_output=True, check=False)
+                       capture_output=True, check=True)
         ok = subprocess.run(
             [sys.executable, str(ok_script), "--update", ok_target],
             cwd=str(ok_tree), capture_output=True, text=True)
