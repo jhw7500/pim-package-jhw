@@ -167,11 +167,23 @@ class Tests:
 
         corrupt(manifest, GSTAPP, sha256="0" * 64)
         corrupt(manifest, DRIVER, size=999)
-        run(manifest, "--update", GSTAPP)
+        result = run(manifest, "--update", GSTAPP)
         self.check(entry_of(manifest, GSTAPP)["sha256"] != "0" * 64,
                    "지정한 항목은 갱신된다")
         self.check(entry_of(manifest, DRIVER)["size"] == 999,
                    "지정하지 않은 항목은 손상된 채로 남는다 — 일괄 승인하지 않는다")
+
+        # 남이 낸 drift 가 내 실행 결과에 섞이면 둘을 구분할 수 없고, 그러면
+        # 경고 전체를 무시하게 된다. 갱신 실행은 자기 항목만 보고한다.
+        report = result.stdout + result.stderr
+        self.check(DRIVER not in report,
+                   "갱신 실행은 무관한 항목을 보고하지 않는다")
+        self.check(GSTAPP in report, "갱신 실행은 자기 항목을 보고한다")
+
+        # 전체 점검은 인자 없이. 그때는 손상된 항목이 보여야 한다.
+        sweep = run(manifest)
+        self.check(DRIVER in sweep.stdout + sweep.stderr,
+                   "인자 없는 전체 점검은 모든 항목을 본다")
 
         # required_strings 는 실측이 아니라 사람이 정하는 계약이다. 자동으로 맞춰버리면
         # 기능이 빠진 빌드를 잡아내는 검사가 스스로 무력해진다.

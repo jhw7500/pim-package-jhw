@@ -23,6 +23,10 @@
 손으로 sha256 을 옮겨적다 틀리는 일을 없앤다. 대상 경로를 반드시 명시해야 하는데,
 일괄 갱신은 의도치 않은 변경까지 함께 승인해버려 이 검사의 존재 이유를 지우기 때문이다.
 `required_strings` 는 갱신하지 않는다 — 그건 실측이 아니라 사람이 정하는 계약이다.
+
+`--update` 는 지정한 항목만 갱신하고 **그 항목만 보고한다.** 남이 낸 drift 가 섞이면
+내가 낸 것과 구분할 수 없고, 그러면 경고 전체를 무시하게 된다. 저장소 전체 점검은
+인자 없이 실행한다 — CI 가 하는 것도 그것이다.
 """
 
 from __future__ import annotations
@@ -322,8 +326,8 @@ def main() -> int:
     parser.add_argument("--manifest", type=Path, default=MANIFEST)
     parser.add_argument(
         "--update", nargs="+", metavar="PATH",
-        help="지정한 항목의 sha256/size/mode/arch 를 실측값으로 덮어쓰고 매니페스트를 다시 쓴 뒤 "
-             "검증한다. 대상 경로를 반드시 명시한다 — 일괄 갱신은 의도치 않은 변경까지 승인한다.")
+        help="지정한 항목의 sha256/size/mode/arch 를 실측값으로 덮어쓰고, 그 항목만 검증해 "
+             "보고한다. 저장소 전체 점검은 인자 없이 실행한다.")
     parser.add_argument(
         "--set-commit", metavar="REF",
         help="--update 대상의 source.commit 을 이 값으로 바꾼다. 상위 저장소 커밋 해시.")
@@ -349,17 +353,26 @@ def main() -> int:
             print("\n".join(notes))
         print()
 
+    # 갱신 실행은 그 항목만 본다. 무관한 항목의 경고가 섞이면 내가 낸 것과 남이 낸
+    # 것을 구분할 수 없고, 그러면 경고 전체를 무시하게 된다. 미등록 스캔도 같은
+    # 이유로 전체 점검에서만 돈다.
+    checked = entries
+    if args.update:
+        wanted = set(args.update)
+        checked = [entry for entry in entries if entry["path"] in wanted]
+
     findings: List[Finding] = []
     rows: List[Dict[str, str]] = []
-    for entry in entries:
+    for entry in checked:
         entry_findings, row = check_entry(entry)
         findings.extend(entry_findings)
         rows.append(row)
 
-    for path_str in unregistered([e["path"] for e in entries]):
-        findings.append(Finding(
-            path_str, "unregistered",
-            "추적되는 바이너리인데 매니페스트에 없다 — .github/binary-manifest.json 에 등록한다"))
+    if not args.update:
+        for path_str in unregistered([e["path"] for e in entries]):
+            findings.append(Finding(
+                path_str, "unregistered",
+                "추적되는 바이너리인데 매니페스트에 없다 — .github/binary-manifest.json 에 등록한다"))
 
     print("=== 바이너리 검증 ===")
     for row in rows:
@@ -373,6 +386,9 @@ def main() -> int:
         for finding in findings:
             print(f"  [{finding.kind}] {finding.path} — {finding.detail}", file=sys.stderr)
             emit_annotation(finding)
+    elif args.update:
+        print("\n갱신한 항목이 매니페스트와 일치한다.")
+        print("저장소 전체 점검은 인자 없이: python3 tools/verify_binaries.py")
     else:
         print("\n모든 항목이 매니페스트와 일치한다.")
 
