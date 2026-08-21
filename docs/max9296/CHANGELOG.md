@@ -25,9 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 온타겟(pim-camera-v016): 누수 잔류 상태에서 prepare 성공, 그 구간 펌웨어
   다운로드 0건(`epoch` 불변 - warm 재사용 유지), cancel 후 재 prepare 성공,
   스트리밍 중에는 여전히 `-EBUSY`
-- 보드 게이트 **G1~G4 전부 통과**. G4 는 dual 50/50 + single 50/50 을 완주했고
-  양쪽 모두 펌웨어 재다운로드 0건, 전 사이클 재사용 조건 유지. 측정 구간 내내
-  `cam-operate` 가 정지 상태였음을 30초 간격 샘플 86건으로 확인
+- 보드 게이트 **G1~G4 전부 통과** (2026-08-21, 드라이버 2.5 한 버전). G4 는 사이클마다
+  하드 리셋하는 방식으로 dual 50/50 + single 50/50 을 완주했고, 각 사이클이 펌웨어
+  재다운로드와 `v4l2-ctl` 종료 상태를 함께 확인한다
+- **전제 조건**: 두 CSI 도메인의 prepare write 는 반드시 병렬로 해야 한다. 순차로 쓰면
+  양쪽 `READY` 를 받고 펌웨어도 정상인데 두 번째 도메인이 스트림하지 못하며, ABI 가
+  이를 거부하지 않아 상태줄로는 알 수 없다. 계약 원문은 상위 저장소에 있다 -
+  https://github.com/jhw7500/max9296/blob/master/docs/parallel-prepare-v1.md 의
+  "Parallel use" 절
 
 ## [2.4] - 2026-08-12
 
