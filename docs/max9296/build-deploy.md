@@ -123,6 +123,44 @@ gstApp + max9296 변경 후:
 | 보드에서 max9296 driver init 실패 | 보드 deploy 누락 또는 modprobe 실패 | `release/` 트리 보드에 복사 후 `cam_enable.sh` 또는 reboot |
 | `Magic value mismatch` / module load 실패 | 커널 버전 mismatch | 보드 커널과 동일한 cross-compile toolchain으로 rebuild 필요 |
 
+## max9296 tools/ 에서 가져온 스크립트
+
+`.ko` 말고도 max9296 저장소의 도구를 배포에 싣는 경우가 있다. 이 절이 그 목록과
+출처를 기록한다.
+
+| 배포 경로 | 정본 | 파일 마지막 변경 | 복사 시점 master | sha256 |
+| --- | --- | --- | --- | --- |
+| `dist/pim/opt/pim/bin/cam_hard_reset.sh` | max9296 `tools/cam_hard_reset.sh` | `70c6646` | `acd88da` | `5e38d433204f3421…` |
+
+### 드리프트 확인
+
+배포본은 정본과 **바이트 동일하게** 유지한다. 헤더에 출처 주석을 덧붙이지 않는
+이유는, 그래야 한 줄로 드리프트를 판정할 수 있기 때문이다:
+
+```bash
+git -C ~/ai/opencode/projects/max9296 show acd88da:tools/cam_hard_reset.sh \
+  | diff - dist/pim/opt/pim/bin/cam_hard_reset.sh && echo "동일"
+```
+
+정본이 갱신되면 다시 복사하고 이 표의 커밋·sha256 을 함께 고친다. `.ko` 와 달리
+`binary-manifest.json` 은 이 파일을 보지 않는다 - 매니페스트의 `TRACKED_PATTERN`
+이 `.ko` 와 `usr/local/bin/*` 만 잡고, arch·ELF 심볼 검사도 셸 스크립트에는
+적용되지 않는다.
+
+### cam_hard_reset.sh 범위
+
+**테스트·검증 전용이다.** 운영 워치독(`chk_cam_operate.sh`)과 결합하지 않으며
+자동 복구 경로에 들어가 있지 않다. 수동 호출과 온타겟 하네스
+(gstApp `test/run-max9296-board-test.sh`, max9296 prepare 게이트)만 쓴다.
+
+현행 리셋 계층(killcam→respawn → 모듈 리셋 → 워치독 재부팅)은 SoC 빌트인
+CSI2/ISI 를 건드리지 않아, D-PHY 락 실패류(STREAMON 성공 + CSI2 이벤트 0)는
+재부팅까지 가야 풀린다. 이 스크립트는 CSI2 까지 unbind/bind 한다.
+
+> **주의**: pim-check 의 케이스 간 재부팅을 이 스크립트로 대체하는 것은 아직
+> 하지 않는다. 부팅 시간이 사라지면 AE 레지스터 정착(콜드 기동 후 `gstApp+16s`)
+> 전에 readback 체크가 샘플링될 수 있다. jhw7500/pim-check#61 이 선결이다.
+
 ## 관련 문서
 
 - `docs/max9296/CHANGELOG.md` — max9296 자체 변경 이력
