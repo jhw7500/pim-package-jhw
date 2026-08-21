@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 보드 게이트 **G1~G4 전부 통과** (2026-08-21, 드라이버 2.5 한 버전). G4 는 사이클마다
   하드 리셋하는 방식으로 dual 50/50 + single 50/50 을 완주했고, 각 사이클이 펌웨어
   재다운로드와 `v4l2-ctl` 종료 상태를 함께 확인한다
+- **전제 조건**: 두 CSI 도메인의 prepare write 는 반드시 병렬로 해야 한다. 순차로 쓰면
+  양쪽 `READY` 를 받고 펌웨어도 정상인데 두 번째 도메인이 스트림하지 못하며, ABI 가
+  이를 거부하지 않아 상태줄로는 알 수 없다. 계약은 max9296 `docs/parallel-prepare-v1.md`
+  의 "Parallel use" 절에 있다
 
 ## [2.4] - 2026-08-12
 
