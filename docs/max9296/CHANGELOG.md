@@ -30,8 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   재다운로드와 `v4l2-ctl` 종료 상태를 함께 확인한다
 - **전제 조건**: 두 CSI 도메인의 prepare write 는 반드시 병렬로 해야 한다. 순차로 쓰면
   양쪽 `READY` 를 받고 펌웨어도 정상인데 두 번째 도메인이 스트림하지 못하며, ABI 가
-  이를 거부하지 않아 상태줄로는 알 수 없다. 계약은 max9296 `docs/parallel-prepare-v1.md`
-  의 "Parallel use" 절에 있다
+  이를 거부하지 않아 상태줄로는 알 수 없다. 계약 원문은 상위 저장소에 있다 -
+  https://github.com/jhw7500/max9296/blob/master/docs/parallel-prepare-v1.md 의
+  "Parallel use" 절
 
 ## [2.4] - 2026-08-12
 
