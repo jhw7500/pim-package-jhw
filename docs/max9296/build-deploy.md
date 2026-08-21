@@ -17,23 +17,52 @@
 ```bash
 # 1. max9296 빌드 (out-of-tree kernel module)
 cd ~/ai/opencode/projects/max9296
-make                     # max9296.ko 생성 (cross-compile toolchain 필요)
+./make-for-imx8          # max9296.ko 생성. SDK 환경과 KERNEL_SRC 를 잡아준다
 
-# 2. pim-package-jhw로 복사
-./update_bin.sh          # 단순 cp: max9296.ko → ../pim-package-jhw/dist/pim/opt/pim/driver/
+# 2. 복사 + 매니페스트 갱신
+./update_bin.sh          # sha256/size/mode 를 실측 기입하고 그 항목만 검증
 
-# 3. pim-package-jhw 측 commit (binary tracked)
+# 3. commit — binary 와 매니페스트를 한 커밋에 넣는다
 cd ../pim-package-jhw
-git add dist/pim/opt/pim/driver/max9296.ko
+git add dist/pim/opt/pim/driver/max9296.ko .github/binary-manifest.json
 git commit -m "chore(pim): max9296.ko 업데이트 (<max9296-commit-hash>)"
 ```
 
-### `update_bin.sh` 본문 (참고)
+맨 `make` 는 `ARCH`·`CROSS_COMPILE`·`KERNEL_SRC` 가 비어 실패하거나 엉뚱한 것을
+만든다. `./make-for-imx8` 을 쓴다.
+
+2단계가 `sha256`·`size`·`mode`·`arch` 를 실측해서 매니페스트에 써넣는다. 손으로
+옮겨적지 않는다. 바이너리와 매니페스트를 나눠 커밋하면 그 사이 커밋에서 둘이
+어긋난 상태가 남으므로 한 커밋에 담는다.
+
+`update_bin.sh` 는 **자기 바이너리만** 갱신하고 보고한다. 저장소 전체 점검은
+pim-package 안에서 따로 돌린다:
 
 ```bash
-#!/bin/bash
-cp max9296.ko ../pim-package-jhw/dist/pim/opt/pim/driver/
+cd ~/ai/opencode/projects/pim-package-jhw
+python3 tools/verify_binaries.py      # 등록된 바이너리 전부 + 미등록 스캔
 ```
+
+이 파일은 LFS 라 포인터만 있는 체크아웃에서는 `arch` 를 잴 수 없고, 그 경우
+해당 필드를 건드리지 않고 사유를 출력한다 — 실물이 있는 곳에서 돌린다.
+
+`module_version` 과 `required_strings` 는 자동으로 바뀌지 않는다. 드라이버 버전을
+올렸거나 심볼 계약을 바꿨다면 손으로 고친다.
+
+### `update_bin.sh` 옵션
+
+```bash
+./update_bin.sh                          # 복사 + 매니페스트 갱신 (기본)
+./update_bin.sh --no-manifest            # 복사만 (예전 동작)
+./update_bin.sh --pim-dir <경로>         # 대상 트리 지정
+PIM_PACKAGE_DIR=<경로> ./update_bin.sh   # 같은 것을 환경변수로
+```
+
+대상 트리 기본값은 이 저장소와 나란히 있는 `pim-package-jhw` 이고, CWD 가 아니라
+스크립트 위치를 기준으로 잡는다. 어느 디렉터리에서 실행해도 같은 곳을 가리킨다.
+
+`source.commit` 은 **바이너리 내용이 실제로 바뀐 경우에만** 갱신한다. 재빌드 없이
+돌리기만 하면 손대지 않는다 — 의미 없는 diff 가 쌓이지 않게.
 
 ## 업데이트 시 sync 검증 (drift 확인)
 
@@ -87,7 +116,9 @@ gstApp + max9296 변경 후:
 | 증상 | 원인 | 해결 |
 |---|---|---|
 | pim 측 sha256이 max9296/max9296.ko와 다름 | `update_bin.sh` 누락 | `cd max9296 && ./update_bin.sh` |
-| `max9296.ko`가 없음 | `make` 누락 또는 cross-compile toolchain 미설정 | `cd max9296 && make` (build.log 확인) |
+| `max9296.ko`가 없음 | 빌드 누락 또는 SDK 미설정 | `cd max9296 && ./make-for-imx8` |
+| `Binary Verify` 가 sha256/size 불일치 경고 | 매니페스트 갱신 누락 | `cd max9296 && ./update_bin.sh` |
+| 소스는 같은데 sha256 이 달라짐 | 커널 빌드 플래그 차이(예: `-mbranch-protection` 의 BTI 유무) | `modinfo` 의 `srcversion` 이 같으면 소스는 동일하다. 타깃이 Cortex-A53 이라 `bti`/`pac` 는 NOP 이므로 동작 차이는 없다 |
 | sha256는 같은데 pim commit에 hash 없음 | binary cp 후 git commit 누락 | `git add dist/.../max9296.ko && git commit` |
 | 보드에서 max9296 driver init 실패 | 보드 deploy 누락 또는 modprobe 실패 | `release/` 트리 보드에 복사 후 `cam_enable.sh` 또는 reboot |
 | `Magic value mismatch` / module load 실패 | 커널 버전 mismatch | 보드 커널과 동일한 cross-compile toolchain으로 rebuild 필요 |

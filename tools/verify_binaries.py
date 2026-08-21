@@ -18,6 +18,15 @@
            producer 가 빠진 빌드가 패키지에 실린 적이 있다.
 
 매니페스트에 없는 추적 바이너리도 경고한다(등록 없이 추가된 것).
+
+바이너리를 의도적으로 바꿨다면 `--update <경로>` 로 실측값을 매니페스트에 써넣는다.
+손으로 sha256 을 옮겨적다 틀리는 일을 없앤다. 대상 경로를 반드시 명시해야 하는데,
+일괄 갱신은 의도치 않은 변경까지 함께 승인해버려 이 검사의 존재 이유를 지우기 때문이다.
+`required_strings` 는 갱신하지 않는다 — 그건 실측이 아니라 사람이 정하는 계약이다.
+
+`--update` 는 지정한 항목만 갱신하고 **그 항목만 보고한다.** 남이 낸 drift 가 섞이면
+내가 낸 것과 구분할 수 없고, 그러면 경고 전체를 무시하게 된다. 저장소 전체 점검은
+인자 없이 실행한다 — CI 가 하는 것도 그것이다.
 """
 
 from __future__ import annotations
@@ -101,6 +110,116 @@ def has_strings(path: Path, needles: List[str]) -> List[str]:
     return [n for n in needles if n.encode() not in blob]
 
 
+def measure(path_str: str) -> Tuple[Dict[str, Any], List[str], bool]:
+    """(실측값, 재지 못한 필드의 사유, 실제_바이너리인가). 못 재는 필드는 결과에서 뺀다."""
+    path = ROOT / path_str
+    if not path.is_file():
+        raise ValueError("파일이 없다")
+
+    actual: Dict[str, Any] = {}
+    skipped: List[str] = []
+
+    sha, is_real = read_content_hash(path)
+    actual["sha256"] = sha
+
+    size = path.stat().st_size if is_real else pointer_size(path)
+    if size is None:
+        skipped.append("size — LFS 포인터에서 크기를 못 읽었다")
+    else:
+        actual["size"] = size
+
+    mode = index_mode(path_str)
+    if mode is None:
+        skipped.append("mode — git index 에 없다. 먼저 git add 한다")
+    else:
+        actual["mode"] = mode
+
+    # arch 는 실제 ELF 를 봐야 안다. LFS 포인터만 있으면 기존 값을 그대로 둔다.
+    if not is_real:
+        skipped.append("arch — LFS 포인터라 ELF 를 볼 수 없다")
+    else:
+        arch = elf_arch(path)
+        if arch is None:
+            skipped.append("arch — ELF 가 아니다")
+        else:
+            actual["arch"] = arch
+
+    return actual, skipped, is_real
+
+
+def brief(value: Any) -> str:
+    text = "(없음)" if value is None else str(value)
+    return f"{text[:12]}…" if len(text) > 16 else text
+
+
+def apply_updates(entries: List[Dict[str, Any]], targets: List[str],
+                  set_commit: Optional[str]) -> Tuple[List[str], List[str]]:
+    """지정한 항목만 실측값으로 덮어쓴다. (바뀐 줄, 못 잰 필드 줄)."""
+    by_path = {entry["path"]: entry for entry in entries}
+    unknown = [t for t in targets if t not in by_path]
+    if unknown:
+        raise SystemExit(
+            "매니페스트에 없는 경로: " + ", ".join(unknown)
+            + "\n등록된 경로:\n  " + "\n  ".join(by_path))
+
+    # 커밋 해시는 한 상위 저장소 안에서만 뜻이 있다. 출처가 다른 바이너리에
+    # 같은 해시를 박으면 기록이 조용히 거짓이 된다.
+    if set_commit is not None:
+        repos = {(by_path[t].get("source") or {}).get("repo") for t in targets}
+        # 출처 미기록 항목은 여기서 걸러낸다. 남겨두면 None 이 저장소 이름인 척
+        # 섞여 "저장소가 다르다" 로 오진되고, 아래의 정확한 사유에 닿지 못한다.
+        repos.discard(None)
+        if len(repos) > 1:
+            raise SystemExit(
+                "--set-commit 대상의 상위 저장소가 서로 다르다: "
+                + ", ".join(sorted(str(r) for r in repos))
+                + "\n저장소별로 나눠서 실행한다.")
+
+    changes: List[str] = []
+    notes: List[str] = []
+    for target in targets:
+        entry = by_path[target]
+        try:
+            actual, skipped, is_real = measure(target)
+        except (OSError, ValueError) as exc:
+            raise SystemExit(f"{target}: {exc}")
+
+        # arch 를 선언한 항목인데 실물이 ELF 가 아니면 잘렸거나 엉뚱한 파일이다.
+        # 그대로 갱신하면 sha256 이 맞다는 이유로 텍스트 파일이 승인된다.
+        if is_real and entry.get("arch") and "arch" not in actual:
+            raise SystemExit(
+                f"{target}: arch 를 {entry['arch']} 로 선언한 항목인데 ELF 가 아니다. "
+                "매니페스트를 고치기 전에 파일부터 확인한다.")
+
+        edits: List[str] = []
+        for field, value in actual.items():
+            before = entry.get(field)
+            if before != value:
+                entry[field] = value
+                edits.append(f"      {field}: {brief(before)} -> {brief(value)}")
+
+        if set_commit is not None:
+            source = entry.get("source")
+            if not isinstance(source, dict):
+                raise SystemExit(
+                    f"{target}: source 가 비어 있어 commit 을 넣을 수 없다. "
+                    "출처가 기록되지 않은 바이너리다 — 매니페스트에서 source 를 먼저 채운다.")
+            if source.get("commit") != set_commit:
+                edits.append(f"      source.commit: "
+                             f"{brief(source.get('commit'))} -> {brief(set_commit)}")
+                source["commit"] = set_commit
+
+        # 경로 머리글은 대상마다 한 번만. 필드마다 반복하면 무엇이 바뀌었는지 안 보인다.
+        if edits:
+            changes.append(f"  {target}")
+            changes.extend(edits)
+        if skipped:
+            notes.append(f"  {target}")
+            notes.extend(f"      건너뜀: {reason}" for reason in skipped)
+
+    return changes, notes
+
+
 def check_entry(entry: Dict[str, Any]) -> Tuple[List[Finding], Dict[str, str]]:
     path_str = entry["path"]
     path = ROOT / path_str
@@ -169,7 +288,13 @@ def check_entry(entry: Dict[str, Any]) -> Tuple[List[Finding], Dict[str, str]]:
 
     expected_arch = entry.get("arch")
     actual_arch = elf_arch(path)
-    if expected_arch and actual_arch and actual_arch != expected_arch:
+    if expected_arch and actual_arch is None:
+        # "잴 수 없음" 으로 넘기면 텍스트 파일도 sha256 만 맞으면 통과한다.
+        findings.append(Finding(
+            path_str, "arch",
+            f"기대 {expected_arch} 인데 ELF 가 아니다 — 잘렸거나 엉뚱한 파일일 수 있다"))
+        row["arch"] = "ELF 아님"
+    elif expected_arch and actual_arch and actual_arch != expected_arch:
         findings.append(Finding(
             path_str, "arch",
             f"기대 {expected_arch} / 실제 {actual_arch} — 호스트 빌드가 섞였을 수 있다"))
@@ -215,24 +340,55 @@ def main() -> int:
         "--strict", action="store_true",
         help="불일치가 있으면 종료 코드 1. 기본은 경고만 하고 0 으로 끝난다.")
     parser.add_argument("--manifest", type=Path, default=MANIFEST)
+    parser.add_argument(
+        "--update", nargs="+", metavar="PATH",
+        help="지정한 항목의 sha256/size/mode/arch 를 실측값으로 덮어쓰고, 그 항목만 검증해 "
+             "보고한다. 저장소 전체 점검은 인자 없이 실행한다.")
+    parser.add_argument(
+        "--set-commit", metavar="REF",
+        help="--update 대상의 source.commit 을 이 값으로 바꾼다. 상위 저장소 커밋 해시.")
     args = parser.parse_args()
+    if args.set_commit and not args.update:
+        parser.error("--set-commit 은 --update 와 함께 쓴다. 갱신할 대상이 있어야 한다.")
 
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     if manifest.get("schema") != 1:
         raise SystemExit(f"지원하지 않는 매니페스트 schema: {manifest.get('schema')}")
     entries = manifest["binaries"]
 
+    if args.update:
+        changes, notes = apply_updates(entries, args.update, args.set_commit)
+        print("=== 매니페스트 갱신 ===")
+        if changes:
+            args.manifest.write_text(
+                json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+            print("\n".join(changes))
+        else:
+            print("  실측값이 이미 매니페스트와 같다 — 파일을 쓰지 않았다.")
+        if notes:
+            print("\n".join(notes))
+        print()
+
+    # 갱신 실행은 그 항목만 본다. 무관한 항목의 경고가 섞이면 내가 낸 것과 남이 낸
+    # 것을 구분할 수 없고, 그러면 경고 전체를 무시하게 된다. 미등록 스캔도 같은
+    # 이유로 전체 점검에서만 돈다.
+    checked = entries
+    if args.update:
+        wanted = set(args.update)
+        checked = [entry for entry in entries if entry["path"] in wanted]
+
     findings: List[Finding] = []
     rows: List[Dict[str, str]] = []
-    for entry in entries:
+    for entry in checked:
         entry_findings, row = check_entry(entry)
         findings.extend(entry_findings)
         rows.append(row)
 
-    for path_str in unregistered([e["path"] for e in entries]):
-        findings.append(Finding(
-            path_str, "unregistered",
-            "추적되는 바이너리인데 매니페스트에 없다 — .github/binary-manifest.json 에 등록한다"))
+    if not args.update:
+        for path_str in unregistered([e["path"] for e in entries]):
+            findings.append(Finding(
+                path_str, "unregistered",
+                "추적되는 바이너리인데 매니페스트에 없다 — .github/binary-manifest.json 에 등록한다"))
 
     print("=== 바이너리 검증 ===")
     for row in rows:
@@ -246,6 +402,9 @@ def main() -> int:
         for finding in findings:
             print(f"  [{finding.kind}] {finding.path} — {finding.detail}", file=sys.stderr)
             emit_annotation(finding)
+    elif args.update:
+        print("\n갱신한 항목이 매니페스트와 일치한다.")
+        print("저장소 전체 점검은 인자 없이: python3 tools/verify_binaries.py")
     else:
         print("\n모든 항목이 매니페스트와 일치한다.")
 

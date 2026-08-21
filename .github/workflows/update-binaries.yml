@@ -148,8 +148,10 @@ jobs:
             ## 머지 전 할 일
 
             1. **`.github/binary-manifest.json` 을 이 PR 에서 갱신한다.**
-               `Binary Verify` 워크플로우가 sha256 불일치를 경고로 알려준다(차단하지 않음).
-               갱신할 값: `sha256`, `size`, `source.commit`.
+               `python3 tools/verify_binaries.py --update <경로> --set-commit <상위-커밋>`
+               이 실측값(`sha256`/`size`/`mode`/`arch`)을 써넣고 그 자리에서 검증까지 한다.
+               손으로 옮겨적지 않는다. `Binary Verify` 워크플로우는 불일치를 경고로만
+               알려준다(차단하지 않음).
             2. 바이너리가 실제로 동작하는지 확인한다. 이 PR 은 파일을 바꿀 뿐
                **보드에서 검증하지 않는다.**
 
