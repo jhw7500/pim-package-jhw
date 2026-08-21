@@ -37,6 +37,33 @@ def run(manifest: Path, *args: str) -> subprocess.CompletedProcess:
     )
 
 
+def minimal_tree(root: Path, body: str, arch: str = "aarch64") -> Tuple[Path, str]:
+    """arch 를 선언한 항목 하나만 있는 최소 저장소. (스크립트 경로, 대상 경로).
+
+    실제 dist/ 바이너리는 건드릴 수 없으므로, ELF 가 아닌 파일을 다루는 경로는
+    별도 트리에서만 시험한다."""
+    target = "dist/pim/usr/local/bin/streamApp"
+    (root / target).parent.mkdir(parents=True, exist_ok=True)
+    (root / target).write_text(body, encoding="utf-8")
+    (root / "tools").mkdir(exist_ok=True)
+    (root / ".github").mkdir(exist_ok=True)
+    shutil.copy(SCRIPT, root / "tools" / SCRIPT.name)
+    (root / ".github/binary-manifest.json").write_text(json.dumps({
+        "schema": 1,
+        "binaries": [{
+            "path": target,
+            "sha256": "0" * 64,
+            "size": 1,
+            "mode": "100644",
+            "arch": arch,
+            "source": None,
+        }],
+    }, indent=2), encoding="utf-8")
+    for args in (["init", "-q"], ["add", "-A"]):
+        subprocess.run(["git", *args], cwd=str(root), capture_output=True, check=False)
+    return root / "tools" / SCRIPT.name, target
+
+
 def load(manifest: Path) -> Dict[str, Any]:
     return json.loads(manifest.read_text(encoding="utf-8"))
 
@@ -96,6 +123,7 @@ class Tests:
             self.misuse_tests(work)
             self.update_tests(work)
             self.scope_tests(work)
+            self.elf_tests(work)
         print()
         print(f"verify_binaries --update: {self.passed} passed / {self.failed} failed")
         return 1 if self.failed else 0
@@ -198,6 +226,45 @@ class Tests:
         self.check(entry_of(manifest, GSTAPP)["required_strings"]
                    == ["없을리없는문자열은아님"],
                    "required_strings 는 --update 가 건드리지 않는다")
+
+
+    # --- arch 를 선언했는데 ELF 가 아니면 승인하지 않는다 -------------------
+
+    def elf_tests(self, work: Path) -> None:
+        tree = work / "not-elf"
+        tree.mkdir()
+        script, target = minimal_tree(tree, "#!/bin/sh\necho not a binary\n")
+
+        result = subprocess.run(
+            [sys.executable, str(script), "--update", target],
+            cwd=str(tree), capture_output=True, text=True)
+        self.check(result.returncode == 1,
+                   "arch 선언 항목이 ELF 가 아니면 --update 를 거부한다")
+        manifest = tree / ".github/binary-manifest.json"
+        self.check(entry_of(manifest, target)["sha256"] == "0" * 64,
+                   "거부된 갱신은 매니페스트를 건드리지 않는다")
+
+        sweep = subprocess.run(
+            [sys.executable, str(script), "--strict"],
+            cwd=str(tree), capture_output=True, text=True)
+        self.check(sweep.returncode == 1,
+                   "전체 점검에서도 ELF 아닌 파일은 --strict 를 실패시킨다")
+        self.check("ELF" in sweep.stdout + sweep.stderr,
+                   "그 사유가 출력에 드러난다")
+
+        # ELF 인 경우까지 막으면 정상 갱신이 불가능해진다.
+        ok_tree = work / "real-elf"
+        ok_tree.mkdir()
+        ok_script, ok_target = minimal_tree(
+            ok_tree, "", arch="aarch64")
+        shutil.copy(ROOT / GSTAPP, ok_tree / ok_target)
+        subprocess.run(["git", "add", "-A"], cwd=str(ok_tree),
+                       capture_output=True, check=False)
+        ok = subprocess.run(
+            [sys.executable, str(ok_script), "--update", ok_target],
+            cwd=str(ok_tree), capture_output=True, text=True)
+        self.check(ok.returncode == 0,
+                   "실제 ELF 는 그대로 갱신된다")
 
 
 if __name__ == "__main__":

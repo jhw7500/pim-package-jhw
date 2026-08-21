@@ -110,8 +110,8 @@ def has_strings(path: Path, needles: List[str]) -> List[str]:
     return [n for n in needles if n.encode() not in blob]
 
 
-def measure(path_str: str) -> Tuple[Dict[str, Any], List[str]]:
-    """(실측값, 재지 못한 필드의 사유). 계산할 수 없는 필드는 결과에서 뺀다."""
+def measure(path_str: str) -> Tuple[Dict[str, Any], List[str], bool]:
+    """(실측값, 재지 못한 필드의 사유, 실제_바이너리인가). 못 재는 필드는 결과에서 뺀다."""
     path = ROOT / path_str
     if not path.is_file():
         raise ValueError("파일이 없다")
@@ -144,7 +144,7 @@ def measure(path_str: str) -> Tuple[Dict[str, Any], List[str]]:
         else:
             actual["arch"] = arch
 
-    return actual, skipped
+    return actual, skipped, is_real
 
 
 def brief(value: Any) -> str:
@@ -177,9 +177,16 @@ def apply_updates(entries: List[Dict[str, Any]], targets: List[str],
     for target in targets:
         entry = by_path[target]
         try:
-            actual, skipped = measure(target)
+            actual, skipped, is_real = measure(target)
         except (OSError, ValueError) as exc:
             raise SystemExit(f"{target}: {exc}")
+
+        # arch 를 선언한 항목인데 실물이 ELF 가 아니면 잘렸거나 엉뚱한 파일이다.
+        # 그대로 갱신하면 sha256 이 맞다는 이유로 텍스트 파일이 승인된다.
+        if is_real and entry.get("arch") and "arch" not in actual:
+            raise SystemExit(
+                f"{target}: arch 를 {entry['arch']} 로 선언한 항목인데 ELF 가 아니다. "
+                "매니페스트를 고치기 전에 파일부터 확인한다.")
 
         edits: List[str] = []
         for field, value in actual.items():
@@ -278,7 +285,13 @@ def check_entry(entry: Dict[str, Any]) -> Tuple[List[Finding], Dict[str, str]]:
 
     expected_arch = entry.get("arch")
     actual_arch = elf_arch(path)
-    if expected_arch and actual_arch and actual_arch != expected_arch:
+    if expected_arch and actual_arch is None:
+        # "잴 수 없음" 으로 넘기면 텍스트 파일도 sha256 만 맞으면 통과한다.
+        findings.append(Finding(
+            path_str, "arch",
+            f"기대 {expected_arch} 인데 ELF 가 아니다 — 잘렸거나 엉뚱한 파일일 수 있다"))
+        row["arch"] = "ELF 아님"
+    elif expected_arch and actual_arch and actual_arch != expected_arch:
         findings.append(Finding(
             path_str, "arch",
             f"기대 {expected_arch} / 실제 {actual_arch} — 호스트 빌드가 섞였을 수 있다"))
