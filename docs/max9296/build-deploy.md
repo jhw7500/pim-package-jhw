@@ -130,7 +130,7 @@ gstApp + max9296 변경 후:
 
 | 배포 경로 | 정본 | 파일 마지막 변경 | 복사 시점 master | sha256 |
 | --- | --- | --- | --- | --- |
-| `dist/pim/opt/pim/bin/cam_hard_reset.sh` | max9296 `tools/cam_hard_reset.sh` | `70c6646` | `acd88da` | `5e38d433204f3421…` |
+| `dist/pim/opt/pim/bin/cam_hard_reset.sh` | max9296 `tools/cam_hard_reset.sh` | `fceeddd` | `edd8fda` | `081e3fd242a3e95006e5cee14eb1dc4ed6ad01357c26c7328fb791c4370de531` |
 
 ### 드리프트 확인
 
@@ -138,7 +138,9 @@ gstApp + max9296 변경 후:
 이유는, 그래야 한 줄로 드리프트를 판정할 수 있기 때문이다:
 
 ```bash
-git -C ~/ai/opencode/projects/max9296 show acd88da:tools/cam_hard_reset.sh \
+# <max9296-checkout> = max9296 저장소 체크아웃 경로. 기준 커밋은 표의
+# "파일 마지막 변경" 열 — master 가 움직여도 판정이 흔들리지 않는다.
+git -C <max9296-checkout> show fceeddd:tools/cam_hard_reset.sh \
   | diff - dist/pim/opt/pim/bin/cam_hard_reset.sh && echo "동일"
 ```
 
