@@ -122,6 +122,26 @@ assert_absent "$github/test/tools/gitlab-new-only.sh"
 git -C "$github" add -A
 git -C "$github" commit -qm "fixture: reverse sync"
 
+# PIM 자동 commit은 허용 경로만 stage해야 한다. 실제 작업 복제본에는 vsd 서브모듈
+# 수정과 HANDOFF.md가 공존할 수 있으므로, 전역 git add -A는 인수인계 범위를 오염시킨다.
+git -C "$gitlab" switch -qc scoped-commit
+write_fixture "$github" "docs/session-lifecycle.md" "scoped commit candidate"
+git -C "$github" add -A
+git -C "$github" commit -qm "fixture: scoped commit candidate"
+write_fixture "$gitlab" "HANDOFF.md" "unrelated handoff"
+write_fixture "$gitlab" "vsd/local-change.txt" "unrelated submodule-style change"
+
+GITHUB_REPO="$github" GITLAB_REPO="$gitlab" \
+    bash "$ROOT/sync-to-gitlab.sh" --commit pim >"$TMP_ROOT/scoped-commit.log"
+
+if git -C "$gitlab" ls-tree -r --name-only HEAD | \
+        grep -Eq '^(HANDOFF\.md|vsd/)'; then
+    fail "PIM commit이 allowlist 밖 기존 작업을 포함함"
+fi
+[ -f "$gitlab/HANDOFF.md" ] || fail "PIM commit이 HANDOFF.md를 제거함"
+[ -f "$gitlab/vsd/local-change.txt" ] || fail "PIM commit이 vsd 작업을 제거함"
+git -C "$gitlab" switch -q master
+
 # 보호 브랜치에서는 --push가 파일 복사나 commit 전에 거부되어야 한다.
 write_fixture "$github" "docs/session-lifecycle.md" "protected branch candidate"
 git -C "$github" add -A

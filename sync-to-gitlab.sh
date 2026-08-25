@@ -294,11 +294,15 @@ save_sync_point() {
 
 # commit/push 분기 처리 — sync_submodule, sync_pim, update_submodule_refs에서 공통 사용
 # args: $1=commit_dir, $2=commit_msg, $3=label, $4=save_scope (빈 값이면 save_sync_point 스킵)
+#       $5..=선택적 stage/commit 경로. 없으면 commit_dir 전체를 사용한다.
 finalize_commit() {
     local commit_dir="$1"
     local commit_msg="$2"
     local label="$3"
     local save_scope="${4:-}"
+    shift 4
+    local add_paths=("$@")
+    local scoped_paths=()
 
     cd "$commit_dir"
 
@@ -321,8 +325,32 @@ finalize_commit() {
     # 서브모듈 commit에는 포함 안 되고 update_submodule_refs에서 add됨
     [ -n "$save_scope" ] && save_sync_point "$save_scope"
 
-    git add -A
-    git commit -m "$commit_msg"
+    if [ ${#add_paths[@]} -gt 0 ]; then
+        local p
+        for p in "${add_paths[@]}"; do
+            # 부분 저장소에는 일부 선택 디렉터리가 없을 수 있다. 현재 파일은 물론,
+            # 삭제되어 working tree에는 없어도 Git이 추적 중인 경로는 포함한다.
+            if [ -e "$p" ] || [ -n "$(git ls-files -- "$p")" ]; then
+                scoped_paths+=("$p")
+            fi
+        done
+        if [ ${#scoped_paths[@]} -eq 0 ]; then
+            echo "  허용 경로에 commit할 대상 없음"
+            cd "$GITHUB_REPO"
+            return 0
+        fi
+        git add -A -- "${scoped_paths[@]}"
+        if git diff --cached --quiet -- "${scoped_paths[@]}"; then
+            echo "  허용 경로에 commit할 변경사항 없음"
+            cd "$GITHUB_REPO"
+            return 0
+        fi
+        # 경로를 commit에도 명시해 기존에 stage된 범위 밖 작업이 섞이지 않게 한다.
+        git commit -m "$commit_msg" -- "${scoped_paths[@]}"
+    else
+        git add -A
+        git commit -m "$commit_msg"
+    fi
     echo "  ${label} commit 완료"
 
     if [ "$DO_PUSH" = true ]; then
@@ -484,7 +512,8 @@ sync_pim() {
     sync_msg="sync: GitHub 반영 ($(date +%Y-%m-%d))"$'\n\n'
     sync_msg+=$(echo "$commits" | sed 's/^/- /')
 
-    finalize_commit "$GITLAB_REPO" "$sync_msg" "pim 본체" "pim"
+    finalize_commit "$GITLAB_REPO" "$sync_msg" "pim 본체" "pim" \
+        "${PIM_DIRS[@]}" "${PIM_FILES[@]}" ".last-sync-pim"
 }
 
 # --- 서브모듈 참조 업데이트 ---
