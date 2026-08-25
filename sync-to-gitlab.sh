@@ -407,15 +407,17 @@ sync_pim() {
     # PIM_DIRS + PIM_FILES을 단일 rsync include 패턴으로 통합
     # source를 GitHub repo 루트로 잡아 루트 .gitignore가 per-directory merge로 자동 적용됨
     # → 사용자가 .gitignore에 패턴 추가하면 자동으로 동기화에서도 제외 (별도 관리 불필요)
+    # 선행 /로 저장소 루트에 고정한다. tools/**처럼 고정하지 않은 패턴은
+    # test/tools/**에도 매칭되어 allowlist 밖 테스트까지 복사한다.
     local rsync_includes=()
     for d in "${PIM_DIRS[@]}"; do
-        rsync_includes+=(--include="${d}/" --include="${d}/**")
+        rsync_includes+=(--include="/${d}/" --include="/${d}/**")
     done
     for f in "${PIM_FILES[@]}"; do
         if [[ "$f" == */* ]]; then
-            rsync_includes+=(--include="${f%%/*}/")
+            rsync_includes+=(--include="/${f%%/*}/")
         fi
-        rsync_includes+=(--include="${f}")
+        rsync_includes+=(--include="/${f}")
     done
 
     check_delete_pending "pim" \

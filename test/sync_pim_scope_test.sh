@@ -67,6 +67,7 @@ write_fixture "$github" "docker/README.md" "github docker"
 write_fixture "$github" "build.sh" "github build"
 write_fixture "$github" "docs/github-only.md" "do not sync"
 write_fixture "$github" "test/github-only.sh" "do not sync"
+write_fixture "$github" "test/tools/github-only.sh" "do not sync nested tools"
 write_fixture "$github" ".github/workflows/github-only.yml" "do not sync"
 
 write_fixture "$gitlab" "docs/gitlab-only.md" "preserve gitlab doc"
@@ -93,6 +94,7 @@ assert_same "$github/docker/README.md" "$gitlab/docker/README.md"
 assert_same "$github/build.sh" "$gitlab/build.sh"
 assert_absent "$gitlab/docs/github-only.md"
 assert_absent "$gitlab/test/github-only.sh"
+assert_absent "$gitlab/test/tools/github-only.sh"
 assert_absent "$gitlab/.github/workflows/github-only.yml"
 [ -f "$gitlab/docs/gitlab-only.md" ] || fail "GitLab 전용 문서가 삭제됨"
 [ -f "$gitlab/test/gitlab-only.sh" ] || fail "GitLab 전용 테스트가 삭제됨"
@@ -104,6 +106,7 @@ git -C "$gitlab" commit -qm "fixture: forward sync"
 # 역방향도 같은 allowlist만 적용해야 한다.
 write_fixture "$gitlab" "docs/session-lifecycle.md" "gitlab selected update"
 write_fixture "$gitlab" "docs/gitlab-new-only.md" "do not sync back"
+write_fixture "$gitlab" "test/tools/gitlab-new-only.sh" "do not sync nested tools back"
 git -C "$gitlab" add -A
 git -C "$gitlab" commit -qm "fixture: gitlab update"
 
@@ -112,7 +115,9 @@ GITHUB_REPO="$github" GITLAB_REPO="$gitlab" \
 
 assert_same "$gitlab/docs/session-lifecycle.md" "$github/docs/session-lifecycle.md"
 assert_absent "$github/docs/gitlab-new-only.md"
+assert_absent "$github/test/tools/gitlab-new-only.sh"
 [ -f "$github/docs/github-only.md" ] || fail "GitHub 전용 문서가 삭제됨"
+[ -f "$github/test/tools/github-only.sh" ] || fail "GitHub 전용 중첩 test/tools 파일이 삭제됨"
 
 git -C "$github" add -A
 git -C "$github" commit -qm "fixture: reverse sync"

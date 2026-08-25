@@ -359,16 +359,18 @@ sync_pim() {
 
     # PIM_DIRS + PIM_FILES을 단일 rsync include 패턴으로 통합
     # source가 GitLab repo 루트라 루트 .gitignore가 per-directory merge로 자동 적용
+    # 선행 /로 저장소 루트에 고정해 tools/**가 test/tools/** 같은 중첩 경로에
+    # 매칭되는 것을 막는다.
     local rsync_includes=()
     local d f
     for d in "${PIM_DIRS[@]}"; do
-        rsync_includes+=(--include="${d}/" --include="${d}/**")
+        rsync_includes+=(--include="/${d}/" --include="/${d}/**")
     done
     for f in "${PIM_FILES[@]}"; do
         if [[ "$f" == */* ]]; then
-            rsync_includes+=(--include="${f%%/*}/")
+            rsync_includes+=(--include="/${f%%/*}/")
         fi
-        rsync_includes+=(--include="${f}")
+        rsync_includes+=(--include="/${f}")
     done
 
     # 1. dry-run으로 변경 파일 추출
