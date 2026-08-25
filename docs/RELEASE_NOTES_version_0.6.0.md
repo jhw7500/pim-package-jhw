@@ -114,6 +114,10 @@ SD RO/cam disconnect/heartbeat frozen 감지 시 자동 복구 대신 사용자 
 - **init_cam**: vib.bin 정리 추가
 - **sc16is7xx 드라이버**: 디버깅 로그 추가
 
+> Provenance 참고: 이 항목은 개인 GitHub workflow 패키지의 fix source blob
+> `070bb868...` 기준이다. `sc16is7xx_ext.ko`는 GitLab 동기화 제외 대상이므로
+> 정식 `pim-package` 바이너리에는 자동 반영되지 않는다.
+
 ---
 
 ### 📊 통계

@@ -95,7 +95,7 @@ mtime이 max9296 last commit 시각보다 오래되면 rebuild 누락 — `make`
 
 같은 driver 디렉토리에 함께 tracked되는 binary:
 - `dist/pim/opt/pim/driver/max9296.ko` ← max9296 repo build
-- `dist/pim/opt/pim/driver/sc16is7xx_ext.ko` ← 별도 build (소스 위치 확인 필요)
+- `dist/pim/opt/pim/driver/sc16is7xx_ext.ko` ← `../sc16is7xx` 별도 build; 버전 판정은 `docs/sc16is7xx/build-deploy.md` 참조
 - `dist/pim/opt/pim/driver/laird_backport.tar` ← WiFi driver backport (벤더 제공)
 
 ## 보드 적용 흐름
