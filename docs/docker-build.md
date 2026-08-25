@@ -61,7 +61,31 @@ cd /home/jhw/ai/my-claude-code-setup/pim-package
 
 ## 🔍 빌드 검증
 
-빌드 후 자동으로 바이너리 정보가 출력됩니다:
+`build.sh`와 `docker/build.sh`는 빌드 완료 후
+`tools/verify_binaries.py`를 자동 실행한다. Docker 빌드는 release 산출물의
+ARM aarch64/GLIBC 정보도 추가로 확인한다.
+
+기본 모드는 `warn`이라 불일치가 있어도 경고만 남기고 빌드 성공을 유지한다.
+
+```bash
+# 기본: 경고만 출력
+./docker/build.sh
+
+# 자동 검증 생략
+PIM_VERIFY_BINARIES=off ./docker/build.sh
+
+# 불일치를 빌드 실패로 처리
+PIM_VERIFY_BINARIES=strict ./docker/build.sh
+```
+
+지원 값은 `off`, `warn`, `strict`뿐이다. 매니페스트는 빌드가 자동 갱신하지
+않는다. 바이너리를 의도적으로 바꾼 경우에만 검토자가 경로를 명시해 갱신한다.
+
+```bash
+python3 tools/verify_binaries.py --update dist/pim/usr/local/bin/gstApp
+```
+
+수동 확인 예시:
 
 ```bash
 # 아키텍처 확인
@@ -80,7 +104,7 @@ readelf -V release/pim/usr/local/bin/ord | grep GLIBC
 개발이나 디버깅을 위해 컨테이너에 직접 접속:
 
 ```bash
-cd /home/jhw/ai/my-claude-code-setup/pim-package
+cd "$(git rev-parse --show-toplevel)"
 docker run --rm -it \
     --platform linux/arm64 \
     -v $(pwd):/workspace \

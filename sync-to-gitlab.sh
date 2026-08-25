@@ -16,8 +16,8 @@ set -euo pipefail
 # (회사 측에서 GitHub로 가져온 변경이 다시 GitLab으로 sync되는 것 방지)
 # =============================================================================
 
-GITHUB_REPO="/home/jhw/ai/opencode/projects/pim-package-jhw"
-GITLAB_REPO="/home/jhw/ai/opencode/projects/pim-package"
+GITHUB_REPO="${GITHUB_REPO:-/home/jhw/ai/opencode/projects/pim-package-jhw}"
+GITLAB_REPO="${GITLAB_REPO:-/home/jhw/ai/opencode/projects/pim-package}"
 
 # 서브모듈 매핑: scope → GitLab 서브모듈 경로
 declare -A SUBMODULE_MAP=(
@@ -29,7 +29,16 @@ declare -A SUBMODULE_MAP=(
 # pim 본체 동기화 대상 디렉토리 (서브모듈 외)
 # release/는 빌드 산출물이므로 제외 (.gitignore와 정합)
 PIM_DIRS=("dist" "patch" "upgrade_file" "tools" "docker")
-PIM_FILES=("build.sh")
+PIM_FILES=(
+    "build.sh"
+    "docs/file_check_reboot-behavior.md"
+    "docs/pim-guardian-runbook.md"
+    "docs/runbook_final_stall.md"
+    "docs/session-lifecycle.md"
+    "docs/ord_vcm_conf-settings-analysis.md"
+    "test/test_final_stall_scenarios.md"
+    ".github/binary-manifest.json"
+)
 
 DRY_RUN=false
 DO_COMMIT=false
@@ -55,7 +64,7 @@ if [ ${#TARGETS[@]} -eq 0 ]; then
 
 대상:
   ord, vcm, vsd  — 해당 서브모듈만 동기화
-  pim            — dist, patch, build.sh 등 본체 파일 동기화
+  pim            — 본체 코드 + 인수인계 파일 allowlist 동기화
   all            — 전부 동기화
 
 모드 (기본은 파일만 sync, commit/push 없음):
@@ -69,6 +78,10 @@ if [ ${#TARGETS[@]} -eq 0 ]; then
                    회사 측 작업이 사라지는 경로다. 덮어쓰기는 방향을 알 수 없어
                    판정하지 않으니 dry-run 으로 확인하라.
   --force        — 안전 검사 우회 (삭제를 감수)
+
+보호 브랜치:
+  --push는 대상 GitLab 저장소가 master/main 또는 detached HEAD이면
+  파일 복사 전에 중단한다. --dry-run은 쓰기가 없으므로 허용한다.
 EOF
     exit 1
 fi
@@ -76,6 +89,37 @@ fi
 # --- 유틸 함수 ---
 log() { echo "=== $1 ==="; }
 warn() { echo "⚠ $1"; }
+
+# --push는 파일을 복사하기 전에 모든 대상 브랜치를 검사한다. commit 뒤에 막으면
+# 보호 브랜치에 로컬 commit과 파일 변경이 이미 남아 안전장치 역할을 못 한다.
+preflight_push_targets() {
+    [ "$DO_PUSH" = true ] || return 0
+    [ "$DRY_RUN" = false ] || return 0
+
+    local target repo branch
+    for target in "${TARGETS[@]}"; do
+        case "$target" in
+            pim) repo="$GITLAB_REPO" ;;
+            ord|vcm|vsd) repo="${GITLAB_REPO}/${SUBMODULE_MAP[$target]}" ;;
+            *) continue ;;
+        esac
+
+        if ! git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            echo "push 대상 Git 저장소를 찾을 수 없다: $repo" >&2
+            return 1
+        fi
+        branch=$(git -C "$repo" symbolic-ref --quiet --short HEAD 2>/dev/null) || {
+            echo "detached HEAD에서는 push하지 않는다: $repo" >&2
+            return 1
+        }
+        case "$branch" in
+            master|main)
+                echo "보호 브랜치 '$branch'에는 sync --push를 허용하지 않는다: $repo" >&2
+                return 1
+                ;;
+        esac
+    done
+}
 
 # 이 sync 로 GitLab 에서 '지워질' 파일이 있는지 미리 잡는다.
 #
@@ -368,6 +412,9 @@ sync_pim() {
         rsync_includes+=(--include="${d}/" --include="${d}/**")
     done
     for f in "${PIM_FILES[@]}"; do
+        if [[ "$f" == */* ]]; then
+            rsync_includes+=(--include="${f%%/*}/")
+        fi
         rsync_includes+=(--include="${f}")
     done
 
@@ -498,6 +545,7 @@ update_submodule_refs() {
 }
 
 # --- 메인 실행 ---
+preflight_push_targets
 cd "$GITHUB_REPO"
 
 log "동기화 시작 ($(date '+%Y-%m-%d %H:%M:%S'))"

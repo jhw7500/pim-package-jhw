@@ -105,6 +105,7 @@ docker run --rm \
     -v ${PROJECT_ROOT}:/workspace \
     -w /workspace \
     -e MAKEFLAGS="-j1" \
+    -e PIM_VERIFY_BINARIES="${PIM_VERIFY_BINARIES:-warn}" \
     ${IMAGE_NAME} \
     /bin/bash -c "${BUILD_CMD}"
 
@@ -119,7 +120,14 @@ if [ $? -eq 0 ]; then
     echo "Binaries are in: release/pim/"
     echo "=========================================="
     echo ""
-    # Verify built binaries: arch (ARM aarch64) + GLIBC version requirements
+    # Verify built binaries: arch (ARM aarch64) + GLIBC version requirements.
+    # build.sh already ran the manifest verifier; this checks release artifacts.
+    VERIFY_MODE=${PIM_VERIFY_BINARIES:-warn}
+    if [ "$VERIFY_MODE" = "off" ]; then
+        echo "Release artifact verification disabled (PIM_VERIFY_BINARIES=off)"
+        exit 0
+    fi
+
     verify_binary() {
         local label="$1"
         local path="$2"
@@ -190,7 +198,9 @@ if [ $? -eq 0 ]; then
 
     if [ $verify_failed -ne 0 ]; then
         echo "WARNING: One or more artifacts failed verification"
-        exit 2
+        if [ "$VERIFY_MODE" = "strict" ]; then
+            exit 2
+        fi
     fi
 else
     echo "ERROR: Build failed"

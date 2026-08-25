@@ -20,8 +20,8 @@ set -euo pipefail
 # loopback이므로 GitHub commit 메시지에서 제외.
 # =============================================================================
 
-GITHUB_REPO="/home/jhw/ai/opencode/projects/pim-package-jhw"
-GITLAB_REPO="/home/jhw/ai/opencode/projects/pim-package"
+GITHUB_REPO="${GITHUB_REPO:-/home/jhw/ai/opencode/projects/pim-package-jhw}"
+GITLAB_REPO="${GITLAB_REPO:-/home/jhw/ai/opencode/projects/pim-package}"
 
 # 서브모듈 매핑: scope → GitLab 서브모듈 경로
 declare -A SUBMODULE_MAP=(
@@ -32,7 +32,16 @@ declare -A SUBMODULE_MAP=(
 
 # pim 본체 동기화 대상 (서브모듈 외)
 PIM_DIRS=("dist" "patch" "upgrade_file" "tools" "docker")
-PIM_FILES=("build.sh")
+PIM_FILES=(
+    "build.sh"
+    "docs/file_check_reboot-behavior.md"
+    "docs/pim-guardian-runbook.md"
+    "docs/runbook_final_stall.md"
+    "docs/session-lifecycle.md"
+    "docs/ord_vcm_conf-settings-analysis.md"
+    "test/test_final_stall_scenarios.md"
+    ".github/binary-manifest.json"
+)
 
 DRY_RUN=false
 DO_COMMIT=false
@@ -61,7 +70,7 @@ if [ ${#TARGETS[@]} -eq 0 ]; then
 
 대상:
   ord, vcm, vsd  — 해당 서브모듈만 동기화
-  pim            — dist, patch, upgrade_file, tools, docker, build.sh 동기화
+  pim            — 본체 코드 + 인수인계 파일 allowlist 동기화
   all            — 전부 동기화
 
 모드 (기본은 파일만 sync, commit/push 없음):
@@ -356,6 +365,9 @@ sync_pim() {
         rsync_includes+=(--include="${d}/" --include="${d}/**")
     done
     for f in "${PIM_FILES[@]}"; do
+        if [[ "$f" == */* ]]; then
+            rsync_includes+=(--include="${f%%/*}/")
+        fi
         rsync_includes+=(--include="${f}")
     done
 

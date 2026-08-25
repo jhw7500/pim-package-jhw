@@ -101,8 +101,13 @@ git commit -m "docs: GIT_RULES 문서 추가"
 | `ord` | `hwjo/ord.git` 서브모듈 | rsync → 서브모듈 레포 push |
 | `vcm` | `hwjo/_vcm.git` 서브모듈 | rsync → 서브모듈 레포 push |
 | `vsd` | `mhkim/vsd.git` 서브모듈 | rsync → 서브모듈 레포 push |
-| `dist`, `pim` | `jkpark/pim-package` 본체 | rsync → pim-package push |
-| `ci`, `docs` | 동기화 안 함 | GitHub 전용 |
+| `dist/`, `patch/`, `upgrade_file/`, `tools/`, `docker/`, `build.sh` | `jkpark/pim-package` 본체 | PIM 코드 allowlist |
+| 인수인계 문서 5개 + FINAL STALL 테스트 명세 | `jkpark/pim-package` 본체 | 파일 allowlist |
+| `.github/binary-manifest.json` | `jkpark/pim-package` 본체 | 바이너리 검증 도구의 데이터 파일 |
+| 그 밖의 `docs/`, `test/`, `.github/workflows/` | 동기화 안 함 | GitHub 전용 또는 저장소별 문서 |
+
+정확한 파일 목록은 `sync-to-gitlab.sh`와 `sync-from-gitlab.sh`의
+`PIM_FILES`가 양방향 공통 계약이다. `release/`는 빌드 산출물이므로 포함하지 않는다.
 
 ### 동기화 스크립트
 
@@ -110,9 +115,18 @@ git commit -m "docs: GIT_RULES 문서 추가"
 # 특정 모듈만
 ./sync-to-gitlab.sh ord
 
-# 전체 동기화
-./sync-to-gitlab.sh all
+# PIM 본체 변경 검토 후 로컬 GitLab commit까지만 생성
+./sync-to-gitlab.sh --dry-run pim
+./sync-to-gitlab.sh --commit pim
 ```
+
+`--push`는 대상 GitLab 저장소가 `master`, `main` 또는 detached HEAD이면 파일을
+복사하기 전에 중단한다. 실제 푸시는 기능 브랜치를 확인한 뒤 대상 ref를 명시한다.
+현재 인수인계 대상은 `feat/cam-link-diagnostics`이며 GitLab `master`에는 푸시하지
+않는다.
+
+테스트나 별도 작업 복제본에서는 `GITHUB_REPO`, `GITLAB_REPO` 환경변수로 기본
+경로를 덮어쓸 수 있다.
 
 동기화 커밋 메시지에 GitHub 커밋 내역이 자동으로 포함된다:
 
@@ -144,6 +158,11 @@ git commit -m "chore(dist): max9296 바이너리 업데이트 (v2.1)"
 # 4. GitHub에 push
 git push origin master
 
-# 5. GitLab 동기화
-./sync-to-gitlab.sh all
+# 5. GitLab 기능 브랜치에서 dry-run과 commit
+./sync-to-gitlab.sh --dry-run pim
+./sync-to-gitlab.sh --commit pim
+
+# 6. diff 검토 후 기능 브랜치를 명시해 push
+git -C /home/jhw/ai/opencode/projects/pim-package \
+  push origin HEAD:refs/heads/feat/cam-link-diagnostics
 ```

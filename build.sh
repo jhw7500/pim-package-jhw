@@ -18,6 +18,10 @@
 BASEDIR=${PWD}
 echo "Script location: ${BASEDIR}"
 
+run_binary_verification() {
+    bash "${BASEDIR}/tools/run_binary_verification.sh"
+}
+
 # Handle clean command
 if [ "$1" == "clean" ]; then
     CLEAN_TARGET="$2"
@@ -302,6 +306,7 @@ else
     esac
 
     echo "Module ${TARGET_MODULE} built and copied to release/"
+    run_binary_verification || exit $?
     exit 0
 fi
 
@@ -345,3 +350,5 @@ ugrade_old_zip_file="pim_update_"$(echo ${version})".tar"
 tar cvf "../${ugrade_old_zip_file}" ./
 
 echo "create ${ugrade_old_zip_file}"
+
+run_binary_verification || exit $?
