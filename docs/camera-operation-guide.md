@@ -1,4 +1,11 @@
-# PIM 카메라 동작 시나리오 가이드
+# PIM 카메라 동작 시나리오 가이드 (레거시 개요)
+
+> **주의:** 이 문서는 v0.5.9-dev 시점의 전체 구조를 설명하는 개요이며 일부
+> 주기·임계값은 현재 `master`와 다르다. 현행 운영 판단에는
+> [`pim-guardian-runbook.md`](./pim-guardian-runbook.md),
+> [`session-lifecycle.md`](./session-lifecycle.md),
+> [`file_check_reboot-behavior.md`](./file_check_reboot-behavior.md)를 우선 사용한다.
+> 이 문서의 숫자나 복구 단계만으로 단말 조치를 결정하지 않는다.
 
 > **버전**: v0.5.9-dev | **최종 갱신**: 2026-03-10
 > **대상**: pim-package (`/opt/pim/bin/`) 카메라 서브시스템

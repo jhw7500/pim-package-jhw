@@ -124,10 +124,14 @@ edgeconf의 카메라 채널(ch0~ch3)에 `vpuenc_h264` 인코더 파라미터를
 - `_collect_*` 결과에 `final_health_status`/`metric`/`window_min`/`epoch`/`heartbeat_epoch` 필드 추가.
   외부 fleet 모니터링에서 정체를 즉시 감지 가능.
 
-### 운영자 작업 (rollout 전)
+### 당시 운영자 작업 (역사 기록)
 
-1. fleet 단말에서 `tools/audit_srt_enable.sh` 실행 — srt_enable 키 누락 단말 식별.
-2. 누락 단말에 `tools/migrate_srt_enable.sh true` 적용 — `ord_vcm_conf.json`에 명시값 추가 + 백업.
+> 아래 `audit_srt_enable.sh`, `migrate_srt_enable.sh`는 당시 rollout용 일회성
+> 도구였으며 이후 제거됐다. 현재 운영에서는 실행하지 말고 `jq`로 값을 확인한 뒤
+> 승인된 설정 배포 절차로 `srt_enable`을 명시한다.
+
+1. 당시 fleet 단말에서 `tools/audit_srt_enable.sh`로 srt_enable 키 누락 단말을 식별했다.
+2. 당시 누락 단말에 `tools/migrate_srt_enable.sh true`를 적용해 명시값과 백업을 만들었다.
 3. 새 vcm binary + chk_cam_operate.sh 배포.
 4. `docs/runbook_final_stall.md` 운영자 공유.
 5. `test/test_final_stall_scenarios.md` 의 S1~S10 시나리오 1개 단말에서 통과 검증.

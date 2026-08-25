@@ -3,6 +3,8 @@
 > 대상: 현장 운영자, 개발자, QA
 > 
 > 목적: `pim_guardian.py` 로그만 보고도 정상/장애를 빠르게 판단하고, 즉시 조치 및 에스컬레이션 자료를 확보한다.
+>
+> 기준: 2026-08-25 `master`. 구현 위치는 행 번호가 아니라 함수/필드명을 기준으로 확인한다.
 
 ---
 
@@ -63,8 +65,8 @@
          `- [System: CPU(46.3%/78C)] [DiskIO: SD(mmcblk1 0.0%/0.0KB/s) eMMC(mmcblk0 2.1%/128.0KB/s)] [RAMDelta:+64.0KB/s] [Peaks: Temp(78C) MinVolt(22.60V)]
          ! [Recent Error] None
          ! [Error List] None
-         ! [Camera Health] effective=4/4 reason=ok hw=4/4 bgMask=0x0
-         |- [TMP: file=OK fileAge=27s camErrStreak=0 done(video/srt)=0/0 syncRaw=N/A syncDebounced=OK bgCamMask=0x0 vhl=True sdErrAge=0s]
+         ! [Camera Health] effective=4/4 reason=ok hw=4/4 bgMask=0x0 channels=NONE
+         |- [TMP: file=OK fileAge=27s camErrStreak=0 done(video/srt)=0/0 syncRaw=N/A syncDebounced=OK bgCamMask=0x0 bgCamCh=NONE vhl=True sdErrAge=0s]
 ```
 
 ---
@@ -128,7 +130,7 @@
 - 쉽게 말해: 파일 생성 체크 성공/실패 상태
 - `fileAge` : `file_check` 마지막 갱신 후 경과초
 - 쉽게 말해: 체크 값이 얼마나 오래됐는지
-- `camErrStreak` : `/tmp/bg_cam_err_streak`
+- `camErrStreak` : `/tmp/cam_state/streak`
 - 쉽게 말해: 카메라 에러가 몇 번 연속 발생했는지
 - `done(video/srt)` : 세션 완료 마커 개수
 - 쉽게 말해: 비디오/자막 완료 파일 개수 비교
@@ -145,7 +147,7 @@
 - `sdErrAge` : `/tmp/err_sdcard.log` 경과초
 - 쉽게 말해: SD 관련 에러가 최근에 있었는지
 
-### Final 라인 (2026-05-15 신규)
+### Final 라인
 
 TMP 라인 바로 다음에 별행으로 출력됨. Final-path 워치독 상태 5필드.
 
@@ -168,7 +170,10 @@ TMP 라인 바로 다음에 별행으로 출력됨. Final-path 워치독 상태 
 - `status=OK hbAge=<window*60 이내>` → 정상
 - `status=STALL metric=<n>` → 자동 escalation 진행 중 (1~2: kill_test, 3~4: init_cam, 5+: reboot)
 - `status=RAM_ONLY` / `REC_DISABLED` → 의도된 비활성, 워치독 skip 중
-- `status=WARMUP metric=120 이상` → 시작 워밍업이 끝났는데 status 갱신 안 됨 → chk_cam_operate.sh 정지 의심
+- `status=WARMUP` → 계산된 시작 유예시간 안이면 정상. 기본 설정의 유예시간은
+  `120 + 10 + 10 = 140`초다.
+- WARMUP이 계산된 유예시간보다 오래 지속되면 raw telemetry의 4번째 epoch와
+  현재 시각을 비교하고 `chk_cam_operate.sh` 정지를 의심한다.
 
 ### 초보자용 한 줄 해석 예시
 
@@ -179,7 +184,7 @@ TMP 라인 바로 다음에 별행으로 출력됨. Final-path 워치독 상태 
 - `bgCamMask=0x5` : CAM0 + CAM2 채널 에러
 - `CamErr:CAM0,CAM2` 또는 `bgCamCh=CAM0,CAM2` : 사람이 바로 읽는 채널 표기
 
-### Final-path 워치독 필드 (2026-05-15 신규)
+### Final-path 워치독 필드
 
 `chk_cam_operate.sh CheckFinalArrival`이 60초마다 `/tmp/cam_final_health` 1줄을 갱신하고,
 `MovePartFile` 성공 시 `/tmp/cam_last_final_ts` heartbeat를 찍는다. guardian이 이 2개 파일을 collect하여 다음 5필드로 노출한다.
@@ -201,7 +206,7 @@ TMP 라인 바로 다음에 별행으로 출력됨. Final-path 워치독 상태 
 | `RAM_ONLY` | 0 | SD BAD/write-disable → SD final 검사 의도적 skip (정상 RAM-only) |
 | `REC_DISABLED` | 0 | 모든 채널 disabled 또는 capture 모드+record off → 녹화 없음 |
 | `BUSY` | 0 | restart/init/kill 사이클 진행 중 → 검사 일시 skip |
-| `WARMUP` | 현재 timer 초 (0~119) | 시작 후 워밍업 중 (~120s) |
+| `WARMUP` | 현재 timer 초 | 시작 후 워밍업 중. 기준은 `rec_time*2 + file_check_delay + startup_grace_extra_sec`이며 기본 140초 |
 | `STALL` | stall_cnt | **정체 감지**. escalation 진행 중 (자동 복구 시도) |
 
 #### 운영 시 빠른 확인
@@ -216,7 +221,12 @@ date +%s                          # 비교 기준
 - `STALL <n>` 이 1~2 → 자동 kill_test.sh 진행 중 (지켜보기)
 - `STALL <n>` 이 3~4 → init_cam.sh 진행 중
 - `STALL <n>` 이 5+ → reboot 직전 (file_chk_reboot=true 시)
-- `WARMUP` 이 120 이상이면 워치독이 멈춰있다는 신호 (chk_cam_operate.sh hang)
+- 기본 설정에서 `WARMUP 120`은 정상 범위다. WARMUP 지속 여부는 raw telemetry
+  epoch와 계산된 유예시간을 함께 확인한다.
+
+Final 라인은 관측용이다. `status=STALL` 자체가 guardian의 `guardian_bits`나
+`--recovery` 요청 조건을 직접 올리지는 않는다. FINAL STALL의 kill/init/reboot
+사다리는 `chk_cam_operate.sh CheckFinalArrival()`이 소유한다.
 
 상세 진단/대응: [runbook_final_stall.md](./runbook_final_stall.md)
 
@@ -351,7 +361,7 @@ guardian은 `guardian_bits`를 만들고, 아래 조건일 때만 복구 요청 
 ### H. FINAL STALL (사일런트 정체)
 
 증상:
-- `final_health_status = STALL <n>` 지속
+- Final 라인의 `status=STALL metric=<n>` 지속
 - `final_heartbeat_epoch` 가 `final_health_epoch` 기준 `rec_min * 120` 초보다 오래된 상태
 - syslog 에 `[RST] FINAL STALL: no new <vhl>_* in <final_dir>` 반복
 - 그러나 `Heartbeat:OK` (영상 fragment는 만들어지고 있음)
@@ -364,8 +374,11 @@ guardian은 `guardian_bits`를 만들고, 아래 조건일 때만 복구 요청 
 조치:
 1. `cat /tmp/cam_final_health /tmp/cam_last_final_ts && date +%s`
 2. `ls -la /tmp/session_*.{video_done,srt_done,all_done} 2>/dev/null` — 어느 마커가 누락인지
-3. `jq '.VCM.srt_enable' /root/shared_v/ord_vcm_conf.json` — null이면 `tools/migrate_srt_enable.sh true`
-4. escalation은 자동 진행 (kill_test → init_cam → reboot). 5분 지나도 회복 안 되면 hardware 의심
+3. `jq '.VCM.srt_enable' /root/shared_v/ord_vcm_conf.json` — null은 현재
+   구현에서 `false`다. 운영 의도와 다르면 승인된 설정 배포 경로로 명시값을 넣고
+   vcm/gstApp을 포함한 파이프라인을 재기동한다.
+4. escalation은 자동 진행한다(kill_test → init_cam → reboot). `stall_cnt`와
+   journal의 단계가 진행하지 않거나 reboot 후에도 재발하면 storage/hardware를 확인한다.
 5. 상세 진단: [runbook_final_stall.md](./runbook_final_stall.md)
 
 ---
@@ -405,5 +418,5 @@ guardian은 `guardian_bits`를 만들고, 아래 조건일 때만 복구 요청 
 - `docs/session-lifecycle.md` — 세션 마커 + `/tmp` 파일 명세 8.4
 - `docs/cpu-usage-analysis.md`
 - `docs/runbook_final_stall.md` — FINAL STALL 시나리오 H 상세 절차
-- `tools/audit_srt_enable.sh`, `tools/migrate_srt_enable.sh` — srt_enable 키 점검/마이그레이션
+- `docs/file_check_reboot-behavior.md` — 재부팅 게이트와 5개 분기
 - `test/test_final_stall_scenarios.md` — 워치독 재현 시나리오 S1~S10
