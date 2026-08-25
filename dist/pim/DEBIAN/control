@@ -5,7 +5,7 @@ Breaks: cis
 Section: test
 Priority: optional
 Architecture: arm64 
-Depends: 
+Depends: python3, python3-yaml
 Recommends: 
 Maintainer: jhw <hwjo@cantops.biz> 
 Homepage: 

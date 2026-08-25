@@ -3,10 +3,13 @@
 
 from __future__ import annotations
 
+import builtins
 import importlib.util
+import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,6 +59,71 @@ class UpdateNetworkValidationTest(unittest.TestCase):
                 except Exception as exc:
                     self.fail(f"{path} raised for invalid IPv4 input: {exc}")
                 self.assertEqual("", result)
+
+    def test_non_string_static_ip_values_are_rejected(self):
+        invalid_values = (
+            (1234, "255.255.255.0"),
+            (True, "255.255.255.0"),
+            ("192.168.0.10", 24),
+        )
+
+        for path, module in self.modules:
+            for address, netmask in invalid_values:
+                with self.subTest(path=path, address=address, netmask=netmask):
+                    try:
+                        result = module.calcu_set_static_ip(address, netmask)
+                    except Exception as exc:
+                        self.fail(f"{path} raised for non-string IPv4 input: {exc}")
+                    self.assertEqual("", result)
+
+    def test_invalid_static_ip_aborts_before_network_side_effects(self):
+        edgeconf = {
+            "NETWORK": {
+                "used": "ETH0",
+                "ETH0": {
+                    "method": "static",
+                    "address": "not-an-ip",
+                    "netmask": "255.255.255.0",
+                },
+                "ETH1": {"method": "dhcp"},
+                "WLAN0": {
+                    "method": "dhcp",
+                    "security": "OPEN",
+                    "ssid": "test-network",
+                },
+            }
+        }
+
+        for path, module in self.modules:
+            with self.subTest(path=path), tempfile.TemporaryDirectory() as directory:
+                directory_path = Path(directory)
+                config_path = directory_path / "edgeconf.json"
+                config_path.write_text(json.dumps(edgeconf), encoding="utf-8")
+                shell_calls = []
+
+                def redirected_open(file, *args, **kwargs):
+                    file_path = Path(file)
+                    if file_path.parent == Path("/tmp"):
+                        file_path = directory_path / file_path.name
+                    return builtins.open(file_path, *args, **kwargs)
+
+                def record_shell_call(command):
+                    shell_calls.append(command)
+                    return True
+
+                with mock.patch.object(
+                    module, "get_global_conf", return_value=str(config_path)
+                ), mock.patch.object(
+                    module, "_shell", side_effect=record_shell_call
+                ), mock.patch.object(
+                    module, "open", side_effect=redirected_open, create=True
+                ), mock.patch.object(
+                    module.os.path, "isfile", return_value=False
+                ):
+                    result = module.update_network()
+
+                self.assertFalse(result)
+                self.assertEqual([], shell_calls)
 
 
 if __name__ == "__main__":

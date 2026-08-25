@@ -14,22 +14,28 @@ on:
     paths:
       - 'dist/pim/opt/pim/bin/**'
       - 'dist/pim/opt/pim/config/**'
+      - 'dist/pim/opt/cis/bin/update_network.py'
       - 'dist/pim/etc/systemd/system/**'
+      - 'dist/pim/DEBIAN/control'
       - 'dist/pim/DEBIAN/postinst'
       - 'docs/camera-health/**'
       - 'test/camera_health/**'
       - 'test/cam_link/**'
+      - 'test/test_update_network_validation.py'
       - '.github/workflows/camera-tests.yml'
   pull_request:
     branches: [master]
     paths:
       - 'dist/pim/opt/pim/bin/**'
       - 'dist/pim/opt/pim/config/**'
+      - 'dist/pim/opt/cis/bin/update_network.py'
       - 'dist/pim/etc/systemd/system/**'
+      - 'dist/pim/DEBIAN/control'
       - 'dist/pim/DEBIAN/postinst'
       - 'docs/camera-health/**'
       - 'test/camera_health/**'
       - 'test/cam_link/**'
+      - 'test/test_update_network_validation.py'
       - '.github/workflows/camera-tests.yml'
   workflow_dispatch:
 
@@ -62,7 +68,7 @@ jobs:
         run: |
           set -euo pipefail
           # jsonschema: 테스트 전용. 패키지 entrypoint 는 이걸 쓰지 않는다.
-          python3 -m pip install --quiet jsonschema
+          python3 -m pip install --quiet jsonschema pyyaml
           # jq: config_bootstrap_test.sh, git: package_executable_test.py 가
           # `git ls-files --stage` 로 실행 비트를 검사한다. 러너 이미지에 이미
           # 있지만 없을 때 조용히 건너뛰지 않도록 명시적으로 확인한다.
@@ -88,6 +94,11 @@ jobs:
       - name: cam_link suite
         run: bash test/cam_link/run_all.sh
 
+      - name: network config validation suite
+        run: >-
+          python3 -m unittest discover -s test
+          -p 'test_update_network_validation.py' -v
+
       - name: Summary
         if: always()
         run: |
@@ -100,4 +111,5 @@ jobs:
             echo "  capture probe, MAX9296 producer, package executable mode, shadow"
             echo "  aggregator, legacy/v1 comparator, boot config snapshot"
             echo "- \`test/cam_link/run_all.sh\` — 링크 판정·복구 로직, frame-sync 진단"
+            echo "- \`test/test_update_network_validation.py\` — netplan YAML 및 static IP 선검증"
           } >> "$GITHUB_STEP_SUMMARY"
