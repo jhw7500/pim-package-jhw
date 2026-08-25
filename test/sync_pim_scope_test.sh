@@ -55,7 +55,6 @@ selected=(
     "docs/session-lifecycle.md"
     "docs/ord_vcm_conf-settings-analysis.md"
     "test/test_final_stall_scenarios.md"
-    ".github/binary-manifest.json"
 )
 
 for path in "${selected[@]}"; do
@@ -68,11 +67,19 @@ write_fixture "$github" "build.sh" "github build"
 write_fixture "$github" "docs/github-only.md" "do not sync"
 write_fixture "$github" "test/github-only.sh" "do not sync"
 write_fixture "$github" "test/tools/github-only.sh" "do not sync nested tools"
+write_fixture "$github" ".github/binary-manifest.json" "github local manifest"
 write_fixture "$github" ".github/workflows/github-only.yml" "do not sync"
 
 write_fixture "$gitlab" "docs/gitlab-only.md" "preserve gitlab doc"
 write_fixture "$gitlab" "test/gitlab-only.sh" "preserve gitlab test"
+write_fixture "$gitlab" ".github/binary-manifest.json" "gitlab repository local manifest"
 write_fixture "$gitlab" ".github/workflows/gitlab-only.yml" "preserve gitlab workflow"
+
+# dry-run은 checksum으로 변경을 찾는다. 실제 복사도 같은 기준이어야 하므로,
+# size와 mtime은 같지만 내용은 다른 선택 파일을 만든다.
+write_fixture "$gitlab" "docs/session-lifecycle.md" \
+    "gitlab selected: docs/session-lifecycle.md"
+touch -r "$github/docs/session-lifecycle.md" "$gitlab/docs/session-lifecycle.md"
 
 git_init "$github" master
 git -C "$github" add -A
@@ -96,6 +103,8 @@ assert_absent "$gitlab/docs/github-only.md"
 assert_absent "$gitlab/test/github-only.sh"
 assert_absent "$gitlab/test/tools/github-only.sh"
 assert_absent "$gitlab/.github/workflows/github-only.yml"
+[ "$(cat "$gitlab/.github/binary-manifest.json")" = "gitlab repository local manifest" ] || \
+    fail "GitLab 저장소 전용 binary manifest가 덮어써짐"
 [ -f "$gitlab/docs/gitlab-only.md" ] || fail "GitLab 전용 문서가 삭제됨"
 [ -f "$gitlab/test/gitlab-only.sh" ] || fail "GitLab 전용 테스트가 삭제됨"
 [ -f "$gitlab/.github/workflows/gitlab-only.yml" ] || fail "GitLab 전용 workflow가 삭제됨"
@@ -116,6 +125,8 @@ GITHUB_REPO="$github" GITLAB_REPO="$gitlab" \
 assert_same "$gitlab/docs/session-lifecycle.md" "$github/docs/session-lifecycle.md"
 assert_absent "$github/docs/gitlab-new-only.md"
 assert_absent "$github/test/tools/gitlab-new-only.sh"
+[ "$(cat "$github/.github/binary-manifest.json")" = "github local manifest" ] || \
+    fail "GitHub 저장소 전용 binary manifest가 덮어써짐"
 [ -f "$github/docs/github-only.md" ] || fail "GitHub 전용 문서가 삭제됨"
 [ -f "$github/test/tools/github-only.sh" ] || fail "GitHub 전용 중첩 test/tools 파일이 삭제됨"
 

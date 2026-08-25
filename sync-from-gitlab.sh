@@ -40,7 +40,6 @@ PIM_FILES=(
     "docs/session-lifecycle.md"
     "docs/ord_vcm_conf-settings-analysis.md"
     "test/test_final_stall_scenarios.md"
-    ".github/binary-manifest.json"
 )
 
 DRY_RUN=false
@@ -334,7 +333,8 @@ sync_submodule() {
         return 0
     fi
 
-    rsync -a --delete \
+    # dry-run과 실제 복사의 변경 판정을 맞춘다.
+    rsync -a --delete --checksum \
         --filter=':- .gitignore' \
         --exclude='.git' \
         --exclude='upgrade_file/dpkg/pimwebserver_*.deb' \
@@ -421,7 +421,7 @@ sync_pim() {
         return 0
     fi
 
-    rsync -a --delete \
+    rsync -a --delete --checksum \
         --filter=':- .gitignore' \
         --exclude='.git' \
         --exclude='upgrade_file/dpkg/pimwebserver_*.deb' \

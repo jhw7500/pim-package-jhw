@@ -7,6 +7,9 @@
 
 이 저장소에서 정식 GitLab 패키지로 동기화할 때 `sc16is7xx_ext.ko`는 제외한다.
 따라서 이 바이너리의 변경은 정식 릴리스로 자동 전파되지 않는다.
+`.github/binary-manifest.json`도 저장소별 바이너리 증명서이므로 동기화에서
+제외한다. GitHub manifest는 아래 개인 workflow 바이너리를, GitLab manifest는
+정식 GitLab 패키지 바이너리를 각각 기록해야 한다.
 
 `sc16is7xx_ext.ko`는 별도 Git 저장소에서 빌드되는 SC16IS752 SPI UART
 out-of-tree kernel module이다. 자동 deploy 도구가 없어 빌드 산출물을 수동으로
