@@ -5,6 +5,17 @@
 이 레포는 GitHub에서 monorepo로 관리하며, GitLab 서브모듈 구조와 동기화한다.
 커밋 시 **모듈 단위 분리**를 필수로 지켜야 동기화 스크립트가 정상 동작한다.
 
+## 작업 순서와 push 승인
+
+1. `pim-package-jhw`에서 변경·문서·바이너리·검증을 먼저 완료한다.
+2. 로컬 커밋과 전체 검증 결과를 확인한다.
+3. 사용자 승인을 받은 뒤에만 GitHub로 push한다.
+4. GitHub 반영이 끝난 뒤 회사 GitLab 기능 브랜치 동기화를 시작한다.
+5. GitLab도 로컬 커밋과 diff를 먼저 확인하고, 별도 사용자 승인 후 push한다.
+
+GitHub와 GitLab 모두 승인 없는 원격 push를 하지 않는다. 회사 GitLab의
+`master`에는 직접 push하지 않고 기능 브랜치와 MR을 사용한다.
+
 ## 커밋 메시지 형식
 
 [Conventional Commits](https://www.conventionalcommits.org/) 기반:
@@ -158,14 +169,14 @@ cp /path/to/new/max9296.ko dist/modules/
 git add dist/modules/max9296.ko
 git commit -m "chore(dist): max9296 바이너리 업데이트 (v2.1)"
 
-# 4. GitHub에 push
+# 4. 전체 검증 후 사용자 승인을 받아 GitHub에 push
 git push origin master
 
 # 5. GitLab 기능 브랜치에서 dry-run과 commit
 ./sync-to-gitlab.sh --dry-run pim
 ./sync-to-gitlab.sh --commit pim
 
-# 6. diff 검토 후 기능 브랜치를 명시해 push
+# 6. diff 검토 후 별도 사용자 승인을 받아 기능 브랜치를 명시해 push
 git -C /home/jhw/ai/opencode/projects/pim-package \
   push origin HEAD:refs/heads/feat/cam-link-diagnostics
 ```
