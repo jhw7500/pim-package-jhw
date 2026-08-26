@@ -47,6 +47,10 @@ MANIFEST = ROOT / ".github/binary-manifest.json"
 
 # 매니페스트에 등록돼 있어야 하는 대상. 여기 걸리는데 매니페스트에 없으면 경고한다.
 TRACKED_PATTERN = re.compile(r"^dist/.*?(\.ko|/usr/local/bin/[^/]+)$")
+TRACKED_EXACT_PATHS = {
+    "dist/pim/usr/lib/gstreamer-1.0/libgstvpu.so",
+    "dist/pim/usr/lib/libfslvpuwrap.so.3.0.0",
+}
 
 LFS_POINTER_PREFIX = b"version https://git-lfs"
 
@@ -319,7 +323,7 @@ def check_entry(entry: Dict[str, Any]) -> Tuple[List[Finding], Dict[str, str]]:
 def unregistered(known: List[str]) -> List[str]:
     out = []
     for line in git("ls-files").splitlines():
-        if TRACKED_PATTERN.search(line) and line not in known:
+        if (TRACKED_PATTERN.search(line) or line in TRACKED_EXACT_PATHS) and line not in known:
             out.append(line)
     return out
 

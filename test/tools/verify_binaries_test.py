@@ -125,6 +125,7 @@ class Tests:
             self.misuse_tests(work)
             self.update_tests(work)
             self.scope_tests(work)
+            self.vpu_artifact_tests(work)
             self.elf_tests(work)
         print()
         print(f"verify_binaries --update: {self.passed} passed / {self.failed} failed")
@@ -237,6 +238,37 @@ class Tests:
         self.check(entry_of(manifest, GSTAPP)["required_strings"]
                    == ["없을리없는문자열은아님"],
                    "required_strings 는 --update 가 건드리지 않는다")
+
+    # --- 활성 VPU ABI 세트는 두 파일 모두 등록돼야 한다 ---------------------
+
+    def vpu_artifact_tests(self, work: Path) -> None:
+        tree = work / "unregistered-vpu-libraries"
+        targets = [
+            "dist/pim/usr/lib/gstreamer-1.0/libgstvpu.so",
+            "dist/pim/usr/lib/libfslvpuwrap.so.3.0.0",
+        ]
+        for target in targets:
+            (tree / target).parent.mkdir(parents=True, exist_ok=True)
+            (tree / target).write_bytes(b"VPU library fixture")
+        (tree / "tools").mkdir()
+        (tree / ".github").mkdir()
+        shutil.copy(SCRIPT, tree / "tools" / SCRIPT.name)
+        write(tree / ".github/binary-manifest.json", {
+            "schema": 1,
+            "binaries": [],
+        })
+        for args in (["init", "-q"], ["add", "-A"]):
+            subprocess.run(["git", *args], cwd=str(tree),
+                           capture_output=True, check=True)
+
+        result = subprocess.run(
+            [sys.executable, str(tree / "tools" / SCRIPT.name), "--strict"],
+            cwd=str(tree), capture_output=True, text=True)
+        report = result.stdout + result.stderr
+        self.check(result.returncode == 1,
+                   "미등록 활성 VPU ABI 세트는 --strict 를 실패시킨다")
+        self.check(all(target in report for target in targets),
+                   "미등록 VPU 플러그인과 wrapper 경로가 모두 보고된다")
 
 
     # --- arch 를 선언했는데 ELF 가 아니면 승인하지 않는다 -------------------

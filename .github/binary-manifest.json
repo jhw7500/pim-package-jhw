@@ -32,10 +32,10 @@
       "module_version": "2.7",
       "source": {
         "repo": "jhw7500/max9296",
-        "commit": "edd8fda",
+        "commit": "acd88da",
         "build": "./make-for-imx8 (Yocto SDK 5.10-hardknott, cortexa53-crypto-poky-linux)"
       },
-      "note": "AE 복원 경쟁 조건 수정 포함본 (max9296#27, #30). 수동 AE 설정의 실효 여부가 스트림 라이프사이클 순서에 따라 갈리던 문제로, 콜드부트는 설정값이 이기고 앱 재기동은 하드코딩 AUTO 가 이겼다 (max9296#26). 2.6 은 enable 스레드의 복원을 소모성 게이트와 무관하게 재적용하게 고쳤고, 2.7 은 그 게이트인 ctrl_cache.pending 자체를 제거했다 (max9296#28, #29). 병렬 prepare ABI + 전원 참조 인수 수정(max9296#18, #22)도 계속 포함된다 - required_strings 의 max9296_prepare_adopt_power_locked 가 빠지면 벤더 ISI 의 s_power 누수로 prepare 가 영구 EBUSY 인 구버전이다. LFS 라 CI 체크아웃에서는 포인터로만 보이며, 포인터의 oid 가 곧 내용 sha256 이라 다운로드 없이 대조된다. srcversion 은 A490660F641EEB5577DD19B 이고 source.commit acd88da 에서 ./make-for-imx8 clean 후 빌드했다. 이 빌드에는 BTI 랜딩패드가 없다(-mbranch-protection=pac-ret+leaf). 이 호스트의 커널 config 가 시점에 따라 ARM64_BTI_KERNEL 유무로 흔들려 같은 소스에서 sha 가 달라질 수 있으니, 대조는 sha256 이 아니라 srcversion 으로 한다. 타깃이 Cortex-A53(ARMv8.0, CPU part 0xd03)이라 bti 는 HINT 공간 NOP 이고 동작 차이는 없다. 2026-08-21 온타겟에서 이 바이너리 그대로 검증했다(sha256 로컬·보드 일치) - 콜드 정착 후와 respawn 2 회 모두 ch0 AE_CTRL 0x0290 manual 유지. 다만 **보드 런타임은 아직 2.5 이며**, 이 패키지를 설치하는 시점에 2.7 이 된다.",
+      "note": "AE 복원 경쟁 조건, 병렬 prepare ABI, 전원 참조 수정이 포함된 2.7 빌드다. source.commit acd88da에서 clean 빌드했고 srcversion은 A490660F641EEB5577DD19B다. 이후 배포 당시 HEAD edd8fda와 제품 소스는 같고 cam_hard_reset.sh만 다르므로 바이너리 기준은 실제 빌드 커밋 acd88da로 기록한다. 2026-08-21 이 파일의 SHA를 보드와 대조한 뒤 콜드 정착 및 respawn 2회에서 ch0 manual AE 유지를 확인했다. 보드 런타임은 아직 2.5이며 이 패키지를 설치할 때 2.7이 된다. BTI 유무로 같은 srcversion의 SHA가 달라질 수 있으나 Cortex-A53에서 동작 차이는 없다.",
       "required_strings": [
         "dev_attr_prepare",
         "max9296_prepare_adopt_power_locked",
@@ -55,6 +55,44 @@
         "build": "./make-for-imx8 (Yocto SDK 5.10-hardknott, cortexa53-crypto-poky-linux)"
       },
       "note": "패키지 커밋 158fff4 가 상위 source commit 1788388을 기록한다. 마지막 드라이버 변경 85a3de4와 검증 당시 source repo master(fb086e0)는 모두 sc16is7xx.c blob 070bb868090420f23bebce8bfc1cd17173d20276을 가진다. 이 바이너리는 update_bin.sh 없이 수동 복사한 개인 workflow용 수정본이며, 정식 GitLab pim-package의 역사적 9f71cb9/62675b6e 계열 바이너리와는 별도로 유지한다. 같은 source blob도 빌드 환경에 따라 SHA-256과 Build ID가 달라질 수 있으므로 기존 ELF 재현은 별도로 검증한다.\nmode 가 100755 인 것은 같은 디렉터리의 max9296.ko(100644)와 어긋나지만 최초 추가(2025-09-18)부터 그랬다. postinst 는 이 파일을 /lib/modules/*/extra/ 로 복사할 뿐이고 모듈 로드에 exec 비트는 필요 없다. 여기서는 현실을 기록한다 — 644 로 적으면 즉시 오경보가 난다. 정리하려면 파일 모드를 바꾸는 별도 변경으로 다룬다."
+    },
+    {
+      "path": "dist/pim/usr/lib/gstreamer-1.0/libgstvpu.so",
+      "sha256": "d83594447b7dac184c019371c0c296b72345585913ed03adf6e0a56f60a38b27",
+      "size": 111720,
+      "mode": "100755",
+      "arch": "aarch64",
+      "source": {
+        "repo": "jhw7500/imx-vpu",
+        "commit": "5b9573c",
+        "build": "./setup-deps.sh && ./build.sh reconf; SDK strip --strip-unneeded"
+      },
+      "required_strings": [
+        "qp-min",
+        "qp-max",
+        "H264 profile",
+        "H264 level"
+      ],
+      "note": "활성 GStreamer VPU 플러그인. wrapper와 같은 ABI 세트로 배포한다. 패키지 최초 반영 8328eea, GNU Build ID 0d13ca40d28a8f21c54d30f4a5f1032debac9f5b. 원본 빌드 시각을 고정한 재빌드와 비교하면 .note.gnu.build-id 20바이트만 달랐고, 해당 section 제거 후 공통 SHA-256은 e57a8655cf829dfe5874d1f812d815ba488d7fcce0e9cc6f7ae17db20355eb2f다."
+    },
+    {
+      "path": "dist/pim/usr/lib/libfslvpuwrap.so.3.0.0",
+      "sha256": "03980af335703b0352a9a43f2dff62657671db5aaf822e476a415d5e762a4927",
+      "size": 58576,
+      "mode": "100755",
+      "arch": "aarch64",
+      "source": {
+        "repo": "jhw7500/imx-vpu",
+        "commit": "5b9573c",
+        "build": "./setup-deps.sh && ./build.sh reconf; SDK strip --strip-unneeded"
+      },
+      "required_strings": [
+        "Unsupported H264 encoding profile",
+        "Unsupported H264 encoding level",
+        "Unsupported HEVC encoding profile",
+        "Unsupported HEVC encoding level"
+      ],
+      "note": "활성 VPU wrapper. libfslvpuwrap.so.3 심볼릭 링크와 플러그인을 한 세트로 배포한다. 패키지 최초 반영 8328eea, GNU Build ID 1c5740bed9d68420fc690f8fa86724eae03b8a4c. 원본 빌드 시각을 고정한 재빌드와 비교하면 .note.gnu.build-id 20바이트만 달랐고, 해당 section 제거 후 공통 SHA-256은 3256a7d4ab7c56020e7c7a4a4a490e1dddffe1748993afb7ef8a3aae7c12e8f7다."
     },
     {
       "path": "dist/pim/usr/local/bin/streamApp",
