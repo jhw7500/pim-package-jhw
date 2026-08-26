@@ -69,11 +69,15 @@ write_fixture "$github" "test/github-only.sh" "do not sync"
 write_fixture "$github" "test/tools/github-only.sh" "do not sync nested tools"
 write_fixture "$github" ".github/binary-manifest.json" "github local manifest"
 write_fixture "$github" ".github/workflows/github-only.yml" "do not sync"
+write_fixture "$github" "dist/pim/opt/pim/driver/laird_backport.tar" \
+    "github local Summit archive"
 
 write_fixture "$gitlab" "docs/gitlab-only.md" "preserve gitlab doc"
 write_fixture "$gitlab" "test/gitlab-only.sh" "preserve gitlab test"
 write_fixture "$gitlab" ".github/binary-manifest.json" "gitlab repository local manifest"
 write_fixture "$gitlab" ".github/workflows/gitlab-only.yml" "preserve gitlab workflow"
+write_fixture "$gitlab" "dist/pim/opt/pim/driver/laird_backport.tar" \
+    "gitlab local Summit archive"
 
 # dry-run은 checksum으로 변경을 찾는다. 실제 복사도 같은 기준이어야 하므로,
 # size와 mtime은 같지만 내용은 다른 선택 파일을 만든다.
@@ -105,6 +109,8 @@ assert_absent "$gitlab/test/tools/github-only.sh"
 assert_absent "$gitlab/.github/workflows/github-only.yml"
 [ "$(cat "$gitlab/.github/binary-manifest.json")" = "gitlab repository local manifest" ] || \
     fail "GitLab 저장소 전용 binary manifest가 덮어써짐"
+[ "$(cat "$gitlab/dist/pim/opt/pim/driver/laird_backport.tar")" = \
+    "gitlab local Summit archive" ] || fail "GitLab Summit tar가 정방향 sync로 덮어써짐"
 [ -f "$gitlab/docs/gitlab-only.md" ] || fail "GitLab 전용 문서가 삭제됨"
 [ -f "$gitlab/test/gitlab-only.sh" ] || fail "GitLab 전용 테스트가 삭제됨"
 [ -f "$gitlab/.github/workflows/gitlab-only.yml" ] || fail "GitLab 전용 workflow가 삭제됨"
@@ -127,6 +133,8 @@ assert_absent "$github/docs/gitlab-new-only.md"
 assert_absent "$github/test/tools/gitlab-new-only.sh"
 [ "$(cat "$github/.github/binary-manifest.json")" = "github local manifest" ] || \
     fail "GitHub 저장소 전용 binary manifest가 덮어써짐"
+[ "$(cat "$github/dist/pim/opt/pim/driver/laird_backport.tar")" = \
+    "github local Summit archive" ] || fail "GitHub Summit tar가 역방향 sync로 덮어써짐"
 [ -f "$github/docs/github-only.md" ] || fail "GitHub 전용 문서가 삭제됨"
 [ -f "$github/test/tools/github-only.sh" ] || fail "GitHub 전용 중첩 test/tools 파일이 삭제됨"
 

@@ -115,6 +115,7 @@ git commit -m "docs: GIT_RULES 문서 추가"
 | `dist/`, `patch/`, `upgrade_file/`, `tools/`, `docker/`, `build.sh` | `jkpark/pim-package` 본체 | PIM 코드 allowlist |
 | 인수인계 문서 5개 + FINAL STALL 테스트 명세 | `jkpark/pim-package` 본체 | 파일 allowlist |
 | `.github/binary-manifest.json` | 각 저장소 로컬 | 동기화 안 함 — 저장소별 바이너리 증명서 |
+| `dist/pim/opt/pim/driver/laird_backport.tar` | 각 저장소 로컬 | 검사·동기화 안 함 — Summit 아카이브는 별도 관리 |
 | 그 밖의 `docs/`, `test/`, `.github/workflows/` | 동기화 안 함 | GitHub 전용 또는 저장소별 문서 |
 
 정확한 파일 목록은 `sync-to-gitlab.sh`와 `sync-from-gitlab.sh`의
@@ -122,6 +123,8 @@ git commit -m "docs: GIT_RULES 문서 추가"
 `sc16is7xx_ext.ko`는 두 저장소가 의도적으로 다른 정식 바이너리를 유지하므로,
 `.github/binary-manifest.json`도 자동 동기화하지 않는다. 각 저장소에서 실제
 바이너리와 함께 갱신하고 `tools/verify_binaries.py --strict`로 검증한다.
+`laird_backport.tar`는 이 매니페스트 검사와 양방향 동기화에서 모두 제외하며,
+GitHub·GitLab 패키지에 이미 있는 파일을 각각 그대로 보존한다.
 
 ### 동기화 스크립트
 

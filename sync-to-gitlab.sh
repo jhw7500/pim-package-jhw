@@ -204,6 +204,7 @@ rsync_dry_raw() {
         --exclude='.git' \
         --exclude='upgrade_file/dpkg/pimwebserver_*.deb' \
         --exclude='dist/pim/opt/pim/driver/sc16is7xx_ext.ko' \
+        --exclude='dist/pim/opt/pim/driver/laird_backport.tar' \
         "$@") || rc=$?
     if [ "$rc" -ne 0 ]; then
         echo "rsync 실패(rc=${rc}) — 위 오류 참고" >&2
@@ -408,6 +409,7 @@ sync_submodule() {
             --exclude='.git' \
             --exclude='upgrade_file/dpkg/pimwebserver_*.deb' \
             --exclude='dist/pim/opt/pim/driver/sc16is7xx_ext.ko' \
+            --exclude='dist/pim/opt/pim/driver/laird_backport.tar' \
             "${GITHUB_REPO}/${subdir}/" "${GITLAB_REPO}/${subdir}/"
         echo "  [DRY-RUN] commit/push 건너뜀"
         return 0
@@ -420,6 +422,7 @@ sync_submodule() {
         --exclude='.git' \
         --exclude='upgrade_file/dpkg/pimwebserver_*.deb' \
         --exclude='dist/pim/opt/pim/driver/sc16is7xx_ext.ko' \
+        --exclude='dist/pim/opt/pim/driver/laird_backport.tar' \
         "${GITHUB_REPO}/${subdir}/" "${GITLAB_REPO}/${subdir}/"
 
     local sync_msg
@@ -493,6 +496,7 @@ sync_pim() {
             --exclude='.git' \
             --exclude='upgrade_file/dpkg/pimwebserver_*.deb' \
             --exclude='dist/pim/opt/pim/driver/sc16is7xx_ext.ko' \
+            --exclude='dist/pim/opt/pim/driver/laird_backport.tar' \
             "${rsync_includes[@]}" \
             --exclude='*' \
             "${GITHUB_REPO}/" "${GITLAB_REPO}/"
@@ -505,6 +509,7 @@ sync_pim() {
         --exclude='.git' \
         --exclude='upgrade_file/dpkg/pimwebserver_*.deb' \
         --exclude='dist/pim/opt/pim/driver/sc16is7xx_ext.ko' \
+        --exclude='dist/pim/opt/pim/driver/laird_backport.tar' \
         "${rsync_includes[@]}" \
         --exclude='*' \
         "${GITHUB_REPO}/" "${GITLAB_REPO}/"
