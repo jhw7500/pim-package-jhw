@@ -142,6 +142,13 @@ assert_file "$DTB"
     = "invensense,iim42652" ] || fail "DT compatible mismatch"
 [ "$(fdtget -t u "$DTB" /soc@0/bus@30800000/i2c@30ad0000 clock-frequency)" \
     = "400000" ] || fail "I2C5 clock-frequency mismatch"
+for csi_address in 32e40000 32e50000; do
+    csi_path="/soc@0/bus@32c00000/camera/csi@$csi_address"
+    for property in clock-frequency assigned-clock-rates; do
+        [ "$(fdtget -t u "$DTB" "$csi_path" "$property")" = "266000000" ] \
+            || fail "$csi_address $property is not fixed at 266 MHz"
+    done
+done
 
 echo "Test 7: package binary manifest covers the new artifacts"
 python3 - "$ROOT/.github/binary-manifest.json" <<'PY'

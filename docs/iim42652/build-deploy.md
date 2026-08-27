@@ -9,7 +9,7 @@
 | 항목 | 값 |
 |---|---|
 | 커널 소스 기준 | `dc2d778fd210fe829b5e2973cbc6bfc9b246a929` |
-| 기준 커널 | `e002bd363671fb43269987a4b08ca2ecb082ebaa` |
+| 기준 커널 | `e002bd363671fb43269987a4b08ca2ecb082ebaa` (CSI0/CSI1 266 MHz) |
 | 패치 보관 저장소 | `jhw7500/iim42652` (`9132465533ca5be3253c3935af827182753d56aa`) |
 | 대상 커널 릴리스 | `5.10.35-lts-5.10.y+g2fce14defc04` |
 | 빌드 명령 | `iim42652/scripts/build.sh --dtb` |
@@ -49,7 +49,14 @@
 ```text
 compatible = "invensense,iim42652"
 I2C5 clock-frequency = 400000
+CSI0 clock-frequency / assigned-clock-rates = 266000000
+CSI1 clock-frequency / assigned-clock-rates = 266000000
 ```
+
+기준 커널 커밋 `e002bd363671fb43269987a4b08ca2ecb082ebaa`가 두 CSI를
+`IMX8MP_SYS_PLL1_266M` 부모의 266 MHz로 설정한다. 기존 패키지의 기본
+`imx8mp-evk.dtb`는 CSI0 500 MHz, CSI1 266 MHz이므로 IIM 전용 DTB를 선택하면
+IIM 노드뿐 아니라 CSI0 클락도 266 MHz로 전환된다. 기본 DTB 자체는 교체하지 않는다.
 
 실제 부트 파일 선택은 보드별 기존 절차로 수동 수행한다. 현재 확인된 보드처럼
 `/dev/mmcblk2p1/imx8mp-evk-test.dtb`를 사용한다면, 기존 파일을 백업한 뒤 패키지가
