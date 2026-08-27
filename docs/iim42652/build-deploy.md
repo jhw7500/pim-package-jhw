@@ -2,9 +2,10 @@
 
 ## 적용 범위
 
-`pim-package`는 IIM-42652 드라이버 모듈 3개와 전용 DTB를 포함하지만 자동으로
-활성화하지 않는다. 기존 `imx8mp-evk.dtb`와 테스트용 `12m/16m/18m` DTB는
-교체하지 않는다.
+`pim-package`는 IIM-42652 드라이버 모듈 3개와 IIM 지원 DTB를 포함한다.
+IIM 지원 DTB는 `imx8mp-evk.dtb` 기본 이름으로 배포하지만 모듈은 자동으로
+적재하지 않는다. 이전 기본 DTB는 `imx8mp-evk-pre-iim42652.dtb`로 보존하며
+테스트용 `12m/16m/18m` DTB는 교체하지 않는다.
 
 | 항목 | 값 |
 |---|---|
@@ -21,7 +22,8 @@
 | `inv-icm42600.ko` | `b2f791f4fd51efc4ed02ac91db5ae431cd6764baa12b797ad38a0d33e48c43de` |
 | `inv-icm42600-i2c.ko` | `d43a86296fb306f5779dd09c1f1feaf37fbd09637a5583a103927b1ef599bee6` |
 | `inv_sensors_timestamp.ko` | `072048d96efe1afd968785841dc4943f0bb0a46d1c635c1f0a5764d4509313af` |
-| `imx8mp-evk-iim42652.dtb` | `10b46b0c6f912f52b950211c2973270d1b3984f4a992382cc5a33874b0bd6ce1` |
+| `imx8mp-evk.dtb` | `10b46b0c6f912f52b950211c2973270d1b3984f4a992382cc5a33874b0bd6ce1` |
+| `imx8mp-evk-pre-iim42652.dtb` | `a387929b7ef501eaa9f21c36ba2a262c2ab14156786cf93f191592ad0cca4fdc` |
 
 세 모듈은 struct 및 symbol CRC가 결합된 한 빌드 세트다. 일부만 교체하면
 `disagrees about version of symbol`로 적재가 거부될 수 있다.
@@ -33,7 +35,7 @@
 1. dpkg가 모듈 3개를 `/lib/modules/5.10.35-lts-5.10.y+g2fce14defc04/updates/pim-iim42652/`에 직접 설치한다.
 2. 각 모듈의 vermagic이 대상 커널 릴리스와 정확히 일치하는지 확인한다.
 3. `depmod -a`를 실행한다.
-4. IIM 전용 DTB를 부트 파티션에 복사한다.
+4. 새 기본 DTB와 이전 기본 DTB 롤백 사본을 부트 파티션에 복사한다.
 
 모듈 경로는 dpkg가 소유하므로 제거하거나 IIM 미포함 버전으로 다운그레이드하면
 파일도 함께 제거되고 `postrm`이 `depmod`를 갱신한다. `modprobe`를 실행하거나 IIM
@@ -42,25 +44,34 @@
 패키지 준비 단계는 고정 대상 커널의 모듈을 검증하고, 실제 수동 load 단계는 현재
 실행 중인 커널이 그 대상과 정확히 같을 때만 허용한다.
 
-## DTB 수동 선택
+## 기본 DTB와 실제 부트 파일 선택
 
-전용 DTB의 IIM 노드는 다음 값을 사용한다.
+새 기본 DTB는 다음 값을 사용한다.
 
 ```text
 compatible = "invensense,iim42652"
 I2C5 clock-frequency = 400000
 CSI0 clock-frequency / assigned-clock-rates = 266000000
 CSI1 clock-frequency / assigned-clock-rates = 266000000
+ISI0 interface = <2 0 2>
+ISI1 interface = <3 0 2>
 ```
 
 기준 커널 커밋 `e002bd363671fb43269987a4b08ca2ecb082ebaa`가 두 CSI를
-`IMX8MP_SYS_PLL1_266M` 부모의 266 MHz로 설정한다. 기존 패키지의 기본
-`imx8mp-evk.dtb`는 CSI0 500 MHz, CSI1 266 MHz이므로 IIM 전용 DTB를 선택하면
-IIM 노드뿐 아니라 CSI0 클락도 266 MHz로 전환된다. 기본 DTB 자체는 교체하지 않는다.
+`IMX8MP_SYS_PLL1_266M` 부모의 266 MHz로 설정한다. 교체 전 기본 DTB는 CSI0
+500 MHz, CSI1 266 MHz였으며 `imx8mp-evk-pre-iim42652.dtb` 이름으로 보존한다.
+새 기본 DTB는 IIM 노드뿐 아니라 CSI0 클락도 266 MHz로 전환한다. CSI1→ISI0
+라우팅 교환은 아직 적용하지 않아 ISI interface는 기존 값을 유지한다.
 
-실제 부트 파일 선택은 보드별 기존 절차로 수동 수행한다. 현재 확인된 보드처럼
-`/dev/mmcblk2p1/imx8mp-evk-test.dtb`를 사용한다면, 기존 파일을 백업한 뒤 패키지가
-복사한 `imx8mp-evk-iim42652.dtb`를 활성 파일명으로 복사하고 재부팅한다.
+패키지 `postinst`는 DTB 파일들을 부트 파티션에 복사하지만 bootloader의 활성
+파일명은 바꾸지 않는다. `fdtfile=imx8mp-evk.dtb`인 보드는 새 기본 DTB를 사용한다.
+현재 확인된 보드처럼 `/dev/mmcblk2p1/imx8mp-evk-test.dtb`를 사용한다면, 기존
+활성 파일을 백업한 뒤 패키지가 복사한 `imx8mp-evk.dtb`를 활성 파일명으로
+복사하고 재부팅한다.
+
+이전 패키지에서 부트 파티션으로 복사된 `imx8mp-evk-iim42652.dtb`는 업그레이드
+후에도 남을 수 있다. bootloader가 그 이름을 참조하지 않는지 확인하기 전에는
+삭제하지 않는다.
 
 활성 파일을 바꾸기 전 다음을 반드시 확인한다.
 
@@ -104,9 +115,10 @@ dmesg | grep -Ei 'iim42652|icm426|unknown symbol|version of symbol'
 - 자이로/가속도 동시 1 kHz: 각 950~1200 Hz
 - 타임스탬프 표본 주파수: 설정 ODR ±10%
 
-검증 실패 시 모듈을 해제하고 백업한 DTB를 복원한 뒤 재부팅한다.
-패키지 제거 또는 다운그레이드는 모듈 파일과 depmod 색인을 정리하지만, 운영자가
-수동으로 활성 파일명에 복사한 DTB는 자동 복원하지 않는다.
+검증 실패 시 모듈을 해제하고 `imx8mp-evk-pre-iim42652.dtb` 또는 별도로 백업한
+활성 DTB를 복원한 뒤 재부팅한다. 패키지 제거 또는 다운그레이드는 모듈 파일과
+depmod 색인을 정리하지만, 운영자가 수동으로 활성 파일명에 복사한 DTB는 자동
+복원하지 않는다.
 
 ## 재현 및 정적 검증
 

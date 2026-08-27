@@ -107,7 +107,7 @@
       "note": "IIM-42652 core가 참조하는 공통 timestamp 모듈. vermagic은 5.10.35-lts-5.10.y+g2fce14defc04, GNU Build ID는 d888052d1261479873d376fb723e8b9a1477a471이다. core/transport와 같은 커밋·빌드 세트로만 교체한다."
     },
     {
-      "path": "dist/pim/opt/pim/boot/imx8mp-evk-iim42652.dtb",
+      "path": "dist/pim/opt/pim/boot/imx8mp-evk.dtb",
       "sha256": "10b46b0c6f912f52b950211c2973270d1b3984f4a992382cc5a33874b0bd6ce1",
       "size": 63689,
       "mode": "100644",
@@ -119,7 +119,23 @@
       "required_strings": [
         "invensense,iim42652"
       ],
-      "note": "수동 선택용 DTB. 기존 imx8mp-evk.dtb와 테스트용 12m/16m/18m DTB를 교체하지 않는다. I2C5 400 kHz와 올바른 IIM-42652 compatible을 포함하며, 활성 부트 파일 선택은 보드 검증 시 운영자가 수행한다."
+      "note": "기본 배포 DTB. I2C5 400 kHz, 올바른 IIM-42652 compatible, CSI0/CSI1 266 MHz를 포함한다. ISI interface는 기존 매핑(ISI0=<2 0 2>, ISI1=<3 0 2>)을 유지하며 IIM 모듈은 자동 적재하지 않는다."
+    },
+    {
+      "path": "dist/pim/opt/pim/boot/imx8mp-evk-pre-iim42652.dtb",
+      "sha256": "a387929b7ef501eaa9f21c36ba2a262c2ab14156786cf93f191592ad0cca4fdc",
+      "size": 63689,
+      "mode": "100755",
+      "source": {
+        "repo": "pim-package historical artifact",
+        "commit": "4085a1051a4771d6693813c2d3219ab4da082e04",
+        "build": "legacy packaged DTB; original build command was not recorded"
+      },
+      "required_strings": [
+        "maxim,max9296",
+        "fsl,imx8mp-mipi-csi"
+      ],
+      "note": "IIM 기본 DTB 승격 전 imx8mp-evk.dtb의 원본 롤백 사본. Git blob 70d9d45cd918250612eb6d100f25e96893b3bdf8이며 IIM-42652 노드는 포함하지 않는다."
     },
     {
       "path": "dist/pim/usr/lib/gstreamer-1.0/libgstvpu.so",

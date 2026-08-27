@@ -6,7 +6,9 @@ PREPARE="$ROOT/dist/pim/opt/pim/bin/iim42652_prepare_modules.sh"
 CONTROL="$ROOT/dist/pim/opt/pim/bin/iim42652_module.sh"
 KREL="5.10.35-lts-5.10.y+g2fce14defc04"
 DRIVER_DIR="$ROOT/dist/pim/lib/modules/$KREL/updates/pim-iim42652"
-DTB="$ROOT/dist/pim/opt/pim/boot/imx8mp-evk-iim42652.dtb"
+DTB="$ROOT/dist/pim/opt/pim/boot/imx8mp-evk.dtb"
+LEGACY_DTB="$ROOT/dist/pim/opt/pim/boot/imx8mp-evk-pre-iim42652.dtb"
+LEGACY_DTB_SHA256="a387929b7ef501eaa9f21c36ba2a262c2ab14156786cf93f191592ad0cca4fdc"
 
 TMPDIR_IIM=$(mktemp -d)
 trap 'rm -rf "$TMPDIR_IIM"' EXIT
@@ -24,6 +26,8 @@ echo "Test 1: package contains the manual IIM-42652 control surface"
 assert_file "$PREPARE"
 assert_file "$CONTROL"
 assert_file "$ROOT/dist/pim/etc/modprobe.d/iim42652-manual.conf"
+assert_file "$DTB"
+assert_file "$LEGACY_DTB"
 
 echo "Test 2: package-owned module set is verified before depmod without loading"
 FAKE_ROOT="$TMPDIR_IIM/modules"
@@ -149,6 +153,13 @@ for csi_address in 32e40000 32e50000; do
             || fail "$csi_address $property is not fixed at 266 MHz"
     done
 done
+legacy_sha=$(sha256sum "$LEGACY_DTB")
+[ "${legacy_sha%% *}" = "$LEGACY_DTB_SHA256" ] \
+    || fail "pre-IIM rollback DTB hash mismatch"
+if fdtget -t s "$LEGACY_DTB" \
+       /soc@0/bus@30800000/i2c@30ad0000/imu@68 compatible >/dev/null 2>&1; then
+    fail "pre-IIM rollback DTB unexpectedly contains the IIM-42652 node"
+fi
 
 echo "Test 7: package binary manifest covers the new artifacts"
 python3 - "$ROOT/.github/binary-manifest.json" <<'PY'
@@ -161,7 +172,8 @@ required = {
     "dist/pim/lib/modules/5.10.35-lts-5.10.y+g2fce14defc04/updates/pim-iim42652/inv-icm42600.ko",
     "dist/pim/lib/modules/5.10.35-lts-5.10.y+g2fce14defc04/updates/pim-iim42652/inv-icm42600-i2c.ko",
     "dist/pim/lib/modules/5.10.35-lts-5.10.y+g2fce14defc04/updates/pim-iim42652/inv_sensors_timestamp.ko",
-    "dist/pim/opt/pim/boot/imx8mp-evk-iim42652.dtb",
+    "dist/pim/opt/pim/boot/imx8mp-evk.dtb",
+    "dist/pim/opt/pim/boot/imx8mp-evk-pre-iim42652.dtb",
 }
 missing = required - actual
 if missing:
@@ -178,7 +190,8 @@ for packaged_path in \
     "./etc/modprobe.d/iim42652-manual.conf" \
     "./opt/pim/bin/iim42652_prepare_modules.sh" \
     "./opt/pim/bin/iim42652_module.sh" \
-    "./opt/pim/boot/imx8mp-evk-iim42652.dtb" \
+    "./opt/pim/boot/imx8mp-evk.dtb" \
+    "./opt/pim/boot/imx8mp-evk-pre-iim42652.dtb" \
     "./lib/modules/$KREL/updates/pim-iim42652/inv-icm42600.ko" \
     "./lib/modules/$KREL/updates/pim-iim42652/inv-icm42600-i2c.ko" \
     "./lib/modules/$KREL/updates/pim-iim42652/inv_sensors_timestamp.ko"; do

@@ -48,7 +48,8 @@ MANIFEST = ROOT / ".github/binary-manifest.json"
 # 매니페스트에 등록돼 있어야 하는 대상. 여기 걸리는데 매니페스트에 없으면 경고한다.
 TRACKED_PATTERN = re.compile(r"^dist/.*?(\.ko|/usr/local/bin/[^/]+)$")
 TRACKED_EXACT_PATHS = {
-    "dist/pim/opt/pim/boot/imx8mp-evk-iim42652.dtb",
+    "dist/pim/opt/pim/boot/imx8mp-evk.dtb",
+    "dist/pim/opt/pim/boot/imx8mp-evk-pre-iim42652.dtb",
     "dist/pim/usr/lib/gstreamer-1.0/libgstvpu.so",
     "dist/pim/usr/lib/libfslvpuwrap.so.3.0.0",
 }
