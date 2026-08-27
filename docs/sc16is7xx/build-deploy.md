@@ -2,9 +2,9 @@
 
 ## 결론
 
-`pim-package-jhw`의 `sc16is7xx_ext.ko`는 개인 GitHub `sc16is7xx`의 수정
-드라이버를 사용하는 바이너리다. 회사 `pim-package`의 역사적 바이너리와는
-의도적으로 다르며, GitHub → GitLab 일반 동기화로 전파하지 않는다.
+`pim-package-jhw`의 `sc16is7xx_ext.ko`는 GitLab `sc16is7xx/main`에서 clean
+build한 최신 바이너리다. 회사 `pim-package`의 역사적 바이너리와는 의도적으로
+다르며, GitHub → GitLab 일반 동기화로 전파하지 않는다.
 
 패키지 저장소의 `master` HEAD는 계속 변경되므로 HEAD 커밋은 기준값으로
 고정하지 않는다. 바이너리가 반영된 패키지 커밋과 드라이버 source commit/blob을
@@ -12,25 +12,27 @@
 
 ## 현재 개인 패키지 바이너리
 
-확인일은 **2026-08-26**이다.
+확인일은 **2026-08-27**이다.
 
 | 항목 | 값 |
 |---|---|
 | 패키지 경로 | `dist/pim/opt/pim/driver/sc16is7xx_ext.ko` |
-| 패키지 반영 커밋 | `158fff47257d0ce875f24f03f13ac2c49c78027d` |
-| 반영 날짜 | `2026-07-24 16:57:04 +09:00` |
-| 기록된 source commit | `1788388e038760c899e78009e6a4b1b0e3bdfc8c` |
-| 마지막 드라이버 변경 | `85a3de446edc1b3d4f67ea97364e41e0e727713e` |
+| 패키지 반영 기준 | 이 문서와 바이너리를 포함한 `master` 변경 |
+| 반영 날짜 | `2026-08-27` |
+| source 저장소/브랜치 | GitLab `hwjo/sc16is7xx`, `main` |
+| source commit | `6c09f624d940f5a939002141e65e451cb185120a` |
+| source commit 날짜 | `2026-08-27 15:49:36 +09:00` |
 | `sc16is7xx.c` Git blob | `070bb868090420f23bebce8bfc1cd17173d20276` |
-| 파일 크기 | `550888` bytes |
-| LFS SHA-256 OID | `1b38dd57647123b62674757e89483182555605c246dc7c321ccd7e932b5b6fe2` |
-| ELF Build ID | `9cb171f3153cc8b5b8fec8151f1e6a73fafd1a2b` |
+| `make-for-imx8` Git blob | `c967f640ea36300f27bee1c8ce7a91198b0e8027` |
+| 파일 크기 | `664400` bytes |
+| LFS SHA-256 OID | `8305c872356787a29b11cda11baa2138dc29835c9ebddd066741c1ac31a9137a` |
+| ELF Build ID | `b0a6071ba131616db0966738ebf62fe05454b8b7` |
 | vermagic | `5.10.35-lts-5.10.y+g2fce14defc04 SMP preempt mod_unload modversions aarch64` |
 | module parameters | `diag`, `diag_period_ms`, `rx_trigger` |
 
-`1788388`은 수정 PR의 merge commit이고 `sc16is7xx.c`는 마지막 소스 커밋
-`85a3de4`와 같은 blob이다. 현재 개인 source repo의 `master`도 같은 source
-blob을 유지한다.
+source commit에는 드라이버 안정성 수정과 Yocto SDK 빌드 수정이 병합되어 있다.
+드라이버 blob은 이전 개인 패키지 기준과 같지만, 병합된 `make-for-imx8`을 사용해
+다시 생성한 산출물을 현재 기준으로 사용한다.
 
 ## 회사 패키지와의 차이
 
@@ -50,9 +52,10 @@ blob을 유지한다.
 ## 빌드 및 개인 패키지 반영
 
 ```bash
-cd ~/ai/opencode/projects/sc16is7xx
+cd ~/ai/opencode/projects/sc16is7xx-gitlab
 git status --short
 git rev-parse HEAD
+git rev-parse origin/main
 git rev-parse HEAD:sc16is7xx.c
 ./make-for-imx8 clean
 ./make-for-imx8
@@ -80,6 +83,17 @@ vermagic과 보드 검증 결과를 같은 변경 단위에 기록한다.
 - 이 개인 패키지 전용 문서
 
 각 패키지는 자신의 실제 바이너리에 맞는 manifest와 provenance를 유지한다.
+
+## 현재 검증 상태
+
+- `sc16is7xx/main@6c09f62` clean build: 통과
+- SHA-256, ELF Build ID, vermagic, module parameters 확인: 통과
+- `pim-package-jhw` 바이너리 manifest strict 검증: 통과
+- Docker 패키지 생성 및 `.deb` 내부 SC16 바이너리 SHA-256 대조: 통과
+- 전체 release artifact gate: 현재 HEAD에 추적되지 않는 외부 구성요소
+  (`adab`, `adab_ecat`, `cism`, `stm32update`, `mcp_trust_test`, `pim_gate`)
+  부재로 미완료
+- 타깃 보드 적재, UART 루프백 및 load/unload 검증: 패키지 배포 후 수행
 
 ## 보드 검증
 
