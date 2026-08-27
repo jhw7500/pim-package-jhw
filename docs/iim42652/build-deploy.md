@@ -81,9 +81,40 @@ mount /dev/mmcblk2p1 /mnt/boot1
 ls -l /mnt/boot1/imx8mp*.dtb
 ```
 
+## 후속 TODO: CSI1 → ISI0 라우팅 교환
+
+> 상태: **미적용**. 현재 기준 커밋 `b3263cf`의 기본 DTB는
+> `ISI0=<2 0 2>`, `ISI1=<3 0 2>` 기존 매핑을 유지한다.
+
+상세 설계와 검증 정본은 `pim-package-jhw` 커밋
+`3167f26b9c57d0170e288354bb269b4e7678d4b9`의
+`docs/imx8mp-max9296-isi-routing-plan.md`다. 후속 릴리스에서는 다음 네 항목을
+같은 커밋과 배포 단위로 변경한다.
+
+| 구성요소 | 현재 | 변경 목표 |
+|---|---|---|
+| 제품 DTS ISI0 | `interface=<2 0 2>` | `interface=<3 0 2>` (CSI1 → ISI0) |
+| 제품 DTS ISI1 | `interface=<3 0 2>` | `interface=<2 0 2>` (CSI0 → ISI1) |
+| gstApp video map | `csi0=video4`, `csi1=video3` | `csi0=video3`, `csi1=video4` |
+| PIM capture map | ch01=ISI1/video4, ch23=ISI0/video3 | ch01=ISI0/video3, ch23=ISI1/video4 |
+
+gstApp의 subdevice 값 `csi0=2`, `csi1=3`과 MAX9296 I2C/CSI 물리 연결은
+변경하지 않는다. 새 DTB도 IIM-42652 노드, I2C5 400 kHz, CSI0/CSI1 266 MHz를
+유지해야 한다. DTS, gstApp `v4l_map`, PIM capture map 중 일부만 배포하면 논리
+채널과 health 판정 대상이 뒤바뀌므로 부분 배포 상태에서는 카메라 서비스를
+시작하지 않는다.
+
+보드에서는 `media-ctl -p`로 CSI1→ISI0→video3 및 CSI0→ISI1→video4를 확인하고,
+두 video node의 양방향 시작 순서, 물리 카메라 위치, crop/control, 공용 FSYNC,
+녹화·RTSP 채널, MIPI/ISI 오류와 지속적인 1프레임 offset을 검증한다.
+
+이 작업 이후에는 ISI 폭 하드코딩(`ISI_2K=4096`, `ISI_4K=8192`) 검토,
+single/dual LED flash 확인, 타임워치 기반 최종 프레임 싱크 검증, RTSP H.265
+Frame ID 정렬을 순서대로 수행한다.
+
 ## 모듈 수동 제어
 
-전용 DTB로 부팅한 뒤 다음 명령으로 적재한다.
+IIM 지원 기본 DTB로 부팅한 뒤 다음 명령으로 적재한다.
 
 ```bash
 /opt/pim/bin/iim42652_module.sh load
