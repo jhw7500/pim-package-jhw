@@ -116,6 +116,10 @@ cpchk() {
     depmod -a
   fi
 
+  # IIM-42652 is packaged as an opt-in driver set. Verify the three ABI-coupled
+  # dpkg-owned modules and refresh dependencies, but leave activation manual.
+  /opt/pim/bin/iim42652_prepare_modules.sh || exit $?
+
   # streamApp(deprecated) 전용 — 기존 환경 링크 유지를 위해 rm/ln 모두 비활성
   #ln -sf /usr/local/lib/libpiencrypt.so.0  /usr/lib/libpiencrypt.so.0
   #ln -sf /usr/local/lib/libpiencrypt.so.0  /usr/lib/libpiencrypt.so

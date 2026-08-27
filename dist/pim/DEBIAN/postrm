@@ -12,6 +12,18 @@ export LC_ALL=C.UTF-8
 db_get pim-mp/model
 model=$RET
 
+IIM_KERNEL_RELEASE=5.10.35-lts-5.10.y+g2fce14defc04
+IIM_MODULE_ROOT=${IIM_MODULE_ROOT:-/lib/modules}
+IIM_DEPMOD=${IIM_DEPMOD:-depmod}
+
+refresh_iim42652_depmod() {
+  if [ -d "$IIM_MODULE_ROOT/$IIM_KERNEL_RELEASE" ]; then
+    if ! "$IIM_DEPMOD" -a "$IIM_KERNEL_RELEASE"; then
+      echo "WARNING: depmod failed for IIM-42652 kernel $IIM_KERNEL_RELEASE; module dependency metadata may be stale" >&2
+    fi
+  fi
+}
+
 case "$1" in
 purge)
   echo "purge purge"
@@ -20,15 +32,18 @@ purge)
   rm -r /root/shared_v
   cat /dev/null > /etc/rc.local
   systemctl disable cam-operate
+  refresh_iim42652_depmod
   #systemctl set-default graphical.target
   ;;
 
 upgrade)
   echo "purge upgrade ($model)"
+  refresh_iim42652_depmod
   ;;
 
 remove)
   echo "postrm remove ($model)"
+  refresh_iim42652_depmod
   ;;
 
 *)
