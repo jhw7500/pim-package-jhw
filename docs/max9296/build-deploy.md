@@ -131,6 +131,7 @@ gstApp + max9296 변경 후:
 | 배포 경로 | 정본 | 파일 마지막 변경 | 복사 시점 master | sha256 |
 | --- | --- | --- | --- | --- |
 | `dist/pim/opt/pim/bin/cam_hard_reset.sh` | max9296 `tools/cam_hard_reset.sh` | `fceeddd` | `edd8fda` | `081e3fd242a3e95006e5cee14eb1dc4ed6ad01357c26c7328fb791c4370de531` |
+| `dist/pim/opt/pim/bin/cam_fps_stack.sh` | max9296 `tools/cam_fps_stack.sh` | `70c6646` | `b8b1aab` | `3d536b5b2e7d5f089d1ad0bd21f7dc5dcad6dcf3e8923f5c354422a9e68c9881` |
 
 ### 드리프트 확인
 
@@ -142,6 +143,9 @@ gstApp + max9296 변경 후:
 # "파일 마지막 변경" 열 — master 가 움직여도 판정이 흔들리지 않는다.
 git -C <max9296-checkout> show fceeddd:tools/cam_hard_reset.sh \
   | diff - dist/pim/opt/pim/bin/cam_hard_reset.sh && echo "동일"
+
+git -C <max9296-checkout> show 70c6646:tools/cam_fps_stack.sh \
+  | diff - dist/pim/opt/pim/bin/cam_fps_stack.sh && echo "동일"
 ```
 
 정본이 갱신되면 다시 복사하고 이 표의 커밋·sha256 을 함께 고친다. `.ko` 와 달리
@@ -162,6 +166,22 @@ CSI2/ISI 를 건드리지 않아, D-PHY 락 실패류(STREAMON 성공 + CSI2 이
 > **주의**: pim-check 의 케이스 간 재부팅을 이 스크립트로 대체하는 것은 아직
 > 하지 않는다. 부팅 시간이 사라지면 AE 레지스터 정착(콜드 기동 후 `gstApp+16s`)
 > 전에 readback 체크가 샘플링될 수 있다. jhw7500/pim-check#61 이 선결이다.
+
+### cam_fps_stack.sh 범위
+
+**온타깃 수동 진단 전용이다.** 서비스나 자동 복구 경로에 연결하지 않으며,
+실행 중인 `gstApp`을 정지시키지 않고 센서·AP1302 ISP·CSI2·ISI 카운터를 같은
+관측 구간에서 비교한다.
+
+```bash
+/opt/pim/bin/cam_fps_stack.sh                 # 활성 채널 자동 선택, 20초
+/opt/pim/bin/cam_fps_stack.sh -c ch01 -d 60  # ch0/ch1 경로를 60초 관측
+```
+
+기본 측정은 읽기 전용이며 `bash`, `i2ctransfer`, `media-ctl`과
+`/proc/interrupts`가 필요하다. `-D/--deep`은
+`/opt/pim/bin/cam_ap1302_dma_verify.sh`를 호출해 AP1302 DMA 제어 레지스터를
+사용하므로 유지보수 창에서만 실행한다.
 
 ## 관련 문서
 

@@ -10,7 +10,7 @@
 - edgeconf/ord_vcm_conf SHA-256
 - single/independent/dual-wide mode와 configured mask
 - 카메라 serial/물리 channel/link/CSI/video-node mapping
-- 시험 전 `cam_fps_stack.sh` 결과
+- 시험 전 `/opt/pim/bin/cam_fps_stack.sh` 결과
 - 시험 전 PID/PPID/cgroup/V4L2 FD snapshot
 
 ## 시험표
