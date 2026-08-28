@@ -57,6 +57,87 @@
       "note": "GitLab sc16is7xx main 커밋 6c09f624d940f5a939002141e65e451cb185120a에서 clean build한 개인 GitHub 패키지용 바이너리다. sc16is7xx.c blob은 070bb868090420f23bebce8bfc1cd17173d20276, make-for-imx8 blob은 c967f640ea36300f27bee1c8ce7a91198b0e8027, ELF Build ID는 b0a6071ba131616db0966738ebf62fe05454b8b7이다. 정식 GitLab pim-package의 역사적 9f71cb9/62675b6e 계열 바이너리는 교체하지 않으며 일반 GitHub → GitLab 동기화에서도 이 파일을 제외한다. 타깃 런타임 검증은 패키지 배포 후 별도로 수행한다.\nmode 가 100755 인 것은 같은 디렉터리의 max9296.ko(100644)와 어긋나지만 최초 추가(2025-09-18)부터 그랬다. postinst 는 이 파일을 /lib/modules/*/extra/ 로 복사할 뿐이고 모듈 로드에 exec 비트는 필요 없다. 여기서는 현실을 기록한다 — 644 로 적으면 즉시 오경보가 난다. 정리하려면 파일 모드를 바꾸는 별도 변경으로 다룬다."
     },
     {
+      "path": "dist/pim/lib/modules/5.10.35-lts-5.10.y+g2fce14defc04/updates/pim-iim42652/inv-icm42600.ko",
+      "sha256": "b2f791f4fd51efc4ed02ac91db5ae431cd6764baa12b797ad38a0d33e48c43de",
+      "size": 1531856,
+      "mode": "100644",
+      "arch": "aarch64",
+      "source": {
+        "repo": "linux-imx-pim local worktree (patch archive: jhw7500/iim42652@9132465533ca5be3253c3935af827182753d56aa)",
+        "commit": "dc2d778fd210fe829b5e2973cbc6bfc9b246a929",
+        "build": "iim42652/scripts/build.sh --dtb (Yocto SDK 5.10-hardknott + production KBUILD)"
+      },
+      "required_strings": [
+        "iim42652",
+        "FIFO full data lost!"
+      ],
+      "note": "IIM-42652 core IIO module. inv_sensors_timestamp와 ABI가 결합되어 세 모듈을 항상 같은 빌드 세트로 배포한다. vermagic은 5.10.35-lts-5.10.y+g2fce14defc04, GNU Build ID는 3fb463609142ec48785c0a4be7e1ad77fa671bf8이다. dpkg가 updates/pim-iim42652 경로를 직접 소유하며 패키지는 depmod만 수행하고 자동 적재하지 않는다."
+    },
+    {
+      "path": "dist/pim/lib/modules/5.10.35-lts-5.10.y+g2fce14defc04/updates/pim-iim42652/inv-icm42600-i2c.ko",
+      "sha256": "d43a86296fb306f5779dd09c1f1feaf37fbd09637a5583a103927b1ef599bee6",
+      "size": 379744,
+      "mode": "100644",
+      "arch": "aarch64",
+      "source": {
+        "repo": "linux-imx-pim local worktree (patch archive: jhw7500/iim42652@9132465533ca5be3253c3935af827182753d56aa)",
+        "commit": "dc2d778fd210fe829b5e2973cbc6bfc9b246a929",
+        "build": "iim42652/scripts/build.sh --dtb (Yocto SDK 5.10-hardknott + production KBUILD)"
+      },
+      "required_strings": [
+        "invensense,iim42652",
+        "inv_icm42600_i2c"
+      ],
+      "note": "IIM-42652 I2C transport module. vermagic은 5.10.35-lts-5.10.y+g2fce14defc04, GNU Build ID는 c8c78b03d95eac0a36aab07f4a79018e2d4d61df이다. modalias 자동 적재는 iim42652-manual.conf로 차단하고 운영자가 iim42652_module.sh load를 실행할 때만 명시적으로 적재한다."
+    },
+    {
+      "path": "dist/pim/lib/modules/5.10.35-lts-5.10.y+g2fce14defc04/updates/pim-iim42652/inv_sensors_timestamp.ko",
+      "sha256": "072048d96efe1afd968785841dc4943f0bb0a46d1c635c1f0a5764d4509313af",
+      "size": 154200,
+      "mode": "100644",
+      "arch": "aarch64",
+      "source": {
+        "repo": "linux-imx-pim local worktree (patch archive: jhw7500/iim42652@9132465533ca5be3253c3935af827182753d56aa)",
+        "commit": "dc2d778fd210fe829b5e2973cbc6bfc9b246a929",
+        "build": "iim42652/scripts/build.sh --dtb (Yocto SDK 5.10-hardknott + production KBUILD)"
+      },
+      "required_strings": [
+        "InvenSense sensors timestamp module"
+      ],
+      "note": "IIM-42652 core가 참조하는 공통 timestamp 모듈. vermagic은 5.10.35-lts-5.10.y+g2fce14defc04, GNU Build ID는 d888052d1261479873d376fb723e8b9a1477a471이다. core/transport와 같은 커밋·빌드 세트로만 교체한다."
+    },
+    {
+      "path": "dist/pim/opt/pim/boot/imx8mp-evk.dtb",
+      "sha256": "10b46b0c6f912f52b950211c2973270d1b3984f4a992382cc5a33874b0bd6ce1",
+      "size": 63689,
+      "mode": "100644",
+      "source": {
+        "repo": "linux-imx-pim local worktree (patch archive: jhw7500/iim42652@9132465533ca5be3253c3935af827182753d56aa)",
+        "commit": "dc2d778fd210fe829b5e2973cbc6bfc9b246a929",
+        "build": "iim42652/scripts/build.sh --dtb"
+      },
+      "required_strings": [
+        "invensense,iim42652"
+      ],
+      "note": "기본 배포 DTB. I2C5 400 kHz, 올바른 IIM-42652 compatible, CSI0/CSI1 266 MHz를 포함한다. ISI interface는 기존 매핑(ISI0=<2 0 2>, ISI1=<3 0 2>)을 유지하며 IIM 모듈은 자동 적재하지 않는다."
+    },
+    {
+      "path": "dist/pim/opt/pim/boot/imx8mp-evk-pre-iim42652.dtb",
+      "sha256": "a387929b7ef501eaa9f21c36ba2a262c2ab14156786cf93f191592ad0cca4fdc",
+      "size": 63689,
+      "mode": "100755",
+      "source": {
+        "repo": "pim-package historical artifact",
+        "commit": "4085a1051a4771d6693813c2d3219ab4da082e04",
+        "build": "legacy packaged DTB; original build command was not recorded"
+      },
+      "required_strings": [
+        "maxim,max9296",
+        "fsl,imx8mp-mipi-csi"
+      ],
+      "note": "IIM 기본 DTB 승격 전 imx8mp-evk.dtb의 원본 롤백 사본. Git blob 70d9d45cd918250612eb6d100f25e96893b3bdf8이며 IIM-42652 노드는 포함하지 않는다."
+    },
+    {
       "path": "dist/pim/usr/lib/gstreamer-1.0/libgstvpu.so",
       "sha256": "d83594447b7dac184c019371c0c296b72345585913ed03adf6e0a56f60a38b27",
       "size": 111720,
