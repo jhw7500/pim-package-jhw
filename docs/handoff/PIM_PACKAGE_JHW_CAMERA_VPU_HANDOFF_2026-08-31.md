@@ -23,8 +23,8 @@ production 기준은 모든 출력 모드에서 30 FPS다.
 | 항목 | 값 |
 |---|---|
 | 파일 | `pim-mp_0.6.3+jhw.camera1_arm64.deb` |
-| 크기 | 30,648,300 bytes |
-| SHA-256 | `12709ff14e2c12bfbee29b1cf839863f8ff498fa52713acd479476506f533b15` |
+| 크기 | 30,648,146 bytes |
+| SHA-256 | `a8576aa871986ff4a51c620d348dc6c024171ce146942462a1317e716163e19c` |
 | Package | `pim-mp` |
 | Version | `0.6.3+jhw.camera1` |
 | Architecture | `arm64` |
@@ -37,7 +37,7 @@ production 기준은 모든 출력 모드에서 30 FPS다.
 ```bash
 cd /root/camtest/handoff-camera1-20260831
 printf '%s  %s\n' \
-  '12709ff14e2c12bfbee29b1cf839863f8ff498fa52713acd479476506f533b15' \
+  'a8576aa871986ff4a51c620d348dc6c024171ce146942462a1317e716163e19c' \
   'pim-mp_0.6.3+jhw.camera1_arm64.deb' | sha256sum -c -
 ```
 
@@ -75,7 +75,9 @@ systemd service, 일부 시스템 설정, 기본 설정 파일과 심볼릭 링�
 
 `VHL_CAM.cam_width`와 `cam_height`는 AP1302/CSI 출력 크기를 선택한다. 현재
 640x360은 AR0234 센서의 native 640x360 readout이 아니다. 센서는 FHD readout을
-유지하고 AP1302/CSI 출력이 640x360으로 축소된다.
+유지하고 AP1302/CSI 출력이 640x360으로 축소된다. 이 설명은 `crop_enable=false`,
+`dz=100` 기준이다. 공급자 보드 Case A에서 AR0234 window는
+X `0x0004..0x0783`(1920), Y `0x0040..0x0477`(1080)으로 실측됐다.
 
 ### 4.2 Digital crop
 
@@ -87,7 +89,9 @@ systemd service, 일부 시스템 설정, 기본 설정 파일과 심볼릭 링�
 
 해상도와 crop은 독립이다. 예를 들어 HD에서 `dz=200`을 적용해도 출력은
 1280x720이며 화면 안의 시야만 2배 확대된다. 640x360에서 crop을 끄면
-640x360 전체 시야 축소 출력이다.
+640x360 전체 시야 축소 출력이다. 다만 인터페이스와 출력 크기가 독립이라는 뜻이지
+sensor readout window가 항상 고정된다는 뜻은 아니다. 공급자 보드의 HD+1.5x Case E는
+출력 1280x720을 유지하면서 AR0234 window가 중앙 1280x720으로 바뀌었다.
 
 실제 드라이버 매핑은 다음과 같다.
 
@@ -122,6 +126,10 @@ gstApp이 해당 키를 무시하고 기본값을 사용한다.
 | `quant` | -1~51 | `[-1,-1]` | 초기 QP, -1 자동 |
 | `qp_min` | 0~51 | `[0,0]` | 0 미설정 |
 | `qp_max` | 0~51 | `[0,0]` | 0 미설정 |
+
+위 `profile` 번호와 범위는 H.264 기준이다. `enc="h265"`에서는 codec별 허용값과
+기본값이 다르므로 H.264 profile 번호를 그대로 넣지 않는다. Case H는 이 모호성을
+없애기 위해 `enc="h264"`를 명시한다.
 
 single-encoder mode에서는 실제 RTSP slot이 record slot 값에 맞춰진다.
 
@@ -192,7 +200,7 @@ set -e
 WORK=/root/camtest/handoff-camera1-20260831
 cd "$WORK"
 printf '%s  %s\n' \
-  '12709ff14e2c12bfbee29b1cf839863f8ff498fa52713acd479476506f533b15' \
+  'a8576aa871986ff4a51c620d348dc6c024171ce146942462a1317e716163e19c' \
   'pim-mp_0.6.3+jhw.camera1_arm64.deb' | sha256sum -c -
 
 systemctl stop cam-operate.service
@@ -215,8 +223,10 @@ pim-mp 0.6.3+jhw.camera1 arm64
 하드 리셋 완료 (CSI2 + ISI 재바인드 포함)
 ```
 
-설치 스크립트는 기존 edgeconf에 누락된 crop/VPU 키를 backfill한다. 기존의 non-null
-값을 덮지 않는 것이 정상이다. 설치 전후 비교는 다음과 같이 확인한다.
+설치 스크립트는 기존 edgeconf에 누락된 crop/VPU 키를 backfill한다. 대부분의 기존
+non-null 값은 보존한다. 단, `led_flash.flash_delay`는 장비별 편차를 막기 위해
+의도적으로 매번 `128`로 강제하므로 설치 전후 diff에 이 변경이 나타날 수 있다.
+설치 전후 비교는 다음과 같이 확인한다.
 
 ```bash
 diff -u /root/pim-handoff-backup-20260831/edgeconf_pim.json \
@@ -277,9 +287,19 @@ ldd /usr/local/bin/gstApp | grep -E 'not found|fslvpu|gst' || true
 ```bash
 /opt/pim/bin/cam_hard_reset.sh -s -S
 pgrep -a gstApp
-v4l2-ctl -d /dev/video4 --get-fmt-video
 media-ctl -p
 ```
+
+gstApp 실행 중에는 `/dev/video4`가 busy이므로 `v4l2-ctl --get-fmt-video`가
+실패할 수 있다. capture node의 정확한 `RGBP` format/stride 확인은 9.4처럼 서비스를
+중지한 독점 capture 구간에서 수행한다.
+
+아래 A/B/E/H는 카메라 출력·crop·VPU만 검증하는 자격시험이다. MCP4018/LED flash가
+없는 보드에서 기존 `led_flash.enable=true`를 그대로 두면 선택적 LED 제어의
+`-ENXIO`가 camera/crop dmesg 판정에 섞일 수 있다. 따라서 각 case는 enabled
+channel의 `led_flash.enable=false`를 명시적으로 적용한다. LED 자체를 검증할 때는 이
+변경을 하지 말고 별도 시험으로 분리한다. 최종 단계에서는 반드시 백업한 운영값을
+복원한다.
 
 ### 8.1 Case A: ch0만, 640x360@30, crop off
 
@@ -298,6 +318,8 @@ jq '
   | .VHL_CAM.i2c2.ch1.enable = false
   | .VHL_CAM.i2c1.ch2.enable = false
   | .VHL_CAM.i2c1.ch3.enable = false
+  | .VHL_CAM.i2c2.ch0.led_flash.enable = false
+  | .VHL_CAM.i2c2.ch1.led_flash.enable = false
   | .VHL_CAM.i2c2.ch0.dz_x = 32768
   | .VHL_CAM.i2c2.ch0.dz_y = 32768
 ' "$EDGE" > "$TMP"
@@ -326,6 +348,8 @@ jq '
   | .VHL_CAM.i2c2.ch1.enable = true
   | .VHL_CAM.i2c1.ch2.enable = false
   | .VHL_CAM.i2c1.ch3.enable = false
+  | .VHL_CAM.i2c2.ch0.led_flash.enable = false
+  | .VHL_CAM.i2c2.ch1.led_flash.enable = false
   | .VHL_CAM.i2c2.ch0.dz_x = 32768
   | .VHL_CAM.i2c2.ch0.dz_y = 32768
   | .VHL_CAM.i2c2.ch1.dz_x = 32768
@@ -379,6 +403,8 @@ jq '
   | .VHL_CAM.i2c2.ch1.enable = true
   | .VHL_CAM.i2c1.ch2.enable = false
   | .VHL_CAM.i2c1.ch3.enable = false
+  | .VHL_CAM.i2c2.ch0.led_flash.enable = false
+  | .VHL_CAM.i2c2.ch1.led_flash.enable = false
   | .VHL_CAM.i2c2.ch0.dz_x = 32768
   | .VHL_CAM.i2c2.ch0.dz_y = 32768
   | .VHL_CAM.i2c2.ch1.dz_x = 32768
@@ -410,7 +436,20 @@ set -e
 EDGE=/root/shared_v/edgeconf_pim.json
 TMP=/root/shared_v/edgeconf_pim.json.handoff.tmp
 jq '
-  .VHL_CAM.i2c2.ch0.bps = [4096,1024]
+  .VHL_CAM.app = "gstApp"
+  | .VHL_CAM.enc = "h264"
+  | .VHL_CAM.cam_width = 640
+  | .VHL_CAM.cam_height = 360
+  | .VHL_CAM.fps = 30
+  | .VHL_CAM.i2c2.crop_enable = false
+  | .VHL_CAM.i2c2.dz = 100
+  | .VHL_CAM.i2c2.ch0.enable = true
+  | .VHL_CAM.i2c2.ch1.enable = true
+  | .VHL_CAM.i2c1.ch2.enable = false
+  | .VHL_CAM.i2c1.ch3.enable = false
+  | .VHL_CAM.i2c2.ch0.led_flash.enable = false
+  | .VHL_CAM.i2c2.ch1.led_flash.enable = false
+  | .VHL_CAM.i2c2.ch0.bps = [4096,1024]
   | .VHL_CAM.i2c2.ch0.gop = [0,60]
   | .VHL_CAM.i2c2.ch0.profile = [10,9]
   | .VHL_CAM.i2c2.ch0.quant = [-1,-1]
@@ -425,9 +464,10 @@ journalctl -u cam-operate.service -b --since '-2 min' --no-pager | \
   grep -E 'bps|gop|profile|quant|qp_|encoder'
 ```
 
-single-encoder mode에서는 ch0 RTSP의 유효값이 record 값인 `bps=4096`,
-`gop=30`, `profile=10`에 맞춰지는 것이 정상이다. 시험 후에는 백업 JSON 또는 승인된
-production JSON으로 복원한다.
+profile 번호는 codec별 의미가 다르므로 이 Case는 `enc="h264"`를 명시한다.
+single-encoder mode(`dualEn=0`)에서는 ch0 RTSP의 유효값이 record 값인
+`bps=4096`, `gop=30`, `profile=10`에 맞춰지는 것이 정상이다. 시험 후에는 백업
+JSON 또는 승인된 production JSON으로 `enc`를 포함한 모든 운영값을 복원한다.
 
 ## 9. FPS·자원·영상 검증
 
@@ -457,6 +497,7 @@ install -d -m 0700 "$EVIDENCE"
 ```bash
 systemctl is-active cam-operate.service
 pgrep -a gstApp
+ss -ltnp | grep ':8554'
 journalctl -u cam-operate.service -b --since '-5 min' --no-pager | \
   tee /root/camtest/handoff-camera1-20260831/evidence/gstapp-journal.txt
 ```
@@ -470,7 +511,11 @@ ffprobe -v error -rtsp_transport tcp -select_streams v:0 \
   -of default=noprint_wrappers=1 'RTSP_URL_FROM_DEVICE_LOG'
 ```
 
-ch0/ch1 모두 H.264 decode가 성공하고 요청한 논리 채널 해상도가 표시돼야 한다.
+ch0/ch1 모두 JSON의 `VHL_CAM.enc`에 맞는 codec으로 decode되고 요청한 논리 채널
+해상도가 표시돼야 한다. Case H는 H.264이며, 공급자 보드의 일반 A/B/E와 최종 운영
+설정은 `enc="h265"`라서 ffprobe에 `codec_name=hevc`가 표시됐다. cold start 직후 첫
+probe가 비어 있으면 즉시 실패로 판정하지 말고 8554 listener와 gstApp PID를 확인한 뒤
+최대 60초 안에서 다시 시도한다.
 
 ### 9.4 RGB565 녹색 화면 검사
 
@@ -522,11 +567,38 @@ dmesg --color=never | grep -Ei \
 - 각 채널 `dz_x=32768`, `dz_y=32768`
 - `app="gstApp"`
 
-Case B JSON을 다시 적용하고 다음 smoke test를 통과시킨다.
+시험 직전의 unrelated 운영값을 잃지 않도록 Case B 시험 파일을 그대로 재사용하지
+않는다. 승인된 production JSON이 따로 없으면 설치 전 백업을 다시 live 파일로
+복원하고 새 schema를 backfill한 뒤, 합의된 카메라 필드만 원자적으로 바꾼다.
 
 ```bash
+set -e
+BACKUP=/root/pim-handoff-backup-20260831
+EDGE=/root/shared_v/edgeconf_pim.json
+TMP=/root/shared_v/edgeconf_pim.json.handoff.tmp
+install -m 0640 "$BACKUP/edgeconf_pim.json" "$EDGE"
+/opt/pim/bin/update_edgeconf.sh
+jq '
+  .VHL_CAM.app = "gstApp"
+  | .VHL_CAM.cam_width = 640
+  | .VHL_CAM.cam_height = 360
+  | .VHL_CAM.fps = 30
+  | .VHL_CAM.i2c2.crop_enable = false
+  | .VHL_CAM.i2c2.dz = 100
+  | .VHL_CAM.i2c2.ch0.enable = true
+  | .VHL_CAM.i2c2.ch1.enable = true
+  | .VHL_CAM.i2c1.ch2.enable = false
+  | .VHL_CAM.i2c1.ch3.enable = false
+  | .VHL_CAM.i2c2.ch0.dz_x = 32768
+  | .VHL_CAM.i2c2.ch0.dz_y = 32768
+  | .VHL_CAM.i2c2.ch1.dz_x = 32768
+  | .VHL_CAM.i2c2.ch1.dz_y = 32768
+' "$EDGE" > "$TMP"
+jq empty "$TMP"
+install -m 0640 "$TMP" "$EDGE"
+rm -f "$TMP"
 /opt/pim/bin/cam_hard_reset.sh -s -S
-v4l2-ctl -d /dev/video4 --get-fmt-video
+media-ctl -p | grep -E 'max9296 2-0048|1280x360@1/30'
 /opt/pim/bin/cam_fps_stack.sh -c ch01 -d 20 -i 2 -D -L FINAL_640X360_30 -R 30
 pgrep -a gstApp
 ```
@@ -570,7 +642,7 @@ pgrep -a gstApp
 | A | ch0 | 640x360@30 |  |  | off/100/center |  |  |  |  |  |  |
 | B | ch0+ch1 | 각 640x360@30 |  |  | off/100/center |  |  |  |  |  |  |
 | E | ch0+ch1 | 각 1280x720@30 |  |  | on/150/center+runtime |  |  |  |  |  |  |
-| H | ch0 | Case H VPU |  |  | Case 유지 |  | 해당 없음 |  |  |  |  |
+| H | ch0+ch1 | Case H H.264 VPU |  |  | off/100/center |  |  |  |  |  |  |
 
 회신 시 아래 정보도 포함한다.
 
@@ -581,7 +653,9 @@ pgrep -a gstApp
 - `cam_fps_stack.sh`, `cam_360p_resource.sh`, gstApp journal, dmesg 결과
 - 실패한 경우 수행한 롤백 단계와 최종 복구 상태
 
-## 13. 공급자 로컬 검증 상태
+## 13. 공급자 검증 결과
+
+### 13.1 로컬 패키지 검증
 
 전달 DEB는 최신 패키징 원본에서 생성한 뒤 다음 검사를 통과했다.
 
@@ -591,8 +665,73 @@ pgrep -a gstApp
 - 패키지 실행권한 검사 통과
 - maintainer script `bash -n` 통과
 - `max9296.ko` vermagic 일치
+- source 파일 시각이 달라도 고정된 `SOURCE_DATE_EPOCH`로 2회 빌드한 DEB가
+  byte-for-byte 및 SHA-256까지 일치
 - DEB 재추출 후 전체 data payload의 파일 유형, 권한, symlink target, SHA-256 일치
 - DEB 권한 분포: regular `644/755`, directory `755`, symlink `777`
 
-대상 보드 설치 및 Case A/B/E/H 실측 결과는 별도 공급자 검증 기록으로 관리하며,
-상대 팀은 12장의 양식으로 독립 결과를 회신한다.
+### 13.2 공급자 타겟 보드 실측
+
+2026-08-31에 다음 환경에서 이 문서의 DEB 자체를 설치하고 검증했다.
+
+| 항목 | 실측값 |
+|---|---|
+| board registry / hostname | `pim` / `pim-camera-v016` |
+| SoC / OS | i.MX8MP / Ubuntu 20.04.2 LTS |
+| kernel | `5.10.35-lts-5.10.y+g2fce14defc04` |
+| 설치 전 package | `pim-mp 0.6.2 arm64` |
+| 설치 후 package | `pim-mp 0.6.3+jhw.camera1 arm64`, `install ok installed` |
+| 최종 설치 DEB SHA-256 | `a8576aa871986ff4a51c620d348dc6c024171ce146942462a1317e716163e19c` |
+| 설치 결과 | `dpkg` exit 0, `dpkg --audit` 출력 없음 |
+| evidence root | `/root/camtest/handoff-camera1-20260831/` |
+
+실측 결과:
+
+| Case | 실제 capture / RTSP | sensor/ISP/CSI/ISI 평균 FPS | crop | CPU / RSS / DDR / 온도 | RGB565 | 결과 |
+|---|---|---|---|---|---|---|
+| A | `640x360 RGBP`; ch0 HEVC `640x360@30` | ch0 `29.9/29.9/29.8/29.9`, 손실 0.3% | off, 1.0x, center | 14.7%; 24712→24748 KiB; 미지원; CPU/SOC 54/56→53/54°C | green ratio 0, `pass=1` | PASS |
+| B | `1280x360 RGBP`; ch0/ch1 HEVC 각 `640x360@30` | ch0 `30.0/29.9/29.9/29.9`, ch1 `30.0/29.9/29.8/29.8`; 손실 0.2/0.4% | off, 1.0x, center | 17.6%; 41584 KiB 유지; 미지원; 54/56→53/55°C | green ratio 0.000503, `pass=1` | PASS |
+| E | `2560x720 RGBP`; ch0/ch1 HEVC 각 `1280x720@30` | ch0 `30.0/30.0/29.8/29.9`, ch1 `29.9/29.9/29.7/29.8`; 손실 0.5/0.7% | on, 1.5x, center; ch0 40000→32768 런타임 성공 | 25.5%; 71208→73216 KiB; 미지원; 56/58°C 유지 | green ratio 0, `pass=1` | PASS |
+| H | `1280x360 RGBP`; ch0 H.264 Main, ch1 H.264 Baseline, 각 `640x360@30` | ch0 `30.0/29.9/29.8/29.9`, ch1 `30.0/29.9/29.7/29.8`; 손실 0.4/0.6% | off, 1.0x, center | 18.5%; 38456 KiB 유지; 미지원; 54/56→54/55°C | green ratio 0, `pass=1` | PASS |
+
+위 A/B/E/H 전체 시험 후 패키지 아카이브 타임스탬프를 결정적으로 만드는 수정이
+들어갔다. 수정 전후 DEB를 각각 재추출해 data와 `DEBIAN`의 내용, 파일 유형, 권한,
+symlink target이 모두 동일하고 아카이브 타임스탬프만 정규화됐음을 확인했다. 최종
+SHA의 전달 DEB를 보드에 다시 설치한 뒤 dual 640x360@30 스모크를 반복한 결과는 ch0
+`30.0/29.9/29.7/29.8`, ch1 `30.0/30.0/29.5/29.6` sensor/ISP/CSI/ISI FPS였고,
+두 RTSP 모두 HEVC `640x360@30`이었다. 최종 증적은
+`/root/camtest/handoff-camera1-20260831/final-reproducible-deb/`에 저장했다.
+
+Case H에서 `dualEn=0`, ch0 유효값 `gop=30,30`, `profile=10,10`,
+`quant=-1,-1`, `qp_min=10,10`, `qp_max=40,40`과 VPU encoder 4.6.1 / wrapper
+3.0.0을 확인했다. `gop=0`은 30 FPS로 해석됐고 RTSP slot은 record slot에 맞춰졌다.
+
+Case A의 AR0234 window는 1920x1080이어서 640x360 crop-off가 sensor native
+640x360 readout이 아니라는 점을 확인했다. Case E의 window는 중앙 1280x720으로
+바뀌어, digital zoom이 출력 크기는 유지하면서 sensor ROI에도 영향을 줄 수 있음을
+확인했다.
+
+모든 case에서 신규 overflow/CRC/ECC/lost-frame/timeout과 녹색 화면은 없었다.
+카메라 자격시험과 무관한 LED flash는 MCP4018 미장착 보드 조건에 맞춰 끈 뒤 clean
+reset에서 신규 I2C 오류가 없음을 재확인했다.
+
+### 13.3 설치 시 관찰사항과 최종 복원 상태
+
+- 각 설치 중 `/opt/cis/bin/init.py power_on`에서 Python `serial` module 부재
+  traceback이 1회씩 발생했다. `dpkg`는 exit 0으로 구성 완료됐고 camera/VPU 시험에는 영향이
+  없었지만, 수신 환경에서 이 CIS 초기화 경로가 필요하면 `python3-serial` 제공 여부를
+  별도 확인한다.
+- 공급자 보드에서는 `restart_app.sh`가 선택적 `vcm`/`ord` command를 찾지 못하는
+  journal 로그가 반복됐다. gstApp, RTSP, 녹화 파일 완료와 camera FPS에는 영향이
+  없었으며, 수신 환경의 해당 실행 파일 제공 여부를 별도 확인한다.
+- DDR PMU counter는 이 보드에서 지원되지 않아 DDR 값은 `na`였다. CPU/RSS/온도는
+  정상 수집됐다.
+- rollback은 실제로 실행하지 않았다. 설치 전 `pim-mp 0.6.2` DEB
+  (SHA-256 `c0dfc79d46dbe4650ede53dbf5eb700ddac1ee9fe54298f99c0cfdf0934907a0`)와
+  edgeconf/ord-vcm/defaultconf 백업의 존재·문법·체크섬을 확인해 복구 입력을 확보했다.
+- 시험 후 설치 직후의 운영 JSON을 byte-for-byte 복원했다. 최종 SHA-256은
+  `87f9bbb1910f1dd385aef96496d03e5a94feace9ac3acb7bc2197e2d6400ad03`이며,
+  ch0/ch1 enabled, ch2/ch3 disabled, 640x360@30, crop off, `dz=100`, center
+  32768, `enc=h265`, gstApp active 상태다.
+
+상대 팀은 공급자 결과를 대체하지 말고 12장의 양식으로 독립 결과를 회신한다.
