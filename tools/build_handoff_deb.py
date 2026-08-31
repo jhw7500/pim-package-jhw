@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_VERSION = "0.6.3+jhw.camera1"
 DEFAULT_SOURCE = ROOT / "dist/pim"
 DEFAULT_OUTPUT = ROOT / "handover/pim-package-jhw-camera-vpu-20260831"
+DEFAULT_SOURCE_DATE_EPOCH = 1788134400  # 2026-08-31 00:00:00 UTC
 BANNED_NAMES = {".omc", ".bkit", ".serena", ".vscode", "__pycache__"}
 VERSION_PATTERN = re.compile(r"^[0-9A-Za-z.+:~_-]+$")
 
@@ -73,6 +74,22 @@ def normalize_permissions(root: Path) -> None:
         normalized = mode & ~0o022
         if normalized != mode:
             path.chmod(normalized)
+
+
+def normalize_timestamps(root: Path, source_date_epoch: int) -> None:
+    if source_date_epoch < 0:
+        raise ValueError("source date epoch must be non-negative")
+    paths = sorted(
+        chain((root,), root.rglob("*")),
+        key=lambda path: len(path.parts),
+        reverse=True,
+    )
+    for path in paths:
+        os.utime(
+            path,
+            (source_date_epoch, source_date_epoch),
+            follow_symlinks=False,
+        )
 
 
 def sha256_file(path: Path) -> str:
@@ -140,7 +157,12 @@ def validate_deb_fields(
         raise RuntimeError(f"DEB metadata mismatch: expected {expected}, got {fields}")
 
 
-def build_package(source: Path, output_dir: Path, version: str) -> Path:
+def build_package(
+    source: Path,
+    output_dir: Path,
+    version: str,
+    source_date_epoch: int = DEFAULT_SOURCE_DATE_EPOCH,
+) -> Path:
     source = source.resolve()
     control = source / "DEBIAN/control"
     if not control.is_file():
@@ -164,7 +186,11 @@ def build_package(source: Path, output_dir: Path, version: str) -> Path:
             remove_banned(stage)
             rewrite_version(stage / "DEBIAN/control", version)
             normalize_permissions(stage)
+            normalize_timestamps(stage, source_date_epoch)
             expected = payload_manifest(stage)
+
+            build_environment = os.environ.copy()
+            build_environment["SOURCE_DATE_EPOCH"] = str(source_date_epoch)
 
             subprocess.run(
                 [
@@ -175,6 +201,7 @@ def build_package(source: Path, output_dir: Path, version: str) -> Path:
                     str(output),
                 ],
                 check=True,
+                env=build_environment,
             )
 
             extracted = Path(temporary) / "extracted"
@@ -202,13 +229,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source", type=Path, default=DEFAULT_SOURCE)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--version", default=DEFAULT_VERSION)
+    parser.add_argument(
+        "--source-date-epoch",
+        type=int,
+        default=DEFAULT_SOURCE_DATE_EPOCH,
+        help="fixed UTC timestamp used for reproducible package metadata",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
     try:
-        build_package(args.source, args.output_dir, args.version)
+        build_package(
+            args.source,
+            args.output_dir,
+            args.version,
+            args.source_date_epoch,
+        )
     except (FileNotFoundError, FileExistsError, ValueError, RuntimeError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1

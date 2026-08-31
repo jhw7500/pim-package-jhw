@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 import tempfile
 import unittest
@@ -39,6 +40,15 @@ class HandoffDebTest(unittest.TestCase):
         tool.chmod(0o755)
         (source / "opt/pim/current").symlink_to("bin/probe.sh")
         return source
+
+    def set_tree_mtime(self, root: Path, epoch: int) -> None:
+        paths = sorted(
+            (root, *root.rglob("*")),
+            key=lambda path: len(path.parts),
+            reverse=True,
+        )
+        for path in paths:
+            os.utime(path, (epoch, epoch), follow_symlinks=False)
 
     def test_build_changes_only_staged_version_and_preserves_payload(self):
         module = load_module()
@@ -120,6 +130,23 @@ class HandoffDebTest(unittest.TestCase):
                     & 0o777,
                     0o644,
                 )
+
+    def test_build_is_reproducible_across_source_mtimes(self):
+        module = load_module()
+        with tempfile.TemporaryDirectory(prefix="handoff-deb-test.") as tmp:
+            work = Path(tmp)
+            source = self.make_package(work)
+            self.set_tree_mtime(source, 978307200)
+            first = module.build_package(
+                source, work / "out-first", "0.6.3+jhw.camera1"
+            )
+
+            self.set_tree_mtime(source, 1640995200)
+            second = module.build_package(
+                source, work / "out-second", "0.6.3+jhw.camera1"
+            )
+
+            self.assertEqual(first.read_bytes(), second.read_bytes())
 
 
 if __name__ == "__main__":
