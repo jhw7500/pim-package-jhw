@@ -24,6 +24,13 @@
 120 FPS 요청 실측은 약 113~115 FPS로 엄격 118.8 FPS 기준을 통과하지 못했으므로
 120 FPS module은 연구용이며 production module 상한은 30 FPS다.
 
+PIM target의 실제 계층 포맷은 MAX9296 subdevice `UYVY8_2X8`, ISI capture node
+`RGBP`다. 640x360 듀얼 출력은 capture node에서 `1280x360 RGB565`로 확인했으며,
+센서/ISP/CSI/ISI 평균은 ch0 `30.0/29.9/29.7/29.8`, ch1
+`29.9/29.9/29.5/29.6 FPS`였다. 두 영역의 원시 RGB565 green ratio는 0~2.08%로
+녹색 우세 현상은 재현되지 않았다. 현재 조명 조건에서는 한 영역이 고정 암부가 될 수
+있어 암부와 녹색 우세를 별도 판정한다.
+
 ### Artifacts
 
 - max9296 2.9: SHA-256 `b27ae021fe4cb569ed6264712fabebb2a6b2cb6f5ab27278aebdb4113e09fc33`
@@ -31,7 +38,8 @@
 - gstApp crop/single-slot integration: SHA-256
   `c816f84094f7d357c51a20b8c694ea198d0207fac68eca53128e5225b5ddafbe`
 - qualification tools: `cam_fps_stack.sh`, `cam_360p_resource.sh`,
-  `uyvy_frame_check.py` (all installed under `/opt/pim/bin`)
+  `uyvy_frame_check.py`, `rgb565_frame_check.py` (all installed under
+  `/opt/pim/bin`)
 
 ## Version 2.0 (2026-02-11)
 

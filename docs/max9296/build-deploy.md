@@ -134,6 +134,7 @@ gstApp + max9296 변경 후:
 | `dist/pim/opt/pim/bin/cam_fps_stack.sh` | max9296 `tools/cam_fps_stack.sh` | `d15d613` | `9467ecd` | `0c517795c947105e50951fb9743cb1550bd0a65b2921024bf25ddbc2d209b21a` |
 | `dist/pim/opt/pim/bin/cam_360p_resource.sh` | max9296 `tools/cam_360p_resource.sh` | `9467ecd` | `9467ecd` | `bade675c2ec06596a61fa6e6c9ff969c148b294dbd43dad6ba58ef358d41bcd6` |
 | `dist/pim/opt/pim/bin/uyvy_frame_check.py` | max9296 `tools/uyvy_frame_check.py` | `9467ecd` | `9467ecd` | `b4b4d610c56175a836f6f19fe66bf9464ab5536b553e7363ef796a21d7ca9580` |
+| `dist/pim/opt/pim/bin/rgb565_frame_check.py` | max9296 `tools/rgb565_frame_check.py` | `334291f` | `334291f` | `9dd626dda8ee4e98b770b45db13632f9ac490b5a07bedf027f53fd6cef268d6d` |
 
 ### 드리프트 확인
 
@@ -154,6 +155,9 @@ git -C <max9296-checkout> show 9467ecd:tools/cam_360p_resource.sh \
 
 git -C <max9296-checkout> show 9467ecd:tools/uyvy_frame_check.py \
   | diff - dist/pim/opt/pim/bin/uyvy_frame_check.py && echo "동일"
+
+git -C <max9296-checkout> show 334291f:tools/rgb565_frame_check.py \
+  | diff - dist/pim/opt/pim/bin/rgb565_frame_check.py && echo "동일"
 ```
 
 정본이 갱신되면 다시 복사하고 이 표의 커밋·sha256 을 함께 고친다. `.ko` 와 달리
@@ -187,9 +191,12 @@ CSI2/ISI 를 건드리지 않아, D-PHY 락 실패류(STREAMON 성공 + CSI2 이
 ```
 
 `cam_360p_resource.sh`는 같은 관측 구간의 gstApp RSS/CPU, DDR PMU, 온도,
-V4L2 format과 신규 커널 오류를 수집한다. `uyvy_frame_check.py`는 정확한 stride와
-프레임 크기를 검증하고 constant/mostly-green UYVY 프레임을 실패 처리한다. 두 도구는
-서비스 자동 복구 경로에 연결하지 않고 qualification에서만 수동 실행한다.
+V4L2 format과 신규 커널 오류를 수집한다. MAX9296 subdevice의 media-bus 포맷은
+UYVY지만 i.MX8 ISI capture node는 이를 RGB565(`RGBP`)로 메모리에 쓴다.
+`uyvy_frame_check.py`는 UYVY 입력을, `rgb565_frame_check.py`는 실제 capture node의
+RGB565 입력을 정확한 stride/크기로 검증하고 constant/mostly-green 프레임을 실패
+처리한다. 이 도구들은 서비스 자동 복구 경로에 연결하지 않고 qualification에서만
+수동 실행한다.
 
 기본 측정은 읽기 전용이며 `bash`, `i2ctransfer`, `media-ctl`과
 `/proc/interrupts`가 필요하다. `-D/--deep`은
