@@ -1,5 +1,27 @@
 # MAX9296 Driver Release Notes
 
+## Version 2.10 (2026-08-31)
+
+### FPS policy
+
+- 일반 max9296 모듈은 640x360에서 1~120 FPS 요청을 허용한다. 별도 qualification
+  모듈은 필요하지 않다.
+- 1920x1080/1280x720의 요청 상한과 모든 모드의 `EXP_TIME(0x500c)` 수동 쓰기
+  안전 상한은 30 FPS다.
+- 640x360의 31~120 FPS에서는 AE auto를 사용한다. 수동 노출과 수동 AE 전환은
+  I2C 쓰기 전에 `-EBUSY`로 거부된다.
+- 패키지 기본 edgeconf는 `640x360@30`을 유지하며, 필요할 때 같은 모듈에서
+  `fps=120`으로 바꾼 뒤 하드 리셋하여 시험한다.
+- 드라이버의 120은 요청 허용 상한이다. `KEEP` 경로 과거 실측은 약
+  113~115 FPS였으므로 정확한 120 FPS 전달을 보장하지 않는다.
+
+### Artifacts
+
+- max9296 2.10: SHA-256
+  `7a5e0a330b6992c1d10731d1ba02f415cea6e2c428feb5de76625f0b4d066241`
+- srcversion: `8EBDAFE29DF1EA7734A71CB`
+- source commit: `e871ed1`
+
 ## Version 2.9 (2026-08-28)
 
 ### Overview

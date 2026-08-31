@@ -26,11 +26,11 @@ V4L2 subdev 노드도 이 전역 채널과 정합되게 사용한다.
 
 ### 1.1 해상도와 디지털 crop은 독립 제어
 
-| 카메라당 출력 | single V4L2 폭 | dual V4L2 폭 | production `max_fps` | 노출 쓰기 안전 상한 |
+| 카메라당 출력 | single V4L2 폭 | dual V4L2 폭 | 드라이버 요청 상한 | 노출 쓰기 안전 상한 |
 |---:|---:|---:|---:|---:|
 | 1920x1080 | 1920x1080 | 3840x1080 | 30 | 30 |
 | 1280x720 | 1280x720 | 2560x720 | 30 | 30 |
-| 640x360 | 640x360 | 1280x360 | 30 | 30 |
+| 640x360 | 640x360 | 1280x360 | 120 | 30 |
 
 `cam_width`/`cam_height`는 AP1302/CSI 출력 크기를 선택한다. `crop_enable`과
 `dz`는 선택된 출력 안에서 디지털 확대·중심 조준만 하며 출력 해상도를 바꾸지
@@ -40,7 +40,8 @@ crop을 꺼도 CSI 출력은 640x360이다.
 기본 640x360 `KEEP` 정책은 AP1302 출력 context를 640x360으로 바꾸지만 AR0234
 sensor-mode 선택은 펌웨어 값을 유지한다. 즉 640x360 출력이 곧 AR0234의
 640x360 readout을 의미하지 않는다. 후보 sensor-mode 0~15는 full-FOV 120 FPS
-production profile로 검증되지 않았으므로 운영 기본은 `KEEP`, 30 FPS다.
+profile로 검증되지 않았으므로 운영 기본은 `KEEP`이다. 일반 드라이버는 이 경로에서
+최대 120 FPS 요청을 허용하지만 패키지 기본값은 회귀 안전성을 위해 30 FPS다.
 
 ## 2) 값 표현(고정점) 규칙
 
@@ -126,12 +127,12 @@ firmware를 다시 로드한다. gstApp 재시작만으로는 하드웨어 epoch
 
 ### 3.3 노출 쓰기 안전 정책
 
-production 일반 영상 FPS와 `EXP_TIME(0x500c)` 쓰기 안전 상한은 모두 30 FPS다.
-qualification module의 31~120 FPS에서 `exp_time`, `exp_time_chX` 또는 수동 AE
+일반 영상 FPS 요청 상한과 `EXP_TIME(0x500c)` 쓰기 안전 상한은 별도 정책이다.
+640x360의 31~120 FPS에서 `exp_time`, `exp_time_chX` 또는 수동 AE
 전환으로 노출 쓰기가 필요하면 I2C 전에 `-EBUSY`로 거부한다. 로그에는 채널,
 모드, 현재 FPS, 요청 노출값, 안전 상한이 남는다.
 
-고속 qualification에서 AE auto이면 초기 exposure seed만 생략하고 gain/AWB/flip
+고속 운용에서 AE auto이면 초기 exposure seed만 생략하고 gain/AWB/flip
 등은 유지한다. 30 FPS 이하에서는 기존 노출·gain·AE 동작을 유지한다. SoC 정지
 이력이 있는 수동 WB `0x510a` 쓰기는 이 구현에 추가하지 않았다.
 
@@ -215,9 +216,10 @@ v4l2-ctl -d /dev/v4l-subdev2 -c dma_reg_write_ch0=$((0x30700001))
 #### 지원 FPS 범위
 
 - 공통 최소값: 1 FPS
-- 1920x1080, 1280x720, 640x360 production: 최대 30 FPS
-- 640x360 qualification artifact: 최대 120 FPS를 협상할 수 있으나, KEEP 경로
-  실측 113~115 FPS는 엄격 기준 118.8 FPS를 통과하지 못해 production에 쓰지 않는다.
+- 1920x1080, 1280x720: 최대 30 FPS
+- 640x360: 일반 모듈에서 최대 120 FPS 요청 가능. 별도 qualification 모듈은 없다.
+- 120은 요청 허용 상한이며 `KEEP` 경로 과거 실측 113~115 FPS는 엄격 기준
+  118.8 FPS를 통과하지 못했다. 따라서 정확한 120 FPS 전달을 보장하지 않는다.
 - 모든 모드의 `0x500c` 노출 쓰기 안전 상한: 30 FPS
 
 #### 코드 위치
@@ -400,7 +402,8 @@ jq -e . "$CONF.360p.tmp"
 `cam_hard_reset.sh -s -S` 또는 `init_cam.sh`를 실행한다. FHD는
 `cam_width=1920, cam_height=1080`, HD는 `1280,720`, 360p는 `640,360`으로
 선택하며 crop 키는 어느 해상도에서도 독립적으로 쓸 수 있다. 운영 FPS 상한은
-세 모드 모두 30이다.
+FHD/HD 30, 360p 120이다. 패키지 기본값은 30이며 120 FPS 시험 시 같은 모듈에서
+`fps=120`, AE auto를 설정하고 하드 리셋한다.
 
 ### 5.1 테스트/튜닝 시(권장)
 
@@ -433,7 +436,7 @@ sudo /opt/pim/bin/init_cam.sh
 - `cam_ae_setting.sh` : `0x5100` 직접 write
 
 직접 I2C 스크립트는 드라이버의 30 FPS exposure guard와 cache/fingerprint를
-우회한다. 특히 `cam_manual_exp_time.sh`는 31 FPS 이상 및 qualification 시험에서
+우회한다. 특히 `cam_manual_exp_time.sh`는 31 FPS 이상 고속 시험에서
 사용하지 않는다. 운영 경로는 V4L2 컨트롤만 사용하고 위 스크립트는 정지된
 디버그 환경의 레거시 도구로 제한한다.
 

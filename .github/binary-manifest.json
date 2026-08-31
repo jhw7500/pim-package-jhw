@@ -25,18 +25,18 @@
     },
     {
       "path": "dist/pim/opt/pim/driver/max9296.ko",
-      "sha256": "b27ae021fe4cb569ed6264712fabebb2a6b2cb6f5ab27278aebdb4113e09fc33",
-      "size": 973936,
+      "sha256": "7a5e0a330b6992c1d10731d1ba02f415cea6e2c428feb5de76625f0b4d066241",
+      "size": 976320,
       "mode": "100644",
       "arch": "aarch64",
       "storage": "lfs",
-      "module_version": "2.9",
+      "module_version": "2.10",
       "source": {
         "repo": "jhw7500/max9296",
-        "commit": "6d44392",
+        "commit": "e871ed1",
         "build": "./make-for-imx8 (Yocto SDK 5.10-hardknott, cortexa53-crypto-poky-linux)"
       },
-      "note": "MAX9296 2.9 clean build다. 1920x1080/1280x720/640x360 production 모드, 30 FPS 노출 안전 상한, crop_enable, 공통 1.00x~3.00x dz, 채널별 중심 cache/replay를 포함한다. 640x360 production은 AP1302/CSI 출력 context만 바꾸는 KEEP 정책이며 AR0234 전용 readout이나 120 FPS를 주장하지 않는다. module srcversion은 DA89ABE8A6E147911293CE6이고 2026-08-31 호스트 전체 테스트와 PIM 타겟 cfgjson 30건을 통과했다.",
+      "note": "MAX9296 2.10 clean build다. 1920x1080/1280x720은 최대 30 FPS, 640x360은 기본 빌드에서 1~120 FPS 요청을 허용한다. 30 FPS 초과에서는 AE auto를 사용하며 EXP_TIME(0x500c) 수동 쓰기는 I2C 전에 거부한다. 패키지 기본 edgeconf는 640x360@30을 유지한다. 640x360 KEEP은 AP1302/CSI 출력 context만 바꾸며, 과거 실측 113~115 FPS이므로 정확한 120 FPS 전달을 보장하지 않는다. crop_enable, 공통 1.00x~3.00x dz, 채널별 중심 cache/replay를 포함한다. module srcversion은 8EBDAFE29DF1EA7734A71CB이고 source commit은 e871ed1이다.",
       "required_strings": [
         "dev_attr_prepare",
         "max9296_prepare_adopt_power_locked",

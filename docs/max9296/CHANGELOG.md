@@ -5,6 +5,27 @@ All notable changes to the MAX9296 driver will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.10] - 2026-08-31
+
+### Changed
+- 기본 `MAX9296_360P_MAX_FPS`를 30에서 120으로 변경해 일반 모듈 하나로
+  640x360의 1~120 FPS 요청을 허용한다. 1920x1080/1280x720 상한은 30 FPS다.
+- 이 값은 드라이버의 요청 허용 상한이다. `KEEP` 경로 과거 실측은 약
+  113~115 FPS이므로 실제 120 FPS 전달을 보장하지 않는다.
+- 패키지 기본 edgeconf는 회귀 안전성을 위해 `640x360@30`을 유지한다.
+
+### Safety
+- 모든 모드의 `EXP_TIME(0x500c)` 쓰기 안전 상한은 30 FPS로 유지한다.
+  640x360의 31~120 FPS에서는 AE auto로 운용하며 수동 노출 및 수동 AE 전환을
+  I2C 쓰기 전에 `-EBUSY`로 거부한다.
+- SoC 정지 이력이 있는 수동 WB `0x510a` 쓰기는 추가하지 않았다.
+
+### Verification
+- i.MX8 BSP 5.10.35 clean cross-build: srcversion
+  `8EBDAFE29DF1EA7734A71CB`, SHA-256
+  `7a5e0a330b6992c1d10731d1ba02f415cea6e2c428feb5de76625f0b4d066241`.
+- 기본 120 FPS 및 명시적 30 FPS override 정책 테스트와 전체 호스트 게이트 통과.
+
 ## [2.9] - 2026-08-28
 
 ### Added

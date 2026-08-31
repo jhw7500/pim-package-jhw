@@ -1,14 +1,18 @@
 # PIM Package Changelog
 
-## 최신 변경사항 (2026-08-31) — MAX9296 640x360/crop 패키지 통합
+## 최신 변경사항 (2026-08-31) — MAX9296 2.10 / 640x360 최대 120 FPS 요청
 
-- clean-built max9296 2.9와 gstApp 640x360/crop/single-slot 바이너리를 반영했다.
+- clean-built max9296 2.10과 gstApp 640x360/crop/single-slot 바이너리를 반영했다.
 - PIM 기본 edgeconf를 `640x360@30`, `crop_enable=false`, `dz=100`, 채널 중심
   32768로 설정하고 별도 병합 fragment를 패키지 config에 추가했다.
 - 기존 설정은 `update_edgeconf.sh`가 누락된 crop 키만 backfill하며 운영자가 지정한
   enable/배율/중심은 보존한다.
 - FHD/HD/360p 출력 선택과 디지털 crop이 독립임을 배포 가이드에 명시했다.
-- 120 FPS는 qualification 전용이며 production 노출 쓰기 안전 상한은 30 FPS다.
+- 일반 max9296 2.10 모듈은 640x360에서 1~120 FPS 요청을 허용한다. 별도
+  qualification 모듈은 필요하지 않다. 단, 과거 실측 전달률은 약 113~115 FPS라
+  정확한 120 FPS 전달을 보장하지 않으며 30 FPS 초과에서는 AE auto를 사용한다.
+- `EXP_TIME(0x500c)` 수동 쓰기 안전 상한은 계속 30 FPS다. 31~120 FPS에서
+  `exp_time`/`exp_time_chX` 및 수동 AE 전환은 I2C 쓰기 전에 거부한다.
 - 1280x360 듀얼 판정을 포함한 `cam_fps_stack.sh`와 resource/UYVY/RGB565
   green-frame qualification 도구를 패키지에 동기화했다. 실제 ISI capture
   포맷은 `RGBP`이고 subdevice media-bus 포맷은 UYVY임을 구분했다.
