@@ -23,8 +23,8 @@ production 기준은 모든 출력 모드에서 30 FPS다.
 | 항목 | 값 |
 |---|---|
 | 파일 | `pim-mp_0.6.3+jhw.camera1_arm64.deb` |
-| 크기 | 30,648,146 bytes |
-| SHA-256 | `a8576aa871986ff4a51c620d348dc6c024171ce146942462a1317e716163e19c` |
+| 크기 | 30,763,272 bytes |
+| SHA-256 | `901c4caa93a0aee817e6f51bbd74f20e3c07d5046e2eeeda979d54a13a1c2bd7` |
 | Package | `pim-mp` |
 | Version | `0.6.3+jhw.camera1` |
 | Architecture | `arm64` |
@@ -37,7 +37,7 @@ production 기준은 모든 출력 모드에서 30 FPS다.
 ```bash
 cd /root/camtest/handoff-camera1-20260831
 printf '%s  %s\n' \
-  'a8576aa871986ff4a51c620d348dc6c024171ce146942462a1317e716163e19c' \
+  '901c4caa93a0aee817e6f51bbd74f20e3c07d5046e2eeeda979d54a13a1c2bd7' \
   'pim-mp_0.6.3+jhw.camera1_arm64.deb' | sha256sum -c -
 ```
 
@@ -200,7 +200,7 @@ set -e
 WORK=/root/camtest/handoff-camera1-20260831
 cd "$WORK"
 printf '%s  %s\n' \
-  'a8576aa871986ff4a51c620d348dc6c024171ce146942462a1317e716163e19c' \
+  '901c4caa93a0aee817e6f51bbd74f20e3c07d5046e2eeeda979d54a13a1c2bd7' \
   'pim-mp_0.6.3+jhw.camera1_arm64.deb' | sha256sum -c -
 
 systemctl stop cam-operate.service
@@ -681,7 +681,7 @@ pgrep -a gstApp
 | kernel | `5.10.35-lts-5.10.y+g2fce14defc04` |
 | 설치 전 package | `pim-mp 0.6.2 arm64` |
 | 설치 후 package | `pim-mp 0.6.3+jhw.camera1 arm64`, `install ok installed` |
-| 최종 설치 DEB SHA-256 | `a8576aa871986ff4a51c620d348dc6c024171ce146942462a1317e716163e19c` |
+| 최종 설치 DEB SHA-256 | `901c4caa93a0aee817e6f51bbd74f20e3c07d5046e2eeeda979d54a13a1c2bd7` |
 | 설치 결과 | `dpkg` exit 0, `dpkg --audit` 출력 없음 |
 | evidence root | `/root/camtest/handoff-camera1-20260831/` |
 
@@ -694,13 +694,14 @@ pgrep -a gstApp
 | E | `2560x720 RGBP`; ch0/ch1 HEVC 각 `1280x720@30` | ch0 `30.0/30.0/29.8/29.9`, ch1 `29.9/29.9/29.7/29.8`; 손실 0.5/0.7% | on, 1.5x, center; ch0 40000→32768 런타임 성공 | 25.5%; 71208→73216 KiB; 미지원; 56/58°C 유지 | green ratio 0, `pass=1` | PASS |
 | H | `1280x360 RGBP`; ch0 H.264 Main, ch1 H.264 Baseline, 각 `640x360@30` | ch0 `30.0/29.9/29.8/29.9`, ch1 `30.0/29.9/29.7/29.8`; 손실 0.4/0.6% | off, 1.0x, center | 18.5%; 38456 KiB 유지; 미지원; 54/56→54/55°C | green ratio 0, `pass=1` | PASS |
 
-위 A/B/E/H 전체 시험 후 패키지 아카이브 타임스탬프를 결정적으로 만드는 수정이
-들어갔다. 수정 전후 DEB를 각각 재추출해 data와 `DEBIAN`의 내용, 파일 유형, 권한,
-symlink target이 모두 동일하고 아카이브 타임스탬프만 정규화됐음을 확인했다. 최종
-SHA의 전달 DEB를 보드에 다시 설치한 뒤 dual 640x360@30 스모크를 반복한 결과는 ch0
-`30.0/29.9/29.7/29.8`, ch1 `30.0/30.0/29.5/29.6` sensor/ISP/CSI/ISI FPS였고,
+위 A/B/E/H 전체 시험 후 패키지 아카이브 타임스탬프를 결정적으로 만드는 수정과
+저장소 권한 정리가 들어갔다. 권한 커밋은 전체 301개 중 패키지 tree 59개 regular
+file(data 58개와 `DEBIAN/templates` 1개)을 `100644`에서 `100755`로 바꾸며 파일
+내용은 변경하지 않는다. 최종 SHA의 전달
+DEB를 보드에 다시 설치한 뒤 dual 640x360@30 스모크를 반복한 결과는 ch0
+`29.9/29.9/29.7/29.8`, ch1 `30.0/30.0/29.5/29.6` sensor/ISP/CSI/ISI FPS였고,
 두 RTSP 모두 HEVC `640x360@30`이었다. 최종 증적은
-`/root/camtest/handoff-camera1-20260831/final-reproducible-deb/`에 저장했다.
+`/root/camtest/handoff-camera1-20260831/final-permissions-deb/`에 저장했다.
 
 Case H에서 `dualEn=0`, ch0 유효값 `gop=30,30`, `profile=10,10`,
 `quant=-1,-1`, `qp_min=10,10`, `qp_max=40,40`과 VPU encoder 4.6.1 / wrapper
@@ -717,6 +718,10 @@ reset에서 신규 I2C 오류가 없음을 재확인했다.
 
 ### 13.3 설치 시 관찰사항과 최종 복원 상태
 
+- 최종 DEB 내부의 권한 변경 파일은 755로 확인했다. 단 `/etc/defaultconf.json`은
+  `postinst`가 644인 `edgeconf_pim_base.json`에서 다시 생성하므로 설치 완료 후에는
+  644가 된다. 함께 확인한 service, CIS script, crontab, firmware archive와 modules
+  파일은 755였다.
 - 각 설치 중 `/opt/cis/bin/init.py power_on`에서 Python `serial` module 부재
   traceback이 1회씩 발생했다. `dpkg`는 exit 0으로 구성 완료됐고 camera/VPU 시험에는 영향이
   없었지만, 수신 환경에서 이 CIS 초기화 경로가 필요하면 `python3-serial` 제공 여부를
