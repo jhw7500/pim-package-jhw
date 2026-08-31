@@ -360,24 +360,25 @@ echo "check led_flash per channel"
 #   enable      : bool. gates mcp4018_power_chX (MAX9295 MFP4 GPIO) + led_flash_chX bit8 (AR0234 R0x3270)
 #   wiper       : int  0..127 (MCP4018 digital pot; 63 = mid-scale default)
 #   flash_delay : int  0..255 (AR0234 R0x3270 bit7:0 DELAY field)
-#                 enable/wiper 와 달리 == null 가드 없이 매번 128 로 강제한다.
-#                 의도된 동작 — 기기별로 값이 갈리지 않게 고정한다.
+#                 누락된 레거시 설정에만 128 기본값을 넣고 명시값은 보존한다.
+#                 640x360@120에서 활성 채널의 128은 프레임 전달률을 크게 낮추므로
+#                 고속 모드 설정은 검증값(현재 ch0=0)을 유지해야 한다.
 jq '.VHL_CAM.i2c2.ch0.led_flash |= (. // {})
 | .VHL_CAM.i2c2.ch0.led_flash |= (if .enable      == null then .enable      = false else . end)
 | .VHL_CAM.i2c2.ch0.led_flash |= (if .wiper       == null then .wiper       = 63    else . end)
-| .VHL_CAM.i2c2.ch0.led_flash.flash_delay = 128
+| .VHL_CAM.i2c2.ch0.led_flash |= (if .flash_delay == null then .flash_delay = 128   else . end)
 | .VHL_CAM.i2c2.ch1.led_flash |= (. // {})
 | .VHL_CAM.i2c2.ch1.led_flash |= (if .enable      == null then .enable      = false else . end)
 | .VHL_CAM.i2c2.ch1.led_flash |= (if .wiper       == null then .wiper       = 63    else . end)
-| .VHL_CAM.i2c2.ch1.led_flash.flash_delay = 128
+| .VHL_CAM.i2c2.ch1.led_flash |= (if .flash_delay == null then .flash_delay = 128   else . end)
 | .VHL_CAM.i2c1.ch2.led_flash |= (. // {})
 | .VHL_CAM.i2c1.ch2.led_flash |= (if .enable      == null then .enable      = false else . end)
 | .VHL_CAM.i2c1.ch2.led_flash |= (if .wiper       == null then .wiper       = 63    else . end)
-| .VHL_CAM.i2c1.ch2.led_flash.flash_delay = 128
+| .VHL_CAM.i2c1.ch2.led_flash |= (if .flash_delay == null then .flash_delay = 128   else . end)
 | .VHL_CAM.i2c1.ch3.led_flash |= (. // {})
 | .VHL_CAM.i2c1.ch3.led_flash |= (if .enable      == null then .enable      = false else . end)
 | .VHL_CAM.i2c1.ch3.led_flash |= (if .wiper       == null then .wiper       = 63    else . end)
-| .VHL_CAM.i2c1.ch3.led_flash.flash_delay = 128
+| .VHL_CAM.i2c1.ch3.led_flash |= (if .flash_delay == null then .flash_delay = 128   else . end)
 ' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
 
 #gstApp (streamApp deprecated — $1==1 분기 제거됨)

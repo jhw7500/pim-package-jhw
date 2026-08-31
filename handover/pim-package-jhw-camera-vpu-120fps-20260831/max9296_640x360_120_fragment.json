@@ -1,0 +1,45 @@
+{
+  "cam_width": 640,
+  "cam_height": 360,
+  "fps": 120,
+  "i2c2": {
+    "crop_enable": false,
+    "dz": 100,
+    "ch0": {
+      "ae_on": true,
+      "dz_x": 32768,
+      "dz_y": 32768,
+      "led_flash": {
+        "flash_delay": 0
+      }
+    },
+    "ch1": {
+      "ae_on": true,
+      "dz_x": 32768,
+      "dz_y": 32768,
+      "led_flash": {
+        "flash_delay": 0
+      }
+    }
+  },
+  "i2c1": {
+    "crop_enable": false,
+    "dz": 100,
+    "ch2": {
+      "ae_on": true,
+      "dz_x": 32768,
+      "dz_y": 32768,
+      "led_flash": {
+        "flash_delay": 0
+      }
+    },
+    "ch3": {
+      "ae_on": true,
+      "dz_x": 32768,
+      "dz_y": 32768,
+      "led_flash": {
+        "flash_delay": 0
+      }
+    }
+  }
+}

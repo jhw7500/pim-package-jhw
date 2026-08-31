@@ -11,9 +11,14 @@
 - 640x360의 31~120 FPS에서는 AE auto를 사용한다. 수동 노출과 수동 AE 전환은
   I2C 쓰기 전에 `-EBUSY`로 거부된다.
 - 패키지 기본 edgeconf는 `640x360@30`을 유지하며, 필요할 때 같은 모듈에서
-  `fps=120`으로 바꾼 뒤 하드 리셋하여 시험한다.
+  packaged `max9296_640x360_120_fragment.json`을 merge한 뒤 하드 리셋하여
+  시험한다. fragment는 AE auto, crop off, 1.00x와 활성 채널 호환 flash delay 0을
+  설정한다.
 - 드라이버의 120은 요청 허용 상한이다. `KEEP` 경로 과거 실측은 약
   113~115 FPS였으므로 정확한 120 FPS 전달을 보장하지 않는다.
+- 타겟 단일 변수 시험에서 활성 AR0234 `LED_FLASH_CONTROL(0x3270)` delay 128은
+  CSI 전달률을 크게 낮췄고 delay 0에서 약 113 FPS로 회복됐다. package migration은
+  명시된 `led_flash.flash_delay`를 더 이상 128로 강제 덮어쓰지 않는다.
 
 ### Artifacts
 
@@ -21,6 +26,8 @@
   `7a5e0a330b6992c1d10731d1ba02f415cea6e2c428feb5de76625f0b4d066241`
 - srcversion: `8EBDAFE29DF1EA7734A71CB`
 - source commit: `e871ed1`
+- target package: `pim-mp 0.6.3+jhw.camera3`; ch0/ch1 CSI `113.3/113.1` FPS,
+  strict 118.8 FPS 기준 미달, transport error 0, 최종 30 FPS 회귀 PASS
 
 ## Version 2.9 (2026-08-28)
 
@@ -44,7 +51,8 @@
 
 640x360 `KEEP`은 AR0234 sensor readout을 바꾸지 않고 AP1302/CSI 출력만 바꾼다.
 120 FPS 요청 실측은 약 113~115 FPS로 엄격 118.8 FPS 기준을 통과하지 못했으므로
-120 FPS module은 연구용이며 production module 상한은 30 FPS다.
+2.9 당시 120 FPS module은 연구용이며 production module 상한은 30 FPS였다.
+2.10부터 일반 모듈의 요청 상한은 120 FPS다.
 
 PIM target의 실제 계층 포맷은 MAX9296 subdevice `UYVY8_2X8`, ISI capture node
 `RGBP`다. 640x360 듀얼 출력은 capture node에서 `1280x360 RGB565`로 확인했으며,

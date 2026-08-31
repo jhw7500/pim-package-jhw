@@ -10,6 +10,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG = ROOT / "dist/pim/opt/pim/config/edgeconf_pim_base.json"
 FRAGMENT = ROOT / "dist/pim/opt/pim/config/max9296_640x360_fragment.json"
+HIGH_FPS_FRAGMENT = (
+    ROOT / "dist/pim/opt/pim/config/max9296_640x360_120_fragment.json"
+)
 
 
 def main() -> int:
@@ -55,7 +58,28 @@ def main() -> int:
         for channel in channels:
             assert fragment[bus][channel] == {"dz_x": 32768, "dz_y": 32768}
 
-    print("PASS: packaged MAX9296 defaults and fragment select safe 640x360")
+    high_fps = json.loads(HIGH_FPS_FRAGMENT.read_text(encoding="utf-8"))
+    assert (
+        high_fps["cam_width"],
+        high_fps["cam_height"],
+        high_fps["fps"],
+    ) == (640, 360, 120), "the high-FPS fragment must request 640x360@120"
+    for bus, channels in (("i2c2", ("ch0", "ch1")),
+                          ("i2c1", ("ch2", "ch3"))):
+        assert high_fps[bus]["crop_enable"] is False
+        assert high_fps[bus]["dz"] == 100
+        for channel in channels:
+            assert high_fps[bus][channel] == {
+                "ae_on": True,
+                "dz_x": 32768,
+                "dz_y": 32768,
+                "led_flash": {"flash_delay": 0},
+            }
+
+    print(
+        "PASS: packaged MAX9296 defaults and fragments select safe "
+        "640x360@30/120"
+    )
     return 0
 
 

@@ -7,6 +7,10 @@
   32768로 설정하고 별도 병합 fragment를 패키지 config에 추가했다.
 - 기존 설정은 `update_edgeconf.sh`가 누락된 crop 키만 backfill하며 운영자가 지정한
   enable/배율/중심은 보존한다.
+- `led_flash.flash_delay`도 누락된 레거시 값에만 128을 backfill하고 명시값은
+  보존한다. 활성 AR0234의 delay 128이 640x360@120 전달률을 낮추는 보드 실측에
+  따라 `max9296_640x360_120_fragment.json`은 모든 채널 delay 0과 AE auto를
+  설정한다.
 - FHD/HD/360p 출력 선택과 디지털 crop이 독립임을 배포 가이드에 명시했다.
 - 일반 max9296 2.10 모듈은 640x360에서 1~120 FPS 요청을 허용한다. 별도
   qualification 모듈은 필요하지 않다. 단, 과거 실측 전달률은 약 113~115 FPS라
@@ -16,6 +20,10 @@
 - 1280x360 듀얼 판정을 포함한 `cam_fps_stack.sh`와 resource/UYVY/RGB565
   green-frame qualification 도구를 패키지에 동기화했다. 실제 ISI capture
   포맷은 `RGBP`이고 subdevice media-bus 포맷은 UYVY임을 구분했다.
+- `pim-mp 0.6.3+jhw.camera3` 타겟 검증에서 packaged 120 fragment 적용 시
+  ch0/ch1 sensor `117.5/118.9`, ISP `114.9/114.4`, CSI `113.3/113.1` FPS를
+  확인했다. transport 오류는 0이고 strict 118.8 FPS 기준은 미달하므로 정확한
+  120 FPS 전달은 보장하지 않는다. 30 FPS 원복 회귀는 양 채널 약 29.7~30.0 FPS다.
 
 2026년 2월 이후 **23개 커밋**에서 다음과 같은 개선사항이 적용되었습니다.
 

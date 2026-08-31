@@ -224,8 +224,9 @@ pim-mp 0.6.3+jhw.camera1 arm64
 ```
 
 설치 스크립트는 기존 edgeconf에 누락된 crop/VPU 키를 backfill한다. 대부분의 기존
-non-null 값은 보존한다. 단, `led_flash.flash_delay`는 장비별 편차를 막기 위해
-의도적으로 매번 `128`로 강제하므로 설치 전후 diff에 이 변경이 나타날 수 있다.
+non-null 값은 보존한다. camera3부터 `led_flash.flash_delay`도 명시값을 보존하고,
+키가 누락된 레거시 설정에만 128을 backfill한다. 활성 AR0234의 delay 128은
+640x360@120 전달률을 낮추므로 고속 fragment가 지정한 0을 설치 중 덮어쓰면 안 된다.
 설치 전후 비교는 다음과 같이 확인한다.
 
 ```bash

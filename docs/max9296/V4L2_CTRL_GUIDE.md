@@ -42,6 +42,9 @@ sensor-mode 선택은 펌웨어 값을 유지한다. 즉 640x360 출력이 곧 A
 640x360 readout을 의미하지 않는다. 후보 sensor-mode 0~15는 full-FOV 120 FPS
 profile로 검증되지 않았으므로 운영 기본은 `KEEP`이다. 일반 드라이버는 이 경로에서
 최대 120 FPS 요청을 허용하지만 패키지 기본값은 회귀 안전성을 위해 30 FPS다.
+120 FPS에서는 패키지의 전용 fragment를 사용해 AE auto와 활성 채널
+`led_flash.flash_delay=0`도 함께 적용한다. 이 보드에서 delay 128은 요청/caps를
+유지한 채 실제 CSI 전달률을 크게 낮췄다.
 
 ## 2) 값 표현(고정점) 규칙
 
@@ -403,7 +406,26 @@ jq -e . "$CONF.360p.tmp"
 `cam_width=1920, cam_height=1080`, HD는 `1280,720`, 360p는 `640,360`으로
 선택하며 crop 키는 어느 해상도에서도 독립적으로 쓸 수 있다. 운영 FPS 상한은
 FHD/HD 30, 360p 120이다. 패키지 기본값은 30이며 120 FPS 시험 시 같은 모듈에서
-`fps=120`, AE auto를 설정하고 하드 리셋한다.
+`max9296_640x360_120_fragment.json`을 적용하고 하드 리셋한다.
+
+```bash
+CONF=/root/shared_v/edgeconf_pim.json
+FRAGMENT=/opt/pim/config/max9296_640x360_120_fragment.json
+TMP=${CONF}.120.tmp
+
+jq --slurpfile patch "$FRAGMENT" \
+  '.VHL_CAM = (.VHL_CAM * $patch[0])' "$CONF" >"$TMP"
+jq -e . "$TMP"
+install -m 0640 "$TMP" "$CONF"
+rm -f "$TMP"
+/opt/pim/bin/cam_hard_reset.sh -s -S
+```
+
+이 fragment는 채널 enable, bitrate와 장비별 경로는 보존하고 640x360@120,
+crop false, dz 100, 중심 32768, AE auto, flash delay 0을 설정한다. 활성 AR0234의
+delay 128은 보드 A/B에서 CSI를 약 46 FPS로 낮췄고 ch0 delay만 0으로 바꾸자 약
+112~113 FPS로 회복됐다. 현재 정상 실측은 약 113~115 FPS이며 엄격 118.8 FPS
+기준은 통과하지 못하므로 정확한 120 FPS 전달을 보장하지 않는다.
 
 ### 5.1 테스트/튜닝 시(권장)
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise MAX9296 crop-default migration through the packaged updater."""
+"""Exercise MAX9296 crop and LED migration through the packaged updater."""
 
 from __future__ import annotations
 
@@ -58,6 +58,9 @@ def main() -> int:
         for channel in channels:
             legacy["VHL_CAM"][bus][channel].pop("dz_x", None)
             legacy["VHL_CAM"][bus][channel].pop("dz_y", None)
+            legacy["VHL_CAM"][bus][channel]["led_flash"].pop(
+                "flash_delay", None
+            )
 
     migrated = migrate(legacy)
     for bus, channels in (("i2c2", ("ch0", "ch1")),
@@ -66,6 +69,9 @@ def main() -> int:
             assert controls(migrated, bus, channel) == (False, 100, 32768, 32768), (
                 f"legacy {bus}.{channel} did not receive safe crop defaults"
             )
+            assert migrated["VHL_CAM"][bus][channel]["led_flash"][
+                "flash_delay"
+            ] == 128, f"legacy {bus}.{channel} did not receive LED delay default"
 
     customized = json.loads(BASE.read_text(encoding="utf-8"))
     expected = {
@@ -87,7 +93,32 @@ def main() -> int:
             f"migration overwrote configured crop controls for {key[0]}.{key[1]}"
         )
 
-    print("PASS: edgeconf migration backfills and preserves MAX9296 crop controls")
+    flash_customized = json.loads(BASE.read_text(encoding="utf-8"))
+    flash_expected = {
+        ("i2c2", "ch0"): 0,
+        ("i2c2", "ch1"): 5,
+        ("i2c1", "ch2"): 10,
+        ("i2c1", "ch3"): 15,
+    }
+    for (bus, channel), delay in flash_expected.items():
+        flash_customized["VHL_CAM"][bus][channel]["led_flash"][
+            "flash_delay"
+        ] = delay
+
+    flash_preserved = migrate(flash_customized)
+    for (bus, channel), delay in flash_expected.items():
+        actual = flash_preserved["VHL_CAM"][bus][channel]["led_flash"][
+            "flash_delay"
+        ]
+        assert actual == delay, (
+            f"migration overwrote {bus}.{channel}.led_flash.flash_delay: "
+            f"expected {delay}, got {actual}"
+        )
+
+    print(
+        "PASS: edgeconf migration backfills crop defaults and preserves "
+        "MAX9296 crop/LED controls"
+    )
     return 0
 
 

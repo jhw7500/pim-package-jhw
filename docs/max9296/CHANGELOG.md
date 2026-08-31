@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 이 값은 드라이버의 요청 허용 상한이다. `KEEP` 경로 과거 실측은 약
   113~115 FPS이므로 실제 120 FPS 전달을 보장하지 않는다.
 - 패키지 기본 edgeconf는 회귀 안전성을 위해 `640x360@30`을 유지한다.
+- 활성 AR0234에서 `led_flash.flash_delay=128`이 120 FPS 전달률을 크게 낮추는 것을
+  단일 변수 보드 시험으로 확인했다. 패키지 120 FPS fragment는 delay 0과 AE auto를
+  적용하고 config migration은 운영자가 명시한 delay 값을 보존한다.
 
 ### Safety
 - 모든 모드의 `EXP_TIME(0x500c)` 쓰기 안전 상한은 30 FPS로 유지한다.
@@ -25,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `8EBDAFE29DF1EA7734A71CB`, SHA-256
   `7a5e0a330b6992c1d10731d1ba02f415cea6e2c428feb5de76625f0b4d066241`.
 - 기본 120 FPS 및 명시적 30 FPS override 정책 테스트와 전체 호스트 게이트 통과.
+- `pim-mp 0.6.3+jhw.camera3`의 packaged fragment로 dual 640x360@120을 재검증했다.
+  sensor `117.5/118.9`, AP1302 `114.9/114.4`, CSI `113.3/113.1` FPS이며
+  transport error 0, strict 120 판정은 FAIL이다. 30 FPS 원복 회귀는 PASS다.
 
 ## [2.9] - 2026-08-28
 
