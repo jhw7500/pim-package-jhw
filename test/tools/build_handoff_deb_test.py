@@ -98,6 +98,11 @@ class HandoffDebTest(unittest.TestCase):
             output = module.build_package(
                 source, work / "out", "0.6.3+jhw.camera1"
             )
+            contents = subprocess.check_output(
+                ["dpkg-deb", "-c", str(output)], text=True
+            ).splitlines()
+            archive_root = next(line for line in contents if line.endswith(" ./"))
+            self.assertEqual(archive_root.split()[0], "drwxr-xr-x")
             with tempfile.TemporaryDirectory(
                 prefix="handoff-deb-extract."
             ) as extracted:

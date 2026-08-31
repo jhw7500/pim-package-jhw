@@ -12,6 +12,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+from itertools import chain
 from pathlib import Path
 from typing import Dict, Tuple
 
@@ -64,7 +65,7 @@ def remove_banned(root: Path) -> None:
 
 
 def normalize_permissions(root: Path) -> None:
-    for path in root.rglob("*"):
+    for path in chain((root,), root.rglob("*")):
         metadata = path.lstat()
         if stat.S_ISLNK(metadata.st_mode):
             continue
