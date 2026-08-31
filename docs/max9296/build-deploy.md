@@ -131,7 +131,9 @@ gstApp + max9296 변경 후:
 | 배포 경로 | 정본 | 파일 마지막 변경 | 복사 시점 master | sha256 |
 | --- | --- | --- | --- | --- |
 | `dist/pim/opt/pim/bin/cam_hard_reset.sh` | max9296 `tools/cam_hard_reset.sh` | `fceeddd` | `edd8fda` | `081e3fd242a3e95006e5cee14eb1dc4ed6ad01357c26c7328fb791c4370de531` |
-| `dist/pim/opt/pim/bin/cam_fps_stack.sh` | max9296 `tools/cam_fps_stack.sh` | `70c6646` | `b8b1aab` | `3d536b5b2e7d5f089d1ad0bd21f7dc5dcad6dcf3e8923f5c354422a9e68c9881` |
+| `dist/pim/opt/pim/bin/cam_fps_stack.sh` | max9296 `tools/cam_fps_stack.sh` | `d15d613` | `9467ecd` | `0c517795c947105e50951fb9743cb1550bd0a65b2921024bf25ddbc2d209b21a` |
+| `dist/pim/opt/pim/bin/cam_360p_resource.sh` | max9296 `tools/cam_360p_resource.sh` | `9467ecd` | `9467ecd` | `bade675c2ec06596a61fa6e6c9ff969c148b294dbd43dad6ba58ef358d41bcd6` |
+| `dist/pim/opt/pim/bin/uyvy_frame_check.py` | max9296 `tools/uyvy_frame_check.py` | `9467ecd` | `9467ecd` | `b4b4d610c56175a836f6f19fe66bf9464ab5536b553e7363ef796a21d7ca9580` |
 
 ### 드리프트 확인
 
@@ -144,8 +146,14 @@ gstApp + max9296 변경 후:
 git -C <max9296-checkout> show fceeddd:tools/cam_hard_reset.sh \
   | diff - dist/pim/opt/pim/bin/cam_hard_reset.sh && echo "동일"
 
-git -C <max9296-checkout> show 70c6646:tools/cam_fps_stack.sh \
+git -C <max9296-checkout> show d15d613:tools/cam_fps_stack.sh \
   | diff - dist/pim/opt/pim/bin/cam_fps_stack.sh && echo "동일"
+
+git -C <max9296-checkout> show 9467ecd:tools/cam_360p_resource.sh \
+  | diff - dist/pim/opt/pim/bin/cam_360p_resource.sh && echo "동일"
+
+git -C <max9296-checkout> show 9467ecd:tools/uyvy_frame_check.py \
+  | diff - dist/pim/opt/pim/bin/uyvy_frame_check.py && echo "동일"
 ```
 
 정본이 갱신되면 다시 복사하고 이 표의 커밋·sha256 을 함께 고친다. `.ko` 와 달리
@@ -177,6 +185,11 @@ CSI2/ISI 를 건드리지 않아, D-PHY 락 실패류(STREAMON 성공 + CSI2 이
 /opt/pim/bin/cam_fps_stack.sh                 # 활성 채널 자동 선택, 20초
 /opt/pim/bin/cam_fps_stack.sh -c ch01 -d 60  # ch0/ch1 경로를 60초 관측
 ```
+
+`cam_360p_resource.sh`는 같은 관측 구간의 gstApp RSS/CPU, DDR PMU, 온도,
+V4L2 format과 신규 커널 오류를 수집한다. `uyvy_frame_check.py`는 정확한 stride와
+프레임 크기를 검증하고 constant/mostly-green UYVY 프레임을 실패 처리한다. 두 도구는
+서비스 자동 복구 경로에 연결하지 않고 qualification에서만 수동 실행한다.
 
 기본 측정은 읽기 전용이며 `bash`, `i2ctransfer`, `media-ctl`과
 `/proc/interrupts`가 필요하다. `-D/--deep`은

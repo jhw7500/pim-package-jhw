@@ -9,6 +9,8 @@
   enable/배율/중심은 보존한다.
 - FHD/HD/360p 출력 선택과 디지털 crop이 독립임을 배포 가이드에 명시했다.
 - 120 FPS는 qualification 전용이며 production 노출 쓰기 안전 상한은 30 FPS다.
+- 1280x360 듀얼 판정을 포함한 `cam_fps_stack.sh`와 resource/UYVY green-frame
+  qualification 도구를 패키지에 동기화했다.
 
 2026년 2월 이후 **23개 커밋**에서 다음과 같은 개선사항이 적용되었습니다.
 

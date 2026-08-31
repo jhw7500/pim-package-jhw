@@ -6,6 +6,7 @@ cd "$(dirname "$0")"
 python3 schema_test.py
 python3 max9296_package_config_test.py
 python3 max9296_config_migration_test.py
+python3 max9296_package_tools_test.py
 python3 config_expectation_test.py
 python3 capture_probe_test.py
 python3 max9296_producer_test.py

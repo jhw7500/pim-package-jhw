@@ -30,6 +30,8 @@
 - srcversion: `DA89ABE8A6E147911293CE6`
 - gstApp crop/single-slot integration: SHA-256
   `c816f84094f7d357c51a20b8c694ea198d0207fac68eca53128e5225b5ddafbe`
+- qualification tools: `cam_fps_stack.sh`, `cam_360p_resource.sh`,
+  `uyvy_frame_check.py` (all installed under `/opt/pim/bin`)
 
 ## Version 2.0 (2026-02-11)
 
