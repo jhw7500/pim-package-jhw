@@ -24,9 +24,29 @@ V4L2 subdev 노드도 이 전역 채널과 정합되게 사용한다.
 
 배포 패키지(pim-package)에는 동일 문서가 `/opt/pim/docs/V4L2_CTRL_GUIDE.md`로 포함된다.
 
+### 1.1 해상도와 디지털 crop은 독립 제어
+
+| 카메라당 출력 | single V4L2 폭 | dual V4L2 폭 | production `max_fps` | 노출 쓰기 안전 상한 |
+|---:|---:|---:|---:|---:|
+| 1920x1080 | 1920x1080 | 3840x1080 | 30 | 30 |
+| 1280x720 | 1280x720 | 2560x720 | 30 | 30 |
+| 640x360 | 640x360 | 1280x360 | 30 | 30 |
+
+`cam_width`/`cam_height`는 AP1302/CSI 출력 크기를 선택한다. `crop_enable`과
+`dz`는 선택된 출력 안에서 디지털 확대·중심 조준만 하며 출력 해상도를 바꾸지
+않는다. 따라서 FHD에서 crop을 켜도 CSI 출력은 1920x1080이고, 640x360에서
+crop을 꺼도 CSI 출력은 640x360이다.
+
+기본 640x360 `KEEP` 정책은 AP1302 출력 context를 640x360으로 바꾸지만 AR0234
+sensor-mode 선택은 펌웨어 값을 유지한다. 즉 640x360 출력이 곧 AR0234의
+640x360 readout을 의미하지 않는다. 후보 sensor-mode 0~15는 full-FOV 120 FPS
+production profile로 검증되지 않았으므로 운영 기본은 `KEEP`, 30 FPS다.
+
 ## 2) 값 표현(고정점) 규칙
 
-V4L2 컨트롤은 기본적으로 정수값으로 노출된다. 드라이버는 하드웨어 레지스터 값을 스케일링하지 않고 그대로 전달하는 것이 원칙이며, 사용자가 스케일을 이해하고 값을 넣는다.
+V4L2 컨트롤은 기본적으로 정수값으로 노출된다. 대부분은 레지스터 스케일을
+그대로 사용하지만 디지털 zoom은 사람이 읽는 백분율·정규화 좌표를 AP1302 8.8
+형식으로 변환한다.
 
 - Gain: `ufixed8` (u16)
   - 스케일: `256 = 1.0x`, `512 = 2.0x`
@@ -34,6 +54,16 @@ V4L2 컨트롤은 기본적으로 정수값으로 노출된다. 드라이버는 
   - 스케일: `4096 = 1.0`, `6144 = 1.5`, `8192 = 2.0`
 - Exposure: `unsigned 32-bit`
   - V4L2는 s32 범위를 쓰므로 드라이버는 `0..INT_MAX` 범위를 허용한다.
+- Digital zoom: 사용자 ABI는 백분율과 정규화 좌표를 사용한다.
+  - `dz`: `100..300` = 1.00x..3.00x
+  - `dz_x`/`dz_y`: `0..65535`, 중앙 `32768(0x8000)`
+
+| `dz` | 의미 | AP1302 `0x1010` |
+|---:|---:|---:|
+| 100 | 1.00x, 확대 없음 | `0x0100` |
+| 150 | 1.50x | `0x0180` |
+| 200 | 2.00x | `0x0200` |
+| 300 | 3.00x | `0x0300` |
 
 보드 기본값(참고: `--list-ctrls` 기준)
 - `brightness_chX`: default=0
@@ -52,7 +82,11 @@ V4L2 컨트롤은 기본적으로 정수값으로 노출된다. 드라이버는 
 
 ### 3.1 공통 컨트롤
 
-- `ext_time` -> `0x500c` (u32, 듀얼 모드에서는 양 채널에 동일 적용)
+- `crop_enable` (`V4L2_CID_USER_BASE+0x102b`) -> bool, 기본 false
+- `exp_time` -> `0x500c` (u32, 듀얼 모드에서는 양 채널에 동일 적용)
+- `dz` -> `0x1010` (100~300%, 기본 100%, 양 채널 공통)
+- `dz_x` -> `0x118c` (공유 정규화 중심 X, 기본 32768)
+- `dz_y` -> `0x118e` (공유 정규화 중심 Y, 기본 32768)
 - `hue` -> Hue (0~359)
 - `power_line_frequency` -> 전원 주파수 필터 (0~3, 기본 1=50Hz)
 
@@ -74,8 +108,34 @@ V4L2 컨트롤은 기본적으로 정수값으로 노출된다. 드라이버는 
 | `saturation_chX` | `0x7006` | u16, fixed12 | 채도 (4096=1.0) |
 | `lsc_chX` | `0x54a0` | u16, fixed12 | LSC 보정 강도 |
 | `led_flash_chX` | AR0234 `0x3270` | u16 | LED Flash (bit8=EN, bit7:0=DELAY) |
+| `dz_x_chX` | `0x118c` | 0~65535, 기본 32768 | 채널별 정규화 중심 X |
+| `dz_y_chX` | `0x118e` | 0~65535, 기본 32768 | 채널별 정규화 중심 Y |
 
-### 3.3 MCP4018 디지털 가변저항
+듀얼 합성 모드는 양 AP1302의 센서 판독 타이밍을 맞춰야 하므로 배율은 공통
+`dz`만 사용한다. 서로 다른 위치를 검사할 때는 채널별 중심만 바꾼다.
+`0x1012`는 중심 X가 아니라 줌 전이 속도이므로 드라이버가 즉시 적용값
+`0x8000`만 쓴다. `0x1014`는 optical zoom factor라 이번 구현에서 쓰지 않으며,
+실제 중심은 `0x118c/0x118e`다.
+
+`crop_enable=false`이면 줌과 중심값은 cache만 갱신하고 `0x1010`, `0x1012`,
+`0x118c`, `0x118e` I2C 쓰기를 발행하지 않는다. true에서는 STREAMOFF 상태에서
+enable한 뒤 공통 배율과 활성 채널 중심을 런타임 변경할 수 있다. 스트리밍 중
+enable 전환은 `-EBUSY`이며 같은 값의 no-op은 성공한다. true에서 false로 바꾼 뒤
+기존 하드웨어 crop을 제거하려면 `cam_hard_reset.sh -s -S` 또는 `init_cam.sh`로
+firmware를 다시 로드한다. gstApp 재시작만으로는 하드웨어 epoch가 바뀌지 않는다.
+
+### 3.3 노출 쓰기 안전 정책
+
+production 일반 영상 FPS와 `EXP_TIME(0x500c)` 쓰기 안전 상한은 모두 30 FPS다.
+qualification module의 31~120 FPS에서 `exp_time`, `exp_time_chX` 또는 수동 AE
+전환으로 노출 쓰기가 필요하면 I2C 전에 `-EBUSY`로 거부한다. 로그에는 채널,
+모드, 현재 FPS, 요청 노출값, 안전 상한이 남는다.
+
+고속 qualification에서 AE auto이면 초기 exposure seed만 생략하고 gain/AWB/flip
+등은 유지한다. 30 FPS 이하에서는 기존 노출·gain·AE 동작을 유지한다. SoC 정지
+이력이 있는 수동 WB `0x510a` 쓰기는 이 구현에 추가하지 않았다.
+
+### 3.4 MCP4018 디지털 가변저항
 
 MCP4018T-503E (50kΩ, 128단계). MAX9295 MFP4 GPIO가 HIGH일 때만 동작한다 (VCC 공급).
 
@@ -86,7 +146,7 @@ MCP4018T-503E (50kΩ, 128단계). MAX9295 MFP4 GPIO가 HIGH일 때만 동작한�
 | subdev3 | `mcp4018_wiper_ch2` | 0~127 | 63 | Port B 가변저항 |
 | subdev3 | `mcp4018_wiper_ch3` | 0~127 | 63 | Port A 가변저항 |
 
-### 3.4 DMA 센서 레지스터 접근
+### 3.5 DMA 센서 레지스터 접근
 
 AP1302 DMA를 통해 AR0234 센서 레지스터를 직접 읽기/쓰기할 수 있다.
 
@@ -120,7 +180,7 @@ DMA 쓰기 절차:
 v4l2-ctl -d /dev/v4l-subdev2 -c dma_reg_write_ch0=$((0x30700001))
 ```
 
-## 3.5) FPS 제어 (Frame Sync)
+## 3.6) FPS 제어 (Frame Sync)
 
 ### FSYNC 기반 프레임 레이트 제어
 
@@ -154,9 +214,11 @@ v4l2-ctl -d /dev/v4l-subdev2 -c dma_reg_write_ch0=$((0x30700001))
 
 #### 지원 FPS 범위
 
-- **최소**: 1 FPS
-- **최대**: 120 FPS (센서 스펙 기준)
-- **권장**: 15, 30, 60 FPS
+- 공통 최소값: 1 FPS
+- 1920x1080, 1280x720, 640x360 production: 최대 30 FPS
+- 640x360 qualification artifact: 최대 120 FPS를 협상할 수 있으나, KEEP 경로
+  실측 113~115 FPS는 엄격 기준 118.8 FPS를 통과하지 못해 production에 쓰지 않는다.
+- 모든 모드의 `0x500c` 노출 쓰기 안전 상한: 30 FPS
 
 #### 코드 위치
 
@@ -186,7 +248,7 @@ v4l2-ctl -d /dev/v4l-subdev2 --get-parm
 
 ### 4.0 현재값 스냅샷/원복(권장)
 
-테스트/튜닝 중에는 flip, gain_chX, ext_time(_chX) 같은 값이 누적되어 “현재 상태가 기본값이 아닌 상태”가 되기 쉽다.
+테스트/튜닝 중에는 flip, gain_chX, exp_time(_chX) 같은 값이 누적되어 “현재 상태가 기본값이 아닌 상태”가 되기 쉽다.
 아래처럼 스냅샷을 떠두면 언제든 원복할 수 있다.
 
 1) 스냅샷 저장
@@ -215,8 +277,8 @@ sudo v4l2-ctl -d /dev/v4l-subdev3 --set-ctrl=lsc_ch2=16383,lsc_ch3=16383
 3) 원복 후 확인
 
 ```bash
-v4l2-ctl -d /dev/v4l-subdev2 --get-ctrl=ext_time,gain_ch0,gain_ch1,brightness_ch0,brightness_ch1,contrast_ch0,contrast_ch1,saturation_ch0,saturation_ch1,hflip_ch0,hflip_ch1,vflip_ch0,vflip_ch1,lsc_ch0,lsc_ch1
-v4l2-ctl -d /dev/v4l-subdev3 --get-ctrl=ext_time,gain_ch2,gain_ch3,brightness_ch2,brightness_ch3,contrast_ch2,contrast_ch3,saturation_ch2,saturation_ch3,hflip_ch2,hflip_ch3,vflip_ch2,vflip_ch3,lsc_ch2,lsc_ch3
+v4l2-ctl -d /dev/v4l-subdev2 --get-ctrl=exp_time,gain_ch0,gain_ch1,brightness_ch0,brightness_ch1,contrast_ch0,contrast_ch1,saturation_ch0,saturation_ch1,hflip_ch0,hflip_ch1,vflip_ch0,vflip_ch1,lsc_ch0,lsc_ch1
+v4l2-ctl -d /dev/v4l-subdev3 --get-ctrl=exp_time,gain_ch2,gain_ch3,brightness_ch2,brightness_ch3,contrast_ch2,contrast_ch3,saturation_ch2,saturation_ch3,hflip_ch2,hflip_ch3,vflip_ch2,vflip_ch3,lsc_ch2,lsc_ch3
 ```
 
 ### 4.1 컨트롤 목록 확인
@@ -234,7 +296,7 @@ v4l2-ctl -d /dev/v4l-subdev3 --list-ctrls --list-ctrls-menus > /tmp/subdev3.ctrl
 ```
 
 확인 포인트(문서/스크립트 작성 시 기준)
-- `gain_chX`, `ext_time`, `brightness_chX`, `contrast_chX`, `saturation_chX`, `lsc_chX`의 `min/max/default` 값
+- `gain_chX`, `exp_time`, `brightness_chX`, `contrast_chX`, `saturation_chX`, `lsc_chX`의 `min/max/default` 값
 - 커스텀 채널 컨트롤이 실제로 보이는지
   - subdev2: `*_ch0`, `*_ch1`
   - subdev3: `*_ch2`, `*_ch3`
@@ -244,7 +306,7 @@ v4l2-ctl -d /dev/v4l-subdev3 --list-ctrls --list-ctrls-menus > /tmp/subdev3.ctrl
 ```text
 User Controls
 
-ext_time (int) : min=0 max=... step=1 default=10000 value=20000
+exp_time (int) : min=0 max=... step=1 default=10000 value=20000
 ae_on_ch0 (bool) : default=1 value=1
 gain_ch0 (int) : min=0 max=... step=1 default=256 value=256
 
@@ -253,8 +315,8 @@ gain_ch0 (int) : min=0 max=... step=1 default=256 value=256
 ### 4.2 공통(커스텀) 컨트롤 설정 예시
 
 ```bash
-# ext_time: 예) 20000
-sudo v4l2-ctl -d /dev/v4l-subdev2 --set-ctrl=ext_time=20000
+# exp_time: 예) 20000 (30 FPS 이하에서만 레지스터 쓰기 허용)
+sudo v4l2-ctl -d /dev/v4l-subdev2 --set-ctrl=exp_time=20000
 
 # fixed12: contrast/saturation 1.0 (4096)
 sudo v4l2-ctl -d /dev/v4l-subdev2 --set-ctrl=contrast_ch0=4096,contrast_ch1=4096,saturation_ch0=4096,saturation_ch1=4096
@@ -278,7 +340,27 @@ sudo v4l2-ctl -d /dev/v4l-subdev3 --set-ctrl=gain_ch2=256,gain_ch3=512
 sudo v4l2-ctl -d /dev/v4l-subdev3 --set-ctrl=vflip_ch2=0,vflip_ch3=1
 ```
 
-### 4.4 Auto/Manual 권장 순서
+### 4.4 디지털 줌·중심 조준
+
+```bash
+# enable 전환은 STREAMOFF 상태에서만 가능
+sudo v4l2-ctl -d /dev/v4l-subdev2 --set-ctrl=crop_enable=1
+
+# 스트리밍 중에도 가능한 공통 배율 + 채널별 중심 tuple
+sudo v4l2-ctl -d /dev/v4l-subdev2 \
+  --set-ctrl=dz=200,dz_x_ch0=32768,dz_y_ch0=52000,dz_x_ch1=32768,dz_y_ch1=32768
+
+# 모든 활성 채널을 같은 중심으로 바꾸는 공유 alias
+sudo v4l2-ctl -d /dev/v4l-subdev2 \
+  --set-ctrl=dz=150,dz_x=32768,dz_y=32768
+```
+
+`dz=150`은 1.50배, `dz=200`은 2.00배다. 출력 해상도는 그대로이며 선택한
+중심 주변의 더 좁은 영역을 같은 출력 크기로 확대한다. 값은 드라이버 cache에
+유지되어 스트림 재시작과 firmware 재로드 뒤 재적용된다. 단,
+`crop_enable=false`이면 cache만 유지하고 crop 레지스터는 쓰지 않는다.
+
+### 4.5 Auto/Manual 권장 순서
 
 Auto가 켜져 있으면 manual 값이 즉시 덮어써질 수 있다. 실사용 권장 순서:
 
@@ -286,8 +368,8 @@ Auto가 켜져 있으면 manual 값이 즉시 덮어써질 수 있다. 실사용
 # AE를 manual로 (ch0/ch1)
 sudo v4l2-ctl -d /dev/v4l-subdev2 --set-ctrl=ae_on_ch0=0,ae_on_ch1=0
 
-# 이후 채널별 ext_time/gain 값을 설정(예: ch0)
-sudo v4l2-ctl -d /dev/v4l-subdev2 --set-ctrl=ae_on_ch0=0,ext_time_ch0=20000,gain_ch0=512
+# 이후 채널별 exp_time/gain 값을 설정(예: ch0)
+sudo v4l2-ctl -d /dev/v4l-subdev2 --set-ctrl=ae_on_ch0=0,exp_time_ch0=20000,gain_ch0=512
 ```
 
 채널별로 AE on/off를 하고 싶으면 `ae_on_chX` / `auto_gain_chX`를 사용한다.
@@ -296,6 +378,29 @@ sudo v4l2-ctl -d /dev/v4l-subdev2 --set-ctrl=ae_on_ch0=0,ext_time_ch0=20000,gain
 
 이 시스템은 `cam-operate`(systemd)와 여러 감시 스크립트가 카메라 앱을 자동 재시작/초기화할 수 있다.
 V4L2 컨트롤을 수동으로 만질 때는 아래처럼 “자동 루프”를 잠깐 멈추는 것을 권장한다.
+
+### 5.0 패키지 JSON과 해상도 전환
+
+패키지 기본 `edgeconf_pim_base.json`은 `640x360@30`, crop false, `dz=100`,
+모든 중심 32768이다. 기존 장비에 일부 키만 안전하게 병합할 때는 설치되는
+`/opt/pim/config/max9296_640x360_fragment.json`을 사용한다. fragment에는
+credential, 채널 enable, bitrate 같은 장비별 값이 없다.
+
+```bash
+CONF=/root/shared_v/edgeconf_pim.json
+FRAGMENT=/opt/pim/config/max9296_640x360_fragment.json
+
+jq -e '.VHL_CAM|type == "object"' "$CONF"
+jq --slurpfile patch "$FRAGMENT" \
+  '.VHL_CAM = (.VHL_CAM * $patch[0])' "$CONF" >"$CONF.360p.tmp"
+jq -e . "$CONF.360p.tmp"
+```
+
+원본을 백업한 뒤 같은 파일시스템에서 원자 교체하고
+`cam_hard_reset.sh -s -S` 또는 `init_cam.sh`를 실행한다. FHD는
+`cam_width=1920, cam_height=1080`, HD는 `1280,720`, 360p는 `640,360`으로
+선택하며 crop 키는 어느 해상도에서도 독립적으로 쓸 수 있다. 운영 FPS 상한은
+세 모드 모두 30이다.
 
 ### 5.1 테스트/튜닝 시(권장)
 
@@ -327,7 +432,10 @@ sudo /opt/pim/bin/init_cam.sh
 - `cam_rotate_setting.sh` : `0x100c` 직접 write
 - `cam_ae_setting.sh` : `0x5100` 직접 write
 
-따라서 “V4L2로 대체” 관점에서는, 앞으로 운영 경로에서 위 스크립트 호출을 줄이거나, 문서/런북에서 사용 금지(또는 디버그 전용)로 명시하는 것이 안전하다.
+직접 I2C 스크립트는 드라이버의 30 FPS exposure guard와 cache/fingerprint를
+우회한다. 특히 `cam_manual_exp_time.sh`는 31 FPS 이상 및 qualification 시험에서
+사용하지 않는다. 운영 경로는 V4L2 컨트롤만 사용하고 위 스크립트는 정지된
+디버그 환경의 레거시 도구로 제한한다.
 
 ## 7) LED Flash 제어
 

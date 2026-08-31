@@ -1,5 +1,46 @@
 # MAX9296 Driver Release Notes
 
+## Version 2.9 (2026-08-28)
+
+### Overview
+
+이 패키지는 AP1302/CSI 640x360 출력, 해상도와 독립적인 디지털 crop, 안전한 노출
+정책을 포함한다. production 기본은 `640x360@30`, crop disabled, 1.00x이며
+1920x1080/1280x720도 같은 드라이버에서 선택할 수 있다.
+
+### Runtime controls
+
+- `crop_enable`: false이면 디지털 crop 레지스터를 전혀 쓰지 않음
+- `dz`: 공통 100~300 = 1.00x~3.00x
+- `dz_x_chX`, `dz_y_chX`: 채널별 0~65535 중심, 기본 32768
+- `exp_time`, `exp_time_chX`: 30 FPS 초과 수동 쓰기는 `-EBUSY`
+
+`dz=200`은 해상도를 640x360으로 만드는 값이 아니라 현재 출력 안에서 2배
+확대하는 값이다. 해상도는 `cam_width`/`cam_height`가 선택한다.
+
+### Qualification status
+
+640x360 `KEEP`은 AR0234 sensor readout을 바꾸지 않고 AP1302/CSI 출력만 바꾼다.
+120 FPS 요청 실측은 약 113~115 FPS로 엄격 118.8 FPS 기준을 통과하지 못했으므로
+120 FPS module은 연구용이며 production module 상한은 30 FPS다.
+
+PIM target의 실제 계층 포맷은 MAX9296 subdevice `UYVY8_2X8`, ISI capture node
+`RGBP`다. 640x360 듀얼 출력은 capture node에서 `1280x360 RGB565`로 확인했으며,
+센서/ISP/CSI/ISI 평균은 ch0 `30.0/29.9/29.7/29.8`, ch1
+`29.9/29.9/29.5/29.6 FPS`였다. 두 영역의 원시 RGB565 green ratio는 0~2.08%로
+녹색 우세 현상은 재현되지 않았다. 현재 조명 조건에서는 한 영역이 고정 암부가 될 수
+있어 암부와 녹색 우세를 별도 판정한다.
+
+### Artifacts
+
+- max9296 2.9: SHA-256 `b27ae021fe4cb569ed6264712fabebb2a6b2cb6f5ab27278aebdb4113e09fc33`
+- srcversion: `DA89ABE8A6E147911293CE6`
+- gstApp crop/single-slot integration: SHA-256
+  `c816f84094f7d357c51a20b8c694ea198d0207fac68eca53128e5225b5ddafbe`
+- qualification tools: `cam_fps_stack.sh`, `cam_360p_resource.sh`,
+  `uyvy_frame_check.py`, `rgb565_frame_check.py` (all installed under
+  `/opt/pim/bin`)
+
 ## Version 2.0 (2026-02-11)
 
 ### 🎉 Overview

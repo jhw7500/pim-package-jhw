@@ -15,30 +15,33 @@ err_report() {
 }
 
 trap err_report ERR
-#FILE_JSON="/home/user/edgeconf_pim.json"
-FILE_JSON=""
-for f in /root/shared_v/edgeconf_*.json; do
-    [ -e "$f" ] || continue
-    if [ -z "$FILE_JSON" ] || [ "$f" -nt "$FILE_JSON" ]; then
-        FILE_JSON="$f"
-    fi
-done
-
-if [ -z "$FILE_JSON" ] || [ ! -f "$FILE_JSON" ]; then
-    FILE_BACKUP_JSON=""
-    for f in /root/shared_v/backup_edgeconf_*.json; do
+# EDGE_CONF_FILE is a test/maintenance override.  Normal package execution keeps
+# the existing newest-file discovery under /root/shared_v.
+FILE_JSON="${EDGE_CONF_FILE:-}"
+if [ -z "$FILE_JSON" ]; then
+    for f in /root/shared_v/edgeconf_*.json; do
         [ -e "$f" ] || continue
-        if [ -z "$FILE_BACKUP_JSON" ] || [ "$f" -nt "$FILE_BACKUP_JSON" ]; then
-            FILE_BACKUP_JSON="$f"
+        if [ -z "$FILE_JSON" ] || [ "$f" -nt "$FILE_JSON" ]; then
+            FILE_JSON="$f"
         fi
     done
-    if [ -f "$FILE_BACKUP_JSON" ]; then
-        dir=$(dirname "$FILE_BACKUP_JSON")
-        file=$(basename "$FILE_BACKUP_JSON")
-        newfile=${file#backup_}
-        FILE_JSON="${dir}/${newfile}"
-        cp "$FILE_BACKUP_JSON" "$FILE_JSON"
-        logger -p local0.notice "[$KEY][$tag:$LINENO] edgeconf json copied from backup json ( $FILE_BACKUP_JSON )"
+
+    if [ -z "$FILE_JSON" ] || [ ! -f "$FILE_JSON" ]; then
+        FILE_BACKUP_JSON=""
+        for f in /root/shared_v/backup_edgeconf_*.json; do
+            [ -e "$f" ] || continue
+            if [ -z "$FILE_BACKUP_JSON" ] || [ "$f" -nt "$FILE_BACKUP_JSON" ]; then
+                FILE_BACKUP_JSON="$f"
+            fi
+        done
+        if [ -f "$FILE_BACKUP_JSON" ]; then
+            dir=$(dirname "$FILE_BACKUP_JSON")
+            file=$(basename "$FILE_BACKUP_JSON")
+            newfile=${file#backup_}
+            FILE_JSON="${dir}/${newfile}"
+            cp "$FILE_BACKUP_JSON" "$FILE_JSON"
+            logger -p local0.notice "[$KEY][$tag:$LINENO] edgeconf json copied from backup json ( $FILE_BACKUP_JSON )"
+        fi
     fi
 fi
 
@@ -232,12 +235,25 @@ jq 'del (.VHL_CAM.capture.turbojpeg)' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSO
 
 echo "update i2c header"
 jq '.VHL_CAM.i2c2 |= (if .exp_time == null then .exp_time = 10000 else . end)
-| .VHL_CAM.i2c1 |= (if .exp_time == null then .exp_time = 10000 else . end)' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
+| .VHL_CAM.i2c2 |= (if .crop_enable == null then .crop_enable = false else . end)
+| .VHL_CAM.i2c2 |= (if .dz == null then .dz = 100 else . end)
+| .VHL_CAM.i2c1 |= (if .exp_time == null then .exp_time = 10000 else . end)
+| .VHL_CAM.i2c1 |= (if .crop_enable == null then .crop_enable = false else . end)
+| .VHL_CAM.i2c1 |= (if .dz == null then .dz = 100 else . end)' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
 
 jq '.VHL_CAM |= (if .i2c2.ch0 == null then .i2c2.ch0 = .ch0 else . end)
 | .VHL_CAM |= (if .i2c2.ch1 == null then .i2c2.ch1 = .ch1 else . end)
 | .VHL_CAM |= (if .i2c1.ch2 == null then .i2c1.ch2 = .ch2 else . end)
 | .VHL_CAM |= (if .i2c1.ch3 == null then .i2c1.ch3 = .ch3 else . end)' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
+
+jq '.VHL_CAM.i2c2.ch0 |= (if .dz_x == null then .dz_x = 32768 else . end)
+| .VHL_CAM.i2c2.ch0 |= (if .dz_y == null then .dz_y = 32768 else . end)
+| .VHL_CAM.i2c2.ch1 |= (if .dz_x == null then .dz_x = 32768 else . end)
+| .VHL_CAM.i2c2.ch1 |= (if .dz_y == null then .dz_y = 32768 else . end)
+| .VHL_CAM.i2c1.ch2 |= (if .dz_x == null then .dz_x = 32768 else . end)
+| .VHL_CAM.i2c1.ch2 |= (if .dz_y == null then .dz_y = 32768 else . end)
+| .VHL_CAM.i2c1.ch3 |= (if .dz_x == null then .dz_x = 32768 else . end)
+| .VHL_CAM.i2c1.ch3 |= (if .dz_y == null then .dz_y = 32768 else . end)' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
 
 #jq 'del(.VHL | select(.ch0 != null).ch0, select(.ch1 != null).ch1, select(.ch2 != null).ch2, select(.ch3 != null).ch3)' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
 echo "check old channel config"
@@ -370,7 +386,8 @@ if [[ $1 == 2 ]]; then
     jq '.VHL_CAM.app = "gstApp"' "$FILE_JSON" > "$TMP_JSON" && mv "$TMP_JSON" "$FILE_JSON"
 fi
 
-model=$(jq -r '.model_name' '/etc/cts/model_info.json')
+MODEL_INFO_FILE="${MODEL_INFO_FILE:-/etc/cts/model_info.json}"
+model=$(jq -r '.model_name' "$MODEL_INFO_FILE")
 bd_type="${model:4:1}"
 if [[ "$bd_type" == "a" || "$bd_type" == "c" ]]; then
     echo "check SENSORS config (model: $model)"

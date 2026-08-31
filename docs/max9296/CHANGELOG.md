@@ -5,6 +5,48 @@ All notable changes to the MAX9296 driver will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9] - 2026-08-28
+
+### Added
+- 1920x1080, 1280x720과 production 640x360 AP1302 출력 모드.
+- `crop_enable`(기본 false), 공통 `dz` 100~300(1.00x~3.00x), 채널별
+  `dz_x_chX`/`dz_y_chX` 중심 제어와 firmware replay.
+- 640x360 readout 후보, 엄격 120 FPS, CPU/RSS/DDR/온도와 frame-format 검증 도구.
+
+### Safety
+- 일반 모드 상한과 `EXP_TIME(0x500c)` 쓰기 안전 상한을 별도 정책으로 유지한다.
+  production은 전 모드 30 FPS이며 qualification의 31~120 FPS 수동 노출은 I2C
+  전에 `-EBUSY`로 거부한다.
+- SoC 정지 이력이 있는 수동 WB `0x510a` 쓰기는 추가하지 않았다.
+- `crop_enable=false`에서는 `0x1010`, `0x1012`, `0x118c`, `0x118e`를 쓰지 않는다.
+
+### Changed
+- 듀얼 합성의 배율은 채널별이 아니라 공통 `dz`만 사용한다. 중심은 채널별로
+  유지한다. `0x1012`는 중심 X가 아니라 전이 속도이며 실제 중심은
+  `0x118c/0x118e`다.
+- 640x360 `KEEP`은 AP1302/CSI 출력 context만 바꾸고 AR0234 sensor-mode는
+  유지한다. KEEP 120 FPS 실측은 약 113~115 FPS로 엄격 기준에 미달해 production
+  기본은 30 FPS다.
+- 드라이버 버전 2.8 → 2.9.
+
+### Verification
+- i.MX8 BSP 5.10.35 clean cross-build: srcversion
+  `DA89ABE8A6E147911293CE6`, SHA-256
+  `b27ae021fe4cb569ed6264712fabebb2a6b2cb6f5ab27278aebdb4113e09fc33`.
+- 360p/노출/crop/readout/FPS/resource/frame-integrity 전체 호스트 게이트 통과.
+
+## [2.8] - 2026-08-27
+
+- single 640x360, dual 1280x360과 디지털 줌·중심 컨트롤을 추가했다.
+- 모든 `0x500c` 쓰기를 안전 가드로 통합하고 30 FPS 초과 수동 노출을 선제 거부했다.
+- live control 주소 선택은 요청 모드가 아니라 실제 프로그램된 모드 토폴로지를 따른다.
+
+## [2.7] - 2026-08-21
+
+- cached control의 소모성 pending 게이트를 제거해 cold boot와 gstApp respawn에서
+  manual AE/gain 복원이 동일하게 동작하도록 했다.
+- 병렬 prepare와 BSP의 누수 전원 참조를 함께 처리한다.
+
 ## [2.5] - 2026-08-20
 
 ### Fixed
