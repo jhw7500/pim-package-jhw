@@ -242,6 +242,7 @@ if [ -z "$TARGET_MODULE" ]; then
     mkdir -p ${BASEDIR}/release/pim/opt/pim/docs
     cp ${BASEDIR}/docs/max9296/V4L2_CTRL_GUIDE.md ${BASEDIR}/release/pim/opt/pim/docs/
     cp ${BASEDIR}/docs/pim-guardian-runbook.md ${BASEDIR}/release/pim/opt/pim/docs/
+    cp ${BASEDIR}/docs/camera-startup-timing.md ${BASEDIR}/release/pim/opt/pim/docs/
 
     cp ${BASEDIR}/adab/build/adab ${BASEDIR}/release/pim/opt/cis/bin/adab_adc
     cp ${BASEDIR}/adab_ecat/build/adab_ecat ${BASEDIR}/release/pim/opt/cis/bin/adab_ecat

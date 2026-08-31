@@ -18,8 +18,9 @@ err_report() {
 trap err_report ERR
 JSON_PREFIX="ord_vcm_"
 JSON_SUFFIX=".json"
+ORD_VCM_CONFIG_DIR="${ORD_VCM_CONFIG_DIR:-/root/shared_v}"
 FILE_JSON=""
-for f in /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX}; do
+for f in "$ORD_VCM_CONFIG_DIR"/${JSON_PREFIX}*${JSON_SUFFIX}; do
     [ -e "$f" ] || continue
     if [ -z "$FILE_JSON" ] || [ "$f" -nt "$FILE_JSON" ]; then
         FILE_JSON="$f"
@@ -27,7 +28,7 @@ for f in /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX}; do
 done
 
 if [ -z "$FILE_JSON" ] || [ ! -f "$FILE_JSON" ]; then
-logger -p local0.err "[$KEY][$tag:$LINENO] ord_vcm json not found under /root/shared_v (${JSON_PREFIX}*${JSON_SUFFIX})"
+logger -p local0.err "[$KEY][$tag:$LINENO] ord_vcm json not found under $ORD_VCM_CONFIG_DIR (${JSON_PREFIX}*${JSON_SUFFIX})"
     exit 1
 fi
 
@@ -75,6 +76,10 @@ echo "ETC check"
 jq '.ETC.file_check_delay |= if . == null then 10 else . end |
  .ETC.file_check_reboot |= if . == null then true else . end |
  .ETC.startup_grace_extra_sec |= if . == null then 10 else . end |
+ .ETC.camera_startup_grace_sec |=
+    if type == "number" then
+      if (. >= 0) and ((floor) == .) then . else 25 end
+    else 25 end |
  .ETC.init_cooldown_sec |= if . == null then 40 else . end |
  .ETC.disconnect_init_interval_sec |= if . == null then 180 else . end |
  .ETC.disconnect_init_grace_sec |= if . == null then 60 else . end' "$FILE_JSON" > tmp.$$ && mv tmp.$$ "$FILE_JSON"

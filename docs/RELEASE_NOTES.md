@@ -1,5 +1,18 @@
 # PIM Package Release Notes
 
+## Unreleased (2026-08-31)
+
+### 카메라 기동 지연과 감시 유예 분리
+
+- gstApp `-d` 기본값을 싱글/듀얼 CSI 공통 5초로 통일했다.
+- `camera_startup_grace_sec`(기본 25초)를 추가하여 GPIO 전원 시퀀스와 드라이버
+  prepare를 포함한 cold-start 감시 유예가 `-d` 변경에 따라 짧아지지 않게 했다.
+- 기존 `startup_grace_extra_sec`(10초)는 FINAL STALL 워밍업 계산에만 유지한다.
+- `rst_time` start-marker timeout(싱글 25초, 듀얼 35초)과 `init_cooldown_sec`(40초)는
+  변경하지 않았다.
+- 상세 근거와 타겟 검증 절차는
+  [`camera-startup-timing.md`](./camera-startup-timing.md)에 기록했다.
+
 ## v0.5.9 (2026-02-11 ~ 2026-03-11)
 
 ### 핵심
@@ -37,7 +50,7 @@
 - **JSON 설정** (`ord_vcm_conf.json` ETC 섹션):
   - `disconnect_init_interval_sec`(180s) — disconnect 시 init_cam 주기적 복구 간격
   - `disconnect_init_grace_sec`(60s) — init_cam 실행 후 재감지 유예 시간
-  - `startup_grace_extra_sec`(10s) — gstApp 시작 후 에러 무시 추가 유예 시간
+  - `startup_grace_extra_sec`(10s) — v0.5.9 당시 gstApp 시작 유예에 사용. 현재는 FINAL STALL 워밍업 전용
   - `init_cooldown_sec`(40s) — init_cam 실행 후 재실행 대기 시간
 
 #### 2. RTSP appsrc caps 동적 전파 (gstApp v1.5)
@@ -52,7 +65,7 @@ Python 기반 시스템 모니터링 데몬을 전면 리팩터링하여 타입 
 
 - **타입 시스템 도입**: TypedDict(`IOMetric`, `DiskUsageInfo`, `AppProcInfo`) 기반 구조화된 데이터 모델, 전체 함수 타입 힌트 적용
 - **카메라 상태 통합 판단**: V4L2 subdev 제어 응답(hw), BG_Check 에러 마스크(bg), cam_state.json 상태를 결합한 `cam_effective` 3단계 판단 (`STARTING` → `active/expected` → `UNKNOWN`)
-- **startup grace 로직**: `pim_cam_start_ts` + `pim_cam_start_delay` 기반으로 gstApp 시작 직후 일시적 에러 무시
+- **startup grace 로직**: v0.5.9 당시 시작 timestamp + `pim_cam_start_delay`로 계산. 현재는 `/tmp/cam_state/last_start_ts`부터 총 `camera_startup_grace_sec`로 계산
 - **온도 경고 시스템**: 히스테리시스 기반 (진입 80°C / 해제 75°C), 30초 주기 로깅, peak 추적
 - **RAM delta 모니터링**: `/dev/shm` 사용량 변화율(KB/s) 추적, 16MB/s 초과 시 경고 (해제 8MB/s)
 - **tmp sync 경고**: `start_video_time_chk` 동기화 상태 연속 실패 3회 시 경고

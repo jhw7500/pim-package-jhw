@@ -1,5 +1,10 @@
 # PIM Camera/VPU 시험 패키지 설치 및 검증 가이드
 
+> 이 문서의 camera1 파일 식별 정보는 최초 전달본 기록이다. 2026-08-31 최신
+> camera4 기동 정책 패키지는
+> [`PIM_CAMERA4_STARTUP_TIMING_HANDOFF_2026-08-31.md`](./PIM_CAMERA4_STARTUP_TIMING_HANDOFF_2026-08-31.md)를
+> 우선 적용한다.
+
 ## 1. 전달 목적과 범위
 
 이 문서는 기존 `pim-package`를 사용하는 동일 사양 시험 보드에서 최신 카메라/VPU

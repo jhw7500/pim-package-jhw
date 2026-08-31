@@ -1,5 +1,6 @@
 #!/bin/bash
 source /opt/pim/lib/cam_state.sh
+source /opt/pim/lib/cam_start_policy.sh
 
 tag=$(basename "$0")
 KEY=RST
@@ -39,9 +40,11 @@ START_DELAY_FILE="/tmp/pim_cam_start_delay"
 # 장비에서 스크립트마다 다른 기준으로 동작하게 되므로 함께 갱신할 것.
 FILE_CHECK_DELAY_DEFAULT=10
 STARTUP_GRACE_EXTRA_SEC_DEFAULT=10
+CAMERA_STARTUP_GRACE_SEC_DEFAULT=25
 INIT_COOLDOWN_SEC_DEFAULT=40
 
 startup_grace_extra_sec=$STARTUP_GRACE_EXTRA_SEC_DEFAULT
+camera_startup_grace_sec=$CAMERA_STARTUP_GRACE_SEC_DEFAULT
 init_cooldown_sec=$INIT_COOLDOWN_SEC_DEFAULT
 
 # If cameras are disconnected, periodically run init_cam.sh to allow recovery
@@ -291,7 +294,7 @@ _cfg_num() {
 GetConfig_() {
     IFS=$'\t' read -r \
         srt_en file_chk_reboot time_rec_en file_check_delay \
-        startup_grace_extra_sec init_cooldown_sec \
+        startup_grace_extra_sec camera_startup_grace_sec init_cooldown_sec \
         DISCONNECT_INIT_CAM_INTERVAL_SEC DISCONNECT_INIT_CAM_GRACE_SEC \
         DISCONNECT_MAX_SEC < <(
         jq -r '[
@@ -300,6 +303,10 @@ GetConfig_() {
             (.VCM.file_time_check // false),
             (.ETC.file_check_delay // 10),
             (.ETC.startup_grace_extra_sec // 10),
+            (.ETC.camera_startup_grace_sec as $v
+             | if ($v | type) == "number" then
+                   if ($v >= 0) and (($v | floor) == $v) then $v else 25 end
+               else 25 end),
             (.ETC.init_cooldown_sec // 40),
             (.ETC.disconnect_init_interval_sec // 180),
             (.ETC.disconnect_init_grace_sec // 60),
@@ -313,6 +320,7 @@ GetConfig_() {
     # 반드시 선언된 기본값으로 되돌린다.
     file_check_delay=$(_cfg_num "$file_check_delay" "$FILE_CHECK_DELAY_DEFAULT")
     startup_grace_extra_sec=$(_cfg_num "$startup_grace_extra_sec" "$STARTUP_GRACE_EXTRA_SEC_DEFAULT")
+    camera_startup_grace_sec=$(_cfg_num "$camera_startup_grace_sec" "$CAMERA_STARTUP_GRACE_SEC_DEFAULT")
     init_cooldown_sec=$(_cfg_num "$init_cooldown_sec" "$INIT_COOLDOWN_SEC_DEFAULT")
     DISCONNECT_INIT_CAM_INTERVAL_SEC=$(_cfg_num "$DISCONNECT_INIT_CAM_INTERVAL_SEC" "$DISCONNECT_INIT_CAM_INTERVAL_SEC_DEFAULT")
     DISCONNECT_INIT_CAM_GRACE_SEC=$(_cfg_num "$DISCONNECT_INIT_CAM_GRACE_SEC" "$DISCONNECT_INIT_CAM_GRACE_SEC_DEFAULT")
@@ -365,11 +373,13 @@ GetConfig() {
 
     if [[ "$csi1_en" -eq 1 ]] && [[ "$csi2_en" -eq 1 ]]; then
         rst_time=35
-        app_delay=22
     else
         rst_time=25
-        app_delay=11
     fi
+    # PLAYING transition delay is independent of the number of CSI domains.
+    # Cold-start protection is CAMERA_STARTUP_GRACE_SEC_DEFAULT/configured
+    # camera_startup_grace_sec and is enforced by the health monitors.
+    app_delay=$CAM_APP_PLAY_DELAY_SEC_DEFAULT
 }
 
 StartScript() {
@@ -1360,7 +1370,7 @@ logger -p local0.info "[$KEY][$tag:$LINENO] /opt/pim/bin/start_cam.sh $app_delay
 
 GetConfig_
 
-logger -p local0.notice "[$KEY][$tag:$LINENO] ch0:$cam_ch0, ch1:$cam_ch1, ch2:$cam_ch2, ch3:$cam_ch3, srt:$srt_en, time_rec_en:$time_rec_en, vhl_name:$vhl_name, rec_time:$rec_time, rst_time:$rst_time, cap_en:$cap_en, mnt_path:$mnt_path, tmp_path:$tmp_path, sd_tmp_path:$sd_tmp_path, final_path:$final_path, app_delay:$app_delay, muxer:$muxer, file_check_delay:$file_check_delay file_chk_reboot:$file_chk_reboot"
+logger -p local0.notice "[$KEY][$tag:$LINENO] ch0:$cam_ch0, ch1:$cam_ch1, ch2:$cam_ch2, ch3:$cam_ch3, srt:$srt_en, time_rec_en:$time_rec_en, vhl_name:$vhl_name, rec_time:$rec_time, rst_time:$rst_time, cap_en:$cap_en, mnt_path:$mnt_path, tmp_path:$tmp_path, sd_tmp_path:$sd_tmp_path, final_path:$final_path, app_delay:$app_delay, camera_startup_grace_sec:$camera_startup_grace_sec, muxer:$muxer, file_check_delay:$file_check_delay file_chk_reboot:$file_chk_reboot"
 
 while :
 do

@@ -1,10 +1,11 @@
 #!/bin/bash
 source /opt/pim/lib/cam_state.sh
+source /opt/pim/lib/cam_start_policy.sh
 
 tag=$(basename "$0")
 key=RST
 iomode=4
-delay=5
+delay=$CAM_APP_PLAY_DELAY_SEC_DEFAULT
 
 CheckApp() {
 local pid=$(ps -ef |grep $1 |grep -v grep |awk '{print $2}')

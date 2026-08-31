@@ -13,6 +13,7 @@ TESTS=(
     ctrl3_classify_test.sh
     streak_test.sh
     escalation_test.sh
+    startup_timing_policy_test.sh
     config_default_test.sh
     initcam_modprobe_test.sh
     flag_e2e_test.sh

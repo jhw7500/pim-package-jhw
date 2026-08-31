@@ -1,5 +1,6 @@
 #!/bin/bash
 source /opt/pim/lib/cam_state.sh
+source /opt/pim/lib/cam_start_policy.sh
 
 tag=$(basename "$0")
 key=RST
@@ -147,11 +148,9 @@ fi
 
 #echo "csi1_en:$csi1_en, csi2_en:$csi2_en"
 
-if [[ "$csi1_en" -eq 1 ]] && [[ "$csi2_en" -eq 1 ]]; then
-    rst_time=22
-else
-    rst_time=11
-fi
+# gstApp -d controls only the PLAYING transition.  Health-monitor cold-start
+# grace is configured independently in ord_vcm_conf.json.
+app_delay=$CAM_APP_PLAY_DELAY_SEC_DEFAULT
 
 logger -p local0.notice "[RST][$tag:$LINENO] reset init_cam_flag and clear recovery requests"
 rm -f /tmp/init_cam_flag
@@ -162,7 +161,7 @@ cam_clear_recovery
 cleanup_recording_orphans "$tmp_path"
 cleanup_shm_overflow
 
-/opt/pim/bin/start_cam.sh $rst_time
+/opt/pim/bin/start_cam.sh $app_delay
 
 #/opt/pim/bin/restart_app.sh &
 #systemctl start cam-operate

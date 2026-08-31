@@ -16,7 +16,7 @@ trap 'rm -rf "$WORK"' EXIT
 sed -n '/^FILE_CHECK_DELAY_DEFAULT=/,/^DISCONNECT_REBOOT_FLAG=/p' "$PIM_BIN/chk_cam_operate.sh" > "$DEFS"
 # 추출이 조용히 실패하면(상수명 변경·재정렬) 빈 파일을 source 해 단정이 무의미해진다.
 # 의존하는 상수가 실제로 들어왔는지 확인한다.
-for c in FILE_CHECK_DELAY_DEFAULT STARTUP_GRACE_EXTRA_SEC_DEFAULT INIT_COOLDOWN_SEC_DEFAULT \
+for c in FILE_CHECK_DELAY_DEFAULT STARTUP_GRACE_EXTRA_SEC_DEFAULT CAMERA_STARTUP_GRACE_SEC_DEFAULT INIT_COOLDOWN_SEC_DEFAULT \
          DISCONNECT_INIT_CAM_INTERVAL_SEC_DEFAULT DISCONNECT_INIT_CAM_GRACE_SEC_DEFAULT \
          DISCONNECT_MAX_SEC_DEFAULT; do
     grep -q "^${c}=" "$DEFS" || {
@@ -34,6 +34,7 @@ source "$DEFS"
 PKG_JSON="$PIM_CFG/ord_vcm_conf.json"
 exp_delay=$(jq -r '.ETC.file_check_delay'             "$PKG_JSON")
 exp_grace=$(jq -r '.ETC.startup_grace_extra_sec'      "$PKG_JSON")
+exp_camera_grace=$(jq -r '.ETC.camera_startup_grace_sec' "$PKG_JSON")
 exp_cool=$(jq  -r '.ETC.init_cooldown_sec'            "$PKG_JSON")
 exp_intv=$(jq  -r '.ETC.disconnect_init_interval_sec' "$PKG_JSON")
 exp_dgrc=$(jq  -r '.ETC.disconnect_init_grace_sec'    "$PKG_JSON")
@@ -41,6 +42,7 @@ exp_dgrc=$(jq  -r '.ETC.disconnect_init_grace_sec'    "$PKG_JSON")
 check_all() {   # $1=시나리오 설명
     t_eq "$1 · file_check_delay"                 "$file_check_delay"                 "$exp_delay"
     t_eq "$1 · startup_grace_extra_sec"          "$startup_grace_extra_sec"          "$exp_grace"
+    t_eq "$1 · camera_startup_grace_sec"         "$camera_startup_grace_sec"         "$exp_camera_grace"
     t_eq "$1 · init_cooldown_sec"                "$init_cooldown_sec"                "$exp_cool"
     t_eq "$1 · DISCONNECT_INIT_CAM_INTERVAL_SEC" "$DISCONNECT_INIT_CAM_INTERVAL_SEC" "$exp_intv"
     t_eq "$1 · DISCONNECT_INIT_CAM_GRACE_SEC"    "$DISCONNECT_INIT_CAM_GRACE_SEC"    "$exp_dgrc"
@@ -61,6 +63,42 @@ echo "=== 손상된 JSON → 선언 기본값 복귀 ==="
 printf '{ this is not json' > "$WORK/broken.json"
 FILE_JSON_="$WORK/broken.json"; GetConfig_ 2>/dev/null
 check_all "손상JSON"
+
+echo
+echo "=== camera startup grace 타입 오류 → 안전 기본값 복귀 ==="
+jq '.ETC.camera_startup_grace_sec = "30"' "$PKG_JSON" > "$WORK/string-grace.json"
+FILE_JSON_="$WORK/string-grace.json"; GetConfig_
+t_eq "문자열 30" "$camera_startup_grace_sec" 25
+jq '.ETC.camera_startup_grace_sec = true' "$PKG_JSON" > "$WORK/bool-grace.json"
+FILE_JSON_="$WORK/bool-grace.json"; GetConfig_
+t_eq "불리언 true" "$camera_startup_grace_sec" 25
+jq '.ETC.camera_startup_grace_sec = -1' "$PKG_JSON" > "$WORK/negative-grace.json"
+FILE_JSON_="$WORK/negative-grace.json"; GetConfig_
+t_eq "음수 -1" "$camera_startup_grace_sec" 25
+
+echo
+echo "=== update_ordvcmconf가 잘못된 타입을 정규화하는가 ==="
+mkdir -p "$WORK/update-config" "$WORK/stubs"
+printf '#!/bin/sh\nexit 0\n' > "$WORK/stubs/logger"
+printf '#!/bin/sh\nexit 0\n' > "$WORK/stubs/sync"
+chmod +x "$WORK/stubs/logger" "$WORK/stubs/sync"
+for spec in 'string|"30"' 'bool|true' 'negative|-1'; do
+    label=${spec%%|*}
+    value=${spec#*|}
+    rm -f "$WORK/update-config"/*.json
+    jq -n --argjson value "$value" \
+        '{ORD:{},VCM:{},ETC:{camera_startup_grace_sec:$value}}' \
+        > "$WORK/update-config/ord_vcm_test.json"
+    if (cd "$WORK" && PATH="$WORK/stubs:$PATH" \
+        ORD_VCM_CONFIG_DIR="$WORK/update-config" \
+        "$PIM_BIN/update_ordvcmconf.sh" >/dev/null 2>&1); then
+        actual=$(jq -r '.ETC.camera_startup_grace_sec' \
+            "$WORK/update-config/ord_vcm_test.json")
+        t_eq "updater · $label" "$actual" 25
+    else
+        t_bad "updater · $label 실행"
+    fi
+done
 
 echo
 echo "=== 복구된 값으로 grace 보호가 실제로 동작하는가 ==="

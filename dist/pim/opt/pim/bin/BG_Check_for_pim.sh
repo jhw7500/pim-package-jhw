@@ -1,5 +1,6 @@
 #!/bin/bash
 source /opt/pim/lib/cam_state.sh
+source /opt/pim/lib/cam_start_policy.sh
 
 FLAG_PATH="/tmp"
 tag=$(basename "$0")
@@ -55,7 +56,7 @@ if [ ! -f "$ORD_VCM_JSON" ]; then
     ORD_VCM_JSON="/tmp/shared_v/ord_vcm_conf.json"
 fi
 
-startup_grace_extra_sec=$(jq -r '(.ETC.startup_grace_extra_sec // 10)' "$ORD_VCM_JSON" 2>/dev/null || echo 10)
+camera_startup_grace_sec=$(cam_policy_camera_startup_grace_sec "$ORD_VCM_JSON")
 # 기본값 40은 패키지 배포 설정(opt/pim/config/ord_vcm_conf.json)·update_ordvcmconf.sh·
 # chk_cam_operate.sh 와 일치시킨 값이다. 어긋나면 설정 키가 없는 장비에서 두 스크립트가
 # 서로 다른 쿨다운으로 동작한다.
@@ -64,12 +65,7 @@ now_ts() { date +%s; }
 read_ts() { [ -f "$1" ] && cat "$1" 2>/dev/null | tr -d '\n' || echo 0; }
 
 in_startup_grace() {
-    local start_ts start_delay now grace
-    now=$(now_ts)
-    start_ts=$(read_ts "/tmp/cam_state/last_start_ts")
-    start_delay=$(read_ts "/tmp/pim_cam_start_delay")
-    grace=$((start_delay + startup_grace_extra_sec))
-    [ "$start_ts" -gt 0 ] && [ $((now - start_ts)) -lt "$grace" ]
+    cam_in_startup_grace "$camera_startup_grace_sec"
 }
 
 in_init_cooldown() {

@@ -41,6 +41,7 @@
       "file_check_delay": 10,
       "file_check_reboot": true,
       "startup_grace_extra_sec": 10,
+      "camera_startup_grace_sec": 25,
       "init_cooldown_sec": 40,
       "disconnect_init_interval_sec": 180,
       "disconnect_init_grace_sec": 60

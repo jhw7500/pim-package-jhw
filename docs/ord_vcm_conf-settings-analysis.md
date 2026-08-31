@@ -79,13 +79,14 @@ GitHub `master`의 코드가 동작 정본이다. 이 문서의 “패키지 값
 |---|---:|---:|---|
 | `file_check_delay` | `10` | `10` | 시작 파일 검사 유예와 파일 미생성 타임아웃에 사용 |
 | `file_check_reboot` | `true` | `false` | 복구 사다리의 마지막 reboot 단계 허용 |
-| `startup_grace_extra_sec` | `10` | `10` | 시작 grace와 FINAL STALL 워밍업에 추가 |
+| `startup_grace_extra_sec` | `10` | `10` | FINAL STALL 워밍업 계산에 추가 |
+| `camera_startup_grace_sec` | `25` | `25` | 앱 시작 시각부터 cold-start 카메라 오류를 무시하는 총 시간. gstApp `-d`와 독립 |
 | `init_cooldown_sec` | `40` | `40` | `init_cam.sh` 직후 재초기화 억제 |
 | `disconnect_init_interval_sec` | `180` | `180` | disconnect 중 주기적 `init_cam.sh` 간격 |
 | `disconnect_init_grace_sec` | `60` | `60` | disconnect 후 첫 `init_cam.sh` 전 유예 |
 | `disconnect_max_sec` | 키 없음 | `0` | 선택적 장기 disconnect reboot. `0`이면 비활성 |
 
-`update_ordvcmconf.sh`는 앞의 6개 패키지 키를 보강하지만
+`update_ordvcmconf.sh`는 `disconnect_max_sec`를 제외한 앞의 패키지 키를 보강하지만
 `disconnect_max_sec`는 추가하지 않는다. 이 키는 필요한 장비에서만 명시적으로
 설정하는 opt-in 정책이다.
 
@@ -101,6 +102,10 @@ kill/init 복구는 계속 수행하며 한계에 도달하면 일반 retry 카�
 (.ETC.file_check_reboot // false)
 (.ETC.file_check_delay // 10)
 (.ETC.startup_grace_extra_sec // 10)
+(.ETC.camera_startup_grace_sec as $v
+ | if ($v | type) == "number" then
+       if ($v >= 0) and (($v | floor) == $v) then $v else 25 end
+   else 25 end)
 (.ETC.init_cooldown_sec // 40)
 (.ETC.disconnect_init_interval_sec // 180)
 (.ETC.disconnect_init_grace_sec // 60)

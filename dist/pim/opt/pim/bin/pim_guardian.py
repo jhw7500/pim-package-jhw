@@ -67,7 +67,7 @@ TMP_SYNC_WARN_LOG_PERIOD_SEC = 30
 RAM_DELTA_WARN_THRESHOLD_KBPS = 16384.0
 RAM_DELTA_WARN_CLEAR_THRESHOLD_KBPS = 8192.0
 RAM_DELTA_WARN_LOG_PERIOD_SEC = 30
-STARTUP_GRACE_EXTRA_SEC = 10
+CAMERA_STARTUP_GRACE_SEC_DEFAULT = 25
 VOLT_MIN = 20.4
 VOLT_MAX = 27.6
 DISK_LIMIT_PCT = 95
@@ -1370,12 +1370,23 @@ class PIMHealthGuardian:
                 )
 
     def _in_startup_grace(self) -> bool:
+        ord_conf = self._as_dict(self.conf.get("ord", {}))
+        etc_conf = self._as_dict(ord_conf.get("ETC", {}))
+        configured = etc_conf.get("camera_startup_grace_sec")
+        if (
+            isinstance(configured, int)
+            and not isinstance(configured, bool)
+            and configured >= 0
+        ):
+            grace_sec = configured
+        else:
+            grace_sec = CAMERA_STARTUP_GRACE_SEC_DEFAULT
+
         now = int(time.time())
         start_ts = self._safe_read_int_file(TMP_START_TS, 0)
-        start_delay = self._safe_read_int_file(TMP_START_DELAY, 0)
-        if start_ts > 0 and start_delay >= 0:
-            return (now - start_ts) < (start_delay + STARTUP_GRACE_EXTRA_SEC)
-        return (time.time() - self.start_time) < STARTUP_GRACE_EXTRA_SEC
+        if start_ts > 0:
+            return (now - start_ts) < grace_sec
+        return (time.time() - self.start_time) < grace_sec
 
     def start(self) -> None:
         syslog("notice", f"PIM Health Guardian 10.0 (Interactive-Recovery) started")

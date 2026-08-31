@@ -121,21 +121,19 @@
   |     +-- restart_app.sh 시작 (vcm/ord 감시 + 앱 재시작)
   |
   +-- Startup Grace Window (파일 검사 유예)
-  |     +-- 싱글 CSI: 11초 + 10초 = 21초
-  |     +-- 듀얼 CSI: 22초 + 10초 = 32초
-  |     +-- SD 불량 시: +20초 추가
+  |     +-- gstApp 재생 지연: 싱글/듀얼 공통 5초
+  |     +-- cold-start 감시 유예: 시작 시각부터 총 25초
+  |     +-- 두 값은 독립이며 더하지 않음
   |
   +-- 메인 루프 진입
         +-- 2초 주기: 파일 검사, 복구 판단
         +-- 30초 주기: 디스크 정리, stale .part 정리
 ```
 
-**부팅~스트림 시작 소요 시간:**
-
-| 구성 | SD 정상 | SD 불량 |
-|------|---------|---------|
-| 싱글 CSI (2채널 이하) | ~32초 | ~52초 |
-| 듀얼 CSI (3~4채널) | ~54초 | ~74초 |
+`-d 5`는 드라이버 전원 시퀀스가 끝난 뒤 gstApp이 PLAYING으로 전환하기 전의
+애플리케이션 지연이다. 부팅부터 첫 프레임까지의 전체 시간이나 건강 검사 유예 시간을
+뜻하지 않는다. GPIO 전원 시퀀스, 모듈 재로드 및 재부팅을 포함한 측정 근거와 검증
+절차는 [`camera-startup-timing.md`](./camera-startup-timing.md)를 따른다.
 
 ### 3.2 녹화 파일 커밋 흐름 (정상)
 
@@ -185,7 +183,7 @@ gstApp 녹화 중
   |     소요: ~5초 (정상 종료) / ~15초 (SIGKILL) / ~30초 (최악)
   |
   +-- [retry_total 4~5] init_cam.sh (모듈 재로드 + 앱 재시작)
-  |     소요: ~12~15초 + app_delay(11~22초)
+  |     소요: ~12~15초 + app_delay(5초)
   |
   +-- [retry_total > 5] reboot (file_chk_reboot=true일 때만)
         소요: ~60~90초 (시스템 리부트)
@@ -195,13 +193,13 @@ gstApp 녹화 중
 
 | 단계 | 동작 | 누적 시간 (싱글CSI) |
 |------|------|---------------------|
-| 1회 실패 | kill_test | ~5초 + grace 21초 |
-| 2회 실패 | kill_test | ~5초 + grace 21초 |
-| 3회 실패 | kill_test | ~5초 + grace 21초 |
-| 4회 실패 | init_cam | ~15초 + grace 21초 + cooldown 40초 |
-| 5회 실패 | init_cam | ~15초 + grace 21초 + cooldown 40초 |
+| 1회 실패 | kill_test | ~5초 + 총 grace 25초 |
+| 2회 실패 | kill_test | ~5초 + 총 grace 25초 |
+| 3회 실패 | kill_test | ~5초 + 총 grace 25초 |
+| 4회 실패 | init_cam | ~15초 + 총 grace 25초 + cooldown 40초 |
+| 5회 실패 | init_cam | ~15초 + 총 grace 25초 + cooldown 40초 |
 | 6회 실패 | **reboot** | - |
-| **합계** | | **약 3~5분** (싱글CSI) / **약 6~8분** (듀얼CSI) |
+| **합계** | | 환경별 I/O 및 프로세스 종료 시간에 따라 달라지므로 타겟 로그로 판정 |
 
 ### 4.2 시작 실패 (gstApp 기동 후 파일 0개)
 
@@ -246,10 +244,10 @@ gstApp 비정상 종료
   |           +-- 쿨다운 아님: init_cam.sh 실행
   |
   +-- init_cam.sh 실행 (~12~15초)
-  +-- start_cam.sh 실행 (app_delay 11~22초)
+  +-- start_cam.sh 실행 (app_delay 5초)
 
-총 소요: 약 30~45초 (쿨다운 미적용 시)
-         약 70~85초 (쿨다운 적용 시)
+총 소요는 모듈 재적재와 드라이버 prepare 시간에 좌우된다. 감시기는 앱 시작 시각부터
+25초 동안 cold-start 오류를 무시하며, init_cam 중복 실행은 40초 cooldown으로 막는다.
 ```
 
 ### 4.4 카메라 물리적 분리 -> 재연결
@@ -410,7 +408,7 @@ modules_loaded() 실패
   |
   +-- RAM-only 모드 운영
         +-- RAM 용량 캡: 1.6GiB
-        +-- startup grace +20초 추가
+        +-- 카메라 startup grace는 저장장치 상태와 무관하게 총 25초 유지
         +-- 30초 주기 enforce_ram_cap_if_needed()
               +-- /dev/shm/recordings 크기 > 1.6GiB 시
               +-- 오래된 세션부터 삭제 (최근 2세션 보호)
@@ -540,8 +538,9 @@ init_cam.sh 호출 시 (모듈 재로드 전)
 | `kill_test.sh` | SIGTERM -> 대기 -> SIGKILL -> 파일 정리 | 2~30초 |
 | `init_cam.sh` | kill_test + rmmod(2초) + modprobe x2(4초) + 정리 | 12~15초 |
 | `start_cam.sh` | 앱 기동 + BG_Check + restart_app | 즉시 (앱 딜레이는 별도) |
-| app_delay | 싱글 CSI / 듀얼 CSI | 11초 / 22초 |
-| startup grace | app_delay + 10초 (+ SD불량 시 +20초) | 21~52초 |
+| app_delay | 싱글/듀얼 CSI 공통 gstApp PLAYING 전 지연 | 5초 |
+| camera startup grace | 앱 시작 시각부터 cold-start 오류 무시 | 총 25초 |
+| startup_grace_extra_sec | FINAL STALL 워밍업 계산용 추가값 | 10초 |
 | init cooldown | init_cam 후 중복 실행 방지 | 40초 |
 | 시스템 reboot | 전체 재부팅 | 60~90초 |
 
@@ -588,8 +587,8 @@ init_cam.sh 호출 시 (모듈 재로드 전)
 
 | 파일 | 용도 | 값 형식 |
 |------|------|---------|
-| `/tmp/pim_cam_start_ts` | 카메라 앱 시작 시각 | epoch (초) |
-| `/tmp/pim_cam_start_delay` | 시작 딜레이 값 | 정수 (초) |
+| `/tmp/cam_state/last_start_ts` | camera startup grace의 기준 앱 시작 시각 | epoch (초) |
+| `/tmp/pim_cam_start_delay` | gstApp `-d` 진단값. grace 계산에는 사용하지 않음 | 정수 (초) |
 | `/tmp/pim_cam_stream_start_ts` | 스트림 실제 시작 시각 | epoch (초) |
 | `/tmp/last_init_cam_ts` | 마지막 init_cam 실행 시각 | epoch (초) |
 | `/tmp/start_video_time` | gstApp 녹화 시작 시각 | "YYYYMMDD HH:MM:SS" |
