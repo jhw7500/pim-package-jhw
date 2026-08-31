@@ -163,12 +163,12 @@
       }
    },
    "VHL_CAM": {
-      "cam_width": 1280,
-      "cam_height": 720,
+      "cam_width": 640,
+      "cam_height": 360,
       "event_auto_remove": true,
       "event_storage_size": 10,
       "floor": "NONAME",
-      "fps": 15,
+      "fps": 30,
       "line": "NONAME",
       "recording_time": 1,
       "vhl_name": "VD3001",
@@ -207,12 +207,16 @@
       },
       "i2c2": {
          "exp_time": 10000,
+         "crop_enable": false,
+         "dz": 100,
          "ch0": {
             "enable": true,
             "vflip": false,
             "hflip": false,
             "ae_on": true,
             "ae_gain": 256,
+            "dz_x": 32768,
+            "dz_y": 32768,
             "bps": [
                2048,
                2048
@@ -249,6 +253,8 @@
             "hflip": false,
             "ae_on": true,
             "ae_gain": 256,
+            "dz_x": 32768,
+            "dz_y": 32768,
             "bps": [
                2048,
                2048
@@ -282,12 +288,16 @@
       },
       "i2c1": {
          "exp_time": 10000,
+         "crop_enable": false,
+         "dz": 100,
          "ch2": {
             "enable": true,
             "vflip": false,
             "hflip": false,
             "ae_on": true,
             "ae_gain": 256,
+            "dz_x": 32768,
+            "dz_y": 32768,
             "bps": [
                2048,
                2048
@@ -324,6 +334,8 @@
             "hflip": false,
             "ae_on": true,
             "ae_gain": 256,
+            "dz_x": 32768,
+            "dz_y": 32768,
             "bps": [
                2048,
                2048

@@ -1,5 +1,15 @@
 # PIM Package Changelog
 
+## 최신 변경사항 (2026-08-31) — MAX9296 640x360/crop 패키지 통합
+
+- clean-built max9296 2.9와 gstApp 640x360/crop/single-slot 바이너리를 반영했다.
+- PIM 기본 edgeconf를 `640x360@30`, `crop_enable=false`, `dz=100`, 채널 중심
+  32768로 설정하고 별도 병합 fragment를 패키지 config에 추가했다.
+- 기존 설정은 `update_edgeconf.sh`가 누락된 crop 키만 backfill하며 운영자가 지정한
+  enable/배율/중심은 보존한다.
+- FHD/HD/360p 출력 선택과 디지털 crop이 독립임을 배포 가이드에 명시했다.
+- 120 FPS는 qualification 전용이며 production 노출 쓰기 안전 상한은 30 FPS다.
+
 2026년 2월 이후 **23개 커밋**에서 다음과 같은 개선사항이 적용되었습니다.
 
 ---

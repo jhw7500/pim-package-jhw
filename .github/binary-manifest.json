@@ -4,13 +4,13 @@
   "binaries": [
     {
       "path": "dist/pim/usr/local/bin/gstApp",
-      "sha256": "b20bfd1cdaf7df21e97f1026f096ae5c3e7970264eaa5a4f8cb64f428760c5f6",
-      "size": 2087528,
+      "sha256": "c816f84094f7d357c51a20b8c694ea198d0207fac68eca53128e5225b5ddafbe",
+      "size": 2118184,
       "mode": "100755",
       "arch": "aarch64",
       "source": {
         "repo": "jhw7500/gstApp",
-        "commit": "e05e6e9",
+        "commit": "ba5df22",
         "build": "./make-for-imx8 -j4 (Yocto SDK 5.10-hardknott, cortexa53-crypto-poky-linux)"
       },
       "required_strings": [
@@ -18,28 +18,30 @@
         "GSTREAMER_SOURCE_STALL",
         "RECORDING_NO_GROWTH",
         "MAX9296_PREPARE",
+        "MAX9296_CROP",
         "/run/lock/gstapp-camera.lock"
       ],
-      "note": "max9296 병렬 prepare 통합 포함본 (gstApp#43). 드라이버 2.5 의 prepare ABI 를 앱이 직접 쓴다 - required_strings 의 MAX9296_PREPARE 와 owner lock 경로가 빠진 바이너리는 prepare 를 쓰지 않는 구버전이다. camera-health v1 producer 도 계속 포함된다 (pim#38 / gstApp#41). 같은 커밋을 서로 다른 시점에 두 번 빌드해 sha256 과 BuildID 가 일치하는 것을 확인했다."
+      "note": "MAX9296 병렬 prepare와 edgeconf 기반 640x360/crop 제어 통합본이다. crop_enable, 공통 dz, 채널별 dz_x/dz_y를 prepare 전에 원자 적용하고 single-camera에서는 실제 활성 슬롯으로 AE/gain/exposure를 전달한다. required_strings의 MAX9296_PREPARE, MAX9296_CROP, owner lock 경로가 빠진 바이너리는 이 계약을 제공하지 않는다. camera-health v1 producer도 유지한다."
     },
     {
       "path": "dist/pim/opt/pim/driver/max9296.ko",
-      "sha256": "26cff9097b4e386aa3af70bc5f252dbfa068f7ea48457fae4a3710702d049a04",
-      "size": 898288,
+      "sha256": "b27ae021fe4cb569ed6264712fabebb2a6b2cb6f5ab27278aebdb4113e09fc33",
+      "size": 973936,
       "mode": "100644",
       "arch": "aarch64",
       "storage": "lfs",
-      "module_version": "2.7",
+      "module_version": "2.9",
       "source": {
         "repo": "jhw7500/max9296",
-        "commit": "acd88da",
+        "commit": "6d44392",
         "build": "./make-for-imx8 (Yocto SDK 5.10-hardknott, cortexa53-crypto-poky-linux)"
       },
-      "note": "AE 복원 경쟁 조건, 병렬 prepare ABI, 전원 참조 수정이 포함된 2.7 빌드다. source.commit acd88da에서 clean 빌드했고 srcversion은 A490660F641EEB5577DD19B다. 이후 배포 당시 HEAD edd8fda와 제품 소스는 같고 cam_hard_reset.sh만 다르므로 바이너리 기준은 실제 빌드 커밋 acd88da로 기록한다. 2026-08-21 이 파일의 SHA를 보드와 대조한 뒤 콜드 정착 및 respawn 2회에서 ch0 manual AE 유지를 확인했다. 보드 런타임은 아직 2.5이며 이 패키지를 설치할 때 2.7이 된다. BTI 유무로 같은 srcversion의 SHA가 달라질 수 있으나 Cortex-A53에서 동작 차이는 없다.",
+      "note": "MAX9296 2.9 clean build다. 1920x1080/1280x720/640x360 production 모드, 30 FPS 노출 안전 상한, crop_enable, 공통 1.00x~3.00x dz, 채널별 중심 cache/replay를 포함한다. 640x360 production은 AP1302/CSI 출력 context만 바꾸는 KEEP 정책이며 AR0234 전용 readout이나 120 FPS를 주장하지 않는다. module srcversion은 DA89ABE8A6E147911293CE6이고 2026-08-31 호스트 전체 테스트와 PIM 타겟 cfgjson 30건을 통과했다.",
       "required_strings": [
         "dev_attr_prepare",
         "max9296_prepare_adopt_power_locked",
-        "dev_attr_health_raw"
+        "dev_attr_health_raw",
+        "max9296_apply_cached_crop"
       ]
     },
     {
