@@ -84,6 +84,38 @@ class HandoffDebTest(unittest.TestCase):
                 module.build_package(source, output_dir, "0.6.3+jhw.camera1")
             self.assertEqual(expected.read_bytes(), b"do not overwrite")
 
+    def test_build_strips_group_and_other_write_bits(self):
+        module = load_module()
+        with tempfile.TemporaryDirectory(prefix="handoff-deb-test.") as tmp:
+            work = Path(tmp)
+            source = self.make_package(work)
+            tool = source / "opt/pim/bin/probe.sh"
+            data = source / "opt/pim/settings.json"
+            tool.chmod(0o775)
+            data.write_text("{}\n", encoding="utf-8")
+            data.chmod(0o664)
+
+            output = module.build_package(
+                source, work / "out", "0.6.3+jhw.camera1"
+            )
+            with tempfile.TemporaryDirectory(
+                prefix="handoff-deb-extract."
+            ) as extracted:
+                subprocess.run(
+                    ["dpkg-deb", "-x", str(output), extracted], check=True
+                )
+                extracted_root = Path(extracted)
+                self.assertEqual(
+                    (extracted_root / "opt/pim/bin/probe.sh").stat().st_mode
+                    & 0o777,
+                    0o755,
+                )
+                self.assertEqual(
+                    (extracted_root / "opt/pim/settings.json").stat().st_mode
+                    & 0o777,
+                    0o644,
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

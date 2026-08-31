@@ -63,6 +63,17 @@ def remove_banned(root: Path) -> None:
             path.unlink()
 
 
+def normalize_permissions(root: Path) -> None:
+    for path in root.rglob("*"):
+        metadata = path.lstat()
+        if stat.S_ISLNK(metadata.st_mode):
+            continue
+        mode = stat.S_IMODE(metadata.st_mode)
+        normalized = mode & ~0o022
+        if normalized != mode:
+            path.chmod(normalized)
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -151,6 +162,7 @@ def build_package(source: Path, output_dir: Path, version: str) -> Path:
             shutil.copytree(source, stage, symlinks=True)
             remove_banned(stage)
             rewrite_version(stage / "DEBIAN/control", version)
+            normalize_permissions(stage)
             expected = payload_manifest(stage)
 
             subprocess.run(
