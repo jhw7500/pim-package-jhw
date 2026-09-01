@@ -2,6 +2,14 @@
 
 ## Unreleased (2026-09-01)
 
+### camera6 gstApp 설정 파서 안전성 통합
+
+- 패키지 버전을 `0.6.3+jhw.camera6`으로 올리고 gstApp `77a2635` clean build를
+  반영했다.
+- malformed edgeconf 배열은 기동 시 명시적으로 거부한다. 정상 배열과 기존
+  MAX9296 640x360/crop/zoom/노출 제어 계약은 유지한다.
+- MAX9296 모듈은 camera5와 동일한 검증본 2.11(`9cb6c82`)을 유지한다.
+
 ### MAX9296 2.11 고속 수동 노출
 
 - 640x360의 mode-valid 31~120 FPS에서 수동 `EXP_TIME(0x500c)`를 더 이상

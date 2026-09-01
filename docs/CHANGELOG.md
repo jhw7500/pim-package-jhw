@@ -1,5 +1,17 @@
 # PIM Package Changelog
 
+## 최신 변경사항 (2026-09-01) — camera6 / gstApp 설정 파서 안전성 통합
+
+- 전달 패키지를 `pim-mp 0.6.3+jhw.camera6`로 올리고, GitHub `master`
+  `77a2635`에서 clean-built한 gstApp을 반영했다.
+- camera5의 MAX9296 2.11, 640x360 최대 120 FPS, crop/zoom 및 고속 수동 노출
+  동작은 그대로 유지한다.
+- 잘못된 edgeconf 배열을 기동 중 조용히 보정하지 않고 파서 단계에서 거부하도록
+  강화했다. 정상 edgeconf의 기존 카메라 동작에는 변화가 없다.
+- camera5는 `pim-camera-v016`에서 설치·런타임 검증했다. camera6의 추가분은
+  gstApp parser 변경뿐이며 host parser 59개, MAX9296 controls 111개,
+  prepare 1117개 시험과 i.MX8 clean cross-build로 검증했다.
+
 ## 최신 변경사항 (2026-09-01) — MAX9296 2.11 / 고속 수동 노출 경고 후 적용
 
 - 전달 패키지를 `pim-mp 0.6.3+jhw.camera5`로 구분하고 clean-built

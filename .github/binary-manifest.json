@@ -4,13 +4,13 @@
   "binaries": [
     {
       "path": "dist/pim/usr/local/bin/gstApp",
-      "sha256": "7e47b6210cd72dfea1d8cc51a0f1713410b201466254fad983c0a87c7362513e",
-      "size": 2118400,
+      "sha256": "82666d3dcc25c945a06a80e29783a8bc5297b7f4f556af17e606c0d740a1e597",
+      "size": 2118624,
       "mode": "100755",
       "arch": "aarch64",
       "source": {
         "repo": "jhw7500/gstApp",
-        "commit": "54acf75",
+        "commit": "77a2635",
         "build": "./make-for-imx8 -j4 (Yocto SDK 5.10-hardknott, cortexa53-crypto-poky-linux)"
       },
       "required_strings": [
@@ -22,7 +22,7 @@
         "MAX9296_EXPOSURE",
         "/run/lock/gstapp-camera.lock"
       ],
-      "note": "MAX9296 병렬 prepare와 edgeconf 기반 640x360/crop 제어 통합본이다. crop_enable, 공통 dz, 채널별 dz_x/dz_y를 prepare 전에 원자 적용하고 single-camera에서는 실제 활성 슬롯으로 AE/gain/exposure를 전달한다. 31~120 FPS manual exposure는 경고 후 JSON seed를 적용하고 AE auto는 seed를 생략한다. HD/FHD 30 FPS와 360p 120 FPS 상한을 제어 I2C 전에 preflight한다. required_strings의 MAX9296_PREPARE, MAX9296_CROP, MAX9296_EXPOSURE, owner lock 경로가 빠진 바이너리는 이 계약을 제공하지 않는다. camera-health v1 producer도 유지한다."
+      "note": "MAX9296 병렬 prepare와 edgeconf 기반 640x360/crop 제어 통합본이다. crop_enable, 공통 dz, 채널별 dz_x/dz_y를 prepare 전에 원자 적용하고 single-camera에서는 실제 활성 슬롯으로 AE/gain/exposure를 전달한다. 31~120 FPS manual exposure는 경고 후 JSON seed를 적용하고 AE auto는 seed를 생략한다. HD/FHD 30 FPS와 360p 120 FPS 상한을 제어 I2C 전에 preflight한다. malformed edgeconf 배열은 기동 시 거부한다. required_strings의 MAX9296_PREPARE, MAX9296_CROP, MAX9296_EXPOSURE, owner lock 경로가 빠진 바이너리는 이 계약을 제공하지 않는다. camera-health v1 producer도 유지한다."
     },
     {
       "path": "dist/pim/opt/pim/driver/max9296.ko",
