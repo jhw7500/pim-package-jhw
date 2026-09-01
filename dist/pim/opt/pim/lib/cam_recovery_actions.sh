@@ -63,17 +63,20 @@ cam_runtime_app() {
 }
 
 cam_cleanup_recording_orphans() {
-    local runtime=$1 dir f count=0
-    dir=$(jq -r '.VHL_CAM.tmp_path // "/dev/shm"' "$runtime") || return 64
+    local runtime=$1 dir vehicle started prefix f
+    dir=$(jq -r '.VHL_CAM.tmp_path // empty' "$runtime") || return 64
+    vehicle=$(jq -r '.VHL_CAM.vhl_name // empty' "$runtime") || return 64
+    started=$(cat "${PIM_CAMERA_SESSION_TIME_FILE:-/tmp/start_video_time_chk}" 2>/dev/null | tr -d '\n')
+    [[ $dir = /* && $dir != / && $dir != *'..'* && $vehicle =~ ^[A-Za-z0-9_-]+$ ]] || return 64
+    [[ $started =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}[[:space:]][0-9]{2}:[0-9]{2}(:[0-9]{2})?$ ]] || return 64
     [ -d "$dir" ] || return 0
+    prefix="$vehicle"_$(date -d "$started" '+%Y%m%d_%H%M' 2>/dev/null) || return 64
     shopt -s nullglob
-    for f in "$dir"/*.mp4 "$dir"/*.ts "$dir"/*.srt "$dir"/*-vib.bin "$dir"/*.mp4.part "$dir"/*.ts.part "$dir"/*.srt.part; do
-        cam_effect "$runtime" rm -f "$f" || { shopt -u nullglob; return $?; }
-        count=$((count + 1))
+    for f in "$dir/$prefix"*.mp4 "$dir/$prefix"*.ts "$dir/$prefix"*.srt "$dir/$prefix"*-vib.bin "$dir/$prefix"*.mp4.part "$dir/$prefix"*.ts.part "$dir/$prefix"*.srt.part; do
+        [ -f "$f" ] || continue
+        cam_effect "$runtime" rm -f -- "$f" || { shopt -u nullglob; return $?; }
     done
     shopt -u nullglob
-    cam_effect "$runtime" rm -f /tmp/session_*.video_done /tmp/session_*.srt_done || return $?
-    return 0
 }
 
 cam_cleanup_shm_overflow() {
@@ -94,18 +97,71 @@ cam_cleanup_shm_overflow() {
     shopt -u nullglob
 }
 
+cam_bg_checker_path() { printf '%s\n' "${PIM_CAMERA_BG_CHECKER:-$PIM_BIN/BG_Check_for_pim.sh}"; }
+cam_bg_checker_pids() {
+    local bg=$1 cmdline arg found pid
+    for cmdline in "${PIM_CAMERA_PROCESS_ROOT:-/proc}"/[0-9]*/cmdline; do
+        [ -r "$cmdline" ] || continue
+        found=0
+        while IFS= read -r -d '' arg; do
+            [ "$arg" = "$bg" ] && found=1
+        done < "$cmdline"
+        [ "$found" -eq 1 ] || continue
+        pid=${cmdline%/cmdline}; pid=${pid##*/}
+        printf '%s\n' "$pid"
+    done
+}
+cam_bg_checker_present() {
+    cam_bg_checker_pids "$1" | grep -q .
+}
+cam_process_present() {
+    local runtime=$1 kind=$2 app bg
+    case "$kind" in
+        app) app=$(cam_runtime_app "$runtime") || return $?; pgrep -x "$app" >/dev/null 2>&1 ;;
+        bg) bg=$(cam_bg_checker_path); cam_bg_checker_present "$bg" ;;
+        ord|vcm) pgrep -x "$kind" >/dev/null 2>&1 ;;
+        *) return 64 ;;
+    esac
+}
+cam_signal_process() {
+    local runtime=$1 signal=$2 kind=$3 app bg
+    case "$kind" in
+        app) app=$(cam_runtime_app "$runtime") || return $?; cam_effect "$runtime" pkill "$signal" -x "$app" ;;
+        bg)
+            bg=$(cam_bg_checker_path)
+            while IFS= read -r pid; do cam_effect "$runtime" kill "$signal" "$pid" || return $?; done < <(cam_bg_checker_pids "$bg")
+            ;;
+        ord|vcm) cam_effect "$runtime" pkill "$signal" -x "$kind" ;;
+        *) return 64 ;;
+    esac
+}
+cam_stop_process() {
+    local runtime=$1 kind=$2 timeout=${PIM_CAMERA_QUIESCE_TIMEOUT_SEC:-5} i=0
+    cam_process_present "$runtime" "$kind" || return 0
+    cam_signal_process "$runtime" -TERM "$kind" || return $?
+    while cam_process_present "$runtime" "$kind"; do
+        [ "$i" -ge "$timeout" ] && break
+        sleep 1; i=$((i + 1))
+    done
+    cam_process_present "$runtime" "$kind" || return 0
+    cam_signal_process "$runtime" -KILL "$kind" || return $?
+    i=0
+    while cam_process_present "$runtime" "$kind"; do
+        [ "$i" -ge "$timeout" ] && return 1
+        sleep 1; i=$((i + 1))
+    done
+}
 cam_quiesce_gstapp() {
-    local runtime=$1 app
-    app=$(cam_runtime_app "$runtime") || return $?
-    if pgrep "$app" >/dev/null 2>&1; then cam_effect "$runtime" pkill -TERM "$app" || return $?; fi
-    if pgrep BG_Check_for_pim.sh >/dev/null 2>&1; then cam_effect "$runtime" pkill -TERM BG_Check_for_pim.sh || return $?; fi
+    local runtime=$1
+    cam_stop_process "$runtime" app || return $?
+    cam_stop_process "$runtime" bg
 }
 
 cam_quiesce_consumers() {
     local runtime=$1
     cam_quiesce_gstapp "$runtime" || return $?
-    if pgrep ord >/dev/null 2>&1; then cam_effect "$runtime" pkill -TERM ord || return $?; fi
-    if pgrep vcm >/dev/null 2>&1; then cam_effect "$runtime" pkill -TERM vcm || return $?; fi
+    cam_stop_process "$runtime" ord || return $?
+    cam_stop_process "$runtime" vcm
 }
 
 cam_initial_module_load() {
@@ -117,8 +173,9 @@ cam_initial_module_load() {
 }
 
 cam_start_gstapp() {
-    local runtime=$1 delay
+    local runtime=$1 delay bg
     delay=$(jq -r '.VHL_CAM.app_delay // 4' "$runtime") || return 64
+    bg=$(cam_bg_checker_path) || return $?
     cam_side_effect_guard "$runtime" || return $?
     PIM_CAMERA_EXECUTOR=1 \
     PIM_CAMERA_REQUEST_ID="$PIM_CAMERA_REQUEST_ID" \
@@ -128,11 +185,20 @@ cam_start_gstapp() {
     PIM_CAMERA_OWNER_PROC_START_TIME="$PIM_CAMERA_OWNER_PROC_START_TIME" \
     PIM_CAMERA_OWNER_TOKEN="$PIM_CAMERA_OWNER_TOKEN" \
     PIM_CAMERA_OWNER_CREATED_AT="$PIM_CAMERA_OWNER_CREATED_AT" \
+    PIM_CAMERA_BG_CHECKER="$bg" \
     "$PIM_CAMERA_START_CAM" "$delay"
 }
 
-cam_restart_ord() { local runtime=$1; cam_side_effect_guard "$runtime" || return $?; command -v ord >/dev/null 2>&1 && ord & }
-cam_restart_vcm() { local runtime=$1; cam_side_effect_guard "$runtime" || return $?; command -v vcm >/dev/null 2>&1 && vcm & }
+cam_launch_consumer() {
+    local runtime=$1 name=$2 path
+    path=$(command -v "$name") || return 127
+    (
+        cam_side_effect_guard "$runtime" || exit $?
+        exec "$path"
+    ) &
+}
+cam_restart_ord() { cam_launch_consumer "$1" ord; }
+cam_restart_vcm() { cam_launch_consumer "$1" vcm; }
 
 cam_verify_camera_ready() {
     local runtime=$1
@@ -141,10 +207,19 @@ cam_verify_camera_ready() {
 }
 
 cam_verify_process_ready() {
-    local runtime=$1 app
-    app=$(cam_runtime_app "$runtime") || return $?
+    local runtime=$1 consumers=${2:-0}
     cam_side_effect_guard "$runtime" || return $?
-    pgrep "$app" >/dev/null 2>&1 && pgrep BG_Check_for_pim.sh >/dev/null 2>&1
+    cam_process_present "$runtime" app && cam_process_present "$runtime" bg || return 1
+    [ "$consumers" = 0 ] || { cam_process_present "$runtime" ord && cam_process_present "$runtime" vcm; }
+}
+
+cam_wait_process_ready() {
+    local runtime=$1 consumers=${2:-0} timeout=${PIM_CAMERA_READY_TIMEOUT_SEC:-5} i=0
+    while ! cam_verify_process_ready "$runtime" "$consumers"; do
+        [ "$i" -ge "$timeout" ] && return 1
+        sleep 1
+        i=$((i + 1))
+    done
 }
 
 cam_action_gstapp_restart() {
@@ -153,13 +228,19 @@ cam_action_gstapp_restart() {
     cam_cleanup_recording_orphans "$runtime" || return $?
     cam_cleanup_shm_overflow "$runtime" || return $?
     cam_start_gstapp "$runtime" || return $?
-    cam_verify_process_ready "$runtime"
+    cam_wait_process_ready "$runtime" 0
 }
 
+cam_module_loaded() { lsmod | awk -v module="${1//-/_}" '$1==module {found=1} END {exit !found}'; }
+cam_unload_module() {
+    local runtime=$1 module=$2
+    cam_module_loaded "$module" || return 0
+    cam_effect "$runtime" rmmod "$module"
+}
 cam_module_reload() {
     local runtime=$1
-    cam_effect "$runtime" rmmod imx8-media-dev || return $?
-    cam_effect "$runtime" rmmod max9296 || return $?
+    cam_unload_module "$runtime" imx8-media-dev || return $?
+    cam_unload_module "$runtime" max9296 || return $?
     cam_effect "$runtime" modprobe max9296 || return $?
     cam_effect "$runtime" modprobe imx8-media-dev
 }
@@ -172,7 +253,7 @@ cam_action_module_reload() {
     cam_restart_ord "$runtime" || return $?
     cam_restart_vcm "$runtime" || return $?
     cam_start_gstapp "$runtime" || return $?
-    cam_verify_process_ready "$runtime"
+    cam_wait_process_ready "$runtime" 1
 }
 
 cam_sysfs_write() {
@@ -188,23 +269,23 @@ cam_action_camera_hard_reset() {
     csi="$root/bus/platform/drivers/mxc-mipi-csi2-sam"; isi="$root/bus/platform/drivers/mxc-isi"
     cap="$root/bus/platform/drivers/isi-capture"; m2m="$root/bus/platform/drivers/isi-m2m"
     cam_quiesce_consumers "$runtime" || return $?
-    cam_effect "$runtime" rmmod imx8-media-dev || return $?
-    cam_effect "$runtime" rmmod max9296 || return $?
+    cam_unload_module "$runtime" imx8-media-dev || return $?
+    cam_unload_module "$runtime" max9296 || return $?
     for d in 32e00000.isi:cap_device 32e02000.isi:cap_device; do cam_sysfs_write "$runtime" unbind "$cap/unbind" "$d" || return $?; done
     for d in 32e00000.isi:m2m_device; do cam_sysfs_write "$runtime" unbind "$m2m/unbind" "$d" || return $?; done
     for d in 32e00000.isi 32e02000.isi; do cam_sysfs_write "$runtime" unbind "$isi/unbind" "$d" || return $?; done
     for d in 32e40000.csi 32e50000.csi; do cam_sysfs_write "$runtime" unbind "$csi/unbind" "$d" || return $?; done
     for d in 32e40000.csi 32e50000.csi; do cam_sysfs_write "$runtime" bind "$csi/bind" "$d" || return $?; done
     for d in 32e00000.isi 32e02000.isi; do cam_sysfs_write "$runtime" bind "$isi/bind" "$d" || return $?; done
-    for d in 32e00000.isi:cap_device 32e02000.isi:cap_device; do cam_sysfs_write "$runtime" bind "$cap/bind" "$d" || return $?; done
-    for d in 32e00000.isi:m2m_device; do cam_sysfs_write "$runtime" bind "$m2m/bind" "$d" || return $?; done
+    for d in 32e00000.isi:cap_device 32e02000.isi:cap_device; do [ -e "$cap/$d" ] || cam_sysfs_write "$runtime" bind "$cap/bind" "$d" || return $?; done
+    for d in 32e00000.isi:m2m_device; do [ -e "$m2m/$d" ] || cam_sysfs_write "$runtime" bind "$m2m/bind" "$d" || return $?; done
     cam_effect "$runtime" modprobe max9296 || return $?
     cam_effect "$runtime" modprobe imx8-media-dev || return $?
     cam_verify_camera_ready "$runtime" || return $?
     cam_restart_ord "$runtime" || return $?
     cam_restart_vcm "$runtime" || return $?
     cam_start_gstapp "$runtime" || return $?
-    cam_verify_process_ready "$runtime"
+    cam_wait_process_ready "$runtime" 1
 }
 
 cam_action_reboot_fallback() { local runtime=$1; cam_effect "$runtime" reboot; }

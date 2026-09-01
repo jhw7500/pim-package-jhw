@@ -8,6 +8,7 @@ source "$PIM_LIB/cam_recovery_actions.sh"
 
 if [ "${PIM_CAMERA_EXECUTOR:-}" != 1 ]; then
     [ $# -le 1 ] || { echo 'usage: start_cam.sh [delay]' >&2; exit 64; }
+    echo 'DEPRECATED: start_cam.sh forwards one recovery request' >&2
     exec "${PIM_CAMERA_RECOVERYCTL:-/opt/pim/bin/cam-recoveryctl}" request gstapp_restart --source legacy-start-cam --reason legacy-wrapper --wait 120
 fi
 
@@ -19,10 +20,10 @@ delay=${1:-$(jq -r '.VHL_CAM.app_delay // 4' "$PIM_CAMERA_RUNTIME_JSON")}
 [[ $delay =~ ^[0-9]+$ ]] || exit 64
 
 cam_side_effect_guard "$PIM_CAMERA_RUNTIME_JSON" || exit $?
-if ! pgrep "$app" >/dev/null 2>&1; then
-    "$app" -d "$delay" -m 4 &
+if ! cam_process_present "$PIM_CAMERA_RUNTIME_JSON" app; then
+    ( cam_side_effect_guard "$PIM_CAMERA_RUNTIME_JSON" && exec "$app" -d "$delay" -m 4 ) &
 fi
 cam_side_effect_guard "$PIM_CAMERA_RUNTIME_JSON" || exit $?
-if ! pgrep BG_Check_for_pim.sh >/dev/null 2>&1; then
-    "$PIM_BIN/BG_Check_for_pim.sh" "$delay" >/dev/null 2>&1 &
+if ! cam_process_present "$PIM_CAMERA_RUNTIME_JSON" bg; then
+    ( cam_side_effect_guard "$PIM_CAMERA_RUNTIME_JSON" && exec "${PIM_CAMERA_BG_CHECKER:-$PIM_BIN/BG_Check_for_pim.sh}" "$delay" >/dev/null 2>&1 ) &
 fi

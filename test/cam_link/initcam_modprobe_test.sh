@@ -16,6 +16,7 @@ run() {
             [ "${1:-}" = modprobe ] && [ "${2:-}" = "${FAILMOD:-}" ] && return 1
             return 0
         }
+        cam_module_loaded() { return 0; }
         FAILMOD=$2 cam_module_reload /runtime.json
     )
     rc=$?
