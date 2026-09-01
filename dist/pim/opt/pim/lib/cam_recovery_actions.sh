@@ -66,12 +66,12 @@ cam_cleanup_recording_orphans() {
     local runtime=$1 dir canonical vehicle started normalized prefix f marker=${PIM_CAMERA_SESSION_TIME_FILE:-/tmp/start_video_time_chk}
     dir=$(jq -r '.VHL_CAM.tmp_path // empty' "$runtime") || return 64
     vehicle=$(jq -r '.VHL_CAM.vhl_name // empty' "$runtime") || return 64
-    [ -r "$marker" ] || return 0
-    IFS= read -r started < "$marker" || return 0
     [[ $dir = /* && $dir != / && $dir != *'..'* && $vehicle =~ ^[A-Za-z0-9_-]+$ ]] || return 64
     [ -L "$dir" ] && return 64
     canonical=$(readlink -f -- "$dir" 2>/dev/null) || return 64
     [ "$canonical" = "$dir" ] && [ "$canonical" != / ] || return 64
+    [ -r "$marker" ] || return 0
+    IFS= read -r started < "$marker" || return 0
     case "$started" in
         [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]\ [0-9][0-9]:[0-9][0-9]:[0-9][0-9]) normalized=$started ;;
         [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]\ [0-9][0-9]:[0-9][0-9]:[0-9][0-9]) normalized=$started ;;
@@ -119,8 +119,8 @@ cam_bg_argv_matches() {
     local cmdline=$1 bg=$2 arg args=()
     [ -r "$cmdline" ] || return 2
     while IFS= read -r -d '' arg; do args+=("$arg"); done < "$cmdline"
-    if [ "${args[0]:-}" = "$bg" ] && [[ ${args[1]:-} =~ ^[0-9]+$ ]]; then return 0; fi
-    [ "${args[0]:-}" = /bin/bash ] && [ "${args[1]:-}" = "$bg" ] && [[ ${args[2]:-} =~ ^[0-9]+$ ]]
+    [ "${#args[@]}" -eq 2 ] && [ "${args[0]:-}" = "$bg" ] && [[ ${args[1]:-} =~ ^[0-9]+$ ]] && return 0
+    [ "${#args[@]}" -eq 3 ] && [ "${args[0]:-}" = /bin/bash ] && [ "${args[1]:-}" = "$bg" ] && [[ ${args[2]:-} =~ ^[0-9]+$ ]]
 }
 cam_bg_checker_records() {
     local bg=$1 root=${PIM_CAMERA_PROCESS_ROOT:-/proc} cmdline stat arg pid start rc
@@ -187,7 +187,7 @@ cam_stop_process() {
     done
     rc=0; cam_process_present "$runtime" "$kind" || rc=$?
     [ "$rc" -eq 0 ] || { [ "$rc" -eq 1 ] && return 0; return "$rc"; }
-    cam_signal_process "$runtime" -KILL "$kind" || return $?
+    cam_signal_process "$runtime" -KILL "$kind" "$snapshot" || return $?
     i=0
     while :; do
         rc=0; cam_process_present "$runtime" "$kind" || rc=$?
@@ -197,9 +197,10 @@ cam_stop_process() {
     done
 }
 cam_quiesce_gstapp() {
-    local runtime=$1
+    local runtime=$1 kind rc
     cam_stop_process "$runtime" app || return $?
-    cam_stop_process "$runtime" bg
+    cam_stop_process "$runtime" bg || return $?
+    for kind in app bg; do rc=0; cam_process_present "$runtime" "$kind" || rc=$?; [ "$rc" -eq 1 ] || { [ "$rc" -eq 0 ] && return 1; return "$rc"; }; done
 }
 
 cam_quiesce_consumers() {
