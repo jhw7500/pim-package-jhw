@@ -78,14 +78,17 @@ prepare_context() {
 run_start_cam_and_wait() {
     local rc
     set +e
+    run_start_cam_rc
+    rc=$?
+    set -e
+    [ "$rc" -eq 0 ] || [ "$rc" -eq 69 ] || fail "start_cam rollover rc=$rc"
+}
+run_start_cam_rc() {
     (
         trap 'wait || :' EXIT
         set -- 0
         source "$PIM_BIN/start_cam.sh"
     )
-    rc=$?
-    set -e
-    [ "$rc" -eq 0 ] || [ "$rc" -eq 69 ] || fail "start_cam rollover rc=$rc"
 }
 
 mkdir -p "$W/stub" "$W/owner-proc" "$W/processes" "$W/dev" "$W/sys" "$W/recordings"
@@ -99,7 +102,7 @@ printf '#!/bin/sh\nprintf "target %%s %%s\\n" "$(basename "$0")" "$*" >> "$PIM_C
 cp "$W/stub/gstApp" "$W/stub/BG_Check_for_pim.sh"
 cp "$W/stub/gstApp" "$W/stub/ord"
 cp "$W/stub/gstApp" "$W/stub/vcm"
-printf '#!/bin/sh\nlast=\nfor arg; do last=$arg; done\nprintf "pgrep %%s\\n" "$last" >> "$PIM_CAMERA_PROBE_LOG"\ngrep -Fqx "$last" "$PIM_CAMERA_PRESENT_FILE" 2>/dev/null\n' > "$W/stub/pgrep"
+printf '#!/bin/sh\nlast=\nfor arg; do last=$arg; done\nprintf "pgrep %%s\\n" "$last" >> "$PIM_CAMERA_PROBE_LOG"\n[ -z "${PIM_CAMERA_PGREP_RC:-}" ] || exit "$PIM_CAMERA_PGREP_RC"\ngrep -Fqx "$last" "$PIM_CAMERA_PRESENT_FILE" 2>/dev/null\n' > "$W/stub/pgrep"
 printf '#!/bin/sh\nprintf "rmmod %%s\\n" "$*" >> "$PIM_CAMERA_CALL_LOG"\n' > "$W/stub/rmmod"
 printf '#!/bin/sh\nprintf "modprobe %%s\\n" "$*" >> "$PIM_CAMERA_CALL_LOG"\n' > "$W/stub/modprobe"
 printf '#!/bin/sh\nprintf "%%s\\n" "${LSMOD_ROWS:-}"\nexit "${LSMOD_RC:-0}"\n' > "$W/stub/lsmod"
@@ -115,6 +118,26 @@ _cr_fsync_dir() { :; }
 # Missing consumer binaries are rejected before a background child exists.
 PATH="$W/no-binaries" expect_rc 127 cam_launch_consumer "$PIM_CAMERA_RUNTIME_JSON" ord
 PATH="$W/no-binaries" expect_rc 127 cam_launch_consumer "$PIM_CAMERA_RUNTIME_JSON" vcm
+
+# The actual internal launcher propagates app and BG inspection errors before
+# spawning either target.
+prepare_context
+rm -rf "$PIM_CAMERA_PROCESS_ROOT"/*
+: > "$PIM_CAMERA_PRESENT_FILE"
+: > "$PIM_CAMERA_CALL_LOG"
+export PIM_CAMERA_PGREP_RC=7
+expect_rc 7 run_start_cam_rc
+unset PIM_CAMERA_PGREP_RC
+assert_no_target_execs app_probe_error
+
+prepare_context
+rm -rf "$PIM_CAMERA_PROCESS_ROOT"/*
+printf 'gstApp\n' > "$PIM_CAMERA_PRESENT_FILE"
+touch "$PIM_CAMERA_PROCESS_ROOT/.inspect_error"
+: > "$PIM_CAMERA_CALL_LOG"
+expect_rc 2 run_start_cam_rc
+rm -f "$PIM_CAMERA_PROCESS_ROOT/.inspect_error"
+assert_no_target_execs bg_probe_error
 
 # Real owner/request rollover at every launch boundary produces zero target execs.
 prepare_context
@@ -242,7 +265,42 @@ for mode in module hard-reset; do
     done
 done
 
-# Restore the production quiesce/action functions for the sequential-stop race.
+# Restore the production direct-action functions and prove its final app/BG
+# barrier blocks reappearance and inspection errors after both sequential stops.
+source "$PIM_LIB/cam_recovery_actions.sh"
+DIRECT_STOPPED=0
+DIRECT_STOP_LOG="$W/direct-stops"
+cam_stop_process() {
+    printf '%s\n' "$2" >> "$DIRECT_STOP_LOG"
+    [ "$2" != bg ] || DIRECT_STOPPED=1
+    return 0
+}
+cam_process_present() {
+    local kind=$2
+    [ "$DIRECT_STOPPED" -eq 1 ] || fail "direct aggregate probe ran before both stops"
+    [ "$kind" = "$DIRECT_TARGET" ] || return 1
+    [ "$DIRECT_MODE" = error ] && return 7
+    return 0
+}
+cam_cleanup_recording_orphans() { printf 'cleanup\n' >> "$PIM_CAMERA_CALL_LOG"; }
+cam_cleanup_shm_overflow() { printf 'shm\n' >> "$PIM_CAMERA_CALL_LOG"; }
+cam_start_gstapp() { printf 'start\n' >> "$PIM_CAMERA_CALL_LOG"; }
+
+for DIRECT_TARGET in app bg; do
+    for DIRECT_MODE in reappear error; do
+        DIRECT_STOPPED=0
+        : > "$DIRECT_STOP_LOG"
+        : > "$PIM_CAMERA_CALL_LOG"
+        wanted=1; [ "$DIRECT_MODE" != error ] || wanted=7
+        expect_rc "$wanted" cam_action_gstapp_restart "$PIM_CAMERA_RUNTIME_JSON"
+        [ "$(tr '\n' ' ' < "$DIRECT_STOP_LOG")" = 'app bg ' ] ||
+            fail "direct stop order changed"
+        [ ! -s "$PIM_CAMERA_CALL_LOG" ] ||
+            fail "direct $DIRECT_TARGET $DIRECT_MODE allowed cleanup/shm/start"
+    done
+done
+
+# Restore production again for the all-consumer sequential-stop race.
 source "$PIM_LIB/cam_recovery_actions.sh"
 STOPPED_ALL=0
 STOP_LOG="$W/stops"
@@ -254,7 +312,10 @@ cam_stop_process() {
 }
 cam_process_present() {
     local kind=$2
-    [ "$STOPPED_ALL" -eq 1 ] || fail "aggregate probe ran before all sequential stops"
+    # The direct app/BG barrier runs before ORD/VCM stops; those consumers are
+    # still absent there. Reappearance/error is injected only at the final
+    # all-consumer aggregate barrier.
+    [ "$STOPPED_ALL" -eq 1 ] || return 1
     case "${AGGREGATE_MODE:-reappear}:$kind" in
         reappear:app) return 0 ;;
         detector:app) return 7 ;;

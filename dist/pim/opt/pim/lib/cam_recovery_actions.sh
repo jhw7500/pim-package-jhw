@@ -172,13 +172,24 @@ cam_signal_process() {
         *) return 64 ;;
     esac
 }
+cam_signal_or_confirm_absent() {
+    local runtime=$1 signal=$2 kind=$3 snapshot=${4:-} rc
+    rc=0; cam_signal_process "$runtime" "$signal" "$kind" "$snapshot" || rc=$?
+    [ "$rc" -eq 0 ] && return 0
+    [ "$rc" -eq 1 ] || return "$rc"
+    case "$kind" in app|ord|vcm) ;; *) return 1 ;; esac
+    rc=0; cam_process_present "$runtime" "$kind" || rc=$?
+    [ "$rc" -eq 1 ] && return 0
+    [ "$rc" -eq 0 ] && return 1
+    return "$rc"
+}
 cam_stop_process() {
     local runtime=$1 kind=$2 timeout=${PIM_CAMERA_QUIESCE_TIMEOUT_SEC:-5} i=0 rc snapshot=
     [[ $timeout =~ ^[0-9]+$ ]] || timeout=5
     rc=0; cam_process_present "$runtime" "$kind" || rc=$?
     [ "$rc" -eq 0 ] || { [ "$rc" -eq 1 ] && return 0; return "$rc"; }
     [ "$kind" != bg ] || snapshot=$(cam_bg_checker_records "$(cam_bg_checker_path)") || return $?
-    cam_signal_process "$runtime" -TERM "$kind" "$snapshot" || return $?
+    cam_signal_or_confirm_absent "$runtime" -TERM "$kind" "$snapshot" || return $?
     while :; do
         rc=0; cam_process_present "$runtime" "$kind" || rc=$?
         [ "$rc" -eq 0 ] || { [ "$rc" -eq 1 ] && break; return "$rc"; }
@@ -187,7 +198,7 @@ cam_stop_process() {
     done
     rc=0; cam_process_present "$runtime" "$kind" || rc=$?
     [ "$rc" -eq 0 ] || { [ "$rc" -eq 1 ] && return 0; return "$rc"; }
-    cam_signal_process "$runtime" -KILL "$kind" "$snapshot" || return $?
+    cam_signal_or_confirm_absent "$runtime" -KILL "$kind" "$snapshot" || return $?
     i=0
     while :; do
         rc=0; cam_process_present "$runtime" "$kind" || rc=$?
