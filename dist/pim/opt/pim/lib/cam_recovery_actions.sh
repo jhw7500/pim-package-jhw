@@ -203,10 +203,14 @@ cam_quiesce_gstapp() {
 }
 
 cam_quiesce_consumers() {
-    local runtime=$1
+    local runtime=$1 kind rc
     cam_quiesce_gstapp "$runtime" || return $?
     cam_stop_process "$runtime" ord || return $?
-    cam_stop_process "$runtime" vcm
+    cam_stop_process "$runtime" vcm || return $?
+    for kind in app bg ord vcm; do
+        rc=0; cam_process_present "$runtime" "$kind" || rc=$?
+        [ "$rc" -eq 1 ] || { [ "$rc" -eq 0 ] && return 1; return "$rc"; }
+    done
 }
 
 cam_initial_module_load() {
@@ -238,6 +242,7 @@ cam_launch_consumer() {
     local runtime=$1 name=$2 path
     path=$(command -v "$name") || return 127
     (
+        _cr_test_owner_rollover "launch_$name" || exit $?
         cam_side_effect_guard "$runtime" || exit $?
         exec "$path"
     ) &
@@ -259,8 +264,12 @@ cam_verify_process_ready() {
 }
 
 cam_wait_process_ready() {
-    local runtime=$1 consumers=${2:-0} timeout=${PIM_CAMERA_READY_TIMEOUT_SEC:-5} i=0
-    while ! cam_verify_process_ready "$runtime" "$consumers"; do
+    local runtime=$1 consumers=${2:-0} timeout=${PIM_CAMERA_READY_TIMEOUT_SEC:-5} i=0 rc
+    [[ $timeout =~ ^[0-9]+$ ]] || timeout=5
+    while :; do
+        rc=0; cam_verify_process_ready "$runtime" "$consumers" || rc=$?
+        [ "$rc" -eq 0 ] && return 0
+        [ "$rc" -eq 1 ] || return "$rc"
         [ "$i" -ge "$timeout" ] && return 1
         sleep 1
         i=$((i + 1))

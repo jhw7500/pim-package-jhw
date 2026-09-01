@@ -21,9 +21,9 @@ delay=${1:-$(jq -r '.VHL_CAM.app_delay // 4' "$PIM_CAMERA_RUNTIME_JSON")}
 
 cam_side_effect_guard "$PIM_CAMERA_RUNTIME_JSON" || exit $?
 if ! cam_process_present "$PIM_CAMERA_RUNTIME_JSON" app; then
-    ( cam_side_effect_guard "$PIM_CAMERA_RUNTIME_JSON" && exec "$app" -d "$delay" -m 4 ) &
+    ( _cr_test_owner_rollover launch_app && cam_side_effect_guard "$PIM_CAMERA_RUNTIME_JSON" && exec "$app" -d "$delay" -m 4 ) &
 fi
 cam_side_effect_guard "$PIM_CAMERA_RUNTIME_JSON" || exit $?
 if ! cam_process_present "$PIM_CAMERA_RUNTIME_JSON" bg; then
-    ( cam_side_effect_guard "$PIM_CAMERA_RUNTIME_JSON" && exec "${PIM_CAMERA_BG_CHECKER:-$PIM_BIN/BG_Check_for_pim.sh}" "$delay" >/dev/null 2>&1 ) &
+    ( _cr_test_owner_rollover launch_bg && cam_side_effect_guard "$PIM_CAMERA_RUNTIME_JSON" && exec "${PIM_CAMERA_BG_CHECKER:-$PIM_BIN/BG_Check_for_pim.sh}" "$delay" >/dev/null 2>&1 ) &
 fi
