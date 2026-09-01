@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -u
+
+PIM_LIB="${PIM_LIB:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" && pwd)}"
+source "$PIM_LIB/cam_recovery.sh"
+
+usage() { echo 'usage: cam-recoveryctl request ACTION --source NAME --reason TEXT [--wait SEC] | apply-config --source NAME --reason TEXT [--wait SEC] | status [--request-id UUID] [--json]' >&2; }
+bad() { usage; exit 64; }
+wait_for_result() {
+    local id=$1 type=$2 seconds=$3 started now result status rc
+    [[ $seconds =~ ^[0-9]+$ ]] || return 64
+    started=$(date +%s)
+    while :; do
+        result=$(cam_recovery_status_json "$id" 2>/dev/null) && {
+            status=$(jq -r .status <<<"$result"); rc=$(jq -r .rc <<<"$result")
+            echo "CAM_RECOVERY_RESULT id=$id type=$type status=$status rc=$rc"
+            [ "$status" = SUCCEEDED ] && return 0 || return "$rc"
+        }
+        now=$(date +%s)
+        [ $((now - started)) -ge "$seconds" ] && return 124
+        sleep 0.1
+    done
+}
+request() {
+    local type=$1; shift; local source= reason= wait=
+    while [ $# -gt 0 ]; do case "$1" in --source) [ $# -ge 2 ] || bad; source=$2; shift 2;; --reason) [ $# -ge 2 ] || bad; reason=$2; shift 2;; --wait) [ $# -ge 2 ] || bad; wait=$2; shift 2;; *) bad;; esac; done
+    _cr_request_type "$type" || bad
+    [ -n "$source" ] && [ -n "$reason" ] || bad
+    [ -z "$wait" ] || [[ $wait =~ ^[0-9]+$ ]] || bad
+    local id rc
+    id=$(cam_request_submit "$type" "$source" "$reason"); rc=$?
+    [ "$rc" -eq 0 ] || return "$rc"
+    if [ -n "$wait" ]; then wait_for_result "$id" "$type" "$wait"; else printf '%s\n' "$id"; fi
+}
+case "${1:-}" in
+    request) [ $# -ge 2 ] || bad; type=$2; shift 2; request "$type" "$@"; exit $?;;
+    apply-config) shift; request apply_config "$@"; exit $?;;
+    status)
+        shift; id=; json=0
+        while [ $# -gt 0 ]; do case "$1" in --request-id) [ $# -ge 2 ] || bad; id=$2; shift 2;; --json) json=1; shift;; *) bad;; esac; done
+        [ -z "$id" ] || [[ $id =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || bad
+        cam_recovery_status_json "$id"; exit $?;;
+    *) bad;;
+esac

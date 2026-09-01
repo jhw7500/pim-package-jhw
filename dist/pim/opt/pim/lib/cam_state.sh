@@ -5,8 +5,6 @@
 # 테스트가 실제 /tmp/cam_state 를 건드리지 않도록 재정의를 허용한다. 스크립트를
 # 통째로 돌리는 테스트에서 상태가 실행 간에 새면 결과가 서로 오염된다.
 STATE_DIR="${STATE_DIR:-/tmp/cam_state}"
-RECOVERY_FILE="/tmp/cam_recovery.json"
-LOCK_FILE="/tmp/cam_op_lock"
 
 # ─────────────────────────────────────────────
 # MAX9296 RX3(0x002F) — 링크별 상태
@@ -263,63 +261,6 @@ cam_has_channel_error() {
         [ "$(_cs_read "channels/ch${ch}_error")" = "true" ] && return 0
     done
     return 1
-}
-
-# ─────────────────────────────────────────────
-# 복구 (recovery는 빈도 낮으므로 jq 유지)
-# ─────────────────────────────────────────────
-cam_request_recovery() {
-    local reason="$1"
-    local now=$(date +%s)
-    cat > "$RECOVERY_FILE" << EOF
-{
-  "requested_at": $now,
-  "reason": "$reason",
-  "attempts": 0,
-  "max_attempts": 5
-}
-EOF
-}
-
-cam_recovery_requested() {
-    [ -f "$RECOVERY_FILE" ]
-}
-
-cam_recovery_reason() {
-    jq -r '.reason // "unknown"' "$RECOVERY_FILE" 2>/dev/null
-}
-
-cam_inc_recovery_attempt() {
-    local tmp="${RECOVERY_FILE}.tmp.$$"
-    jq '.attempts += 1' "$RECOVERY_FILE" > "$tmp" && mv "$tmp" "$RECOVERY_FILE"
-}
-
-cam_clear_recovery() {
-    rm -f "$RECOVERY_FILE"
-}
-
-cam_recovery_exhausted() {
-    local attempts=$(jq -r '.attempts // 0' "$RECOVERY_FILE" 2>/dev/null)
-    local max=$(jq -r '.max_attempts // 5' "$RECOVERY_FILE" 2>/dev/null)
-    [ "$attempts" -ge "$max" ]
-}
-
-# ─────────────────────────────────────────────
-# 락
-# ─────────────────────────────────────────────
-cam_lock() {
-    local op="$1"
-    if [ -f "$LOCK_FILE" ]; then
-        local locked_op=$(cat "$LOCK_FILE" 2>/dev/null)
-        logger -p local0.info "[CAM_STATE] lock held by: $locked_op"
-        return 1
-    fi
-    echo "$op" > "$LOCK_FILE"
-    return 0
-}
-
-cam_unlock() {
-    rm -f "$LOCK_FILE"
 }
 
 # ─────────────────────────────────────────────
