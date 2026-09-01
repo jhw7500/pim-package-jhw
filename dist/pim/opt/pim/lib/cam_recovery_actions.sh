@@ -112,8 +112,8 @@ cam_process_start_time() {
     tail=${stat##*) }
     set -- $tail
     [ "$#" -ge 20 ] || return 2
-    [[ $20 =~ ^[0-9]+$ ]] || return 2
-    printf '%s\n' "$20"
+    [[ ${20} =~ ^[0-9]+$ ]] || return 2
+    printf '%s\n' "${20}"
 }
 cam_bg_argv_matches() {
     local cmdline=$1 bg=$2 arg args=()
@@ -152,13 +152,13 @@ cam_process_present() {
     esac
 }
 cam_signal_process() {
-    local runtime=$1 signal=$2 kind=$3 app bg
+    local runtime=$1 signal=$2 kind=$3 app bg records=${4:-}
     case "$kind" in
         app) app=$(cam_runtime_app "$runtime") || return $?; cam_effect "$runtime" pkill "$signal" -x "$app" ;;
         bg)
             local records pid start current cmdline
             bg=$(cam_bg_checker_path)
-            records=$(cam_bg_checker_records "$bg") || return $?
+            [ -n "$records" ] || records=$(cam_bg_checker_records "$bg") || return $?
             [ -n "$records" ] || return 1
             while read -r pid start; do
                 cmdline="${PIM_CAMERA_PROCESS_ROOT:-/proc}/$pid/cmdline"
@@ -173,23 +173,24 @@ cam_signal_process() {
     esac
 }
 cam_stop_process() {
-    local runtime=$1 kind=$2 timeout=${PIM_CAMERA_QUIESCE_TIMEOUT_SEC:-5} i=0 rc
+    local runtime=$1 kind=$2 timeout=${PIM_CAMERA_QUIESCE_TIMEOUT_SEC:-5} i=0 rc snapshot=
     [[ $timeout =~ ^[0-9]+$ ]] || timeout=5
-    cam_process_present "$runtime" "$kind"; rc=$?
+    rc=0; cam_process_present "$runtime" "$kind" || rc=$?
     [ "$rc" -eq 0 ] || { [ "$rc" -eq 1 ] && return 0; return "$rc"; }
-    cam_signal_process "$runtime" -TERM "$kind" || return $?
+    [ "$kind" != bg ] || snapshot=$(cam_bg_checker_records "$(cam_bg_checker_path)") || return $?
+    cam_signal_process "$runtime" -TERM "$kind" "$snapshot" || return $?
     while :; do
-        cam_process_present "$runtime" "$kind"; rc=$?
+        rc=0; cam_process_present "$runtime" "$kind" || rc=$?
         [ "$rc" -eq 0 ] || { [ "$rc" -eq 1 ] && break; return "$rc"; }
         [ "$i" -ge "$timeout" ] && break
         sleep 1; i=$((i + 1))
     done
-    cam_process_present "$runtime" "$kind"; rc=$?
+    rc=0; cam_process_present "$runtime" "$kind" || rc=$?
     [ "$rc" -eq 0 ] || { [ "$rc" -eq 1 ] && return 0; return "$rc"; }
     cam_signal_process "$runtime" -KILL "$kind" || return $?
     i=0
     while :; do
-        cam_process_present "$runtime" "$kind"; rc=$?
+        rc=0; cam_process_present "$runtime" "$kind" || rc=$?
         [ "$rc" -eq 0 ] || { [ "$rc" -eq 1 ] && return 0; return "$rc"; }
         [ "$i" -ge "$timeout" ] && return 1
         sleep 1; i=$((i + 1))
@@ -286,7 +287,7 @@ cam_module_loaded() {
 }
 cam_unload_module() {
     local runtime=$1 module=$2 rc
-    cam_module_loaded "$module"; rc=$?
+    rc=0; cam_module_loaded "$module" || rc=$?
     [ "$rc" -eq 0 ] || { [ "$rc" -eq 1 ] && return 0; return "$rc"; }
     cam_effect "$runtime" rmmod "$module"
 }
