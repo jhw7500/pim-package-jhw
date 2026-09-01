@@ -98,6 +98,9 @@ _cr_test_startup_reservation_probe() {
     [ "${STARTUP_RACE_PROBE:-}" = 1 ] || return 0
     STARTUP_RACE_PROBE=0
     STARTUP_PROBE_OWNER=$(jq -c '{boot_id,invocation_id,pid,proc_start_time,token,created_at}' "$PIM_CAMERA_RUN_DIR/owner.json")
+    STARTUP_PROBE_LIFECYCLE=$(jq -r .lifecycle "$PIM_CAMERA_RUN_DIR/owner.json")
+    STARTUP_PROBE_ACTIVE=$(cat "$PIM_CAMERA_RUN_DIR/recovery/active.json" 2>/dev/null || printf null)
+    STARTUP_PROBE_PENDING=$([ -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] && printf present || printf absent)
     STARTUP_PROBE_RC=0
     cam_request_submit apply_config external "startup reservation race" >/dev/null || STARTUP_PROBE_RC=$?
     return 0
@@ -215,6 +218,9 @@ fake_stat 222
 STARTUP_RACE_PROBE=1
 STARTUP_PROBE_RC=
 STARTUP_PROBE_OWNER=
+STARTUP_PROBE_LIFECYCLE=
+STARTUP_PROBE_ACTIVE=
+STARTUP_PROBE_PENDING=
 REAL_COUNTER_STUB=1
 set +e
 cam_daemon_startup "$DAEMON_PID"
@@ -224,6 +230,9 @@ unset REAL_COUNTER_STUB
 [ "$STARTUP_PROBE_RC" = 75 ] || fail "external apply entered former ACTIVE-before-submit boundary rc=${STARTUP_PROBE_RC:-missing}"
 [ "$restart_rc" -eq 0 ] || fail "reserved same-boot startup failed rc=$restart_rc"
 [ "$STARTUP_PROBE_OWNER" = "$(jq -c '{boot_id,invocation_id,pid,proc_start_time,token,created_at}' "$PIM_CAMERA_RUN_DIR/owner.json")" ] || fail "startup reservation changed daemon identity"
+[ "$STARTUP_PROBE_LIFECYCLE" = RECOVERING ] || fail "startup reservation did not publish private RECOVERING after active"
+[ "$STARTUP_PROBE_PENDING" = absent ] || fail "startup reservation left a pending request"
+jq -e --argjson owner "$STARTUP_PROBE_OWNER" '.type=="module_reload" and .status=="PENDING" and ({boot_id:.owner.boot_id,invocation_id:.owner.invocation_id,pid:.owner.pid,proc_start_time:.owner.proc_start_time,token:.owner.token,created_at:.owner.created_at}==$owner)' >/dev/null <<<"$STARTUP_PROBE_ACTIVE" || fail "private RECOVERING was not backed by the reserved active identity"
 [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] || fail "external startup-race request occupied pending lease"
 [ "$(grep -c '^stage$' "$PIM_CAMERA_HELPER_LOG")" -eq 1 ] || fail "same-boot restart did not re-stage exactly once"
 [ "$(count_log action:module_reload)" -eq 1 ] || fail "same-boot restart did not module-reload exactly once"
@@ -234,6 +243,31 @@ jq -e '[.actions[].action] == ["module_reload"] and [.actions[].status] == ["SUC
 jq -e '.actions.module_reload.attempted==1 and .actions.module_reload.succeeded==1' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "same-boot startup action counter did not complete"
 
 echo "=== partial startup reservation is recoverable and never ACTIVE ==="
+reset_case boot-a
+write_source partial-history 640
+cam_daemon_startup "$DAEMON_PID"
+fake_stat 222
+: > "$PIM_CAMERA_CALL_LOG"
+PIM_CAMERA_TEST_FAILPOINT=startup_reserve_after_history
+export PIM_CAMERA_TEST_FAILPOINT
+expect_rc 70 cam_daemon_startup "$DAEMON_PID"
+unset PIM_CAMERA_TEST_FAILPOINT
+partial_history_file=$(grep -rl '"source":"startup"' "$PIM_CAMERA_STATE_DIR/recovery/history" | tail -1)
+[ -n "$partial_history_file" ] || fail "after-history reservation lost internal history"
+partial_history_id=$(jq -r .request.id "$partial_history_file")
+jq -e '.lifecycle=="STARTING"' "$PIM_CAMERA_RUN_DIR/owner.json" >/dev/null || fail "after-history reservation exposed RECOVERING/ACTIVE"
+[ ! -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] && [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/active.json" ] || fail "after-history reservation exposed a partial lease"
+partial_history_owner=$(cksum "$PIM_CAMERA_RUN_DIR/owner.json")
+partial_history_bytes=$(cksum "$partial_history_file")
+expect_rc 69 cam_request_submit apply_config external "after-history intake"
+[ "$partial_history_owner" = "$(cksum "$PIM_CAMERA_RUN_DIR/owner.json")" ] || fail "after-history intake mutated owner"
+[ "$partial_history_bytes" = "$(cksum "$partial_history_file")" ] || fail "after-history intake mutated history"
+fake_stat 333
+cam_daemon_startup "$DAEMON_PID"
+jq -e --arg id "$partial_history_id" '.request.id==$id and .request.status=="FAILED" and .request.interrupted==true' "$partial_history_file" >/dev/null || fail "after-history retry did not terminalize orphan history"
+[ "$(count_log action:camera_hard_reset)" -eq 1 ] || fail "after-history retry did not use dirty hard reset"
+jq -e '.lifecycle=="ACTIVE"' "$PIM_CAMERA_RUN_DIR/owner.json" >/dev/null || fail "after-history retry did not recover"
+
 reset_case boot-a
 write_source partial 640
 cam_daemon_startup "$DAEMON_PID"
@@ -248,6 +282,11 @@ jq -e '.lifecycle=="STARTING"' "$PIM_CAMERA_RUN_DIR/owner.json" >/dev/null || fa
 jq -e '.status=="PENDING"' "$PIM_CAMERA_RUN_DIR/recovery/active.json" >/dev/null || fail "partial startup reservation lost claimed lease"
 jq -e '.dirty==true' "$PIM_CAMERA_STATE_DIR/service-state.json" >/dev/null || fail "partial startup reservation was not dirty"
 [ ! -s "$PIM_CAMERA_CALL_LOG" ] || fail "partial startup reservation executed action"
+partial_owner_before_intake=$(cksum "$PIM_CAMERA_RUN_DIR/owner.json")
+partial_active_before_intake=$(cksum "$PIM_CAMERA_RUN_DIR/recovery/active.json")
+expect_rc 69 cam_request_submit apply_config external "after-active intake"
+[ "$partial_owner_before_intake" = "$(cksum "$PIM_CAMERA_RUN_DIR/owner.json")" ] || fail "after-active intake mutated owner"
+[ "$partial_active_before_intake" = "$(cksum "$PIM_CAMERA_RUN_DIR/recovery/active.json")" ] || fail "after-active intake mutated active"
 fake_stat 333
 cam_daemon_startup "$DAEMON_PID"
 jq -e --arg id "$partial_id" '.id==$id and .status=="FAILED" and .rc==70' "$PIM_CAMERA_RUN_DIR/recovery/results/$partial_id.json" >/dev/null || fail "partial startup reservation did not produce terminal result"

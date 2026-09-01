@@ -23,11 +23,151 @@ reset_protocol_sandbox() {
     printf 'test-boot-id\n' > "$PIM_CAMERA_BOOT_ID_FILE"
     fake_stat 111
 }
+create_normal_terminal_fixture() {
+    local wait_pid wait_rc
+    reset_protocol_sandbox
+    owner_active
+    mkdir -p "$PIM_CAMERA_STATE_DIR"
+    printf '{"dirty":false,"sentinel":"normal-terminal"}\n' > "$PIM_CAMERA_STATE_DIR/service-state.json"
+    normal_terminal_wait="$WORK/normal-terminal-wait.out"
+    "$ROOT/dist/pim/opt/pim/bin/cam-recoveryctl" request module_reload --source operator --reason "normal terminal" --wait "$CONTROLLED_WAIT_SECONDS" >"$normal_terminal_wait" &
+    wait_pid=$!
+    for _ in $(seq 1 30); do [ -f "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] && break; sleep 0.1; done
+    [ -f "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] || fail "normal terminal request was not accepted"
+    normal_terminal_id=$(jq -r .id "$PIM_CAMERA_RUN_DIR/recovery/pending.json")
+    cam_request_claim
+    cam_request_transition QUIESCING
+    cam_request_transition RUNNING
+    cam_action_counter_begin module_reload "$normal_terminal_id"
+    cam_request_transition VERIFYING
+    cam_action_counter_finish module_reload "$normal_terminal_id" SUCCEEDED 0
+    mkdir -p "$WORK/normal-terminal-fixture"
+    cp "$PIM_CAMERA_RUN_DIR/recovery/active.json" "$WORK/normal-terminal-fixture/active.json"
+    cam_request_finish SUCCEEDED 0
+    set +e; wait "$wait_pid"; wait_rc=$?; set -e
+    [ "$wait_rc" -eq 0 ] || fail "normal terminal waiter rc=$wait_rc"
+    [ "$(cat "$normal_terminal_wait")" = "CAM_RECOVERY_RESULT id=$normal_terminal_id type=module_reload status=SUCCEEDED rc=0" ] || fail "normal terminal waiter lost original sentinel"
+    cp "$PIM_CAMERA_RUN_DIR/owner.json" "$WORK/normal-terminal-fixture/owner.json"
+    cp "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json" "$WORK/normal-terminal-fixture/result.json"
+    cp "$PIM_CAMERA_STATE_DIR/recovery/history/$normal_terminal_id.json" "$WORK/normal-terminal-fixture/history.json"
+    cp "$PIM_CAMERA_STATE_DIR/recovery/state.json" "$WORK/normal-terminal-fixture/state.json"
+    cp "$PIM_CAMERA_STATE_DIR/service-state.json" "$WORK/normal-terminal-fixture/service-state.json"
+}
+restore_normal_terminal_fixture() {
+    reset_protocol_sandbox
+    mkdir -p "$PIM_CAMERA_RUN_DIR/recovery/results" "$PIM_CAMERA_STATE_DIR/recovery/history"
+    cp "$WORK/normal-terminal-fixture/owner.json" "$PIM_CAMERA_RUN_DIR/owner.json"
+    cp "$WORK/normal-terminal-fixture/active.json" "$PIM_CAMERA_RUN_DIR/recovery/active.json"
+    cp "$WORK/normal-terminal-fixture/result.json" "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json"
+    cp "$WORK/normal-terminal-fixture/history.json" "$PIM_CAMERA_STATE_DIR/recovery/history/$normal_terminal_id.json"
+    cp "$WORK/normal-terminal-fixture/state.json" "$PIM_CAMERA_STATE_DIR/recovery/state.json"
+    cp "$WORK/normal-terminal-fixture/service-state.json" "$PIM_CAMERA_STATE_DIR/service-state.json"
+    fake_stat 222
+}
+snapshot_terminal_bytes() {
+    terminal_owner_before=$(cksum "$PIM_CAMERA_RUN_DIR/owner.json")
+    terminal_active_before=$(cksum "$PIM_CAMERA_RUN_DIR/recovery/active.json")
+    terminal_history_before=$(cksum "$PIM_CAMERA_STATE_DIR/recovery/history/$normal_terminal_id.json")
+    terminal_result_before=$(cksum "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json")
+    terminal_counter_before=$(cksum "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+    terminal_service_before=$(cksum "$PIM_CAMERA_STATE_DIR/service-state.json")
+}
+assert_terminal_bytes_unchanged() {
+    local label=$1
+    [ "$terminal_owner_before" = "$(cksum "$PIM_CAMERA_RUN_DIR/owner.json")" ] || fail "$label mutated owner"
+    [ "$terminal_active_before" = "$(cksum "$PIM_CAMERA_RUN_DIR/recovery/active.json")" ] || fail "$label mutated active lease"
+    [ "$terminal_history_before" = "$(cksum "$PIM_CAMERA_STATE_DIR/recovery/history/$normal_terminal_id.json")" ] || fail "$label mutated history"
+    [ "$terminal_result_before" = "$(cksum "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json")" ] || fail "$label mutated result"
+    [ "$terminal_counter_before" = "$(cksum "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail "$label mutated counters"
+    [ "$terminal_service_before" = "$(cksum "$PIM_CAMERA_STATE_DIR/service-state.json")" ] || fail "$label mutated service state"
+}
 
 printf 'test-boot-id\n' > "$PIM_CAMERA_BOOT_ID_FILE"
 fake_stat 111
 # This source is intentionally the RED boundary: Task 2 has not created it yet.
 source "$PIM_LIB/cam_recovery.sh"
+
+echo "=== STARTING recovery transition is private ==="
+reset_protocol_sandbox
+cam_owner_create "$DAEMON_PID"
+starting_owner_before=$(cksum "$PIM_CAMERA_RUN_DIR/owner.json")
+expect_rc 64 cam_owner_set_lifecycle RECOVERING
+[ "$starting_owner_before" = "$(cksum "$PIM_CAMERA_RUN_DIR/owner.json")" ] || fail "public STARTING recovery mutated owner"
+jq -e '.lifecycle=="STARTING"' "$PIM_CAMERA_RUN_DIR/owner.json" >/dev/null || fail "public STARTING recovery changed lifecycle"
+[ ! -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] || fail "public STARTING recovery created pending"
+[ ! -e "$PIM_CAMERA_RUN_DIR/recovery/active.json" ] || fail "public STARTING recovery created active"
+[ ! -d "$PIM_CAMERA_STATE_DIR/recovery/history" ] || fail "public STARTING recovery created history"
+[ ! -d "$PIM_CAMERA_RUN_DIR/recovery/results" ] || fail "public STARTING recovery created result"
+
+echo "=== normal terminal active removal is idempotent ==="
+create_normal_terminal_fixture
+
+restore_normal_terminal_fixture
+terminal_success_history=$(cksum "$PIM_CAMERA_STATE_DIR/recovery/history/$normal_terminal_id.json")
+terminal_success_result=$(cksum "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json")
+terminal_success_counter=$(cksum "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+terminal_success_service=$(cksum "$PIM_CAMERA_STATE_DIR/service-state.json")
+expect_rc 0 cam_owner_create "$DAEMON_PID"
+[ "$terminal_success_history" = "$(cksum "$PIM_CAMERA_STATE_DIR/recovery/history/$normal_terminal_id.json")" ] || fail "consistent success rewrote terminal history"
+[ "$terminal_success_result" = "$(cksum "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json")" ] || fail "consistent success rewrote terminal result"
+[ "$terminal_success_counter" = "$(cksum "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail "consistent success mutated counters"
+[ "$terminal_success_service" = "$(cksum "$PIM_CAMERA_STATE_DIR/service-state.json")" ] || fail "consistent success mutated service state"
+[ ! -e "$PIM_CAMERA_RUN_DIR/recovery/active.json" ] || fail "consistent success retained active lease"
+jq -e '.proc_start_time=="222" and .lifecycle=="STARTING"' "$PIM_CAMERA_RUN_DIR/owner.json" >/dev/null || fail "consistent success did not publish replacement owner"
+
+restore_normal_terminal_fixture
+terminal_finished=$(jq -r .finished_at "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json")
+jq --argjson finished "$terminal_finished" '.status="FAILED" | .rc=17 | .finished_at=$finished' "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json" > "$WORK/result.failed" && mv "$WORK/result.failed" "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json"
+jq --argjson finished "$terminal_finished" '.request.status="FAILED" | .request.rc=17 | .request.finished_at=$finished' "$PIM_CAMERA_STATE_DIR/recovery/history/$normal_terminal_id.json" > "$WORK/history.failed" && mv "$WORK/history.failed" "$PIM_CAMERA_STATE_DIR/recovery/history/$normal_terminal_id.json"
+terminal_failed_history=$(cksum "$PIM_CAMERA_STATE_DIR/recovery/history/$normal_terminal_id.json")
+terminal_failed_result=$(cksum "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json")
+terminal_failed_service=$(cksum "$PIM_CAMERA_STATE_DIR/service-state.json")
+expect_rc 0 cam_owner_create "$DAEMON_PID"
+[ "$terminal_failed_history" = "$(cksum "$PIM_CAMERA_STATE_DIR/recovery/history/$normal_terminal_id.json")" ] || fail "consistent failure rewrote terminal history"
+[ "$terminal_failed_result" = "$(cksum "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json")" ] || fail "consistent failure rewrote terminal result"
+[ "$terminal_failed_service" = "$(cksum "$PIM_CAMERA_STATE_DIR/service-state.json")" ] || fail "consistent failure mutated service state"
+[ ! -e "$PIM_CAMERA_RUN_DIR/recovery/active.json" ] || fail "consistent failure retained active lease"
+
+echo "=== normal terminal partial files converge exactly ==="
+restore_normal_terminal_fixture
+active_request=$(cat "$PIM_CAMERA_RUN_DIR/recovery/active.json")
+jq -c --argjson request "$active_request" '.request=$request' "$PIM_CAMERA_STATE_DIR/recovery/history/$normal_terminal_id.json" > "$WORK/history.nonterminal" && mv "$WORK/history.nonterminal" "$PIM_CAMERA_STATE_DIR/recovery/history/$normal_terminal_id.json"
+partial_actions=$(jq -c .actions "$PIM_CAMERA_STATE_DIR/recovery/history/$normal_terminal_id.json")
+partial_result=$(cksum "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json")
+partial_counter=$(cksum "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+partial_service=$(cksum "$PIM_CAMERA_STATE_DIR/service-state.json")
+expect_rc 0 cam_owner_create "$DAEMON_PID"
+jq -e --argjson finished "$terminal_finished" '.request.status=="SUCCEEDED" and .request.rc==0 and .request.finished_at==$finished' "$PIM_CAMERA_STATE_DIR/recovery/history/$normal_terminal_id.json" >/dev/null || fail "result-only partial did not complete history exactly"
+[ "$partial_actions" = "$(jq -c .actions "$PIM_CAMERA_STATE_DIR/recovery/history/$normal_terminal_id.json")" ] || fail "result-only partial changed actions"
+[ "$partial_result" = "$(cksum "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json")" ] || fail "result-only partial rewrote result"
+[ "$partial_counter" = "$(cksum "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail "result-only partial changed counters"
+[ "$partial_service" = "$(cksum "$PIM_CAMERA_STATE_DIR/service-state.json")" ] || fail "result-only partial changed service state"
+
+restore_normal_terminal_fixture
+expected_result=$(cat "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json")
+rm -f "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json"
+partial_history=$(cksum "$PIM_CAMERA_STATE_DIR/recovery/history/$normal_terminal_id.json")
+partial_counter=$(cksum "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+partial_service=$(cksum "$PIM_CAMERA_STATE_DIR/service-state.json")
+expect_rc 0 cam_owner_create "$DAEMON_PID"
+[ "$expected_result" = "$(cat "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json")" ] || fail "history-only partial did not recreate exact result"
+[ "$partial_history" = "$(cksum "$PIM_CAMERA_STATE_DIR/recovery/history/$normal_terminal_id.json")" ] || fail "history-only partial rewrote history"
+[ "$partial_counter" = "$(cksum "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail "history-only partial changed counters"
+[ "$partial_service" = "$(cksum "$PIM_CAMERA_STATE_DIR/service-state.json")" ] || fail "history-only partial changed service state"
+
+echo "=== conflicting terminal files fail closed byte-for-byte ==="
+for conflict in identity status_rc finished_at malformed; do
+    restore_normal_terminal_fixture
+    case "$conflict" in
+        identity) jq '.reason="conflicting reason"' "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json" > "$WORK/result.conflict" && mv "$WORK/result.conflict" "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json" ;;
+        status_rc) jq '.status="FAILED" | .rc=19' "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json" > "$WORK/result.conflict" && mv "$WORK/result.conflict" "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json" ;;
+        finished_at) jq '.finished_at+=1' "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json" > "$WORK/result.conflict" && mv "$WORK/result.conflict" "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json" ;;
+        malformed) jq '.finished_at=0' "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json" > "$WORK/result.conflict" && mv "$WORK/result.conflict" "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json" ;;
+    esac
+    snapshot_terminal_bytes
+    expect_rc 70 cam_owner_create "$DAEMON_PID"
+    assert_terminal_bytes_unchanged "$conflict conflict"
+done
 
 echo "=== stale owner acquisition terminalizes accepted leases ==="
 reset_protocol_sandbox

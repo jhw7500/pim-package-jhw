@@ -225,3 +225,74 @@ The complete diff was reviewed against all four findings. An exact executable-co
 - The code-review graph still does not index the two production Bash files, so future structural review must continue to combine complete diff inspection with dynamic protocol/action suites until the parser limitation is fixed.
 
 No Fix round 1 blocker remains.
+
+## Fix round 2
+
+Base: `aff9a3f4891684f698accbabb0d46b8cc7ef5a3a`. This round addresses only the two residual Important findings in `task-4-fix-round-2-brief.md`; it does not change public request types, add a queue, or enter Task 5/later service and package scope.
+
+### RED evidence
+
+1. Normal terminal active leases were misclassified as interrupted:
+
+   - Command: `rtk bash test/camera_health/recovery_protocol_test.sh`
+   - Exit: `1`
+   - Failure: `FAIL: expected rc=0, got 70: cam_owner_create 4242`
+   - The control request was produced through the real request/claim/action-counter/finish protocol and its waiter first consumed the exact success sentinel. The regression matrix then checks consistent result+history, result-only, history-only, identity/status/rc/finished-at conflicts, malformed terminal input, and preservation of terminal/action-counter/service-state bytes.
+
+2. Public lifecycle code allowed `STARTING -> RECOVERING` without a reserved lease:
+
+   - Command: `rtk bash test/camera_health/recovery_protocol_test.sh`
+   - Exit: `1`
+   - Failure: `FAIL: expected rc=64, got 0: cam_owner_set_lifecycle RECOVERING`
+   - The regression checks that the owner bytes and lifecycle remain unchanged and that no pending, active, history, or result record is created.
+
+### Terminal reconciliation matrix
+
+| Recovery input | Required durable outcome | Final result |
+| --- | --- | --- |
+| Consistent terminal result + terminal history (`SUCCEEDED/0`) | Preserve result, history, counters/actions, and service-state bytes; remove only active lease | PASS |
+| Consistent terminal result + terminal history (`FAILED/17`) | Preserve result, history, counters/actions, and service-state bytes; remove only active lease | PASS |
+| Terminal result + nonterminal history | Copy only the exact terminal request fields into history; preserve result/actions/counters/service state | PASS |
+| Terminal history + missing result | Generate the identity/status/rc/finished-at-equivalent result; preserve history/actions/counters/service state | PASS |
+| Identity, status/rc, or finished-at conflict; malformed terminal time | Return `70` before mutation; preserve owner/lease/result/history/counter/service bytes | PASS |
+| Genuine nonterminal stale request | Preserve the established round-1 interrupted path: dirty state and matching synthetic `FAILED/70` terminal records | PASS |
+
+Terminal success accepts only `SUCCEEDED` with `rc=0`; terminal failure accepts only `FAILED` with an integral positive rc. Result/history identity, status, rc, and positive integral `finished_at` must agree. An active lease that is already terminal must also agree before removal. Normal terminal reconciliation never marks service state dirty and does not rewrite already-consistent terminal records, actions, or counters. Ordered result-only/history-only writes are idempotent across retry; the existing interrupted durable-result failpoint remains covered.
+
+### Private startup transition
+
+- `STARTING:RECOVERING` was removed from the public lifecycle table. `cam_owner_set_lifecycle RECOVERING` now returns `64` from STARTING without changing bytes.
+- Startup first writes validated internal request history and active lease under the recovery lock. Only then a private lock-held helper revalidates the immutable STARTING owner, absence of pending work, exact active request bytes/type/status/embedded owner, and exact matching history before atomically publishing RECOVERING.
+- The startup race hook observes RECOVERING only together with that accepted active lease. A normal external submit at the former gap returns BUSY and cannot replace the lease.
+- The history-write and active-write failpoints remain recoverable without opening intake: the former leaves STARTING plus orphan internal history; the latter leaves STARTING plus the accepted active lease. Stale-owner retry terminalizes the interrupted request and performs the existing dirty hard reset exactly once.
+- Public submit, claim, lifecycle, waiter sentinel, request result, BUSY, and action-counter contracts are unchanged.
+
+### Fresh final-head verification
+
+| Command | Exit/result |
+| --- | --- |
+| `rtk bash -n dist/pim/opt/pim/lib/cam_recovery.sh dist/pim/opt/pim/lib/cam_operate_control.sh dist/pim/opt/pim/lib/cam_recovery_actions.sh dist/pim/opt/pim/bin/chk_cam_operate.sh` | `0` |
+| `rtk bash test/camera_health/recovery_protocol_test.sh` | `0`, `recovery protocol: PASS` |
+| `rtk bash test/camera_health/cam_operate_control_test.sh` | `0`, `cam operate control: PASS` |
+| `rtk bash test/cam_link/recovery_actions_test.sh` | `0`, `recovery actions: PASS` |
+| `rtk bash test/cam_link/recovery_actions_safety_test.sh` | `0`, `recovery actions safety: PASS` |
+| `rtk bash test/cam_link/recovery_launch_safety_test.sh` | `0`, `recovery launch safety: PASS` |
+| `rtk bash test/cam_link/escalation_test.sh` | `0`, `7 passed / 0 failed` |
+| `rtk bash test/camera_health/run_all.sh` | `0`, including protocol/control PASS |
+| `rtk bash test/cam_link/run_all.sh -v` | `0`, `all passed (14)` |
+| `rtk shellcheck -S error` on all three changed production/test shell files | `0` |
+| `rtk git diff --check` | `0` |
+
+### Graph and diff review
+
+The graph incremental update reported three changed paths, two re-parsed files, 40 updated nodes, 922 updated edges, and no parse errors. `detect_changes` reported five indexed test helpers, risk `0.40`, and no affected flow. The changed production Bash file remains outside the graph's top-level function model, so zero affected flows/test gaps were treated as a parser limitation rather than coverage evidence. The complete production diff was manually reviewed, and the focused protocol/control suites plus both aggregate suites provide executable coverage.
+
+The implementation contains no `STARTING:RECOVERING` public edge and no call to the public owner-lifecycle helper for that transition. Exact scans of changed production found no SHA/generation state or later service-control additions. The final staged review is limited to the brief-approved recovery protocol implementation, its protocol/control tests, and this report.
+
+### Remaining concerns
+
+- Multi-file recovery remains an ordered, idempotent durability protocol rather than a filesystem-wide atomic transaction. Both one-sided normal-terminal states and the established interrupted failpoint retry are explicitly exercised.
+- Verification is host/stub based. Target-board timing and real device/process teardown remain later board/system acceptance work.
+- The graph still does not model the changed production shell top-level, so executable test evidence and complete diff review remain necessary.
+
+No Fix round 2 implementation blocker remains.

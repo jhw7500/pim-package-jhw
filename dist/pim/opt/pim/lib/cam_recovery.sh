@@ -137,12 +137,21 @@ _cr_request_identity_equal() {
       ($left|identity)==($right|identity)
     ' >/dev/null
 }
-_cr_abandoned_result_valid() {
+_cr_terminal_result_valid() {
     local result=$1 request=$2
     jq -e '
-      type=="object" and .status=="FAILED" and .rc==70 and
-      (.finished_at|type=="number" and floor==. and .>0)
+      type=="object" and
+      (.id|type=="string" and test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")) and
+      (.type|type=="string") and (.source|type=="string" and length>0) and
+      (.reason|type=="string" and length>0) and
+      (.created_at|type=="number" and floor==. and .>0) and
+      (.finished_at|type=="number" and floor==. and .>0) and
+      ((.status=="SUCCEEDED" and .rc==0) or
+       (.status=="FAILED" and (.rc|type=="number" and floor==. and .>0))) and
+      ((has("source_path")|not) or (.source_path|type=="string" and length>0)) and
+      ((has("source_mtime")|not) or (.source_mtime|type=="number" and floor==. and .>=0))
     ' >/dev/null <<<"$result" || return 1
+    _cr_request_type "$(jq -r .type <<<"$result")" || return 1
     jq -ne --argjson request "$request" --argjson result "$result" '
       def identity: {
         id,type,source,reason,created_at,
@@ -151,9 +160,33 @@ _cr_abandoned_result_valid() {
       ($request|identity)==($result|identity)
     ' >/dev/null
 }
+_cr_terminal_request_valid() {
+    _cr_request_schema "$1" || return 1
+    jq -e '
+      (.finished_at|type=="number" and floor==. and .>0) and
+      ((.status=="SUCCEEDED" and .rc==0) or
+       (.status=="FAILED" and (.rc|type=="number" and floor==. and .>0)))
+    ' >/dev/null <<<"$1"
+}
+_cr_terminal_request_result_equal() {
+    jq -ne --argjson request "$1" --argjson result "$2" '
+      $request.status==$result.status and $request.rc==$result.rc and
+      $request.finished_at==$result.finished_at
+    ' >/dev/null
+}
+_cr_request_json_equal() {
+    jq -ne --argjson left "$1" --argjson right "$2" '$left==$right' >/dev/null
+}
+_cr_interrupted_terminal_valid() {
+    _cr_terminal_request_valid "$1" || return 1
+    jq -e '.status=="FAILED" and .rc==70 and .interrupted==true and .interrupted_reason=="owner_stale"' >/dev/null <<<"$1"
+}
+_cr_result_from_terminal() {
+    jq -c '{id,type,status,rc,source,reason,created_at,finished_at} + (if has("source_path") then {source_path} else {} end) + (if has("source_mtime") then {source_mtime} else {} end)' <<<"$1"
+}
 _cr_reconcile_abandoned_lease_locked() {
     local old_owner=$1 pending_path active_path lease_path kind request status id history_path result_path
-    local history='' result='' terminal history_next result_next finished
+    local history='' history_request result='' terminal history_next result_next finished mode
     pending_path=$(_cr_pending_file); active_path=$(_cr_active_file)
     [ ! -e "$pending_path" ] || [ ! -e "$active_path" ] || return 70
     if [ -e "$pending_path" ]; then lease_path=$pending_path; kind=pending
@@ -173,32 +206,69 @@ _cr_reconcile_abandoned_lease_locked() {
     if [ -e "$history_path" ]; then
         history=$(cat "$history_path" 2>/dev/null) || return 70
         jq -e 'type=="object" and (.request|type=="object") and (.actions|type=="array") and all(.actions[];type=="object")' >/dev/null <<<"$history" || return 70
-        _cr_request_schema "$(jq -c .request <<<"$history")" || return 70
-        _cr_request_identity_equal "$request" "$(jq -c .request <<<"$history")" || return 70
+        history_request=$(jq -c .request <<<"$history") || return 70
+        _cr_request_schema "$history_request" || return 70
+        _cr_request_identity_equal "$request" "$history_request" || return 70
     elif [ "$kind" = active ]; then
         return 70
     else
         history=$(jq -cn --argjson request "$request" '{request:$request,actions:[]}') || return 70
+        history_request=$request
     fi
     if [ -e "$result_path" ]; then
         result=$(cat "$result_path" 2>/dev/null) || return 70
-        _cr_abandoned_result_valid "$result" "$request" || return 70
-        [ -n "$history" ] || return 70
-        finished=$(jq -r .finished_at <<<"$result") || return 70
-    elif jq -e '.request.status=="FAILED" and .request.rc==70 and .request.interrupted==true and (.request.finished_at|type=="number" and floor==. and .>0)' >/dev/null <<<"$history"; then
-        finished=$(jq -r .request.finished_at <<<"$history") || return 70
+        _cr_terminal_result_valid "$result" "$request" || return 70
+        if _cr_terminal_request_valid "$history_request"; then
+            _cr_terminal_request_result_equal "$history_request" "$result" || return 70
+            if [ "$kind" = pending ]; then _cr_interrupted_terminal_valid "$history_request" || return 70; fi
+            terminal=$history_request
+            history_next=$history
+            result_next=$result
+            mode=terminal_both
+        else
+            [ "$kind" = active ] || return 70
+            case "$(jq -r .status <<<"$history_request")" in SUCCEEDED|FAILED) return 70;; esac
+            _cr_request_json_equal "$request" "$history_request" || return 70
+            terminal=$(jq -c --argjson result "$result" '.status=$result.status | .rc=$result.rc | .finished_at=$result.finished_at' <<<"$request") || return 70
+            history_next=$(jq -c --argjson terminal "$terminal" '.request=$terminal' <<<"$history") || return 70
+            result_next=$result
+            mode=terminal_result_only
+        fi
+    elif _cr_terminal_request_valid "$history_request"; then
+        if [ "$kind" = pending ]; then _cr_interrupted_terminal_valid "$history_request" || return 70; fi
+        terminal=$history_request
+        history_next=$history
+        result_next=$(_cr_result_from_terminal "$terminal") || return 70
+        mode=terminal_history_only
     else
+        case "$(jq -r .status <<<"$history_request")" in SUCCEEDED|FAILED) return 70;; esac
+        _cr_request_json_equal "$request" "$history_request" || return 70
         finished=$(_cr_now) || return 70
+        terminal=$(jq -c --argjson now "$finished" '.status="FAILED" | .rc=70 | .interrupted=true | .finished_at=$now | .interrupted_reason="owner_stale"' <<<"$request") || return 70
+        history_next=$(jq -c --argjson terminal "$terminal" '.request=$terminal' <<<"$history") || return 70
+        result_next=$(_cr_result_from_terminal "$terminal") || return 70
+        mode=interrupted
     fi
-    terminal=$(jq -c --argjson now "$finished" '.status="FAILED" | .rc=70 | .interrupted=true | .finished_at=$now | .interrupted_reason="owner_stale"' <<<"$request") || return 70
-    history_next=$(jq -c --argjson terminal "$terminal" '.request=$terminal' <<<"$history") || return 70
-    result_next=$(jq -c '{id,type,status,rc,source,reason,created_at,finished_at} + (if has("source_path") then {source_path} else {} end) + (if has("source_mtime") then {source_mtime} else {} end)' <<<"$terminal") || return 70
-    [ ! -e "$(_cr_service_file)" ] || jq -e 'type=="object"' "$(_cr_service_file)" >/dev/null 2>&1 || return 70
-    _cr_mark_dirty || return 70
-    _cr_atomic_write "$history_path" "$history_next" || return 70
-    _cr_test_failpoint owner_reconcile_after_history || return 70
-    _cr_atomic_write "$result_path" "$result_next" || return 70
-    _cr_test_failpoint owner_reconcile_after_result || return 70
+    if [ "$status" = SUCCEEDED ] || [ "$status" = FAILED ]; then
+        _cr_terminal_request_valid "$request" || return 70
+        _cr_terminal_request_result_equal "$request" "$result_next" || return 70
+    fi
+    if [ "$mode" = interrupted ]; then
+        [ ! -e "$(_cr_service_file)" ] || jq -e 'type=="object"' "$(_cr_service_file)" >/dev/null 2>&1 || return 70
+        _cr_mark_dirty || return 70
+    fi
+    case "$mode" in
+        interrupted|terminal_result_only)
+            _cr_atomic_write "$history_path" "$history_next" || return 70
+            _cr_test_failpoint owner_reconcile_after_history || return 70
+            ;;
+    esac
+    case "$mode" in
+        interrupted|terminal_history_only)
+            _cr_atomic_write "$result_path" "$result_next" || return 70
+            _cr_test_failpoint owner_reconcile_after_result || return 70
+            ;;
+    esac
     _cr_remove "$lease_path" || return 70
 }
 _cr_owner_create_locked() {
@@ -223,7 +293,7 @@ _cr_owner_create_locked() {
 }
 cam_owner_create() { _cr_lock_call _cr_owner_create_locked "$@"; }
 _cr_lifecycle_allowed() {
-    case "$1:$2" in STARTING:ACTIVE|STARTING:RECOVERING|STARTING:DEGRADED|STARTING:STOPPING|ACTIVE:APPLYING_CONFIG|ACTIVE:RECOVERING|ACTIVE:DEGRADED|ACTIVE:STOPPING|APPLYING_CONFIG:ACTIVE|APPLYING_CONFIG:DEGRADED|APPLYING_CONFIG:STOPPING|RECOVERING:ACTIVE|RECOVERING:DEGRADED|RECOVERING:STOPPING|DEGRADED:APPLYING_CONFIG|DEGRADED:RECOVERING|DEGRADED:STOPPING) return 0;; esac; return 1
+    case "$1:$2" in STARTING:ACTIVE|STARTING:DEGRADED|STARTING:STOPPING|ACTIVE:APPLYING_CONFIG|ACTIVE:RECOVERING|ACTIVE:DEGRADED|ACTIVE:STOPPING|APPLYING_CONFIG:ACTIVE|APPLYING_CONFIG:DEGRADED|APPLYING_CONFIG:STOPPING|RECOVERING:ACTIVE|RECOVERING:DEGRADED|RECOVERING:STOPPING|DEGRADED:APPLYING_CONFIG|DEGRADED:RECOVERING|DEGRADED:STOPPING) return 0;; esac; return 1
 }
 _cr_owner_set_lifecycle_locked() {
     local next=$1 owner current updated
@@ -233,6 +303,29 @@ _cr_owner_set_lifecycle_locked() {
     _cr_owner_snapshot_live "$owner" || return 69; _cr_atomic_write "$(_cr_owner_file)" "$updated" || return 70
 }
 cam_owner_set_lifecycle() { _cr_lock_call _cr_owner_set_lifecycle_locked "$@"; }
+
+_cr_startup_owner_set_recovering_locked() {
+    local request=$1 owner active history id updated
+    owner=$(_cr_owner_json) || return 69
+    _cr_owner_snapshot_live "$owner" || return 69
+    _cr_owner_snapshot_lifecycle_in "$owner" STARTING || return 69
+    [ ! -e "$(_cr_pending_file)" ] || return 75
+    active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69
+    _cr_request_schema "$active" || return 70
+    _cr_request_json_equal "$request" "$active" || return 70
+    _cr_record_owner_ready "$active" STARTING || return 69
+    jq -e '.status=="PENDING"' >/dev/null <<<"$active" || return 70
+    _cr_public_action "$(jq -r .type <<<"$active")" || return 70
+    id=$(jq -r .id <<<"$active") || return 70
+    history=$(cat "$(_cr_history_file "$id")" 2>/dev/null) || return 70
+    jq -e 'type=="object" and (.request|type=="object") and (.actions|type=="array")' >/dev/null <<<"$history" || return 70
+    _cr_request_json_equal "$active" "$(jq -c .request <<<"$history")" || return 70
+    updated=$(jq -c '.lifecycle="RECOVERING" | .updated_at=(now|floor)' <<<"$owner") || return 70
+    _cr_record_owner_ready "$active" STARTING || return 69
+    [ ! -e "$(_cr_pending_file)" ] || return 75
+    _cr_request_json_equal "$active" "$(cat "$(_cr_active_file)" 2>/dev/null)" || return 70
+    _cr_atomic_write "$(_cr_owner_file)" "$updated" || return 70
+}
 
 _cr_startup_request_reserve_locked() {
     local type=$1 source=$2 reason=$3 source_path=${4:-} source_mtime=${5:-} owner id now request history
@@ -253,7 +346,7 @@ _cr_startup_request_reserve_locked() {
     _cr_record_owner_ready "$request" STARTING || return 69
     _cr_atomic_write "$(_cr_active_file)" "$request" || return 70
     _cr_test_failpoint startup_reserve_after_active || return 70
-    _cr_owner_set_lifecycle_locked RECOVERING || return $?
+    _cr_startup_owner_set_recovering_locked "$request" || return $?
     _cr_test_failpoint startup_reserve_after_lifecycle || return 70
     if declare -F _cr_test_startup_reservation_probe >/dev/null 2>&1; then
         _cr_test_startup_reservation_probe || return $?
