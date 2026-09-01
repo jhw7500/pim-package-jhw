@@ -382,3 +382,67 @@ The final scope is limited to the recovery protocol implementation, its protocol
 - The code-review graph still cannot model the production shell top-level, requiring complete diff inspection plus executable protocol/action gates.
 
 No Fix round 3 implementation blocker remains.
+
+## Fix round 4
+
+Base: `89fdc62632678453b904028b7349b9bd6882fbb6`. This round fixes only the two round-3 re-review findings: contradictory interruption metadata on stale-takeover inputs, and counter-finish writes performed before complete history/state attribution validation. It does not change public request/action types, lifecycle edges, queue behavior, recovery escalation, or Task 5/later service work.
+
+### RED evidence
+
+1. The two reviewer probes were first captured together before any production edit:
+
+   - Command: `rtk bash test/camera_health/recovery_protocol_test.sh`
+   - Exit: `1`
+   - Failure: `FAIL: reviewed regressions accepted: result-interruption:0 counter-started-at:0`
+   - A successful result carrying `interrupted=true`/`interrupted_reason=owner_stale` authorized stale-owner takeover, and a `RUNNING:RUNNING` counter with mismatched history/state `started_at` terminalized both records with rc `0`.
+
+2. The complete mutation matrix was then added while production was still unchanged:
+
+   - Command: `rtk bash test/camera_health/recovery_protocol_test.sh`
+   - Exit: `1`
+   - Interruption failures: valid-looking pairs, either key alone, false/non-string values, active-lease-only metadata, ordinary `FAILED/17` result metadata, and matching nonterminal lease/history metadata all returned `0`; only the already-covered contradictory successful history shape returned `70`.
+   - Counter failures: started-at, exact-shape, and finished-at corruptions returned `0`; request/status/rc identity conflicts returned `64` instead of the required fail-closed `70`.
+
+Every mutation starts from a real request/claim/transition/counter/finish fixture. The final tests snapshot owner, active lease, history, result (including absence), recovery counter state, service state, runtime, and call log after mutation and require all eight fingerprints to remain byte-identical on RC70.
+
+### GREEN behavior and invariants
+
+- `_cr_terminal_result_valid` now rejects either interruption key unconditionally. Results remain the normal terminal sentinel record and never carry synthetic interruption metadata.
+- Every stale lease request and every history request is checked before reconciliation writes. Metadata is absent for nonterminal and ordinary terminal shapes; if either key exists, the request must pass the exact synthetic owner-stale shape: terminal `FAILED`, rc `70`, `interrupted=true`, `interrupted_reason=owner_stale`, and a valid positive integral finish time.
+- The established owner-stale durable-result retry still succeeds: its lease remains the original nonterminal request, history holds the exact synthetic terminal request, result has no interruption keys, RUNNING action/counter evidence is preserved, and retry removes only the lease before publishing the replacement owner.
+- `cam_action_counter_finish` now validates the exact active/history request, one exact matching history action, the history action shape, the global action-state shape, request/action identity, and equal history/state start time before generating a time or writing either file.
+- `RUNNING:TERMINAL` copies the state terminal time only after its status/rc/start/request tuple agrees with the requested finish. `TERMINAL:RUNNING` copies the history terminal time only after the reciprocal tuple agrees. All attribution conflicts return `70` before mutation.
+- A RUNNING global record may retain a positive `last_finished_at` from the previous request, matching the existing counter-begin contract; it must have the current request/start, `last_status=RUNNING`, and `last_rc=null`. Once the state is terminal, finish/status/rc/start/request and the corresponding succeeded/failed total must form the current terminal tuple.
+- Normal finish calls `_cr_now` once for both records. Both reciprocal directions reuse the authoritative durable finish time. Tests prove attempted/succeeded/failed remain exactly `1/1/0`, the state-terminal retry does not change the state fingerprint, and all normal/reciprocal terminal fixtures pass eventual stale-owner takeover.
+
+The final mutation set covers nine interruption cases and fourteen counter-finish corruptions. All return RC70 with the complete byte-preservation proof. The normal writer, both reciprocal directions, multiple public actions, uncountered actions, and synthetic interrupted retry remain accepted.
+
+### Fresh final-head verification
+
+| Command | Exit/result |
+| --- | --- |
+| `rtk bash -n dist/pim/opt/pim/lib/cam_recovery.sh dist/pim/opt/pim/lib/cam_operate_control.sh dist/pim/opt/pim/lib/cam_recovery_actions.sh dist/pim/opt/pim/bin/chk_cam_operate.sh` | `0` |
+| `rtk bash test/camera_health/recovery_protocol_test.sh` | `0`, `recovery protocol: PASS` |
+| `rtk bash test/camera_health/cam_operate_control_test.sh` | `0`, `cam operate control: PASS` |
+| `rtk bash test/cam_link/recovery_actions_test.sh` | `0`, `recovery actions: PASS` |
+| `rtk bash test/cam_link/recovery_actions_safety_test.sh` | `0`, `recovery actions safety: PASS` |
+| `rtk bash test/cam_link/recovery_launch_safety_test.sh` | `0`, `recovery launch safety: PASS` |
+| `rtk bash test/cam_link/escalation_test.sh` | `0`, `7 passed / 0 failed` |
+| `rtk bash test/camera_health/run_all.sh` | `0`, including protocol and control PASS |
+| `rtk bash test/cam_link/run_all.sh -v` | `0`, `all passed (14)` |
+| `rtk shellcheck -S error dist/pim/opt/pim/lib/cam_recovery.sh test/camera_health/recovery_protocol_test.sh` | `0` |
+| `rtk git diff --check` | `0` |
+
+### Graph and diff review
+
+The required graph-first review saw the two changed code/test paths, risk `0.65`, and eight affected indexed test flows. The graph was built at `3a1e0e0e9de7e84960d50a34af9a2db1a3dfbafa` while the worktree base is `89fdc62632678453b904028b7349b9bd6882fbb6`; its Bash parser again omitted the production top-level and mislocated several test helpers. Its zero production impact and reported helper test gaps were therefore treated as stale-parser limitations, not coverage evidence. The focused protocol matrix and both aggregate suites are the authoritative evidence.
+
+The complete pre-report diff contains exactly the recovery protocol implementation and its executable protocol test: `263 insertions`, `11 deletions`. Manual full-diff review confirmed no new public action type, lifecycle edge, queue, SHA/generation state, source fallback, service-control path, or Task 5 behavior. The production changes are limited to the takeover metadata gates and counter-finish prewrite validators.
+
+### Remaining concerns
+
+- Multi-file durability remains an ordered idempotent protocol rather than a filesystem-wide atomic transaction. This round prevents known mismatched evidence from being repaired or terminalized; the established failpoint retries still cover each one-sided finish direction.
+- Verification is host/stub based. Target-board timing and real device/process teardown remain later board/system acceptance work.
+- The graph remains stale and does not index the changed production Bash top-level, so structural review must continue to pair complete diff inspection with executable protocol/action suites.
+
+No Fix round 4 implementation blocker remains.

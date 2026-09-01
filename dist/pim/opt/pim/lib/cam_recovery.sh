@@ -141,6 +141,8 @@ _cr_terminal_result_valid() {
     local result=$1 request=$2
     jq -e '
       type=="object" and
+      (has("interrupted")|not) and
+      (has("interrupted_reason")|not) and
       (.id|type=="string" and test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")) and
       (.type|type=="string") and (.source|type=="string" and length>0) and
       (.reason|type=="string" and length>0) and
@@ -182,12 +184,11 @@ _cr_interrupted_terminal_valid() {
     jq -e '.status=="FAILED" and .rc==70 and .interrupted==true and .interrupted_reason=="owner_stale"' >/dev/null <<<"$1"
 }
 _cr_terminal_interruption_valid() {
-    jq -e '
-      if has("interrupted") or has("interrupted_reason") then
-        .status=="FAILED" and .rc==70 and
-        .interrupted==true and .interrupted_reason=="owner_stale"
-      else true end
-    ' >/dev/null <<<"$1"
+    if jq -e 'has("interrupted") or has("interrupted_reason")' >/dev/null <<<"$1"; then
+        _cr_interrupted_terminal_valid "$1"
+    else
+        return 0
+    fi
 }
 _cr_terminal_history_actions_valid() {
     local history=$1 terminal=$2
@@ -271,6 +272,7 @@ _cr_reconcile_abandoned_lease_locked() {
     fi
     request=$(cat "$lease_path" 2>/dev/null) || return 70
     _cr_request_schema "$request" || return 70
+    _cr_terminal_interruption_valid "$request" || return 70
     _cr_owner_immutable_equal "$(jq -c .owner <<<"$request")" "$old_owner" || return 70
     status=$(jq -r .status <<<"$request") || return 70
     case "$kind:$status" in
@@ -284,6 +286,7 @@ _cr_reconcile_abandoned_lease_locked() {
         jq -e 'type=="object" and (.request|type=="object") and (.actions|type=="array") and all(.actions[];type=="object")' >/dev/null <<<"$history" || return 70
         history_request=$(jq -c .request <<<"$history") || return 70
         _cr_request_schema "$history_request" || return 70
+        _cr_terminal_interruption_valid "$history_request" || return 70
         _cr_request_identity_equal "$request" "$history_request" || return 70
     elif [ "$kind" = active ]; then
         return 70
@@ -492,6 +495,51 @@ _cr_state_action_phase() {
       elif $a.last_status == "SUCCEEDED" or $a.last_status == "FAILED" then "TERMINAL"
       else "CONFLICT" end' <<<"$1"
 }
+_cr_counter_finish_history_action() {
+    jq -ce --arg action "$2" --arg id "$3" '
+      if type=="object" and (.request|type=="object") and
+         (.actions|type=="array") and all(.actions[];type=="object")
+      then
+        [.actions[] | select(.action==$action and .request_id==$id)] as $matches |
+        if ($matches|length)==1 then $matches[0] else empty end
+      else empty end
+    ' <<<"$1"
+}
+_cr_counter_finish_history_action_valid() {
+    jq -e --arg action "$2" --arg id "$3" '
+      def positive_integer: type=="number" and floor==. and .>0;
+      def terminal_status:
+        (.status=="SUCCEEDED" and .rc==0) or
+        (.status=="FAILED" and (.rc|type=="number" and floor==. and .>0));
+      .action==$action and .request_id==$id and
+      if .status=="RUNNING" then
+        (keys|sort)==["action","request_id","started_at","status"] and
+        (.started_at|positive_integer)
+      else
+        (keys|sort)==["action","finished_at","rc","request_id","started_at","status"] and
+        terminal_status and (.started_at|positive_integer) and
+        (.finished_at|positive_integer) and .finished_at>=.started_at
+      end
+    ' >/dev/null <<<"$1"
+}
+_cr_counter_finish_state_action_valid() {
+    jq -e --arg action "$2" --arg id "$3" '
+      def positive_integer: type=="number" and floor==. and .>0;
+      .actions[$action] as $a |
+      $a.last_request_id==$id and ($a.attempted|positive_integer) and
+      ($a.last_started_at|positive_integer) and
+      if $a.last_status=="RUNNING" then
+        ($a.last_finished_at==null or ($a.last_finished_at|positive_integer)) and
+        $a.last_rc==null
+      elif $a.last_status=="SUCCEEDED" then
+        $a.last_rc==0 and ($a.last_finished_at|positive_integer) and
+        $a.last_finished_at >= $a.last_started_at and ($a.succeeded|positive_integer)
+      elif $a.last_status=="FAILED" then
+        ($a.last_rc|positive_integer) and ($a.last_finished_at|positive_integer) and
+        $a.last_finished_at >= $a.last_started_at and ($a.failed|positive_integer)
+      else false end
+    ' >/dev/null <<<"$1"
+}
 _cr_counter_begin_locked() {
     local action=$1 id=$2 active state history history_action history_next state_next history_phase state_phase now
     _cr_public_action "$action" || return 64; _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69
@@ -525,23 +573,30 @@ _cr_counter_begin_locked() {
 }
 cam_action_counter_begin() { [ $# -eq 2 ] || return 64; _cr_lock_call _cr_counter_begin_locked "$@"; }
 _cr_counter_finish_locked() {
-    local action=$1 id=$2 status=$3 rc=$4 active state history history_action history_next state_next history_phase state_phase now
+    local action=$1 id=$2 status=$3 rc=$4 active state history history_request history_action history_next state_next
+    local history_phase state_phase history_started state_started now
     _cr_public_action "$action" || return 64; _cr_terminal_valid "$status" "$rc" || return 64
     _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69; _cr_record_owner_matches "$active" || return 69
     [ "$(jq -r .id <<<"$active")" = "$id" ] || return 64
     case "$(jq -r .status <<<"$active")" in RUNNING|VERIFYING) ;; *) return 64;; esac
     _cr_mutation_guard "$active" counter_init ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_state_init || return 70; state=$(cat "$(_cr_state_file)") || return 70; _cr_state_valid <<<"$state" || return 70; history=$(cat "$(_cr_history_file "$id")" 2>/dev/null) || return 70
-    history_action=$(_cr_history_action "$history" "$action" "$id" 2>/dev/null || true)
-    [ -n "$history_action" ] || return 64
+    history_request=$(jq -ce '.request | select(type=="object")' <<<"$history") || return 70
+    _cr_request_json_equal "$history_request" "$active" || return 70
+    history_action=$(_cr_counter_finish_history_action "$history" "$action" "$id" 2>/dev/null) || return 70
+    _cr_counter_finish_history_action_valid "$history_action" "$action" "$id" || return 70
+    _cr_counter_finish_state_action_valid "$state" "$action" "$id" || return 70
     history_phase=$(jq -r .status <<<"$history_action"); state_phase=$(_cr_state_action_phase "$state" "$action" "$id")
+    history_started=$(jq -r .started_at <<<"$history_action") || return 70
+    state_started=$(jq -r --arg action "$action" '.actions[$action].last_started_at' <<<"$state") || return 70
+    [ "$history_started" = "$state_started" ] || return 70
     case "$history_phase:$state_phase" in
         RUNNING:RUNNING) now=$(_cr_now) || return 70 ;;
         RUNNING:TERMINAL)
-            jq -e --arg action "$action" --arg id "$id" --arg status "$status" --argjson rc "$rc" '.actions[$action].last_request_id==$id and .actions[$action].last_status==$status and .actions[$action].last_rc==$rc' >/dev/null <<<"$state" || return 64
+            jq -e --arg action "$action" --arg status "$status" --argjson rc "$rc" '.actions[$action].last_status==$status and .actions[$action].last_rc==$rc' >/dev/null <<<"$state" || return 70
             now=$(jq -r --arg action "$action" '.actions[$action].last_finished_at | select(type=="number" and floor==. and .>0)' <<<"$state") || return 70
             ;;
         SUCCEEDED:RUNNING|FAILED:RUNNING)
-            [ "$history_phase" = "$status" ] && [ "$(jq -r .rc <<<"$history_action")" = "$rc" ] || return 64
+            [ "$history_phase" = "$status" ] && [ "$(jq -r .rc <<<"$history_action")" = "$rc" ] || return 70
             now=$(jq -r '.finished_at | select(type=="number" and floor==. and .>0)' <<<"$history_action") || return 70
             ;;
         SUCCEEDED:TERMINAL|FAILED:TERMINAL) return 64;;

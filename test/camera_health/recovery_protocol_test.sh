@@ -184,6 +184,196 @@ for conflict in identity status_rc finished_at malformed; do
     assert_terminal_bytes_unchanged "$conflict conflict"
 done
 
+echo "=== contradictory interruption metadata fails closed byte-for-byte ==="
+interruption_failures=''
+for mutation in \
+    result_success_pair result_flag_only result_reason_only result_false \
+    result_reason_nonstring active_pair history_success_pair \
+    result_failed_pair nonterminal_lease_history_pair; do
+    restore_normal_terminal_fixture
+    result_file="$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json"
+    active_file="$PIM_CAMERA_RUN_DIR/recovery/active.json"
+    history_file="$PIM_CAMERA_STATE_DIR/recovery/history/$normal_terminal_id.json"
+    case "$mutation" in
+        result_success_pair)
+            jq '.interrupted=true | .interrupted_reason="owner_stale"' "$result_file" > "$WORK/interruption.json" && mv "$WORK/interruption.json" "$result_file"
+            ;;
+        result_flag_only)
+            jq '.interrupted=true' "$result_file" > "$WORK/interruption.json" && mv "$WORK/interruption.json" "$result_file"
+            ;;
+        result_reason_only)
+            jq '.interrupted_reason="owner_stale"' "$result_file" > "$WORK/interruption.json" && mv "$WORK/interruption.json" "$result_file"
+            ;;
+        result_false)
+            jq '.interrupted=false | .interrupted_reason="owner_stale"' "$result_file" > "$WORK/interruption.json" && mv "$WORK/interruption.json" "$result_file"
+            ;;
+        result_reason_nonstring)
+            jq '.interrupted=true | .interrupted_reason=7' "$result_file" > "$WORK/interruption.json" && mv "$WORK/interruption.json" "$result_file"
+            ;;
+        active_pair)
+            jq '.interrupted=true | .interrupted_reason="owner_stale"' "$active_file" > "$WORK/interruption.json" && mv "$WORK/interruption.json" "$active_file"
+            ;;
+        history_success_pair)
+            jq '.request.interrupted=true | .request.interrupted_reason="owner_stale"' "$history_file" > "$WORK/interruption.json" && mv "$WORK/interruption.json" "$history_file"
+            ;;
+        result_failed_pair)
+            finished=$(jq -r .finished_at "$result_file")
+            jq --argjson finished "$finished" '.status="FAILED" | .rc=17 | .finished_at=$finished | .interrupted=true | .interrupted_reason="owner_stale"' "$result_file" > "$WORK/interruption.result" && mv "$WORK/interruption.result" "$result_file"
+            jq --argjson finished "$finished" '.request.status="FAILED" | .request.rc=17 | .request.finished_at=$finished' "$history_file" > "$WORK/interruption.history" && mv "$WORK/interruption.history" "$history_file"
+            ;;
+        nonterminal_lease_history_pair)
+            rm -f "$result_file"
+            jq '.interrupted=true | .interrupted_reason="owner_stale"' "$active_file" > "$WORK/interruption.active" && mv "$WORK/interruption.active" "$active_file"
+            active_request=$(cat "$active_file")
+            jq --argjson request "$active_request" '.request=$request' "$history_file" > "$WORK/interruption.history" && mv "$WORK/interruption.history" "$history_file"
+            ;;
+    esac
+    snapshot_terminal_bytes
+    set +e
+    cam_owner_create "$DAEMON_PID"
+    interruption_rc=$?
+    set -e
+    if [ "$interruption_rc" -eq 70 ]; then
+        assert_terminal_bytes_unchanged "$mutation"
+    else
+        interruption_failures="$interruption_failures $mutation:$interruption_rc"
+    fi
+done
+
+counter_finish_setup() {
+    reset_protocol_sandbox
+    owner_active
+    mkdir -p "$PIM_CAMERA_STATE_DIR"
+    printf '{"dirty":false,"sentinel":"counter-preflight"}\n' > "$PIM_CAMERA_STATE_DIR/service-state.json"
+    printf '{"sentinel":"runtime"}\n' > "$PIM_CAMERA_RUNTIME_JSON"
+    printf 'sentinel:call\n' > "$PIM_CAMERA_CALL_LOG"
+    counter_finish_id=$(cam_request_submit module_reload health "$1")
+    cam_request_claim
+    cam_request_transition QUIESCING
+    cam_request_transition RUNNING
+    cam_action_counter_begin module_reload "$counter_finish_id"
+    counter_finish_history="$PIM_CAMERA_STATE_DIR/recovery/history/$counter_finish_id.json"
+    counter_finish_state="$PIM_CAMERA_STATE_DIR/recovery/state.json"
+    counter_finish_started=$(jq -r '.actions[0].started_at' "$counter_finish_history")
+    counter_finish_finished=$((counter_finish_started + 10))
+}
+counter_finish_snapshot() {
+    counter_owner_before=$(file_fingerprint "$PIM_CAMERA_RUN_DIR/owner.json")
+    counter_active_before=$(file_fingerprint "$PIM_CAMERA_RUN_DIR/recovery/active.json")
+    counter_history_before=$(file_fingerprint "$counter_finish_history")
+    counter_state_before=$(file_fingerprint "$counter_finish_state")
+    counter_result_before=$(file_fingerprint "$PIM_CAMERA_RUN_DIR/recovery/results/$counter_finish_id.json")
+    counter_service_before=$(file_fingerprint "$PIM_CAMERA_STATE_DIR/service-state.json")
+    counter_runtime_before=$(file_fingerprint "$PIM_CAMERA_RUNTIME_JSON")
+    counter_call_before=$(file_fingerprint "$PIM_CAMERA_CALL_LOG")
+}
+assert_counter_finish_bytes_unchanged() {
+    local label=$1
+    [ "$counter_owner_before" = "$(file_fingerprint "$PIM_CAMERA_RUN_DIR/owner.json")" ] || fail "$label mutated owner"
+    [ "$counter_active_before" = "$(file_fingerprint "$PIM_CAMERA_RUN_DIR/recovery/active.json")" ] || fail "$label mutated active lease"
+    [ "$counter_history_before" = "$(file_fingerprint "$counter_finish_history")" ] || fail "$label mutated history"
+    [ "$counter_state_before" = "$(file_fingerprint "$counter_finish_state")" ] || fail "$label mutated counters"
+    [ "$counter_result_before" = "$(file_fingerprint "$PIM_CAMERA_RUN_DIR/recovery/results/$counter_finish_id.json")" ] || fail "$label mutated result"
+    [ "$counter_service_before" = "$(file_fingerprint "$PIM_CAMERA_STATE_DIR/service-state.json")" ] || fail "$label mutated service state"
+    [ "$counter_runtime_before" = "$(file_fingerprint "$PIM_CAMERA_RUNTIME_JSON")" ] || fail "$label mutated runtime"
+    [ "$counter_call_before" = "$(file_fingerprint "$PIM_CAMERA_CALL_LOG")" ] || fail "$label mutated call log"
+}
+counter_finish_state_terminal() {
+    local status=$1 rc=$2 finished=$3
+    jq --arg action module_reload --arg id "$counter_finish_id" --arg status "$status" --argjson rc "$rc" --argjson finished "$finished" '
+      .actions[$action].last_request_id=$id |
+      .actions[$action].last_finished_at=$finished |
+      .actions[$action].last_status=$status |
+      .actions[$action].last_rc=$rc |
+      if $status=="SUCCEEDED" then
+        .actions[$action].succeeded+=1 | .actions[$action].consecutive_failures=0
+      else
+        .actions[$action].failed+=1 | .actions[$action].consecutive_failures+=1
+      end
+    ' "$counter_finish_state" > "$WORK/counter-state-terminal" && mv "$WORK/counter-state-terminal" "$counter_finish_state"
+}
+counter_finish_history_terminal() {
+    local status=$1 rc=$2 finished=$3
+    jq --arg action module_reload --arg id "$counter_finish_id" --arg status "$status" --argjson rc "$rc" --argjson finished "$finished" '
+      .actions |= map(if .action==$action and .request_id==$id then
+        .status=$status | .rc=$rc | .finished_at=$finished
+      else . end)
+    ' "$counter_finish_history" > "$WORK/counter-history-terminal" && mv "$WORK/counter-history-terminal" "$counter_finish_history"
+}
+
+echo "=== counter finish validates complete attribution before writes ==="
+counter_finish_failures=''
+for mutation in \
+    running_started_mismatch running_history_extra \
+    state_terminal_started state_terminal_request state_terminal_status \
+    state_terminal_rc state_terminal_finished \
+    history_terminal_started history_terminal_request history_terminal_status \
+    history_terminal_action history_terminal_rc history_terminal_finished history_terminal_extra; do
+    counter_finish_setup "$mutation"
+    case "$mutation" in
+        running_started_mismatch)
+            jq '.actions.module_reload.last_started_at+=1' "$counter_finish_state" > "$WORK/counter-mutation" && mv "$WORK/counter-mutation" "$counter_finish_state"
+            ;;
+        running_history_extra)
+            jq '.actions[0].unexpected=true' "$counter_finish_history" > "$WORK/counter-mutation" && mv "$WORK/counter-mutation" "$counter_finish_history"
+            ;;
+        state_terminal_started)
+            counter_finish_state_terminal SUCCEEDED 0 "$counter_finish_finished"
+            jq '.actions.module_reload.last_started_at+=1' "$counter_finish_state" > "$WORK/counter-mutation" && mv "$WORK/counter-mutation" "$counter_finish_state"
+            ;;
+        state_terminal_request)
+            counter_finish_state_terminal SUCCEEDED 0 "$counter_finish_finished"
+            jq '.actions.module_reload.last_request_id="00000000-0000-4000-8000-000000000003"' "$counter_finish_state" > "$WORK/counter-mutation" && mv "$WORK/counter-mutation" "$counter_finish_state"
+            ;;
+        state_terminal_status)
+            counter_finish_state_terminal FAILED 17 "$counter_finish_finished"
+            ;;
+        state_terminal_rc)
+            counter_finish_state_terminal SUCCEEDED 9 "$counter_finish_finished"
+            ;;
+        state_terminal_finished)
+            counter_finish_state_terminal SUCCEEDED 0 "$((counter_finish_started - 1))"
+            ;;
+        history_terminal_started)
+            counter_finish_history_terminal SUCCEEDED 0 "$counter_finish_finished"
+            jq '.actions[0].started_at+=1' "$counter_finish_history" > "$WORK/counter-mutation" && mv "$WORK/counter-mutation" "$counter_finish_history"
+            ;;
+        history_terminal_request)
+            counter_finish_history_terminal SUCCEEDED 0 "$counter_finish_finished"
+            jq '.actions[0].request_id="00000000-0000-4000-8000-000000000004"' "$counter_finish_history" > "$WORK/counter-mutation" && mv "$WORK/counter-mutation" "$counter_finish_history"
+            ;;
+        history_terminal_status)
+            counter_finish_history_terminal FAILED 17 "$counter_finish_finished"
+            ;;
+        history_terminal_action)
+            counter_finish_history_terminal SUCCEEDED 0 "$counter_finish_finished"
+            jq '.actions[0].action="gstapp_restart"' "$counter_finish_history" > "$WORK/counter-mutation" && mv "$WORK/counter-mutation" "$counter_finish_history"
+            ;;
+        history_terminal_rc)
+            counter_finish_history_terminal SUCCEEDED 9 "$counter_finish_finished"
+            ;;
+        history_terminal_finished)
+            counter_finish_history_terminal SUCCEEDED 0 "$((counter_finish_started - 1))"
+            ;;
+        history_terminal_extra)
+            counter_finish_history_terminal SUCCEEDED 0 "$counter_finish_finished"
+            jq '.actions[0].unexpected=true' "$counter_finish_history" > "$WORK/counter-mutation" && mv "$WORK/counter-mutation" "$counter_finish_history"
+            ;;
+    esac
+    counter_finish_snapshot
+    set +e
+    cam_action_counter_finish module_reload "$counter_finish_id" SUCCEEDED 0
+    counter_finish_rc=$?
+    set -e
+    if [ "$counter_finish_rc" -eq 70 ]; then
+        assert_counter_finish_bytes_unchanged "$mutation"
+    else
+        counter_finish_failures="$counter_finish_failures $mutation:$counter_finish_rc"
+    fi
+done
+[ -z "$interruption_failures$counter_finish_failures" ] ||
+    fail "round-4 mutations accepted: interruption:$interruption_failures counter:$counter_finish_failures"
+
 echo "=== normal terminal action attribution fails closed ==="
 mutation_failures=''
 for mutation in \
@@ -256,6 +446,7 @@ writer_state_started=$(jq -r '.actions.module_reload.last_started_at' "$PIM_CAME
 cam_action_counter_finish module_reload "$writer_time_id" SUCCEEDED 0
 writer_history_finished=$(jq -r '.actions[0].finished_at' "$PIM_CAMERA_STATE_DIR/recovery/history/$writer_time_id.json")
 writer_state_finished=$(jq -r '.actions.module_reload.last_finished_at' "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+jq -e '.actions.module_reload.attempted==1 and .actions.module_reload.succeeded==1 and .actions.module_reload.failed==0' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "normal finish counter totals"
 cam_request_transition VERIFYING
 cp "$PIM_CAMERA_RUN_DIR/recovery/active.json" "$WORK/writer-time.active"
 cam_request_finish SUCCEEDED 0
@@ -319,8 +510,10 @@ writer_retry_setup "finish history-terminal retry"
 cam_action_counter_begin module_reload "$writer_retry_id"
 PIM_CAMERA_TEST_FAILPOINT=counter_finish_after_history expect_rc 70 cam_action_counter_finish module_reload "$writer_retry_id" SUCCEEDED 0
 retry_history_time=$(jq -r '.actions[0].finished_at' "$PIM_CAMERA_STATE_DIR/recovery/history/$writer_retry_id.json")
+jq -e '.actions.module_reload.attempted==1 and .actions.module_reload.succeeded==0 and .actions.module_reload.failed==0 and .actions.module_reload.last_status=="RUNNING"' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "history-terminal partial changed counter totals"
 cam_action_counter_finish module_reload "$writer_retry_id" SUCCEEDED 0
 retry_state_time=$(jq -r '.actions.module_reload.last_finished_at' "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+jq -e '.actions.module_reload.attempted==1 and .actions.module_reload.succeeded==1 and .actions.module_reload.failed==0' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "history-terminal retry counter totals"
 writer_retry_complete finish-history-terminal
 [ "$retry_history_time" = "$retry_state_time" ] || writer_retry_failures="$writer_retry_failures finish-history-terminal:$retry_history_time/$retry_state_time"
 [ "$writer_retry_takeover_rc" -eq 0 ] || writer_retry_failures="$writer_retry_failures finish-history-terminal-takeover:$writer_retry_takeover_rc"
@@ -330,9 +523,13 @@ cam_action_counter_begin module_reload "$writer_retry_id"
 cp "$PIM_CAMERA_STATE_DIR/recovery/history/$writer_retry_id.json" "$WORK/running-history.json"
 cam_action_counter_finish module_reload "$writer_retry_id" SUCCEEDED 0
 retry_state_time=$(jq -r '.actions.module_reload.last_finished_at' "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+retry_state_terminal=$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+jq -e '.actions.module_reload.attempted==1 and .actions.module_reload.succeeded==1 and .actions.module_reload.failed==0' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "state-terminal fixture counter totals"
 cp "$WORK/running-history.json" "$PIM_CAMERA_STATE_DIR/recovery/history/$writer_retry_id.json"
 cam_action_counter_finish module_reload "$writer_retry_id" SUCCEEDED 0
 retry_history_time=$(jq -r '.actions[0].finished_at' "$PIM_CAMERA_STATE_DIR/recovery/history/$writer_retry_id.json")
+[ "$retry_state_terminal" = "$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail "state-terminal retry rewrote counters"
+jq -e '.actions.module_reload.attempted==1 and .actions.module_reload.succeeded==1 and .actions.module_reload.failed==0' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "state-terminal retry counter totals"
 writer_retry_complete finish-state-terminal
 [ "$retry_history_time" = "$retry_state_time" ] || writer_retry_failures="$writer_retry_failures finish-state-terminal:$retry_history_time/$retry_state_time"
 [ "$writer_retry_takeover_rc" -eq 0 ] || writer_retry_failures="$writer_retry_failures finish-state-terminal-takeover:$writer_retry_takeover_rc"
