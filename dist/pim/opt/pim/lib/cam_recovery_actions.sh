@@ -63,14 +63,21 @@ cam_runtime_app() {
 }
 
 cam_cleanup_recording_orphans() {
-    local runtime=$1 dir vehicle started prefix f
+    local runtime=$1 dir canonical vehicle started normalized prefix f
     dir=$(jq -r '.VHL_CAM.tmp_path // empty' "$runtime") || return 64
     vehicle=$(jq -r '.VHL_CAM.vhl_name // empty' "$runtime") || return 64
     started=$(cat "${PIM_CAMERA_SESSION_TIME_FILE:-/tmp/start_video_time_chk}" 2>/dev/null | tr -d '\n')
     [[ $dir = /* && $dir != / && $dir != *'..'* && $vehicle =~ ^[A-Za-z0-9_-]+$ ]] || return 64
-    [[ $started =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}[[:space:]][0-9]{2}:[0-9]{2}(:[0-9]{2})?$ ]] || return 64
+    [ -L "$dir" ] && return 64
+    canonical=$(readlink -f -- "$dir" 2>/dev/null) || return 64
+    [ "$canonical" = "$dir" ] && [ "$canonical" != / ] || return 64
+    case "$started" in
+        [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]\ [0-9][0-9]:[0-9][0-9]:[0-9][0-9]) normalized=$started ;;
+        [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]\ [0-9][0-9]:[0-9][0-9]:[0-9][0-9]) normalized=$started ;;
+        *) return 0 ;;
+    esac
     [ -d "$dir" ] || return 0
-    prefix="$vehicle"_$(date -d "$started" '+%Y%m%d_%H%M' 2>/dev/null) || return 64
+    prefix="$vehicle"_$(date -d "$normalized" '+%Y%m%d_%H%M' 2>/dev/null) || return 0
     shopt -s nullglob
     for f in "$dir/$prefix"*.mp4 "$dir/$prefix"*.ts "$dir/$prefix"*.srt "$dir/$prefix"*-vib.bin "$dir/$prefix"*.mp4.part "$dir/$prefix"*.ts.part "$dir/$prefix"*.srt.part; do
         [ -f "$f" ] || continue
@@ -98,21 +105,29 @@ cam_cleanup_shm_overflow() {
 }
 
 cam_bg_checker_path() { printf '%s\n' "${PIM_CAMERA_BG_CHECKER:-$PIM_BIN/BG_Check_for_pim.sh}"; }
-cam_bg_checker_pids() {
-    local bg=$1 cmdline arg found pid
+cam_bg_checker_records() {
+    local bg=$1 root=${PIM_CAMERA_PROCESS_ROOT:-/proc} cmdline stat arg pid start args=()
+    [ -e "$root/.inspect_error" ] && return 2
     for cmdline in "${PIM_CAMERA_PROCESS_ROOT:-/proc}"/[0-9]*/cmdline; do
         [ -r "$cmdline" ] || continue
-        found=0
+        args=()
         while IFS= read -r -d '' arg; do
-            [ "$arg" = "$bg" ] && found=1
+            args+=("$arg")
         done < "$cmdline"
-        [ "$found" -eq 1 ] || continue
+        [ "${args[0]:-}" = "$bg" ] && [[ ${args[1]:-} =~ ^[0-9]+$ ]] || continue
         pid=${cmdline%/cmdline}; pid=${pid##*/}
-        printf '%s\n' "$pid"
+        stat=${cmdline%/cmdline}/stat
+        [ -r "$stat" ] || return 2
+        start=$(awk '{print $22}' "$stat" 2>/dev/null) || return 2
+        [[ $start =~ ^[0-9]+$ ]] || return 2
+        printf '%s %s\n' "$pid" "$start"
     done
 }
 cam_bg_checker_present() {
-    cam_bg_checker_pids "$1" | grep -q .
+    local records rc
+    records=$(cam_bg_checker_records "$1"); rc=$?
+    [ "$rc" -eq 0 ] || return "$rc"
+    [ -n "$records" ]
 }
 cam_process_present() {
     local runtime=$1 kind=$2 app bg
@@ -128,22 +143,32 @@ cam_signal_process() {
     case "$kind" in
         app) app=$(cam_runtime_app "$runtime") || return $?; cam_effect "$runtime" pkill "$signal" -x "$app" ;;
         bg)
+            local records pid start current
             bg=$(cam_bg_checker_path)
-            while IFS= read -r pid; do cam_effect "$runtime" kill "$signal" "$pid" || return $?; done < <(cam_bg_checker_pids "$bg")
+            records=$(cam_bg_checker_records "$bg") || return $?
+            [ -n "$records" ] || return 1
+            while read -r pid start; do
+                current=$(awk '{print $22}' "${PIM_CAMERA_PROCESS_ROOT:-/proc}/$pid/stat" 2>/dev/null) || return 2
+                [ "$current" = "$start" ] || continue
+                cam_effect "$runtime" kill "$signal" "$pid" || return $?
+            done <<< "$records"
             ;;
         ord|vcm) cam_effect "$runtime" pkill "$signal" -x "$kind" ;;
         *) return 64 ;;
     esac
 }
 cam_stop_process() {
-    local runtime=$1 kind=$2 timeout=${PIM_CAMERA_QUIESCE_TIMEOUT_SEC:-5} i=0
-    cam_process_present "$runtime" "$kind" || return 0
+    local runtime=$1 kind=$2 timeout=${PIM_CAMERA_QUIESCE_TIMEOUT_SEC:-5} i=0 rc
+    [[ $timeout =~ ^[0-9]+$ ]] || timeout=5
+    cam_process_present "$runtime" "$kind"; rc=$?
+    [ "$rc" -eq 0 ] || { [ "$rc" -eq 1 ] && return 0; return "$rc"; }
     cam_signal_process "$runtime" -TERM "$kind" || return $?
     while cam_process_present "$runtime" "$kind"; do
         [ "$i" -ge "$timeout" ] && break
         sleep 1; i=$((i + 1))
     done
-    cam_process_present "$runtime" "$kind" || return 0
+    cam_process_present "$runtime" "$kind"; rc=$?
+    [ "$rc" -eq 0 ] || { [ "$rc" -eq 1 ] && return 0; return "$rc"; }
     cam_signal_process "$runtime" -KILL "$kind" || return $?
     i=0
     while cam_process_present "$runtime" "$kind"; do
@@ -231,10 +256,19 @@ cam_action_gstapp_restart() {
     cam_wait_process_ready "$runtime" 0
 }
 
-cam_module_loaded() { lsmod | awk -v module="${1//-/_}" '$1==module {found=1} END {exit !found}'; }
+cam_module_loaded() {
+    local module=${1//-/_} table matches rc
+    table=$(lsmod); rc=$?
+    [ "$rc" -eq 0 ] || return 2
+    matches=$(awk -v module="$module" '$1 == module {print "loaded"}' <<< "$table"); rc=$?
+    [ "$rc" -eq 0 ] || return 2
+    [ -n "$matches" ] && return 0
+    return 1
+}
 cam_unload_module() {
-    local runtime=$1 module=$2
-    cam_module_loaded "$module" || return 0
+    local runtime=$1 module=$2 rc
+    cam_module_loaded "$module"; rc=$?
+    [ "$rc" -eq 0 ] || { [ "$rc" -eq 1 ] && return 0; return "$rc"; }
     cam_effect "$runtime" rmmod "$module"
 }
 cam_module_reload() {
