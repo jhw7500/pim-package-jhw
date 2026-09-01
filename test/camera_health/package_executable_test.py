@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PACKAGE_ROOT = ROOT / "dist/pim"
 ENTRYPOINTS = (
     Path("opt/pim/bin/camera_config_bootstrap.sh"),
+    Path("opt/pim/bin/camera_runtime_config.py"),
     Path("opt/pim/bin/camera_capture_probe.py"),
     Path("opt/pim/bin/camera_config_expectation.py"),
     Path("opt/pim/bin/camera_health_shadow_compare.py"),
