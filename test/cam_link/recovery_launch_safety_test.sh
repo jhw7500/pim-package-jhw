@@ -36,7 +36,7 @@ expect_rc() {
 assert_no_target_execs() {
     [ ! -s "$PIM_CAMERA_CALL_LOG" ] || {
         cat "$PIM_CAMERA_CALL_LOG" >&2
-        fail "$1 executed a target after owner rollover"
+        fail "$1 executed a forbidden target"
     }
 }
 fake_owner_stat() {
@@ -132,7 +132,7 @@ assert_no_target_execs app_probe_error
 
 prepare_context
 rm -rf "$PIM_CAMERA_PROCESS_ROOT"/*
-printf 'gstApp\n' > "$PIM_CAMERA_PRESENT_FILE"
+: > "$PIM_CAMERA_PRESENT_FILE"
 touch "$PIM_CAMERA_PROCESS_ROOT/.inspect_error"
 : > "$PIM_CAMERA_CALL_LOG"
 expect_rc 2 run_start_cam_rc
