@@ -1,8 +1,8 @@
 # cam-operate 상시 유지와 직렬 recovery 설계
 
-> 작성일: 2026-09-01  
-> 상태: 구현 전 설계 승인본  
-> 대상 이슈: GitHub #61 `fix(cam): cam-operate 상시 유지와 recovery 직렬화·횟수 관리`  
+> 작성일: 2026-09-01
+> 상태: 구현 전 설계 승인본
+> 대상 이슈: GitHub #61 `fix(cam): cam-operate 상시 유지와 recovery 직렬화·횟수 관리`
 > 코드 기준: `pim-package-jhw` `f74964871478b77f077d0491aac1bf21e690fc2c`
 
 ## 1. 결정
@@ -12,9 +12,10 @@
 모듈 reload, camera hard reset, reboot fallback은 단일 요청 인터페이스와 단일 executor를
 통해 직렬 실행한다.
 
-서비스 invocation은 시작할 때 검증된 edgeconf 설정 세대를 고정하며, 어느 순간에도 유효한
-active 세대는 하나뿐이다. 실행 중 `/root/shared_v/edgeconf_pim.json`이 바뀌어도 현재
-세대에는 섞어 적용하지 않는다. 새 설정은 명시적인 `cam-operate` 재시작 또는
+서비스 invocation은 시작할 때 검증된 camera config bundle 세대를 고정하며, 어느 순간에도
+유효한 active 세대는 하나뿐이다. bundle은 `edgeconf_pim.json`과 `ord_vcm_conf.json` 두
+파일을 반드시 함께 포함한다. 실행 중 `/root/shared_v`의 어느 파일이 바뀌어도 현재 세대에는
+섞어 적용하지 않는다. 새 설정은 명시적인 `cam-operate` 재시작 또는
 `cam-recoveryctl apply-config`에서만 candidate로 검증하고, reset/restart 검증까지 성공한
 뒤 원자적으로 새 active 세대로 승격한다. `apply-config`는 같은 invocation 안에서 허용되는
 유일한 config-generation 경계다.
@@ -42,13 +43,13 @@ ACTIVE 유지 조건은 서비스 내부의 자동 recovery에 적용한다. 운
 - `/tmp/cam_recovery.json`과 `/tmp/cam_op_lock`은 영속성이 없고 원자적 상태 전이를
   보장하지 않는다.
 - `chk_cam_operate.sh`, `start_cam.sh`, `restart_app.sh`, `kill_test.sh`, `init_cam.sh`가
-  edgeconf를 서로 다른 시점에 선택하거나 cache한다.
+  edgeconf/ord 설정을 서로 다른 시점과 경로에서 선택하거나 cache한다.
 
 현재 JSON 동작과 변경 후 정책은 다음과 같다.
 
 | 경로 | 현재 동작 | 변경 후 동작 |
 |---|---|---|
-| `chk_cam_operate.sh` | 서비스 시작 때 최신 wildcard JSON을 읽고 실행 중 reload하지 않음 | invocation의 고정 설정 세대만 사용 |
+| `chk_cam_operate.sh` | 서비스 시작 때 최신 wildcard edgeconf와 고정 경로 ord JSON을 읽고 실행 중 reload하지 않음 | invocation의 고정 bundle 세대만 사용 |
 | `start_cam.sh` | 호출할 때마다 최신 wildcard JSON 선택 | executor가 넘긴 고정 세대만 사용 |
 | `restart_app.sh` | 프로세스 시작 때 JSON을 읽고 cache한 뒤 무한 loop | 독립 loop 제거, daemon이 고정 세대로 liveness 관리 |
 | `kill_test.sh` / `killcam` | 호출 때 최신 JSON을 읽지만 주로 cleanup path에 사용 | deprecated wrapper가 `gstapp_restart` 요청, JSON 직접 접근 금지 |
@@ -67,7 +68,7 @@ ACTIVE 유지 조건은 서비스 내부의 자동 recovery에 적용한다. 운
 - 모든 recovery action을 한 owner와 한 executor가 직렬 실행한다.
 - 중첩 recovery, orphan worker, 종료 중 gstApp 재기동을 차단한다.
 - action별 시도/성공/실패/연속 실패 횟수와 request history를 재시작 후에도 보존한다.
-- 설정 세대를 원자적으로 고정하고 모든 결과에 config SHA-256을 남긴다.
+- 두 JSON을 한 설정 세대로 원자적으로 고정하고 모든 결과에 개별/bundle SHA-256을 남긴다.
 - candidate 적용 실패 시 기존 active 설정 세대를 보존한다.
 - 같은 boot의 명시적 서비스 재시작에서 module/hardware reset을 보장한다.
 - 기존 직접 명령은 한 release 동안 호환 wrapper로 유지한다.
@@ -78,6 +79,8 @@ ACTIVE 유지 조건은 서비스 내부의 자동 recovery에 적용한다. 운
 - 여러 recovery 요청을 queue로 적재하지 않는다. 진행 중이면 새 요청은 BUSY다.
 - 임의 JSON 변경을 실행 중 hot reload하지 않는다.
 - 외부 binary인 gstApp 내부의 JSON open 구현을 이 저장소에서 단정하거나 변경하지 않는다.
+- camera recovery가 `ord-operate`/`vcm-operate` 서비스 수명을 제어하게 만들지 않는다. 두
+  서비스의 config reload/restart 정책은 각 서비스 owner 범위다.
 - 별도 저장소/배포본의 `pim-check` 구현을 이 변경만으로 완료했다고 간주하지 않는다.
 
 ## 4. 소유권 모델
@@ -127,48 +130,62 @@ systemd unit은 `KillMode=control-group`을 사용해 invocation의 잔존 child
 
 ### 5.1 설정 source와 snapshot
 
-운영자 소유 canonical source는 정확히
-`/root/shared_v/edgeconf_pim.json` 하나다. `edgeconf_*.json` 최신 파일 선택은 제거한다.
-daemon은 canonical source를 직접 수정하지 않는다.
+운영자 소유 canonical source는 정확히 다음 두 파일이다.
+
+- `/root/shared_v/edgeconf_pim.json`
+- `/root/shared_v/ord_vcm_conf.json`
+
+`edgeconf_*.json` 최신 파일 선택은 제거한다. 두 파일을 한 bundle로 검증하며 하나가
+missing/invalid이면 generation 전체를 거부한다. daemon은 canonical source를 직접 수정하지
+않는다.
 
 고정 세대는 package의 초기 default JSON을 영구 복사해 쓰는 모델이 아니다. 각 명시적 반영
-시점에 존재하는 canonical JSON을 검증해 만든 snapshot이다. 따라서 실행 중 편집은 즉시
+시점에 존재하는 canonical JSON bundle을 검증해 만든 snapshot이다. 따라서 실행 중 편집은 즉시
 반영되지 않지만, 다음 명시적 service restart 또는 `apply-config`에는 반영된다.
 
-`pim-camera-config.service`와 `camera_config_bootstrap.sh`의 기존 boot validation 결과는
-유지하되, 서비스 재시작과 `apply-config`에서도 현재 canonical source를 같은 validation
-규칙으로 다시 검증한다. 검증 실패 시 현재 pinned generation을 유지하고 새 action을
-시작하지 않는다.
+runtime config 위치는 `/run/pim-camera/config` 하나만 사용한다. 기존
+`camera_config_bootstrap.sh`의 `/tmp/config` publish는 이 경로로 이전하고 `/tmp`에 두 번째
+runtime copy를 만들지 않는다. `pim-camera-config.service`가 `RemainAfterExit=yes`와
+`RuntimeDirectory=pim-camera`로 boot 동안 directory lifetime을 소유하고, 첫 validated
+generation을 camera/ORD/VCM 서비스보다 먼저 publish한다.
+
+서비스 재시작과 `apply-config`에서도 현재 canonical bundle을 bootstrap과 같은 validation
+규칙으로 다시 검증한다. 검증 실패 시 현재 pinned generation을 유지하고 새 action을 시작하지
+않는다.
 
 검증된 파일은 다음 metadata와 함께 immutable runtime candidate generation으로 publish한다.
 
 - generation UUID
-- full config SHA-256
-- normalized hardware-epoch SHA-256
-- canonical source path와 source SHA-256
+- `edgeconf_pim.json` SHA-256
+- `ord_vcm_conf.json` SHA-256
+- 파일 이름과 개별 SHA를 key-sort한 manifest의 bundle SHA-256
+- 두 schema에서 camera 관련 필드만 정규화한 hardware-epoch SHA-256
+- 각 canonical source path와 source SHA-256
 - validation 시각
 - boot ID와 invocation UUID
 
-runtime generation은 `/run/pim-camera/config/generations/<generation-id>/`에 저장한다.
+runtime generation은 `/run/pim-camera/config/generations/<generation-id>/`에 두 JSON과
+`manifest.json`을 함께 저장한다. manifest 생성 규칙과 bundle SHA 계산 입력은 versioned
+schema로 고정한다.
 classifier가 고른 action은 candidate snapshot으로 실행·검증한다. 성공한 뒤에만
 `/run/pim-camera/config/active.json`을 원자적으로 교체하며, 실패하면 기존 active pointer를
 유지하고 candidate를 failed history에 연결한다. 하위 process에는 canonical path가 아니라
-선택된 snapshot path를 명시적으로 전달한다. recovery request와 결과에는 이전 active와
-candidate generation UUID 및 두 SHA를 모두 기록한다.
+선택된 generation directory를 명시적으로 전달한다. recovery request와 결과에는 이전
+active와 candidate generation UUID, 두 file SHA, bundle SHA, hardware SHA를 모두 기록한다.
 
 daemon은 canonical JSON을 쓰거나 정규화 결과를 되돌려 쓰지 않는다. 기존
 `force_edgeconf_app_to_gstapp` 형태의 runtime canonical mutation은 제거한다.
 
 ### 5.2 반영 시점
 
-| 사건 | 새 canonical JSON 반영 | 최소 action |
+| 사건 | 새 canonical bundle 반영 | 최소 action |
 |---|---|---|
-| 실행 중 파일 편집 | 반영 안 함 | 없음 |
+| 실행 중 두 canonical 파일 중 하나 또는 모두 편집 | 반영 안 함 | 없음 |
 | `killcam` / `init_cam.sh` / `cam_hard_reset.sh` 직접 호출 | 반영 안 함 | wrapper가 요청한 action |
 | 자동 health recovery | 반영 안 함 | 기존 pinned generation으로 정책 action |
 | 같은 boot의 `systemctl restart cam-operate` | validation/action 성공 시 반영 | `module_reload` |
 | `cam-recoveryctl apply-config` | validation/action 성공 시 반영 | diff classifier 결과 |
-| 새 boot의 첫 managed activation | boot validation 결과 반영 | 정상 module load |
+| 새 boot의 첫 managed activation | 두 파일 boot validation 결과 반영 | 정상 module load |
 
 `apply-config`는 다섯 번째 recovery action type이 아니라 같은 pending/active lease를 사용하는
 config control request다. classifier가 고른 실제 action만 해당 action counter에 반영한다.
@@ -186,6 +203,9 @@ normalized hardware projection은 적어도 다음 의미 필드를 포함한다
 
 구현 시 실제 JSON path 목록을 한 함수/상수에 중앙화하고 fixture test로 고정한다. key 순서,
 공백, 설명용 metadata처럼 hardware에 영향을 주지 않는 변경은 hardware SHA를 바꾸지 않는다.
+현재 `ord_vcm_conf.json`의 `ETC.camera_startup_grace_sec`는 health/control policy로 분류하고
+hardware epoch에는 넣지 않는다. 향후 ORD/VCM schema에 camera reset/topology field가 추가되면
+versioned projection과 test를 함께 갱신한다.
 
 reset 결정은 다음 순서다.
 
@@ -204,7 +224,7 @@ reset 결정은 다음 순서다.
 state가 없거나 boot ID가 다르면 첫 managed activation으로 보되, 이미 실행 중인 gstApp,
 terminal이 아닌 recovery 또는 모순된 module 상태가 발견되면 unknown/dirty로 분류해 hard
 reset으로 상향한다. 각 activation은
-`last_invocation_id`, `clean_stop`, pinned config SHA, active/interrupted recovery를 갱신한다.
+`last_invocation_id`, `clean_stop`, pinned bundle SHA, active/interrupted recovery를 갱신한다.
 
 ## 6. 요청 인터페이스
 
@@ -289,7 +309,10 @@ CAM_RECOVERY_RESULT id=<uuid> type=<type> status=SUCCEEDED rc=0
     results/<request-id>.json
   config/
     active.json
-    generations/<generation-id>/edgeconf_pim.json
+    generations/<generation-id>/
+      edgeconf_pim.json
+      ord_vcm_conf.json
+      manifest.json
 ```
 
 ### 7.2 persistent
@@ -306,13 +329,14 @@ CAM_RECOVERY_RESULT id=<uuid> type=<type> status=SUCCEEDED rc=0
 
 - `attempted`, `succeeded`, `failed`, `consecutive_failures`
 - `last_request_id`, `last_started_at`, `last_finished_at`
-- `last_status`, `last_rc`, `last_config_sha256`
+- `last_status`, `last_rc`, `last_bundle_sha256`
 
 attempt counter는 action이 `running`으로 전이할 때 올린다. 성공/실패와 연속 실패 값은
 terminal 전이에서 갱신한다. fallback으로 실제 실행한 action도 별도 counter를 올린다.
 
 history에는 top-level request, source/reason, parent/fallback 관계, 모든 state timestamp,
-실행 action, config generation/SHA, 검증 결과, exit code, boot/invocation/owner 정보를 남긴다.
+실행 action, config generation과 file/bundle/hardware SHA, 검증 결과, exit code,
+boot/invocation/owner 정보를 남긴다.
 모든 JSON 갱신은 동일 filesystem의 temp file에 write+fsync한 뒤 rename하고, 필요한 경우
 parent directory도 fsync한다.
 
@@ -327,7 +351,7 @@ interrupted 표식은 같은 boot 재시작 reset classifier를 hard reset으로
 1. owner와 request lease 검증
 2. 새 health-trigger 억제 및 gstApp/child quiesce
 3. 선택 action 실행
-4. pinned config로 gstApp 시작
+4. pinned generation의 edgeconf/ord bundle로 gstApp과 camera-owned child 시작
 5. 제한 시간 내 process, channel, camera health 검증
 6. result/counter/history 원자적 기록
 7. health-trigger 재개
@@ -345,19 +369,24 @@ hard reset 실패 뒤 `reboot_fallback`은 compare-and-set 표식으로 top-leve
 
 | 구성요소 | 책임 |
 |---|---|
+| `pim-camera-config.service` / `camera_config_bootstrap.sh` | boot bundle validation, `/run/pim-camera/config` 첫 generation과 manifest publish |
 | 신규 `dist/pim/opt/pim/bin/cam-recoveryctl` | request/apply-config/status CLI, validation, BUSY와 wait 처리 |
 | 신규 `dist/pim/opt/pim/lib/cam_recovery.sh` | lock, atomic JSON, counter/history, reconciliation 공통 함수 |
-| `chk_cam_operate.sh` | 유일한 owner/executor, app liveness와 recovery policy 통합 |
-| `start_cam.sh` | 고정 config path와 owner token을 받아 gstApp 실행 |
+| `chk_cam_operate.sh` | 유일한 owner/executor, 고정 bundle로 app liveness와 recovery policy 통합 |
+| `start_cam.sh` | generation directory와 owner token을 받아 gstApp 실행 |
 | `restart_app.sh` | 독립 무한 loop 제거; 필요하면 deprecated forwarding shim만 유지 |
 | `cam_operate_stop.sh` | owner revoke -> worker quiesce -> gstApp stop 순서 보장 |
 | `cam_state.sh` | 새 persistent state 조회/기록 API 사용 |
+| `BG_Check_for_pim.sh`와 camera-owned descendant | 같은 generation directory 사용, canonical source 직접 read 금지 |
 | `pim_guardian.py` | 직접 script/systemctl 대신 `cam-recoveryctl request` 호출 |
+| `docs/camera-health/config-consumer-inventory.md` | runtime authority를 `/tmp/config`에서 `/run/pim-camera/config`로 갱신 |
 | `cam-operate.service` | RuntimeDirectory/StateDirectory, control-group kill, stop ordering |
 
-systemd에는 `RuntimeDirectory=pim-camera`, `StateDirectory=pim-camera`, 적절한 directory mode와
-`KillMode=control-group`을 적용한다. exact directive는 대상 Ubuntu 20.04의 systemd 버전에서
-검증한다.
+`pim-camera-config.service`가 `RuntimeDirectory=pim-camera`와 `RemainAfterExit=yes`로 boot
+runtime bundle의 수명을 소유한다. `cam-operate.service`는 config service를 `Requires/After`로
+의존하고 `StateDirectory=pim-camera`, 적절한 directory mode, `KillMode=control-group`을
+적용한다. exact directive와 shared RuntimeDirectory cleanup semantics는 대상 Ubuntu 20.04의
+systemd 버전에서 검증한다.
 
 ## 10. 한 release 호환 정책
 
@@ -380,7 +409,7 @@ history/journal에 기록한다.
 ## 11. 관측성과 guardian 출력
 
 각 request와 state transition은 journald 및 `local0`에 구조화된 한 줄 로그로 기록한다.
-최소 field는 request ID, action type, source, state, rc, boot ID, invocation ID, config SHA,
+최소 field는 request ID, action type, source, state, rc, boot ID, invocation ID, bundle SHA,
 elapsed time이다. reason의 newline/control character는 sanitize한다.
 
 guardian/status 출력에는 다음 recovery summary를 포함한다.
@@ -388,14 +417,14 @@ guardian/status 출력에는 다음 recovery summary를 포함한다.
 - pending/active request와 elapsed time
 - 마지막 terminal request/action/result
 - action별 counter와 consecutive failure
-- 현재 invocation과 pinned config SHA
+- 현재 invocation과 pinned bundle/file SHA
 - interrupted/dirty 여부
 
 status 조회는 상태를 변경하지 않으며 missing/corrupt persistent file을 구분해 보고한다.
 
 ## 12. 오류 처리
 
-- canonical config validation 실패: 기존 pinned 세대 유지, request 실패, hardware 미변경
+- canonical bundle validation 실패: 기존 pinned 세대 유지, request 실패, hardware 미변경
 - owner mismatch: action 시작/계속 금지, interrupted history 기록
 - atomic state write 실패: 외부 action 시작 전이면 중단; action 후면 journal에 비상 기록하고
   다음 시작에서 reconcile
@@ -423,6 +452,9 @@ status 조회는 상태를 변경하지 않으며 missing/corrupt persistent fil
 - explicit restart/apply-config의 action 성공만 새 validated SHA를 승격함
 - candidate action 실패는 기존 active pointer를 보존하고 dirty 상태를 기록함
 - daemon과 helper가 canonical JSON을 수정하지 않음
+- 두 JSON 중 하나가 missing/invalid이면 bundle 전체가 거부되고 active pointer가 유지됨
+- 두 file hash와 manifest의 deterministic bundle hash가 재현됨
+- camera runtime consumer가 `/tmp/config` 또는 `/root/shared_v`를 직접 읽지 않음
 - same-boot restart는 최소 module reload, hardware SHA 변경/dirty는 hard reset
 - new boot 첫 activation은 normal module load
 - key order/공백/app-only 변경은 hardware SHA를 바꾸지 않음
@@ -444,24 +476,26 @@ status 조회는 상태를 변경하지 않으며 missing/corrupt persistent fil
 - 요청 2개를 동시에 보내도 실제 hardware action은 하나만 실행
 - service restart 시 분류된 module/hard reset이 한 번 실행되고 정상 stream 복구
 - stop/restart stress 중 orphan `restart_app.sh`와 중복 gstApp process가 없음
-- 설정 파일을 실행 중 수정해도 기존 채널은 pinned SHA를 계속 사용
-- `apply-config` 또는 명시적 restart 뒤에만 새 SHA와 설정이 반영
+- 두 canonical 파일 중 하나를 실행 중 수정해도 기존 process는 같은 bundle SHA를 유지
+- `apply-config` 또는 명시적 restart 성공 뒤에만 두 JSON의 새 bundle SHA가 반영
 - module/hard-reset failure injection 결과와 reboot fallback 횟수가 history/counter와 일치
 - 재부팅 뒤 counter/history가 유지되고 interrupted request가 정확히 reconcile
 - `pim-check`가 새 request/sentinel로 전환된 배포본에서 end-to-end 판정 통과
 
 ## 14. rollout과 완료 조건
 
-1. atomic state/config library와 CLI를 test-first로 추가한다.
-2. daemon owner/executor와 app liveness를 통합한다.
-3. stop ordering과 systemd ownership을 변경한다.
-4. guardian과 legacy wrapper를 전환한다.
-5. host test와 package gate를 통과한다.
-6. 대상 보드에서 service ACTIVE, concurrency, reset classifier, config pinning을 검증한다.
-7. 한 release 동안 deprecated 호출 telemetry를 확인한 뒤 제거 계획을 확정한다.
+1. bootstrap destination을 `/run/pim-camera/config`로 옮기고 two-file manifest를 test-first로
+   추가한다.
+2. atomic state/config library와 CLI를 test-first로 추가한다.
+3. daemon owner/executor와 app liveness를 통합한다.
+4. stop ordering과 systemd ownership을 변경한다.
+5. guardian, camera-owned config consumer, legacy wrapper를 전환한다.
+6. host test와 package gate를 통과한다.
+7. 대상 보드에서 service ACTIVE, concurrency, reset classifier, config pinning을 검증한다.
+8. 한 release 동안 deprecated 호출 telemetry를 확인한 뒤 제거 계획을 확정한다.
 
 완료는 코드가 존재하는 것만으로 판정하지 않는다. 위 host/board acceptance가 통과하고,
-모든 자동 recovery history가 단일 owner와 pinned config SHA를 가리키며, 서비스 종료 구간에
+모든 자동 recovery history가 단일 owner와 pinned bundle SHA를 가리키며, 서비스 종료 구간에
 gstApp 재기동이 관측되지 않아야 한다.
 
 ## 15. 구현 전 확인할 외부 경계
