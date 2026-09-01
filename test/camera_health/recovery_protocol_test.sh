@@ -125,24 +125,19 @@ cam_reconcile_interrupted
 [ "$before" = "$(cksum "$PIM_CAMERA_STATE_DIR/recovery/history/interrupted.json")" ] || fail "interrupted reconciliation repeated"
 
 owner_active
-rollover_original=$(declare -f _cr_owner_lifecycle_in)
-eval "${rollover_original/_cr_owner_lifecycle_in/_cr_owner_lifecycle_in_real}"
-rollover_checks=0
-_cr_owner_lifecycle_in() {
-    rollover_checks=$((rollover_checks + 1))
-    if [ "$rollover_checks" -eq 2 ]; then
-        jq '.created_at += 1' "$PIM_CAMERA_RUN_DIR/owner.json" > "$WORK/rollover.json" && mv "$WORK/rollover.json" "$PIM_CAMERA_RUN_DIR/owner.json"
-    fi
-    _cr_owner_lifecycle_in_real "$@"
-}
-expect_rc 69 cam_request_submit gstapp_restart rollover "snapshot race"
+PIM_CAMERA_TEST_OWNER_ROLLOVER=pending expect_rc 69 cam_request_submit gstapp_restart rollover "snapshot race"
 [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] || fail "owner rollover created pending lease"
-unset -f _cr_owner_lifecycle_in _cr_owner_lifecycle_in_real
-eval "$rollover_original"
 
 owner_active
 retry_id=$(cam_request_submit apply_config fallback "ordered actions")
 cam_request_claim; cam_request_transition QUIESCING; cam_request_transition RUNNING
+cp "$PIM_CAMERA_RUN_DIR/owner.json" "$WORK/owner-snapshot.json"
+history_before=$(cksum "$PIM_CAMERA_STATE_DIR/recovery/history/$retry_id.json")
+state_before=$(cksum "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+PIM_CAMERA_TEST_OWNER_ROLLOVER=counter_history expect_rc 69 cam_action_counter_begin module_reload "$retry_id"
+[ "$history_before" = "$(cksum "$PIM_CAMERA_STATE_DIR/recovery/history/$retry_id.json")" ] || fail "rollover changed history"
+[ "$state_before" = "$(cksum "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail "rollover changed counter state"
+cp "$WORK/owner-snapshot.json" "$PIM_CAMERA_RUN_DIR/owner.json"
 PIM_CAMERA_TEST_FAILPOINT=counter_begin_after_history expect_rc 70 cam_action_counter_begin module_reload "$retry_id"
 jq -e '.actions | length == 1 and .actions[0].action == "module_reload" and .actions[0].status == "RUNNING"' "$PIM_CAMERA_STATE_DIR/recovery/history/$retry_id.json" >/dev/null || fail "begin partial history"
 cam_action_counter_begin module_reload "$retry_id"
@@ -153,6 +148,11 @@ PIM_CAMERA_TEST_FAILPOINT=counter_finish_after_history expect_rc 70 cam_action_c
 cam_action_counter_finish camera_hard_reset "$retry_id" FAILED 22
 cam_action_counter_begin reboot_fallback "$retry_id"
 cam_action_counter_finish reboot_fallback "$retry_id" SUCCEEDED 0
+cp "$PIM_CAMERA_RUN_DIR/owner.json" "$WORK/owner-result.json"
+PIM_CAMERA_TEST_OWNER_ROLLOVER=result expect_rc 69 cam_request_finish SUCCEEDED 0
+[ ! -e "$PIM_CAMERA_RUN_DIR/recovery/results/$retry_id.json" ] || fail "rollover wrote result"
+[ -f "$PIM_CAMERA_RUN_DIR/recovery/active.json" ] || fail "rollover removed active lease"
+cp "$WORK/owner-result.json" "$PIM_CAMERA_RUN_DIR/owner.json"
 cam_request_finish SUCCEEDED 0
 jq -e '[.actions[].action] == ["module_reload","camera_hard_reset","reboot_fallback"] and [.actions[].status] == ["FAILED","FAILED","SUCCEEDED"]' "$PIM_CAMERA_STATE_DIR/recovery/history/$retry_id.json" >/dev/null || fail "ordered fallback history"
 
