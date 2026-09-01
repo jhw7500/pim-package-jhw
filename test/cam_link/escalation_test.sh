@@ -45,7 +45,10 @@ run_b() {
         date()   { echo "$NOW"; }
         sync()   { :; }
         sleep()  { :; }
-        reboot() { echo "REBOOT_CALLED"; }
+        cam_submit_internal_action() {
+            [ "$1" = reboot_fallback ] && echo "REBOOT_CALLED"
+            return 0
+        }
         logger() { :; }
         # shellcheck disable=SC1090
         source "$FN"

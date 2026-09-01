@@ -11,6 +11,7 @@ python3 pim_guardian_startup_grace_test.py
 python3 config_expectation_test.py
 python3 runtime_config_test.py
 bash recovery_protocol_test.sh
+bash cam_operate_control_test.sh
 python3 capture_probe_test.py
 python3 max9296_producer_test.py
 bash cam_fps_stack_cli_test.sh

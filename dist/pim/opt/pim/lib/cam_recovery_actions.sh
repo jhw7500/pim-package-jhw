@@ -20,8 +20,6 @@ cam_validate_runtime() {
 
 cam_executor_assert_context() {
     local owner active key expected actual
-    [ "${PIM_CAMERA_EXECUTOR:-}" = 1 ] || return 69
-    [ -n "${PIM_CAMERA_REQUEST_ID:-}" ] || return 69
     owner=$(_cr_owner_json) || return 69
     cam_owner_assert "${PIM_CAMERA_OWNER_INVOCATION:-}" "${PIM_CAMERA_OWNER_TOKEN:-}" || return 69
     for key in boot_id invocation_id pid proc_start_time token created_at; do
@@ -36,6 +34,12 @@ cam_executor_assert_context() {
         esac
         [ "$expected" = "$actual" ] || return 69
     done
+    if [ "${PIM_CAMERA_STARTUP_EXECUTOR:-}" = 1 ]; then
+        _cr_owner_snapshot_lifecycle_in "$owner" STARTING || return 69
+        return 0
+    fi
+    [ "${PIM_CAMERA_EXECUTOR:-}" = 1 ] || return 69
+    [ -n "${PIM_CAMERA_REQUEST_ID:-}" ] || return 69
     active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69
     [ "$(jq -r .id <<<"$active")" = "$PIM_CAMERA_REQUEST_ID" ] || return 69
     _cr_record_owner_ready "$active" RECOVERING APPLYING_CONFIG || return 69
@@ -297,7 +301,7 @@ cam_wait_process_ready() {
 
 cam_action_gstapp_restart() {
     local runtime=$1
-    cam_quiesce_gstapp "$runtime" || return $?
+    cam_consumers_prequiesced || cam_quiesce_gstapp "$runtime" || return $?
     cam_cleanup_recording_orphans "$runtime" || return $?
     cam_cleanup_shm_overflow "$runtime" || return $?
     cam_start_gstapp "$runtime" || return $?
@@ -329,7 +333,7 @@ cam_module_reload() {
 
 cam_action_module_reload() {
     local runtime=$1
-    cam_quiesce_consumers "$runtime" || return $?
+    cam_consumers_prequiesced || cam_quiesce_consumers "$runtime" || return $?
     cam_module_reload "$runtime" || return $?
     cam_verify_camera_ready "$runtime" || return $?
     cam_restart_ord "$runtime" || return $?
@@ -350,7 +354,7 @@ cam_action_camera_hard_reset() {
     local runtime=$1 root=$PIM_CAMERA_SYSFS_ROOT csi isi cap m2m d
     csi="$root/bus/platform/drivers/mxc-mipi-csi2-sam"; isi="$root/bus/platform/drivers/mxc-isi"
     cap="$root/bus/platform/drivers/isi-capture"; m2m="$root/bus/platform/drivers/isi-m2m"
-    cam_quiesce_consumers "$runtime" || return $?
+    cam_consumers_prequiesced || cam_quiesce_consumers "$runtime" || return $?
     cam_unload_module "$runtime" imx8-media-dev || return $?
     cam_unload_module "$runtime" max9296 || return $?
     for d in 32e00000.isi:cap_device 32e02000.isi:cap_device; do cam_sysfs_write "$runtime" unbind "$cap/unbind" "$d" || return $?; done
@@ -402,6 +406,15 @@ cam_executor_set_context() {
     PIM_CAMERA_OWNER_TOKEN=$(jq -r .token <<<"$owner")
     PIM_CAMERA_OWNER_CREATED_AT=$(jq -r .created_at <<<"$owner")
     export PIM_CAMERA_EXECUTOR PIM_CAMERA_REQUEST_ID PIM_CAMERA_OWNER_BOOT_ID PIM_CAMERA_OWNER_INVOCATION PIM_CAMERA_OWNER_PID PIM_CAMERA_OWNER_PROC_START_TIME PIM_CAMERA_OWNER_TOKEN PIM_CAMERA_OWNER_CREATED_AT
+}
+
+cam_consumers_prequiesced() {
+    local active
+    [ "${PIM_CAMERA_CONSUMERS_QUIESCED:-}" = 1 ] || return 1
+    cam_executor_assert_context || return $?
+    active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69
+    [ "$(jq -r .type <<<"$active")" = apply_config ] || return 69
+    _cr_record_owner_ready "$active" APPLYING_CONFIG
 }
 
 cam_execute_recovery_request() {
