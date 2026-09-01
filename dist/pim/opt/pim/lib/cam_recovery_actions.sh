@@ -257,10 +257,17 @@ cam_verify_camera_ready() {
 }
 
 cam_verify_process_ready() {
-    local runtime=$1 consumers=${2:-0}
+    local runtime=$1 consumers=${2:-0} kind rc
     cam_side_effect_guard "$runtime" || return $?
-    cam_process_present "$runtime" app && cam_process_present "$runtime" bg || return 1
-    [ "$consumers" = 0 ] || { cam_process_present "$runtime" ord && cam_process_present "$runtime" vcm; }
+    for kind in app bg; do
+        rc=0; cam_process_present "$runtime" "$kind" || rc=$?
+        [ "$rc" -eq 0 ] || return "$rc"
+    done
+    [ "$consumers" = 0 ] && return 0
+    for kind in ord vcm; do
+        rc=0; cam_process_present "$runtime" "$kind" || rc=$?
+        [ "$rc" -eq 0 ] || return "$rc"
+    done
 }
 
 cam_wait_process_ready() {

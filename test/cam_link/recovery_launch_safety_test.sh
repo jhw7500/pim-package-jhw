@@ -12,16 +12,17 @@ printf '#!/bin/sh\nprintf "exec %s\\n" "$(basename "$0")" >> "$PIM_CAMERA_CALL_L
 cp "$W/stub/ord" "$W/stub/vcm"; chmod +x "$W/stub"/*
 source "$PIM_LIB/cam_recovery_actions.sh"
 cam_validate_runtime() { :; }; cam_executor_assert_context() { return "${GUARD_RC:-0}"; }
-_cr_test_owner_rollover() { [ "${ROLLOVER_STAGE:-}" = "$1" ] && return 69 || return 0; }
+_cr_test_owner_rollover() { [ "${PIM_CAMERA_TEST_OWNER_ROLLOVER:-}" = "$1" ] && return 69 || return 0; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
 expect_rc() { local n=$1; shift; set +e; "$@"; local r=$?; set -e; [ "$r" = "$n" ] || fail "$* rc=$r"; }
 
 # Missing binaries fail synchronously and guard/rollover happen inside launch subshell.
 PATH="$W/none" expect_rc 127 cam_launch_consumer "$PIM_CAMERA_RUNTIME_JSON" ord
 PATH="$W/none" expect_rc 127 cam_launch_consumer "$PIM_CAMERA_RUNTIME_JSON" vcm
-: > "$PIM_CAMERA_CALL_LOG"; ROLLOVER_STAGE=launch_ord cam_launch_consumer "$PIM_CAMERA_RUNTIME_JSON" ord; wait || true
+: > "$PIM_CAMERA_CALL_LOG"; PIM_CAMERA_TEST_OWNER_ROLLOVER=launch_ord cam_launch_consumer "$PIM_CAMERA_RUNTIME_JSON" ord; wait || true
 [ ! -s "$PIM_CAMERA_CALL_LOG" ] || fail rollover_ord
-: > "$PIM_CAMERA_CALL_LOG"; ROLLOVER_STAGE=launch_vcm cam_launch_consumer "$PIM_CAMERA_RUNTIME_JSON" vcm; wait || true
+: > "$PIM_CAMERA_CALL_LOG"; PIM_CAMERA_TEST_OWNER_ROLLOVER=launch_vcm cam_launch_consumer "$PIM_CAMERA_RUNTIME_JSON" vcm; wait || true
 [ ! -s "$PIM_CAMERA_CALL_LOG" ] || fail rollover_vcm
-GUARD_RC=69 expect_rc 69 cam_wait_process_ready "$PIM_CAMERA_RUNTIME_JSON" 1
+cam_executor_assert_context() { return 69; }
+expect_rc 69 cam_wait_process_ready "$PIM_CAMERA_RUNTIME_JSON" 1
 echo 'recovery launch safety: PASS'
