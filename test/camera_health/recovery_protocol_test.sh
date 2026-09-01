@@ -10,6 +10,8 @@ export PIM_CAMERA_STATE_DIR="$WORK/var/lib/pim-camera"
 export PIM_CAMERA_BOOT_ID_FILE="$WORK/boot_id"
 export PIM_CAMERA_PROC_ROOT="$WORK/proc"
 export PIM_LIB="$ROOT/dist/pim/opt/pim/lib"
+export PIM_CAMERA_RUNTIME_JSON="$PIM_CAMERA_STATE_DIR/runtime.json"
+export PIM_CAMERA_CALL_LOG="$WORK/call.log"
 DAEMON_PID=4242
 CONTROLLED_WAIT_SECONDS=30
 
@@ -29,6 +31,8 @@ create_normal_terminal_fixture() {
     owner_active
     mkdir -p "$PIM_CAMERA_STATE_DIR"
     printf '{"dirty":false,"sentinel":"normal-terminal"}\n' > "$PIM_CAMERA_STATE_DIR/service-state.json"
+    printf '{"sentinel":"runtime"}\n' > "$PIM_CAMERA_RUNTIME_JSON"
+    printf 'sentinel:call\n' > "$PIM_CAMERA_CALL_LOG"
     normal_terminal_wait="$WORK/normal-terminal-wait.out"
     "$ROOT/dist/pim/opt/pim/bin/cam-recoveryctl" request module_reload --source operator --reason "normal terminal" --wait "$CONTROLLED_WAIT_SECONDS" >"$normal_terminal_wait" &
     wait_pid=$!
@@ -52,6 +56,8 @@ create_normal_terminal_fixture() {
     cp "$PIM_CAMERA_STATE_DIR/recovery/history/$normal_terminal_id.json" "$WORK/normal-terminal-fixture/history.json"
     cp "$PIM_CAMERA_STATE_DIR/recovery/state.json" "$WORK/normal-terminal-fixture/state.json"
     cp "$PIM_CAMERA_STATE_DIR/service-state.json" "$WORK/normal-terminal-fixture/service-state.json"
+    cp "$PIM_CAMERA_RUNTIME_JSON" "$WORK/normal-terminal-fixture/runtime.json"
+    cp "$PIM_CAMERA_CALL_LOG" "$WORK/normal-terminal-fixture/call.log"
 }
 restore_normal_terminal_fixture() {
     reset_protocol_sandbox
@@ -62,30 +68,39 @@ restore_normal_terminal_fixture() {
     cp "$WORK/normal-terminal-fixture/history.json" "$PIM_CAMERA_STATE_DIR/recovery/history/$normal_terminal_id.json"
     cp "$WORK/normal-terminal-fixture/state.json" "$PIM_CAMERA_STATE_DIR/recovery/state.json"
     cp "$WORK/normal-terminal-fixture/service-state.json" "$PIM_CAMERA_STATE_DIR/service-state.json"
+    cp "$WORK/normal-terminal-fixture/runtime.json" "$PIM_CAMERA_RUNTIME_JSON"
+    cp "$WORK/normal-terminal-fixture/call.log" "$PIM_CAMERA_CALL_LOG"
     fake_stat 222
 }
 snapshot_terminal_bytes() {
-    terminal_owner_before=$(cksum "$PIM_CAMERA_RUN_DIR/owner.json")
-    terminal_active_before=$(cksum "$PIM_CAMERA_RUN_DIR/recovery/active.json")
-    terminal_history_before=$(cksum "$PIM_CAMERA_STATE_DIR/recovery/history/$normal_terminal_id.json")
-    terminal_result_before=$(cksum "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json")
-    terminal_counter_before=$(cksum "$PIM_CAMERA_STATE_DIR/recovery/state.json")
-    terminal_service_before=$(cksum "$PIM_CAMERA_STATE_DIR/service-state.json")
+    terminal_owner_before=$(file_fingerprint "$PIM_CAMERA_RUN_DIR/owner.json")
+    terminal_active_before=$(file_fingerprint "$PIM_CAMERA_RUN_DIR/recovery/active.json")
+    terminal_history_before=$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/history/$normal_terminal_id.json")
+    terminal_result_before=$(file_fingerprint "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json")
+    terminal_counter_before=$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+    terminal_service_before=$(file_fingerprint "$PIM_CAMERA_STATE_DIR/service-state.json")
+    terminal_runtime_before=$(file_fingerprint "$PIM_CAMERA_RUNTIME_JSON")
+    terminal_call_before=$(file_fingerprint "$PIM_CAMERA_CALL_LOG")
 }
+file_fingerprint() { if [ -e "$1" ]; then cksum "$1"; else printf 'ABSENT %s\n' "$1"; fi; }
 assert_terminal_bytes_unchanged() {
     local label=$1
-    [ "$terminal_owner_before" = "$(cksum "$PIM_CAMERA_RUN_DIR/owner.json")" ] || fail "$label mutated owner"
-    [ "$terminal_active_before" = "$(cksum "$PIM_CAMERA_RUN_DIR/recovery/active.json")" ] || fail "$label mutated active lease"
-    [ "$terminal_history_before" = "$(cksum "$PIM_CAMERA_STATE_DIR/recovery/history/$normal_terminal_id.json")" ] || fail "$label mutated history"
-    [ "$terminal_result_before" = "$(cksum "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json")" ] || fail "$label mutated result"
-    [ "$terminal_counter_before" = "$(cksum "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail "$label mutated counters"
-    [ "$terminal_service_before" = "$(cksum "$PIM_CAMERA_STATE_DIR/service-state.json")" ] || fail "$label mutated service state"
+    [ "$terminal_owner_before" = "$(file_fingerprint "$PIM_CAMERA_RUN_DIR/owner.json")" ] || fail "$label mutated owner"
+    [ "$terminal_active_before" = "$(file_fingerprint "$PIM_CAMERA_RUN_DIR/recovery/active.json")" ] || fail "$label mutated active lease"
+    [ "$terminal_history_before" = "$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/history/$normal_terminal_id.json")" ] || fail "$label mutated history"
+    [ "$terminal_result_before" = "$(file_fingerprint "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json")" ] || fail "$label mutated result"
+    [ "$terminal_counter_before" = "$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail "$label mutated counters"
+    [ "$terminal_service_before" = "$(file_fingerprint "$PIM_CAMERA_STATE_DIR/service-state.json")" ] || fail "$label mutated service state"
+    [ "$terminal_runtime_before" = "$(file_fingerprint "$PIM_CAMERA_RUNTIME_JSON")" ] || fail "$label mutated runtime"
+    [ "$terminal_call_before" = "$(file_fingerprint "$PIM_CAMERA_CALL_LOG")" ] || fail "$label mutated call log"
 }
 
 printf 'test-boot-id\n' > "$PIM_CAMERA_BOOT_ID_FILE"
 fake_stat 111
 # This source is intentionally the RED boundary: Task 2 has not created it yet.
 source "$PIM_LIB/cam_recovery.sh"
+# shellcheck source=/dev/null
+source "$PIM_LIB/cam_operate_control.sh"
 
 echo "=== STARTING recovery transition is private ==="
 reset_protocol_sandbox
@@ -168,6 +183,246 @@ for conflict in identity status_rc finished_at malformed; do
     expect_rc 70 cam_owner_create "$DAEMON_PID"
     assert_terminal_bytes_unchanged "$conflict conflict"
 done
+
+echo "=== normal terminal action attribution fails closed ==="
+mutation_failures=''
+for mutation in \
+    history_running counter_running counter_wrong_rc counter_wrong_request \
+    counter_wrong_started counter_wrong_finished unknown_action duplicate_public \
+    action_wrong_request action_invalid_status action_invalid_rc action_started_zero \
+    action_finished_before public_countered_false missing_state corrupt_state \
+    malformed_service success_interrupted failed_interrupted; do
+    restore_normal_terminal_fixture
+    history_file="$PIM_CAMERA_STATE_DIR/recovery/history/$normal_terminal_id.json"
+    state_file="$PIM_CAMERA_STATE_DIR/recovery/state.json"
+    case "$mutation" in
+        history_running) jq '.actions[0].status="RUNNING"' "$history_file" > "$WORK/mutation.json" && mv "$WORK/mutation.json" "$history_file" ;;
+        counter_running) jq '.actions.module_reload.last_status="RUNNING"' "$state_file" > "$WORK/mutation.json" && mv "$WORK/mutation.json" "$state_file" ;;
+        counter_wrong_rc) jq '.actions.module_reload.last_rc=9' "$state_file" > "$WORK/mutation.json" && mv "$WORK/mutation.json" "$state_file" ;;
+        counter_wrong_request) jq '.actions.module_reload.last_request_id="00000000-0000-4000-8000-000000000001"' "$state_file" > "$WORK/mutation.json" && mv "$WORK/mutation.json" "$state_file" ;;
+        counter_wrong_started) jq '.actions.module_reload.last_started_at+=1' "$state_file" > "$WORK/mutation.json" && mv "$WORK/mutation.json" "$state_file" ;;
+        counter_wrong_finished) jq '.actions.module_reload.last_finished_at+=1' "$state_file" > "$WORK/mutation.json" && mv "$WORK/mutation.json" "$state_file" ;;
+        unknown_action) jq '.actions[0].action="unknown_action"' "$history_file" > "$WORK/mutation.json" && mv "$WORK/mutation.json" "$history_file" ;;
+        duplicate_public) jq '.actions += [.actions[0]]' "$history_file" > "$WORK/mutation.json" && mv "$WORK/mutation.json" "$history_file" ;;
+        action_wrong_request) jq '.actions[0].request_id="00000000-0000-4000-8000-000000000002"' "$history_file" > "$WORK/mutation.json" && mv "$WORK/mutation.json" "$history_file" ;;
+        action_invalid_status) jq '.actions[0].status="BROKEN"' "$history_file" > "$WORK/mutation.json" && mv "$WORK/mutation.json" "$history_file" ;;
+        action_invalid_rc) jq '.actions[0].rc=5' "$history_file" > "$WORK/mutation.json" && mv "$WORK/mutation.json" "$history_file" ;;
+        action_started_zero) jq '.actions[0].started_at=0' "$history_file" > "$WORK/mutation.json" && mv "$WORK/mutation.json" "$history_file" ;;
+        action_finished_before) jq '.actions[0].finished_at=(.actions[0].started_at-1)' "$history_file" > "$WORK/mutation.json" && mv "$WORK/mutation.json" "$history_file" ;;
+        public_countered_false) jq '.actions[0].countered=false' "$history_file" > "$WORK/mutation.json" && mv "$WORK/mutation.json" "$history_file" ;;
+        missing_state) rm -f "$state_file" ;;
+        corrupt_state) printf '{bad state}\n' > "$state_file" ;;
+        malformed_service) printf '[]\n' > "$PIM_CAMERA_STATE_DIR/service-state.json" ;;
+        success_interrupted) jq '.request.interrupted=true' "$history_file" > "$WORK/mutation.json" && mv "$WORK/mutation.json" "$history_file" ;;
+        failed_interrupted)
+            finished=$(jq -r .finished_at "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json")
+            jq --argjson finished "$finished" '.status="FAILED" | .rc=17 | .finished_at=$finished' "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json" > "$WORK/mutation.result" && mv "$WORK/mutation.result" "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json"
+            jq --argjson finished "$finished" '.request.status="FAILED" | .request.rc=17 | .request.finished_at=$finished' "$history_file" > "$WORK/mutation.base" && mv "$WORK/mutation.base" "$history_file"
+            jq '.request.interrupted=true' "$history_file" > "$WORK/mutation.json" && mv "$WORK/mutation.json" "$history_file"
+            ;;
+    esac
+    snapshot_terminal_bytes
+    set +e
+    cam_owner_create "$DAEMON_PID"
+    mutation_rc=$?
+    set -e
+    if [ "$mutation_rc" -eq 70 ]; then
+        assert_terminal_bytes_unchanged "$mutation"
+    else
+        mutation_failures="$mutation_failures $mutation:$mutation_rc"
+    fi
+done
+[ -z "$mutation_failures" ] || fail "terminal action mutations accepted:$mutation_failures"
+
+echo "=== action counter writers share exact timestamps ==="
+printf '2000000000\n' > "$WORK/incrementing-now"
+_cr_now() {
+    local value
+    value=$(cat "$WORK/incrementing-now") || return 1
+    printf '%s\n' "$value"
+    printf '%s\n' "$((value + 1))" > "$WORK/incrementing-now"
+}
+reset_protocol_sandbox
+owner_active
+mkdir -p "$PIM_CAMERA_STATE_DIR"
+printf '{"dirty":false,"sentinel":"writer-time"}\n' > "$PIM_CAMERA_STATE_DIR/service-state.json"
+writer_time_id=$(cam_request_submit module_reload health "writer timestamp" /source/active 99)
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+cam_action_counter_begin module_reload "$writer_time_id"
+writer_history_started=$(jq -r '.actions[0].started_at' "$PIM_CAMERA_STATE_DIR/recovery/history/$writer_time_id.json")
+writer_state_started=$(jq -r '.actions.module_reload.last_started_at' "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+cam_action_counter_finish module_reload "$writer_time_id" SUCCEEDED 0
+writer_history_finished=$(jq -r '.actions[0].finished_at' "$PIM_CAMERA_STATE_DIR/recovery/history/$writer_time_id.json")
+writer_state_finished=$(jq -r '.actions.module_reload.last_finished_at' "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+cam_request_transition VERIFYING
+cp "$PIM_CAMERA_RUN_DIR/recovery/active.json" "$WORK/writer-time.active"
+cam_request_finish SUCCEEDED 0
+cp "$WORK/writer-time.active" "$PIM_CAMERA_RUN_DIR/recovery/active.json"
+fake_stat 222
+set +e
+cam_owner_create "$DAEMON_PID"
+writer_takeover_rc=$?
+set -e
+[ "$writer_history_started" = "$writer_state_started" ] &&
+    [ "$writer_history_finished" = "$writer_state_finished" ] &&
+    [ "$writer_takeover_rc" -eq 0 ] ||
+    fail "split counter timestamps begin=$writer_history_started/$writer_state_started finish=$writer_history_finished/$writer_state_finished takeover=$writer_takeover_rc"
+
+writer_retry_setup() {
+    reset_protocol_sandbox
+    owner_active
+    mkdir -p "$PIM_CAMERA_STATE_DIR"
+    printf '{"dirty":false,"sentinel":"writer-retry"}\n' > "$PIM_CAMERA_STATE_DIR/service-state.json"
+    writer_retry_id=$(cam_request_submit module_reload health "$1" /source/active 98)
+    cam_request_claim
+    cam_request_transition QUIESCING
+    cam_request_transition RUNNING
+}
+writer_retry_complete() {
+    local label=$1
+    cam_request_transition VERIFYING
+    cp "$PIM_CAMERA_RUN_DIR/recovery/active.json" "$WORK/$label.active"
+    cam_request_finish SUCCEEDED 0
+    cp "$WORK/$label.active" "$PIM_CAMERA_RUN_DIR/recovery/active.json"
+    fake_stat 222
+    set +e
+    cam_owner_create "$DAEMON_PID"
+    writer_retry_takeover_rc=$?
+    set -e
+}
+writer_retry_failures=''
+
+writer_retry_setup "begin history-only retry"
+PIM_CAMERA_TEST_FAILPOINT=counter_begin_after_history expect_rc 70 cam_action_counter_begin module_reload "$writer_retry_id"
+retry_history_time=$(jq -r '.actions[0].started_at' "$PIM_CAMERA_STATE_DIR/recovery/history/$writer_retry_id.json")
+cam_action_counter_begin module_reload "$writer_retry_id"
+retry_state_time=$(jq -r '.actions.module_reload.last_started_at' "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+cam_action_counter_finish module_reload "$writer_retry_id" SUCCEEDED 0
+writer_retry_complete begin-history-only
+[ "$retry_history_time" = "$retry_state_time" ] || writer_retry_failures="$writer_retry_failures begin-history-only:$retry_history_time/$retry_state_time"
+[ "$writer_retry_takeover_rc" -eq 0 ] || writer_retry_failures="$writer_retry_failures begin-history-only-takeover:$writer_retry_takeover_rc"
+
+writer_retry_setup "begin state-only retry"
+cam_action_counter_begin module_reload "$writer_retry_id"
+retry_state_time=$(jq -r '.actions.module_reload.last_started_at' "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+jq '.actions=[]' "$PIM_CAMERA_STATE_DIR/recovery/history/$writer_retry_id.json" > "$WORK/retry-history.json" && mv "$WORK/retry-history.json" "$PIM_CAMERA_STATE_DIR/recovery/history/$writer_retry_id.json"
+cam_action_counter_begin module_reload "$writer_retry_id"
+retry_history_time=$(jq -r '.actions[0].started_at' "$PIM_CAMERA_STATE_DIR/recovery/history/$writer_retry_id.json")
+cam_action_counter_finish module_reload "$writer_retry_id" SUCCEEDED 0
+writer_retry_complete begin-state-only
+[ "$retry_history_time" = "$retry_state_time" ] || writer_retry_failures="$writer_retry_failures begin-state-only:$retry_history_time/$retry_state_time"
+[ "$writer_retry_takeover_rc" -eq 0 ] || writer_retry_failures="$writer_retry_failures begin-state-only-takeover:$writer_retry_takeover_rc"
+
+writer_retry_setup "finish history-terminal retry"
+cam_action_counter_begin module_reload "$writer_retry_id"
+PIM_CAMERA_TEST_FAILPOINT=counter_finish_after_history expect_rc 70 cam_action_counter_finish module_reload "$writer_retry_id" SUCCEEDED 0
+retry_history_time=$(jq -r '.actions[0].finished_at' "$PIM_CAMERA_STATE_DIR/recovery/history/$writer_retry_id.json")
+cam_action_counter_finish module_reload "$writer_retry_id" SUCCEEDED 0
+retry_state_time=$(jq -r '.actions.module_reload.last_finished_at' "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+writer_retry_complete finish-history-terminal
+[ "$retry_history_time" = "$retry_state_time" ] || writer_retry_failures="$writer_retry_failures finish-history-terminal:$retry_history_time/$retry_state_time"
+[ "$writer_retry_takeover_rc" -eq 0 ] || writer_retry_failures="$writer_retry_failures finish-history-terminal-takeover:$writer_retry_takeover_rc"
+
+writer_retry_setup "finish state-terminal retry"
+cam_action_counter_begin module_reload "$writer_retry_id"
+cp "$PIM_CAMERA_STATE_DIR/recovery/history/$writer_retry_id.json" "$WORK/running-history.json"
+cam_action_counter_finish module_reload "$writer_retry_id" SUCCEEDED 0
+retry_state_time=$(jq -r '.actions.module_reload.last_finished_at' "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+cp "$WORK/running-history.json" "$PIM_CAMERA_STATE_DIR/recovery/history/$writer_retry_id.json"
+cam_action_counter_finish module_reload "$writer_retry_id" SUCCEEDED 0
+retry_history_time=$(jq -r '.actions[0].finished_at' "$PIM_CAMERA_STATE_DIR/recovery/history/$writer_retry_id.json")
+writer_retry_complete finish-state-terminal
+[ "$retry_history_time" = "$retry_state_time" ] || writer_retry_failures="$writer_retry_failures finish-state-terminal:$retry_history_time/$retry_state_time"
+[ "$writer_retry_takeover_rc" -eq 0 ] || writer_retry_failures="$writer_retry_failures finish-state-terminal-takeover:$writer_retry_takeover_rc"
+
+_cr_now() { date +%s; }
+[ -z "$writer_retry_failures" ] || fail "counter retry timestamps diverged:$writer_retry_failures"
+
+echo "=== reciprocal terminal action attribution remains valid ==="
+reset_protocol_sandbox
+owner_active
+mkdir -p "$PIM_CAMERA_STATE_DIR"
+printf '{"dirty":false,"sentinel":"uncountered"}\n' > "$PIM_CAMERA_STATE_DIR/service-state.json"
+uncountered_id=$(cam_request_submit apply_config operator "uncountered terminal" /source/apply 100)
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+_coc_record_step ord_restart SUCCEEDED 0
+_coc_record_step vcm_restart SUCCEEDED 0
+_coc_record_step policy_reload SUCCEEDED 0
+cam_request_transition VERIFYING
+cam_request_finish SUCCEEDED 0
+jq -e --arg id "$uncountered_id" '
+  [.actions[].action]==["ord_restart","vcm_restart","policy_reload"] and
+  all(.actions[]; .request_id==$id and .countered==false and .status=="SUCCEEDED" and .rc==0)
+' "$PIM_CAMERA_STATE_DIR/recovery/history/$uncountered_id.json" >/dev/null || fail "real uncountered terminal fixture"
+uncountered_history=$(cksum "$PIM_CAMERA_STATE_DIR/recovery/history/$uncountered_id.json")
+uncountered_service=$(cksum "$PIM_CAMERA_STATE_DIR/service-state.json")
+[ ! -e "$PIM_CAMERA_STATE_DIR/recovery/state.json" ] || fail "uncountered fixture unexpectedly created global counters"
+fake_stat 222
+expect_rc 0 cam_owner_create "$DAEMON_PID"
+[ "$uncountered_history" = "$(cksum "$PIM_CAMERA_STATE_DIR/recovery/history/$uncountered_id.json")" ] || fail "uncountered takeover rewrote history"
+[ "$uncountered_service" = "$(cksum "$PIM_CAMERA_STATE_DIR/service-state.json")" ] || fail "uncountered takeover rewrote service state"
+[ ! -e "$PIM_CAMERA_STATE_DIR/recovery/state.json" ] || fail "uncountered takeover created global counters"
+[ ! -e "$PIM_CAMERA_RUN_DIR/recovery/active.json" ] || fail "uncountered takeover retained active lease"
+
+reset_protocol_sandbox
+owner_active
+mkdir -p "$PIM_CAMERA_STATE_DIR"
+printf '{"dirty":false,"sentinel":"multiple-public"}\n' > "$PIM_CAMERA_STATE_DIR/service-state.json"
+multiple_public_id=$(cam_request_submit apply_config operator "multiple public terminal" /source/apply 101)
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+cam_action_counter_begin module_reload "$multiple_public_id"
+cam_action_counter_finish module_reload "$multiple_public_id" SUCCEEDED 0
+cam_action_counter_begin gstapp_restart "$multiple_public_id"
+cam_action_counter_finish gstapp_restart "$multiple_public_id" SUCCEEDED 0
+cam_request_transition VERIFYING
+cam_request_finish SUCCEEDED 0
+jq -e --arg id "$multiple_public_id" '
+  [.actions[].action]==["module_reload","gstapp_restart"] and
+  all(.actions[]; .request_id==$id and .status=="SUCCEEDED" and .rc==0)
+' "$PIM_CAMERA_STATE_DIR/recovery/history/$multiple_public_id.json" >/dev/null || fail "real multiple-public terminal fixture"
+multiple_history=$(cksum "$PIM_CAMERA_STATE_DIR/recovery/history/$multiple_public_id.json")
+multiple_counter=$(cksum "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+multiple_service=$(cksum "$PIM_CAMERA_STATE_DIR/service-state.json")
+fake_stat 222
+expect_rc 0 cam_owner_create "$DAEMON_PID"
+[ "$multiple_history" = "$(cksum "$PIM_CAMERA_STATE_DIR/recovery/history/$multiple_public_id.json")" ] || fail "multiple-public takeover rewrote history"
+[ "$multiple_counter" = "$(cksum "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail "multiple-public takeover rewrote counters"
+[ "$multiple_service" = "$(cksum "$PIM_CAMERA_STATE_DIR/service-state.json")" ] || fail "multiple-public takeover rewrote service state"
+[ ! -e "$PIM_CAMERA_RUN_DIR/recovery/active.json" ] || fail "multiple-public takeover retained active lease"
+
+echo "=== interrupted terminal retry preserves matching running evidence ==="
+reset_protocol_sandbox
+owner_active
+mkdir -p "$PIM_CAMERA_STATE_DIR"
+printf '{"dirty":false,"sentinel":"running-interrupted"}\n' > "$PIM_CAMERA_STATE_DIR/service-state.json"
+running_interrupted_id=$(cam_request_submit module_reload health "running interrupted" /source/active 102)
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+cam_action_counter_begin module_reload "$running_interrupted_id"
+running_action=$(jq -c .actions "$PIM_CAMERA_STATE_DIR/recovery/history/$running_interrupted_id.json")
+running_counter=$(cksum "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+fake_stat 222
+PIM_CAMERA_TEST_FAILPOINT=owner_reconcile_after_result expect_rc 70 cam_owner_create "$DAEMON_PID"
+jq -e --arg id "$running_interrupted_id" '.request.id==$id and .request.status=="FAILED" and .request.rc==70 and .request.interrupted==true and .request.interrupted_reason=="owner_stale"' "$PIM_CAMERA_STATE_DIR/recovery/history/$running_interrupted_id.json" >/dev/null || fail "interrupted retry history"
+[ "$running_action" = "$(jq -c .actions "$PIM_CAMERA_STATE_DIR/recovery/history/$running_interrupted_id.json")" ] || fail "interrupted first pass rewrote running action"
+[ "$running_counter" = "$(cksum "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail "interrupted first pass rewrote running counter"
+interrupted_history=$(cksum "$PIM_CAMERA_STATE_DIR/recovery/history/$running_interrupted_id.json")
+interrupted_result=$(cksum "$PIM_CAMERA_RUN_DIR/recovery/results/$running_interrupted_id.json")
+interrupted_counter=$(cksum "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+interrupted_service=$(cksum "$PIM_CAMERA_STATE_DIR/service-state.json")
+expect_rc 0 cam_owner_create "$DAEMON_PID"
+[ "$interrupted_history" = "$(cksum "$PIM_CAMERA_STATE_DIR/recovery/history/$running_interrupted_id.json")" ] || fail "interrupted retry rewrote history"
+[ "$interrupted_result" = "$(cksum "$PIM_CAMERA_RUN_DIR/recovery/results/$running_interrupted_id.json")" ] || fail "interrupted retry rewrote result"
+[ "$interrupted_counter" = "$(cksum "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail "interrupted retry rewrote counters"
+[ "$interrupted_service" = "$(cksum "$PIM_CAMERA_STATE_DIR/service-state.json")" ] || fail "interrupted retry rewrote dirty service state"
+[ ! -e "$PIM_CAMERA_RUN_DIR/recovery/active.json" ] || fail "interrupted retry retained active lease"
 
 echo "=== stale owner acquisition terminalizes accepted leases ==="
 reset_protocol_sandbox

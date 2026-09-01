@@ -296,3 +296,89 @@ The implementation contains no `STARTING:RECOVERING` public edge and no call to 
 - The graph still does not model the changed production shell top-level, so executable test evidence and complete diff review remain necessary.
 
 No Fix round 2 implementation blocker remains.
+
+## Fix round 3
+
+Base: `3a1e0e0e9de7e84960d50a34af9a2db1a3dfbafa`. This round fixes only normal-terminal action/history/global-counter attribution consistency and the timestamp writers required to produce that consistent evidence. It does not add Task 5 liveness, a queue, service control, or later package/systemd behavior.
+
+### RED evidence
+
+1. Action/counter/service mutations were accepted during normal-terminal takeover:
+
+   - Command: `rtk bash test/camera_health/recovery_protocol_test.sh`
+   - Exit: `1`
+   - Failure: `FAIL: terminal action mutations accepted: history_running:0 counter_running:0 counter_wrong_rc:0 counter_wrong_request:0 counter_wrong_started:0 counter_wrong_finished:0 unknown_action:0 duplicate_public:0 action_wrong_request:0 action_invalid_status:0 action_invalid_rc:0 action_started_zero:0 action_finished_before:0 public_countered_false:0 missing_state:0 corrupt_state:0 malformed_service:0 success_interrupted:0 failed_interrupted:0`
+   - The source fixture is a real `cam-recoveryctl` request completed through claim, transitions, public counter begin/finish, request finish, and waiter consumption. Each invalid case changes one attribution field (or removes/duplicates one record) before attempting stale-owner acquisition.
+
+2. Normal counter writers used different timestamps for the same logical action transition:
+
+   - Command: `rtk bash test/camera_health/recovery_protocol_test.sh`
+   - Exit: `1`
+   - Failure: `FAIL: split counter timestamps begin=2000000004/2000000005 finish=2000000006/2000000007 takeover=70`
+   - An incrementing test clock proved that begin and finish each called the clock separately for history and global state, producing evidence the strict takeover validator correctly rejected.
+
+3. The four partial-counter retry directions generated fresh timestamps instead of copying durable evidence:
+
+   - Command: `rtk bash test/camera_health/recovery_protocol_test.sh`
+   - Exit: `1`
+   - Failure: `FAIL: counter retry timestamps diverged: begin-history-only:2000000013/2000000014 begin-history-only-takeover:70 begin-state-only:2000000023/2000000022 begin-state-only-takeover:70 finish-history-terminal:2000000032/2000000033 finish-history-terminal-takeover:70 finish-state-terminal:2000000042/2000000041 finish-state-terminal-takeover:70`
+   - The history-first directions use the real begin/finish failpoints. The reciprocal directions retain one durable side, remove/restore the other side, and invoke the public counter API to exercise its existing idempotent convergence branches.
+
+### GREEN mutation and reciprocal matrix
+
+| Case | Expected result | Final result |
+| --- | --- | --- |
+| History action RUNNING with SUCCEEDED counter | RC70 before takeover mutation | PASS |
+| Counter RUNNING, wrong rc/request/start/finish | RC70 before takeover mutation | PASS (5 cases) |
+| Unknown action, duplicate public action, wrong action request | RC70 before takeover mutation | PASS (3 cases) |
+| Invalid action status/rc/start/finish or contradictory public metadata | RC70 before takeover mutation | PASS (5 cases) |
+| Missing/corrupt global recovery state with public action | RC70 before takeover mutation | PASS (2 cases) |
+| Malformed service state | RC70 before takeover mutation | PASS |
+| SUCCEEDED or ordinary FAILED/17 request marked interrupted | RC70 before takeover mutation | PASS (2 cases) |
+| Real normal public action | Active-only removal; exact history/counter/service preservation | PASS |
+| Real uncountered ord/vcm/policy actions | `countered:false`, terminal shapes; no global counter created | PASS |
+| Real distinct module+gstapp public actions | Both exact counter attributions preserved | PASS |
+| Synthetic owner-stale FAILED/70 with matching RUNNING public action/counter | Existing forensic evidence preserved across durable-result retry | PASS |
+| Normal begin/finish and four partial retry directions under incrementing clock | Exact history/state timestamps and successful terminal takeover | PASS |
+
+For every invalid case the test snapshots owner, active lease, history, result, recovery counter state (including absence), service state, runtime, and call log after the mutation. RC70 is accepted only when every fingerprint remains byte-identical.
+
+### Production invariants
+
+- Terminal takeover classifies interruption metadata before any persistent write. Interruption fields are absent for normal terminal requests; only exact `FAILED`, `rc=70`, `interrupted=true`, `interrupted_reason=owner_stale` enables the interrupted evidence shape.
+- Public terminal actions have the exact generated six-field shape. The exact owner-stale interrupted form may instead retain the generated four-field RUNNING shape. Normal terminal requests cannot contain RUNNING actions.
+- Uncountered `ord_restart`, `vcm_restart`, and `policy_reload` actions require their exact generated terminal shape with `countered:false`. Unknown actions, extra/contradictory metadata, duplicate names, request-id mismatches, invalid status/rc pairs, and invalid timestamps fail closed.
+- Every public action requires the global recovery state file, strict `_cr_state_valid`, and exact matching `last_request_id`, `last_status`, `last_rc`, `last_started_at`, and `last_finished_at`. Validation never repairs or increments counters.
+- Existing service state, when present, must parse as an object and is preserved byte-for-byte during normal-terminal takeover.
+- The attribution preflight runs after in-memory terminal convergence is calculated but before dirty marking, history/result writes, lease removal, or replacement owner publication.
+- Normal counter begin/finish uses one clock value for both durable records. Partial retries copy the existing history/state start or finish timestamp to the missing side, preserving attempted/success/failed counts and the established failpoint convergence behavior.
+
+### Fresh final-head verification
+
+| Command | Exit/result |
+| --- | --- |
+| `rtk bash -n dist/pim/opt/pim/lib/cam_recovery.sh dist/pim/opt/pim/lib/cam_operate_control.sh dist/pim/opt/pim/lib/cam_recovery_actions.sh dist/pim/opt/pim/bin/chk_cam_operate.sh` | `0` |
+| `rtk bash test/camera_health/recovery_protocol_test.sh` | `0`, `recovery protocol: PASS` |
+| `rtk bash test/camera_health/cam_operate_control_test.sh` | `0`, `cam operate control: PASS` |
+| `rtk bash test/cam_link/recovery_actions_test.sh` | `0`, `recovery actions: PASS` |
+| `rtk bash test/cam_link/recovery_actions_safety_test.sh` | `0`, `recovery actions safety: PASS` |
+| `rtk bash test/cam_link/recovery_launch_safety_test.sh` | `0`, `recovery launch safety: PASS` |
+| `rtk bash test/cam_link/escalation_test.sh` | `0`, `7 passed / 0 failed` |
+| `rtk bash test/camera_health/run_all.sh` | `0`, including updated protocol/control PASS |
+| `rtk bash test/cam_link/run_all.sh -v` | `0`, `all passed (14)` |
+| `rtk shellcheck -S error` on the changed production and protocol-test shell files | `0` |
+| `rtk git diff --check` | `0` |
+
+### Graph and diff review
+
+The graph incremental update reported two changed paths, one re-parsed file, 16 updated nodes, 725 updated edges, and no parse errors. `detect_changes` reported eight indexed protocol-test helpers, risk `0.40`, and zero affected flows. The changed production Bash top-level again returned `target not indexed`, so its zero-flow/test-gap output is a parser limitation rather than coverage evidence. The production diff and protocol-test diff were reviewed completely; the focused and aggregate executable gates above are the authoritative coverage evidence.
+
+The final scope is limited to the recovery protocol implementation, its protocol regression test, and this Task 4 report. No public request/action type, lifecycle edge, queue, SHA/generation state, fallback, or service-control path was added.
+
+### Remaining concerns
+
+- Multi-file durability remains ordered and idempotent rather than filesystem-wide atomic. The four public-counter partial directions and terminal result/history partial directions are covered explicitly.
+- Verification remains host/stub based; real target-board timing and device/process teardown remain later acceptance work.
+- The code-review graph still cannot model the production shell top-level, requiring complete diff inspection plus executable protocol/action gates.
+
+No Fix round 3 implementation blocker remains.
