@@ -33,7 +33,7 @@ request() {
     if [ -n "$wait" ]; then wait_for_result "$id" "$type" "$wait"; else printf '%s\n' "$id"; fi
 }
 case "${1:-}" in
-    request) [ $# -ge 2 ] || bad; type=$2; shift 2; request "$type" "$@"; exit $?;;
+    request) [ $# -ge 2 ] || bad; type=$2; shift 2; [ "$type" != apply_config ] || bad; request "$type" "$@"; exit $?;;
     apply-config) shift; request apply_config "$@"; exit $?;;
     status)
         shift; id=; json=0
