@@ -141,7 +141,7 @@ cam_state_init() {
 # ─────────────────────────────────────────────
 cam_state_get() {
     local key="$1"
-    local default="${2:-0}"
+    local default="${2-0}"
     local result
     result=$(_cs_read "$key")
     if [ -z "$result" ] || [ "$result" = "null" ]; then

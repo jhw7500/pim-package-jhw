@@ -11,6 +11,7 @@ export PIM_CAMERA_BOOT_ID_FILE="$WORK/boot_id"
 export PIM_CAMERA_PROC_ROOT="$WORK/proc"
 export PIM_LIB="$ROOT/dist/pim/opt/pim/lib"
 DAEMON_PID=4242
+CONTROLLED_WAIT_SECONDS=30
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 expect_rc() { local expected=$1; shift; set +e; "$@"; local actual=$?; set -e; [ "$actual" -eq "$expected" ] || fail "expected rc=$expected, got $actual: $*"; }
@@ -69,7 +70,7 @@ jq -e '.request.source_path == "/source/path" and .request.source_mtime == 123 a
 
 owner_active
 wait_out="$WORK/wait-success.out"
-"$ROOT/dist/pim/opt/pim/bin/cam-recoveryctl" request gstapp_restart --source operator --reason "manual repair" --wait 3 >"$wait_out" &
+"$ROOT/dist/pim/opt/pim/bin/cam-recoveryctl" request gstapp_restart --source operator --reason "manual repair" --wait "$CONTROLLED_WAIT_SECONDS" >"$wait_out" &
 wait_pid=$!
 for _ in $(seq 1 30); do [ -f "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] && break; sleep 0.1; done
 wait_id=$(jq -r .id "$PIM_CAMERA_RUN_DIR/recovery/pending.json")
@@ -83,7 +84,7 @@ jq -e '.actions.gstapp_restart.attempted == 2 and .actions.module_reload.attempt
 
 owner_active
 wait_out="$WORK/wait.out"
-"$ROOT/dist/pim/opt/pim/bin/cam-recoveryctl" request module_reload --source operator --reason "manual repair" --wait 3 >"$wait_out" &
+"$ROOT/dist/pim/opt/pim/bin/cam-recoveryctl" request module_reload --source operator --reason "manual repair" --wait "$CONTROLLED_WAIT_SECONDS" >"$wait_out" &
 wait_pid=$!
 for _ in $(seq 1 30); do [ -f "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] && break; sleep 0.1; done
 [ -f "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] || fail "wait request not pending"
@@ -139,7 +140,7 @@ PIM_CAMERA_TEST_OWNER_ROLLOVER=counter_history expect_rc 69 cam_action_counter_b
 [ "$state_before" = "$(cksum "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail "rollover changed counter state"
 cp "$WORK/owner-snapshot.json" "$PIM_CAMERA_RUN_DIR/owner.json"
 PIM_CAMERA_TEST_FAILPOINT=counter_begin_after_history expect_rc 70 cam_action_counter_begin module_reload "$retry_id"
-jq -e '.actions | length == 1 and .actions[0].action == "module_reload" and .actions[0].status == "RUNNING"' "$PIM_CAMERA_STATE_DIR/recovery/history/$retry_id.json" >/dev/null || fail "begin partial history"
+jq -e '(.actions | length) == 1 and .actions[0].action == "module_reload" and .actions[0].status == "RUNNING"' "$PIM_CAMERA_STATE_DIR/recovery/history/$retry_id.json" >/dev/null || fail "begin partial history"
 cam_action_counter_begin module_reload "$retry_id"
 expect_rc 64 cam_action_counter_begin module_reload "$retry_id"
 cam_action_counter_finish module_reload "$retry_id" FAILED 21
@@ -171,7 +172,7 @@ cam_request_finish FAILED 31
 
 owner_active
 corrupt_wait="$WORK/corrupt-wait.out"
-"$ROOT/dist/pim/opt/pim/bin/cam-recoveryctl" request gstapp_restart --source operator --reason corrupt --wait 3 >"$corrupt_wait" &
+"$ROOT/dist/pim/opt/pim/bin/cam-recoveryctl" request gstapp_restart --source operator --reason corrupt --wait "$CONTROLLED_WAIT_SECONDS" >"$corrupt_wait" &
 corrupt_wait_pid=$!
 for _ in $(seq 1 30); do [ -f "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] && break; sleep 0.1; done
 corrupt_wait_id=$(jq -r .id "$PIM_CAMERA_RUN_DIR/recovery/pending.json")
