@@ -1,5 +1,36 @@
 # MAX9296 Driver Release Notes
 
+## Version 2.11 (2026-09-01)
+
+### Exposure policy
+
+- 640x360의 31~120 FPS에서 수동 `EXP_TIME(0x500c)` 쓰기는 더 이상
+  `-EBUSY`로 거부되지 않는다. 드라이버가 실제 I2C 쓰기 직전에 경고를 남기고
+  적용한다.
+- JSON 초기값은 고속에서도 `ae_on=false`일 때 적용된다. 실행 중에는
+  `v4l2-ctl`의 `exp_time`/`exp_time_chX`로 바꿀 수 있다. `ae_on=true`인
+  고속 기동은 기존처럼 초기 exposure seed를 생략한다.
+- 30 FPS는 기존 qualification 경고 기준이며 hard limit가 아니다. 모드 상한을
+  넘는 FPS는 계속 `-EINVAL`로 거부한다.
+- 120 FPS frame period는 약 8,333 us다. `exp_time=5000`처럼 10,000 us보다
+  작은 값도 설정 가능하다. frame period 이상 값도 쓰지만 로그에
+  `over_period=1`이 남으므로 영상/FPS 확인이 필요하다.
+- 수동 WB `0x510a` 쓰기는 추가하지 않았다.
+
+### Artifacts
+
+- max9296 2.11: SHA-256
+  `8bffdef309bc3ff4dea5bb7e1df8b6eca3558cca53ed549553c5711caa3fd888`
+- srcversion: `FA657080406DAF10D6903F7`
+- source commit: `9cb6c82`
+- gstApp: SHA-256
+  `7e47b6210cd72dfea1d8cc51a0f1713410b201466254fad983c0a87c7362513e`,
+  source commit `54acf75`
+- host-built package: `pim-mp 0.6.3+jhw.camera5`, SHA-256
+  `ac46a0191da33d48a30e733098aebef3a6d1844895ea2e1fe07c0daf9c85f681`
+- camera5 target 설치·런타임 검증은 별도 수행한다. 기존 약 113~115 FPS 수치는
+  2.10/camera3 AE-auto qualification 이력이다.
+
 ## Version 2.10 (2026-08-31)
 
 ### FPS policy

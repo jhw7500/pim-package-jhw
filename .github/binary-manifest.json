@@ -4,13 +4,13 @@
   "binaries": [
     {
       "path": "dist/pim/usr/local/bin/gstApp",
-      "sha256": "c816f84094f7d357c51a20b8c694ea198d0207fac68eca53128e5225b5ddafbe",
-      "size": 2118184,
+      "sha256": "7e47b6210cd72dfea1d8cc51a0f1713410b201466254fad983c0a87c7362513e",
+      "size": 2118400,
       "mode": "100755",
       "arch": "aarch64",
       "source": {
         "repo": "jhw7500/gstApp",
-        "commit": "ba5df22",
+        "commit": "54acf75",
         "build": "./make-for-imx8 -j4 (Yocto SDK 5.10-hardknott, cortexa53-crypto-poky-linux)"
       },
       "required_strings": [
@@ -19,29 +19,31 @@
         "RECORDING_NO_GROWTH",
         "MAX9296_PREPARE",
         "MAX9296_CROP",
+        "MAX9296_EXPOSURE",
         "/run/lock/gstapp-camera.lock"
       ],
-      "note": "MAX9296 병렬 prepare와 edgeconf 기반 640x360/crop 제어 통합본이다. crop_enable, 공통 dz, 채널별 dz_x/dz_y를 prepare 전에 원자 적용하고 single-camera에서는 실제 활성 슬롯으로 AE/gain/exposure를 전달한다. required_strings의 MAX9296_PREPARE, MAX9296_CROP, owner lock 경로가 빠진 바이너리는 이 계약을 제공하지 않는다. camera-health v1 producer도 유지한다."
+      "note": "MAX9296 병렬 prepare와 edgeconf 기반 640x360/crop 제어 통합본이다. crop_enable, 공통 dz, 채널별 dz_x/dz_y를 prepare 전에 원자 적용하고 single-camera에서는 실제 활성 슬롯으로 AE/gain/exposure를 전달한다. 31~120 FPS manual exposure는 경고 후 JSON seed를 적용하고 AE auto는 seed를 생략한다. HD/FHD 30 FPS와 360p 120 FPS 상한을 제어 I2C 전에 preflight한다. required_strings의 MAX9296_PREPARE, MAX9296_CROP, MAX9296_EXPOSURE, owner lock 경로가 빠진 바이너리는 이 계약을 제공하지 않는다. camera-health v1 producer도 유지한다."
     },
     {
       "path": "dist/pim/opt/pim/driver/max9296.ko",
-      "sha256": "7a5e0a330b6992c1d10731d1ba02f415cea6e2c428feb5de76625f0b4d066241",
-      "size": 976320,
+      "sha256": "8bffdef309bc3ff4dea5bb7e1df8b6eca3558cca53ed549553c5711caa3fd888",
+      "size": 976800,
       "mode": "100644",
       "arch": "aarch64",
       "storage": "lfs",
-      "module_version": "2.10",
+      "module_version": "2.11",
       "source": {
         "repo": "jhw7500/max9296",
-        "commit": "e871ed1",
+        "commit": "9cb6c82",
         "build": "./make-for-imx8 (Yocto SDK 5.10-hardknott, cortexa53-crypto-poky-linux)"
       },
-      "note": "MAX9296 2.10 clean build다. 1920x1080/1280x720은 최대 30 FPS, 640x360은 기본 빌드에서 1~120 FPS 요청을 허용한다. 30 FPS 초과에서는 AE auto를 사용하며 EXP_TIME(0x500c) 수동 쓰기는 I2C 전에 거부한다. 패키지 기본 edgeconf는 640x360@30을 유지한다. 640x360 KEEP은 AP1302/CSI 출력 context만 바꾸며, 과거 실측 113~115 FPS이므로 정확한 120 FPS 전달을 보장하지 않는다. crop_enable, 공통 1.00x~3.00x dz, 채널별 중심 cache/replay를 포함한다. module srcversion은 8EBDAFE29DF1EA7734A71CB이고 source commit은 e871ed1이다.",
+      "note": "MAX9296 2.11 clean build다. 1920x1080/1280x720은 최대 30 FPS, 640x360은 기본 빌드에서 1~120 FPS 요청을 허용한다. mode-valid 31~120 FPS의 EXP_TIME(0x500c) 수동 쓰기는 frame-period 정보를 경고한 뒤 적용하며, 모드 상한 초과는 -EINVAL로 거부한다. 패키지 기본 edgeconf는 640x360@30을 유지한다. 640x360 KEEP은 AP1302/CSI 출력 context만 바꾸며, 과거 실측 113~115 FPS이므로 정확한 120 FPS 전달을 보장하지 않는다. crop_enable, 공통 1.00x~3.00x dz, 채널별 중심 cache/replay를 포함한다. module srcversion은 FA657080406DAF10D6903F7이고 source commit은 9cb6c82이다.",
       "required_strings": [
         "dev_attr_prepare",
         "max9296_prepare_adopt_power_locked",
         "dev_attr_health_raw",
-        "max9296_apply_cached_crop"
+        "max9296_apply_cached_crop",
+        "exposure write outside qualified range"
       ]
     },
     {

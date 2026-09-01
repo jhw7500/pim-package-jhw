@@ -1,5 +1,24 @@
 # PIM Package Changelog
 
+## 최신 변경사항 (2026-09-01) — MAX9296 2.11 / 고속 수동 노출 경고 후 적용
+
+- 전달 패키지를 `pim-mp 0.6.3+jhw.camera5`로 구분하고 clean-built
+  max9296 2.11과 gstApp을 반영했다.
+- max9296와 gstApp의 30 FPS 초과 수동 노출 정책을 `-EBUSY` 거부에서 경고 후
+  적용으로 변경했다. 640x360@120에서 `ae_on=false`와 JSON `exp_time`을 함께
+  지정하면 기동 시 `0x500c`에 적용되며, 실행 중 V4L2 `exp_time`/
+  `exp_time_chX` 변경도 가능하다.
+- 30 FPS는 쓰기 금지선이 아니라 기존 qualification 경고 기준으로 유지한다.
+  모드가 허용하지 않는 FPS는 계속 I2C 전에 `-EINVAL`로 거부한다.
+- 120 FPS frame period는 약 8,333 us이므로 10,000 us보다 짧은
+  `exp_time=5000`부터 시험하는 것을 권장한다. frame period 이상 값도 쓰기는
+  진행하지만 `over_period=1` 경고를 남긴다.
+- 고속 AE auto 기동의 exposure seed 생략, 30 FPS 이하의 기존 동작과 수동 WB
+  `0x510a` 미사용 정책은 유지한다.
+- host 검증 DEB는 `31,146,536 bytes`, SHA-256
+  `ac46a0191da33d48a30e733098aebef3a6d1844895ea2e1fe07c0daf9c85f681`이다.
+  타겟 camera5 설치·런타임 검증은 별도 수행한다.
+
 ## 최신 변경사항 (2026-08-31) — MAX9296 2.10 / 640x360 최대 120 FPS 요청
 
 - clean-built max9296 2.10과 gstApp 640x360/crop/single-slot 바이너리를 반영했다.

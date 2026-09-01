@@ -5,6 +5,26 @@ All notable changes to the MAX9296 driver will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.11] - 2026-09-01
+
+### Changed
+- mode-valid 31~120 FPS에서 `EXP_TIME(0x500c)` 수동 쓰기를 차단하지 않고
+  경고 후 적용한다. JSON 초기 수동 노출과 런타임 `exp_time`/
+  `exp_time_chX` 모두 같은 정책을 사용한다.
+- 경고에는 채널, 모드, FPS, 요청 노출값, frame period, 기존 검증 상한과
+  `over_period` 여부를 포함한다. 모드 상한을 넘는 FPS는 계속 `-EINVAL`이다.
+- 120 FPS에서는 약 8,333 us보다 짧은 노출값부터 시험하고 실제 영상과 계층별
+  FPS를 함께 판정한다. AE auto의 고속 초기 seed 생략과 `0x510a` 미사용은 유지한다.
+
+### Verification
+- i.MX8 BSP 5.10.35 clean cross-build: srcversion
+  `FA657080406DAF10D6903F7`, SHA-256
+  `8bffdef309bc3ff4dea5bb7e1df8b6eca3558cca53ed549553c5711caa3fd888`.
+- 360p 정책 36개, 드라이버 노출/zoom 계약, gstApp controls 111개, prepare
+  1,117개 및 양 source contract가 통과했다.
+- `pim-mp 0.6.3+jhw.camera5` DEB 내부의 드라이버/gstApp/가이드가 source와
+  byte-identical임을 확인했다. camera5 타겟 검증은 별도 수행한다.
+
 ## [2.10] - 2026-08-31
 
 ### Changed

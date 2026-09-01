@@ -26,7 +26,7 @@ V4L2 subdev 노드도 이 전역 채널과 정합되게 사용한다.
 
 ### 1.1 해상도와 디지털 crop은 독립 제어
 
-| 카메라당 출력 | single V4L2 폭 | dual V4L2 폭 | 드라이버 요청 상한 | 노출 쓰기 안전 상한 |
+| 카메라당 출력 | single V4L2 폭 | dual V4L2 폭 | 드라이버 요청 상한 | 노출 경고 기준 |
 |---:|---:|---:|---:|---:|
 | 1920x1080 | 1920x1080 | 3840x1080 | 30 | 30 |
 | 1280x720 | 1280x720 | 2560x720 | 30 | 30 |
@@ -42,9 +42,10 @@ sensor-mode 선택은 펌웨어 값을 유지한다. 즉 640x360 출력이 곧 A
 640x360 readout을 의미하지 않는다. 후보 sensor-mode 0~15는 full-FOV 120 FPS
 profile로 검증되지 않았으므로 운영 기본은 `KEEP`이다. 일반 드라이버는 이 경로에서
 최대 120 FPS 요청을 허용하지만 패키지 기본값은 회귀 안전성을 위해 30 FPS다.
-120 FPS에서는 패키지의 전용 fragment를 사용해 AE auto와 활성 채널
-`led_flash.flash_delay=0`도 함께 적용한다. 이 보드에서 delay 128은 요청/caps를
-유지한 채 실제 CSI 전달률을 크게 낮췄다.
+120 FPS 전달률 기준 시험에서는 패키지의 전용 fragment를 사용해 AE auto와 활성
+채널 `led_flash.flash_delay=0`도 함께 적용한다. 수동 노출 비교 시험은
+`ae_on=false`와 frame period보다 짧은 `exp_time`을 별도로 지정한다. 이 보드에서
+delay 128은 요청/caps를 유지한 채 실제 CSI 전달률을 크게 낮췄다.
 
 ## 2) 값 표현(고정점) 규칙
 
@@ -128,16 +129,21 @@ enable 전환은 `-EBUSY`이며 같은 값의 no-op은 성공한다. true에서 
 기존 하드웨어 crop을 제거하려면 `cam_hard_reset.sh -s -S` 또는 `init_cam.sh`로
 firmware를 다시 로드한다. gstApp 재시작만으로는 하드웨어 epoch가 바뀌지 않는다.
 
-### 3.3 노출 쓰기 안전 정책
+### 3.3 노출 쓰기 검증·경고 정책
 
-일반 영상 FPS 요청 상한과 `EXP_TIME(0x500c)` 쓰기 안전 상한은 별도 정책이다.
-640x360의 31~120 FPS에서 `exp_time`, `exp_time_chX` 또는 수동 AE
-전환으로 노출 쓰기가 필요하면 I2C 전에 `-EBUSY`로 거부한다. 로그에는 채널,
-모드, 현재 FPS, 요청 노출값, 안전 상한이 남는다.
+일반 영상 FPS 요청 상한과 `EXP_TIME(0x500c)` qualification 경고 기준은 별도다.
+현재 30 FPS 값은 hard limit가 아니라 기존 qualification 경고 기준이다.
+640x360의 31~120 FPS에서 `exp_time`, `exp_time_chX` 또는 수동 AE 전환으로
+노출 쓰기가 필요하면 드라이버는 실제 I2C 쓰기 직전에 채널, 모드, 현재 FPS,
+요청 노출값, frame period, 검증 상한과 `over_period` 여부를 경고하고 적용한다.
+모드가 허용하지 않는 FPS는 계속 `-EINVAL`로 거부한다.
 
 고속 운용에서 AE auto이면 초기 exposure seed만 생략하고 gain/AWB/flip
-등은 유지한다. 30 FPS 이하에서는 기존 노출·gain·AE 동작을 유지한다. SoC 정지
-이력이 있는 수동 WB `0x510a` 쓰기는 이 구현에 추가하지 않았다.
+등은 유지한다. JSON `exp_time`을 기동 시 적용하려면 `ae_on=false`로 설정한다.
+런타임에는 V4L2 `exp_time`/`exp_time_chX`를 변경할 수 있다. 120 FPS의 nominal
+frame period는 약 8,333 us이므로 `exp_time=5000`처럼 짧은 값부터 시험하고
+계층별 FPS와 영상을 확인한다. 30 FPS 이하에서는 기존 노출·gain·AE 동작을
+유지한다. SoC 정지 이력이 있는 수동 WB `0x510a` 쓰기는 추가하지 않았다.
 
 ### 3.4 MCP4018 디지털 가변저항
 
@@ -223,7 +229,8 @@ v4l2-ctl -d /dev/v4l-subdev2 -c dma_reg_write_ch0=$((0x30700001))
 - 640x360: 일반 모듈에서 최대 120 FPS 요청 가능. 별도 qualification 모듈은 없다.
 - 120은 요청 허용 상한이며 `KEEP` 경로 과거 실측 113~115 FPS는 엄격 기준
   118.8 FPS를 통과하지 못했다. 따라서 정확한 120 FPS 전달을 보장하지 않는다.
-- 모든 모드의 `0x500c` 노출 쓰기 안전 상한: 30 FPS
+- 모든 모드의 `0x500c` 노출 qualification 경고 기준: 30 FPS. mode-valid
+  고속 쓰기는 경고 후 적용한다.
 
 #### 코드 위치
 
@@ -320,8 +327,8 @@ gain_ch0 (int) : min=0 max=... step=1 default=256 value=256
 ### 4.2 공통(커스텀) 컨트롤 설정 예시
 
 ```bash
-# exp_time: 예) 20000 (30 FPS 이하에서만 레지스터 쓰기 허용)
-sudo v4l2-ctl -d /dev/v4l-subdev2 --set-ctrl=exp_time=20000
+# exp_time: 120 FPS 예시는 5000 us부터 시험(약 8333 us frame period)
+sudo v4l2-ctl -d /dev/v4l-subdev2 --set-ctrl=exp_time=5000
 
 # fixed12: contrast/saturation 1.0 (4096)
 sudo v4l2-ctl -d /dev/v4l-subdev2 --set-ctrl=contrast_ch0=4096,contrast_ch1=4096,saturation_ch0=4096,saturation_ch1=4096
@@ -457,10 +464,9 @@ sudo /opt/pim/bin/init_cam.sh
 - `cam_rotate_setting.sh` : `0x100c` 직접 write
 - `cam_ae_setting.sh` : `0x5100` 직접 write
 
-직접 I2C 스크립트는 드라이버의 30 FPS exposure guard와 cache/fingerprint를
-우회한다. 특히 `cam_manual_exp_time.sh`는 31 FPS 이상 고속 시험에서
-사용하지 않는다. 운영 경로는 V4L2 컨트롤만 사용하고 위 스크립트는 정지된
-디버그 환경의 레거시 도구로 제한한다.
+직접 I2C 스크립트는 드라이버의 mode/FPS 검증, 고속 경고와
+cache/fingerprint를 우회한다. 고속 시험에서도 운영 경로는 V4L2 컨트롤만
+사용하고 위 스크립트는 정지된 디버그 환경의 레거시 도구로 제한한다.
 
 ## 7) LED Flash 제어
 

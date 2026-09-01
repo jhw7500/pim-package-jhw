@@ -1,6 +1,18 @@
 # PIM Package Release Notes
 
-## Unreleased (2026-08-31)
+## Unreleased (2026-09-01)
+
+### MAX9296 2.11 고속 수동 노출
+
+- 640x360의 mode-valid 31~120 FPS에서 수동 `EXP_TIME(0x500c)`를 더 이상
+  `-EBUSY`로 차단하지 않는다. 드라이버는 frame period와 기존 30 FPS 검증
+  기준을 경고하고 실제 레지스터 쓰기를 진행한다.
+- gstApp은 `ae_on=false`인 JSON 수동 노출을 고속에서도 적용한다. `ae_on=true`인
+  고속 기동에서는 기존처럼 초기 exposure seed를 생략한다.
+- gstApp preflight는 FHD/HD 30 FPS, 360p 120 FPS 상한을 제어 ioctl 전에
+  검증한다. 모드 상한 초과는 `-EINVAL`로 종료한다.
+- 120 FPS에서는 nominal frame period 약 8,333 us보다 짧은
+  `exp_time=5000`부터 시험하고 실제 FPS와 영상을 함께 확인한다.
 
 ### 카메라 기동 지연과 감시 유예 분리
 
