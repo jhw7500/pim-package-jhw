@@ -11,11 +11,13 @@ wait_for_result() {
     [[ $seconds =~ ^[0-9]+$ ]] || return 64
     started=$(date +%s)
     while :; do
-        result=$(cam_recovery_status_json "$id" 2>/dev/null) && {
+        result=$(cam_recovery_status_json "$id" 2>/dev/null); result_rc=$?
+        [ "$result_rc" -eq 0 ] && {
             status=$(jq -r .status <<<"$result"); rc=$(jq -r .rc <<<"$result")
             echo "CAM_RECOVERY_RESULT id=$id type=$type status=$status rc=$rc"
             [ "$status" = SUCCEEDED ] && return 0 || return "$rc"
         }
+        [ "$result_rc" -eq 69 ] || return "$result_rc"
         now=$(date +%s)
         [ $((now - started)) -ge "$seconds" ] && return 124
         sleep 0.1

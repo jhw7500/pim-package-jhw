@@ -89,6 +89,12 @@ _cr_record_owner_matches() {
     done
     invocation=$(jq -r .invocation_id <<<"$saved"); token=$(jq -r .token <<<"$saved"); cam_owner_assert "$invocation" "$token"
 }
+_cr_record_owner_ready() {
+    local record=$1
+    shift
+    _cr_record_owner_matches "$record" || return 69
+    _cr_owner_lifecycle_in "$@"
+}
 cam_owner_create() {
     local pid=${1:-$$} boot start invocation token now record
     [[ $pid =~ ^[0-9]+$ ]] || return 64
@@ -116,7 +122,7 @@ _cr_request_new() {
     [ ! -e "$(_cr_pending_file)" ] && [ ! -e "$(_cr_active_file)" ] || return 75
     id=$(_cr_uuid) || return 70; now=$(_cr_now); owner=$(_cr_owner_json); _cr_owner_schema <<<"$owner" || return 69
     request=$(jq -cn --arg id "$id" --arg type "$type" --arg source "$source" --arg reason "$reason" --arg source_path "$source_path" --arg source_mtime "$source_mtime" --argjson now "$now" --argjson owner "$owner" '{id:$id,type:$type,source:$source,reason:$reason,status:"PENDING",created_at:$now,owner:$owner} + (if $source_path=="" then {} else {source_path:$source_path} end) + (if $source_mtime=="" then {} else {source_mtime:($source_mtime|tonumber)} end)') || return 70
-    _cr_owner_lifecycle_in ACTIVE DEGRADED || return 69; _cr_atomic_write "$(_cr_pending_file)" "$request" || return 70; printf '%s\n' "$id"
+    _cr_record_owner_ready "$request" ACTIVE DEGRADED || return 69; _cr_atomic_write "$(_cr_pending_file)" "$request" || return 70; printf '%s\n' "$id"
 }
 cam_request_submit() { _cr_lock_call _cr_request_new "$@"; }
 _cr_history_request() {
@@ -132,8 +138,8 @@ _cr_claim_locked() {
     pending=$(cat "$(_cr_pending_file)") || return 70; jq -e '.id and .type and .source and .reason and .owner' >/dev/null <<<"$pending" || return 70
     _cr_record_owner_matches "$pending" || return 69; id=$(jq -r .id <<<"$pending")
     history=$(jq -cn --argjson request "$pending" '{request:$request,actions:[]}') || return 70
-    _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_history_file "$id")" "$history" || return 70
-    _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_move "$(_cr_pending_file)" "$(_cr_active_file)" || return 70
+    _cr_record_owner_ready "$pending" ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_history_file "$id")" "$history" || return 70
+    _cr_record_owner_ready "$pending" ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_move "$(_cr_pending_file)" "$(_cr_active_file)" || return 70
 }
 cam_request_claim() { _cr_lock_call _cr_claim_locked; }
 _cr_transition_allowed() { case "$1:$2" in PENDING:QUIESCING|QUIESCING:RUNNING|RUNNING:VERIFYING|VERIFYING:SUCCEEDED|VERIFYING:FAILED|RUNNING:FAILED|QUIESCING:FAILED) return 0;; esac; return 1; }
@@ -143,8 +149,8 @@ _cr_transition_locked() {
     active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69; _cr_record_owner_matches "$active" || return 69
     current=$(jq -r .status <<<"$active"); _cr_transition_allowed "$current" "$next" || return 64
     updated=$(jq -c --arg next "$next" --argjson now "$(_cr_now)" '.status=$next | .updated_at=$now' <<<"$active") || return 70; id=$(jq -r .id <<<"$updated")
-    _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_active_file)" "$updated" || return 70
-    _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_history_request "$id" "$updated" || return 70
+    _cr_record_owner_ready "$updated" ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_active_file)" "$updated" || return 70
+    _cr_record_owner_ready "$updated" ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_history_request "$id" "$updated" || return 70
 }
 cam_request_transition() { [ $# -eq 1 ] || return 64; _cr_lock_call _cr_transition_locked "$1"; }
 
@@ -154,32 +160,71 @@ _cr_state_valid() {
 }
 _cr_state_init() { [ -f "$(_cr_state_file)" ] && { _cr_state_valid < "$(_cr_state_file)" || return 1; return 0; }; _cr_atomic_write "$(_cr_state_file)" "$(_cr_state_template)"; }
 _cr_terminal_valid() { [[ $2 =~ ^[0-9]+$ ]] && { [ "$1" = SUCCEEDED ] && [ "$2" -eq 0 ]; } || { [ "$1" = FAILED ] && [ "$2" -gt 0 ]; }; }
+_cr_test_failpoint() { [ "${PIM_CAMERA_TEST_FAILPOINT:-}" != "$1" ]; }
+_cr_history_action() {
+    jq -c --arg action "$2" --arg id "$3" '.actions[] | select(.action==$action and .request_id==$id)' <<<"$1"
+}
+_cr_state_action_phase() {
+    jq -r --arg action "$2" --arg id "$3" '
+      .actions[$action] as $a |
+      if $a.last_request_id != $id then "ABSENT"
+      elif $a.last_status == "RUNNING" then "RUNNING"
+      elif $a.last_status == "SUCCEEDED" or $a.last_status == "FAILED" then "TERMINAL"
+      else "CONFLICT" end' <<<"$1"
+}
 _cr_counter_begin_locked() {
-    local action=$1 id=$2 active state history history_next state_next
+    local action=$1 id=$2 active state history history_action history_next state_next history_phase state_phase
     _cr_public_action "$action" || return 64; _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69
     active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69; _cr_record_owner_matches "$active" || return 69
-    [ "$(jq -r .status <<<"$active")" = RUNNING ] && [ "$(jq -r .id <<<"$active")" = "$id" ] && [ "$(jq -r .type <<<"$active")" = "$action" ] || return 64
-    _cr_state_init || return 70; state=$(cat "$(_cr_state_file)") || return 70; _cr_state_valid <<<"$state" || return 70
+    [ "$(jq -r .status <<<"$active")" = RUNNING ] && [ "$(jq -r .id <<<"$active")" = "$id" ] || return 64
+    _cr_record_owner_ready "$active" ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_state_init || return 70; state=$(cat "$(_cr_state_file)") || return 70; _cr_state_valid <<<"$state" || return 70
     history=$(cat "$(_cr_history_file "$id")" 2>/dev/null) || return 70
-    jq -e --arg action "$action" --arg id "$id" 'any(.actions[];.action==$action and .request_id==$id)' >/dev/null <<<"$history" && return 64
-    history_next=$(jq -c --arg action "$action" --arg id "$id" --argjson now "$(_cr_now)" '.actions += [{action:$action,request_id:$id,status:"RUNNING",started_at:$now}]' <<<"$history") || return 70
-    state_next=$(jq -c --arg action "$action" --arg id "$id" --argjson now "$(_cr_now)" '.actions[$action].attempted+=1 | .actions[$action].last_request_id=$id | .actions[$action].last_started_at=$now | .actions[$action].last_status="RUNNING" | .actions[$action].last_rc=null' <<<"$state") || return 70
-    _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_history_file "$id")" "$history_next" || return 70
-    _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_state_file)" "$state_next" || return 70
+    history_action=$(_cr_history_action "$history" "$action" "$id" 2>/dev/null || true)
+    history_phase=ABSENT; [ -z "$history_action" ] || history_phase=$(jq -r .status <<<"$history_action")
+    state_phase=$(_cr_state_action_phase "$state" "$action" "$id")
+    case "$history_phase:$state_phase" in
+        ABSENT:ABSENT)
+            history_next=$(jq -c --arg action "$action" --arg id "$id" --argjson now "$(_cr_now)" '.actions += [{action:$action,request_id:$id,status:"RUNNING",started_at:$now}]' <<<"$history") || return 70
+            state_next=$(jq -c --arg action "$action" --arg id "$id" --argjson now "$(_cr_now)" '.actions[$action].attempted+=1 | .actions[$action].last_request_id=$id | .actions[$action].last_started_at=$now | .actions[$action].last_status="RUNNING" | .actions[$action].last_rc=null' <<<"$state") || return 70
+            _cr_record_owner_ready "$active" ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_history_file "$id")" "$history_next" || return 70
+            _cr_test_failpoint counter_begin_after_history || return 70
+            _cr_record_owner_ready "$active" ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_state_file)" "$state_next" || return 70;;
+        RUNNING:ABSENT)
+            state_next=$(jq -c --arg action "$action" --arg id "$id" --argjson now "$(_cr_now)" '.actions[$action].attempted+=1 | .actions[$action].last_request_id=$id | .actions[$action].last_started_at=$now | .actions[$action].last_status="RUNNING" | .actions[$action].last_rc=null' <<<"$state") || return 70
+            _cr_record_owner_ready "$active" ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_state_file)" "$state_next" || return 70;;
+        ABSENT:RUNNING)
+            history_next=$(jq -c --arg action "$action" --arg id "$id" --argjson now "$(_cr_now)" '.actions += [{action:$action,request_id:$id,status:"RUNNING",started_at:$now}]' <<<"$history") || return 70
+            _cr_record_owner_ready "$active" ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_history_file "$id")" "$history_next" || return 70;;
+        *) return 64;;
+    esac
 }
 cam_action_counter_begin() { [ $# -eq 2 ] || return 64; _cr_lock_call _cr_counter_begin_locked "$@"; }
 _cr_counter_finish_locked() {
-    local action=$1 id=$2 status=$3 rc=$4 active state history history_next state_next
+    local action=$1 id=$2 status=$3 rc=$4 active state history history_action history_next state_next history_phase state_phase
     _cr_public_action "$action" || return 64; _cr_terminal_valid "$status" "$rc" || return 64
     _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69; _cr_record_owner_matches "$active" || return 69
-    [ "$(jq -r .id <<<"$active")" = "$id" ] && [ "$(jq -r .type <<<"$active")" = "$action" ] || return 64
+    [ "$(jq -r .id <<<"$active")" = "$id" ] || return 64
     case "$(jq -r .status <<<"$active")" in RUNNING|VERIFYING) ;; *) return 64;; esac
-    _cr_state_init || return 70; state=$(cat "$(_cr_state_file)") || return 70; _cr_state_valid <<<"$state" || return 70; history=$(cat "$(_cr_history_file "$id")" 2>/dev/null) || return 70
-    jq -e --arg action "$action" --arg id "$id" 'any(.actions[];.action==$action and .request_id==$id and .status=="RUNNING")' >/dev/null <<<"$history" || return 64
+    _cr_record_owner_ready "$active" ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_state_init || return 70; state=$(cat "$(_cr_state_file)") || return 70; _cr_state_valid <<<"$state" || return 70; history=$(cat "$(_cr_history_file "$id")" 2>/dev/null) || return 70
+    history_action=$(_cr_history_action "$history" "$action" "$id" 2>/dev/null || true)
+    [ -n "$history_action" ] || return 64
+    history_phase=$(jq -r .status <<<"$history_action"); state_phase=$(_cr_state_action_phase "$state" "$action" "$id")
     history_next=$(jq -c --arg action "$action" --arg id "$id" --arg status "$status" --argjson rc "$rc" --argjson now "$(_cr_now)" '.actions |= map(if .action==$action and .request_id==$id and .status=="RUNNING" then .status=$status | .rc=$rc | .finished_at=$now else . end)' <<<"$history") || return 70
     state_next=$(jq -c --arg action "$action" --arg id "$id" --arg status "$status" --argjson rc "$rc" --argjson now "$(_cr_now)" '.actions[$action].last_request_id=$id | .actions[$action].last_finished_at=$now | .actions[$action].last_status=$status | .actions[$action].last_rc=$rc | if $status=="SUCCEEDED" then .actions[$action].succeeded+=1 | .actions[$action].consecutive_failures=0 else .actions[$action].failed+=1 | .actions[$action].consecutive_failures+=1 end' <<<"$state") || return 70
-    _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_history_file "$id")" "$history_next" || return 70
-    _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_state_file)" "$state_next" || return 70
+    case "$history_phase:$state_phase" in
+        RUNNING:RUNNING)
+            _cr_record_owner_ready "$active" ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_history_file "$id")" "$history_next" || return 70
+            _cr_test_failpoint counter_finish_after_history || return 70
+            _cr_record_owner_ready "$active" ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_state_file)" "$state_next" || return 70;;
+        RUNNING:TERMINAL)
+            jq -e --arg action "$action" --arg id "$id" --arg status "$status" --argjson rc "$rc" '.actions[$action].last_request_id==$id and .actions[$action].last_status==$status and .actions[$action].last_rc==$rc' >/dev/null <<<"$state" || return 64
+            _cr_record_owner_ready "$active" ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_history_file "$id")" "$history_next" || return 70;;
+        SUCCEEDED:RUNNING|FAILED:RUNNING)
+            [ "$history_phase" = "$status" ] && [ "$(jq -r .rc <<<"$history_action")" = "$rc" ] || return 64
+            _cr_record_owner_ready "$active" ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_state_file)" "$state_next" || return 70;;
+        SUCCEEDED:TERMINAL|FAILED:TERMINAL) return 64;;
+        *) return 64;;
+    esac
 }
 cam_action_counter_finish() { [ $# -eq 4 ] || return 64; _cr_lock_call _cr_counter_finish_locked "$@"; }
 _cr_finish_locked() {
@@ -188,9 +233,9 @@ _cr_finish_locked() {
     active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69; _cr_record_owner_matches "$active" || return 69; id=$(jq -r .id <<<"$active")
     terminal=$(jq -c --arg status "$status" --argjson rc "$rc" --argjson now "$(_cr_now)" '.status=$status | .rc=$rc | .finished_at=$now' <<<"$active") || return 70
     result=$(jq -c '{id,type,status,rc,source,reason,created_at,finished_at} + (if has("source_path") then {source_path} else {} end) + (if has("source_mtime") then {source_mtime} else {} end)' <<<"$terminal") || return 70
-    _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_result_file "$id")" "$result" || return 70
-    _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_history_request "$id" "$terminal" || return 70
-    _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_remove "$(_cr_active_file)" || return 70
+    _cr_record_owner_ready "$active" ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_result_file "$id")" "$result" || return 70
+    _cr_record_owner_ready "$active" ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_history_request "$id" "$terminal" || return 70
+    _cr_record_owner_ready "$active" ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_remove "$(_cr_active_file)" || return 70
 }
 cam_request_finish() { [ $# -eq 2 ] || return 64; _cr_lock_call _cr_finish_locked "$@"; }
 
