@@ -145,3 +145,83 @@ Before this report, the staged scope contained exactly the six brief-approved co
 - The code-review graph currently has incomplete Bash production-file indexing; review relied on complete staged diff inspection plus focused/aggregate executable gates.
 
 No Task 4 implementation blocker remains.
+
+## Fix round 1
+
+Base: `5fa7d79827493e389c96cf7b38313adc9a49434d`. This round addresses only the four Important review findings in `task-4-fix-round-1-brief.md`; it does not add Task 5 liveness, a queue, service control, or later package/systemd work.
+
+### RED evidence
+
+1. Live-owner acquisition was destructive:
+
+   - Command: `rtk bash test/camera_health/cam_operate_control_test.sh`
+   - Exit: `1`
+   - Failure: `FAIL: expected rc=75 got=0: cam_daemon_startup 4242`
+   - The regression now checks byte preservation for owner, service state, runtime, pending lease, existing history/result/counter sentinels, and checks that staging, publishing, consumers, history, results, and counters for the accepted request are untouched.
+
+2. Stale accepted leases were orphaned:
+
+   - Command: `rtk bash test/camera_health/recovery_protocol_test.sh`
+   - Exit: `1`
+   - Failure: `jq: Could not open .../results/<old-id>.json` followed by `FAIL: stale pending waiter has no complete terminal result`
+   - The final tests cover pending, an actual waiting `cam-recoveryctl apply-config --wait` client, active action history/counters, corrupt fail-closed input, and a retry after a durable-result failpoint.
+
+3. STARTING exposed an ACTIVE intake window:
+
+   - Command: `rtk bash test/camera_health/cam_operate_control_test.sh`
+   - Exit: `1`
+   - Failure: `FAIL: external apply entered former ACTIVE-before-submit boundary rc=0`
+   - The injection runs at the old lifecycle boundary and uses the normal public submit API, rather than a test-only lease shortcut.
+
+4. Real module reload did not receive apply-level full quiescence:
+
+   - Command: `rtk bash test/cam_link/recovery_actions_test.sh`
+   - Exit: `1`
+   - Failure: `FAIL: module apply did not invoke exactly one full quiesce`
+   - The observed RED sequence began with module operations (`lsmod`, `rmmod`, `modprobe`) and contained no completed full-consumer quiesce before them.
+
+5. Hard reset discarded the policy union:
+
+   - Command: `rtk bash test/camera_health/cam_operate_control_test.sh`
+   - Exit: `1`
+   - Failure: `FAIL: hardware+ETC apply lost precedence union`
+   - The RED action log was `quiesce:consumers`, `action:camera_hard_reset`, `verify:camera`, `verify:processes:1`, with no `policy_reload`.
+
+### GREEN behavior and invariants
+
+- Owner acquisition is one lock-held protocol. A schema-valid live boot/PID/start-time tuple returns `75` before any mutation. A malformed owner or unreconcilable lease fails closed. Only a stale tuple enters reconciliation, and the new immutable owner is written only after reconciliation completes.
+- Stale lease commit order is persistent dirty state, terminal interrupted history (`FAILED`, `rc=70`), matching terminal result, durable lease removal, then the replacement STARTING owner. Pending history is created with `actions:[]`; active history replaces only `.request`, preserving its action array and the global action-counter bytes. The waiter consumes `CAM_RECOVERY_RESULT ... status=FAILED rc=70` and exits `70`.
+- `owner_reconcile_after_result` proves idempotent recovery: the old owner and lease remain while terminal history/result exist; retry preserves both terminal file checksums, removes the lease, and only then publishes the new owner.
+- Same-boot startup uses `cam_startup_request_reserve` under the recovery lock. It validates the live STARTING owner, checks the single empty lease, creates the normal public-action request/history and active lease, and changes lifecycle directly to RECOVERING. Public `cam_request_submit` rules are unchanged. External apply at the former ACTIVE gap returns `75`; the internal action retains the immutable owner tuple and completes normal history/counters. A failpoint after active reservation leaves STARTING/dirty state with an accepted lease; stale-owner retry terminalizes it and performs the dirty hard reset without opening intake.
+- Apply `module_reload` now takes the same full-consumer pre-quiescence path as `camera_hard_reset`. The real action integration proves exactly one completed full quiesce before the first `rmmod`/`modprobe`, module work before consumer restart, and restart before final verify. Failed quiescence and a forged pre-quiesced environment produce no module effect; the action layer still revalidates the active `apply_config` lease and immutable owner context.
+- Dirty override emits one `camera_hard_reset` and retains `policy_reload` when the semantic plan includes ETC. Policy is executed as an independent precedence stage after hardware/consumer work and before final verification. Hardware+ETC, dirty+ETC, and hardware-only cases pass exact count/order assertions. Post-publish policy failure retains the new runtime, records request `FAILED rc=1`, sets owner `DEGRADED`, persists `dirty=true`, `degraded_reason=hardware-policy-failure`, `degraded_target=policy`, and performs no final verify or rollback.
+
+### Fresh final-head verification
+
+| Command | Exit/result |
+| --- | --- |
+| `rtk bash -n dist/pim/opt/pim/lib/cam_recovery.sh dist/pim/opt/pim/lib/cam_operate_control.sh dist/pim/opt/pim/lib/cam_recovery_actions.sh dist/pim/opt/pim/bin/chk_cam_operate.sh` | `0` |
+| `rtk bash test/camera_health/cam_operate_control_test.sh` | `0`, `cam operate control: PASS` |
+| `rtk bash test/camera_health/recovery_protocol_test.sh` | `0`, `recovery protocol: PASS` |
+| `rtk bash test/cam_link/recovery_actions_test.sh` | `0`, `recovery actions: PASS` |
+| `rtk bash test/cam_link/recovery_actions_safety_test.sh` | `0`, `recovery actions safety: PASS` |
+| `rtk bash test/cam_link/recovery_launch_safety_test.sh` | `0`, `recovery launch safety: PASS` |
+| `rtk bash test/cam_link/escalation_test.sh` | `0`, `7 passed / 0 failed` |
+| `rtk bash test/camera_health/run_all.sh` | `0`, including protocol/control PASS |
+| `rtk bash test/cam_link/run_all.sh -v` | `0`, `all passed (14)` |
+| `rtk shellcheck -S error` on all five changed production/test shell files | `0` |
+| `rtk git diff --check` | `0` |
+
+### Graph and diff review
+
+The graph incremental update reported five changed paths, no parse errors, 50 updated nodes, and 925 updated edges. `detect_changes` reported nine changed indexed test helpers, risk `0.50`, and zero affected flows. Both changed production Bash files returned `target not indexed`, so the zero-flow/test-gap result is explicitly a graph parser limitation and was not treated as coverage evidence. Focused real-action tests and both complete aggregate suites provide the executable evidence.
+
+The complete diff was reviewed against all four findings. An exact executable-command scan found zero direct `modprobe`, `rmmod`, `systemctl`, or `reboot` statements in the changed control/protocol production files, and an exact-word scan found zero SHA/generation state. A broader scan matched only the existing public `reboot_fallback` action name and source-root variable, not direct execution or source fallback. `git diff --check` and shellcheck error severity are clean.
+
+### Remaining concerns
+
+- Verification is host/stub based. Target-board timing, real device teardown/readiness, and reboot acceptance remain later board/system work.
+- Multi-file durability is implemented as ordered idempotent records rather than a filesystem-wide atomic transaction; explicit failpoint retry covers the durable-result boundary, while corrupt or ambiguous records deliberately fail closed for operator recovery.
+- The code-review graph still does not index the two production Bash files, so future structural review must continue to combine complete diff inspection with dynamic protocol/action suites until the parser limitation is fixed.
+
+No Fix round 1 blocker remains.

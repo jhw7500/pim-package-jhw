@@ -44,8 +44,9 @@ expect_log() { grep -Fqx "$1" "$PIM_CAMERA_CALL_LOG" || { cat "$PIM_CAMERA_CALL_
 reject_log() { ! grep -Fqx "$1" "$PIM_CAMERA_CALL_LOG" || { cat "$PIM_CAMERA_CALL_LOG" >&2; fail "unexpected log: $1"; }; }
 count_log() { grep -Fxc "$1" "$PIM_CAMERA_CALL_LOG" 2>/dev/null || true; }
 fake_stat() {
+    local start=${1:-111}
     mkdir -p "$PIM_CAMERA_PROC_ROOT/$DAEMON_PID"
-    { printf '%s' "$DAEMON_PID (cam-operate) S"; for _ in $(seq 1 18); do printf ' 0'; done; printf ' 111 0 0\n'; } > "$PIM_CAMERA_PROC_ROOT/$DAEMON_PID/stat"
+    { printf '%s' "$DAEMON_PID (cam-operate) S"; for _ in $(seq 1 18); do printf ' 0'; done; printf ' %s 0 0\n' "$start"; } > "$PIM_CAMERA_PROC_ROOT/$DAEMON_PID/stat"
 }
 write_source() {
     local marker=${1:-source} width=${2:-640} ord=${3:-one} vcm=${4:-one} policy=${5:-one}
@@ -93,11 +94,27 @@ source "$CONTROL"
 _cr_fsync_file() { :; }
 _cr_fsync_dir() { :; }
 
+_cr_test_startup_reservation_probe() {
+    [ "${STARTUP_RACE_PROBE:-}" = 1 ] || return 0
+    STARTUP_RACE_PROBE=0
+    STARTUP_PROBE_OWNER=$(jq -c '{boot_id,invocation_id,pid,proc_start_time,token,created_at}' "$PIM_CAMERA_RUN_DIR/owner.json")
+    STARTUP_PROBE_RC=0
+    cam_request_submit apply_config external "startup reservation race" >/dev/null || STARTUP_PROBE_RC=$?
+    return 0
+}
+cam_owner_set_lifecycle() {
+    local next=$1 rc
+    _cr_lock_call _cr_owner_set_lifecycle_locked "$next"
+    rc=$?
+    [ "$rc" -eq 0 ] || return "$rc"
+    if [ "$next" = ACTIVE ]; then _cr_test_startup_reservation_probe; fi
+}
+
 cam_initial_module_load() { printf 'action:initial_module_load\n' >> "$PIM_CAMERA_CALL_LOG"; }
 cam_action_module_reload() { printf 'action:module_reload\n' >> "$PIM_CAMERA_CALL_LOG"; }
 cam_action_camera_hard_reset() { printf 'action:camera_hard_reset\n' >> "$PIM_CAMERA_CALL_LOG"; }
 cam_execute_action_step() {
-    local request_type
+    local request_type rc
     request_type=$(jq -r '.type // empty' "$PIM_CAMERA_RUN_DIR/recovery/active.json" 2>/dev/null)
     if [ "$request_type" = apply_config ]; then
         [ "${PIM_CAMERA_CONSUMERS_QUIESCED:-}" = 1 ] || return 91
@@ -108,8 +125,16 @@ cam_execute_action_step() {
     if [ "${EXPECT_DIRTY_DURING_ACTION:-}" = "$1" ]; then
         jq -e '.dirty == true' "$PIM_CAMERA_STATE_DIR/service-state.json" >/dev/null || return 93
     fi
+    if [ "${REAL_COUNTER_STUB:-}" = 1 ]; then
+        cam_action_counter_begin "$1" "$PIM_CAMERA_REQUEST_ID" || return $?
+    fi
     printf 'action:%s\n' "$1" >> "$PIM_CAMERA_CALL_LOG"
-    [ "${FAIL_ACTION:-}" != "$1" ]
+    rc=0
+    [ "${FAIL_ACTION:-}" != "$1" ] || rc=1
+    if [ "${REAL_COUNTER_STUB:-}" = 1 ]; then
+        if [ "$rc" -eq 0 ]; then cam_action_counter_finish "$1" "$PIM_CAMERA_REQUEST_ID" SUCCEEDED 0 || return $?; else cam_action_counter_finish "$1" "$PIM_CAMERA_REQUEST_ID" FAILED "$rc" || return $?; fi
+    fi
+    return "$rc"
 }
 cam_quiesce_gstapp() { cam_executor_assert_context || return $?; printf 'quiesce:gstapp\n' >> "$PIM_CAMERA_CALL_LOG"; }
 cam_quiesce_consumers() { cam_executor_assert_context || return $?; printf 'quiesce:consumers\n' >> "$PIM_CAMERA_CALL_LOG"; }
@@ -125,7 +150,7 @@ cam_verify_camera_ready() {
     printf 'verify:camera\n' >> "$PIM_CAMERA_CALL_LOG"
     [ "${FAIL_VERIFY:-}" != camera ]
 }
-_coc_policy_reload() { printf 'action:policy_reload\n' >> "$PIM_CAMERA_CALL_LOG"; }
+_coc_policy_reload() { printf 'action:policy_reload\n' >> "$PIM_CAMERA_CALL_LOG"; [ "${FAIL_ACTION:-}" != policy_reload ]; }
 
 echo "=== new-boot startup transaction ==="
 reset_case boot-a
@@ -142,6 +167,35 @@ jq -e '.lifecycle == "ACTIVE" and .pid == 4242' "$PIM_CAMERA_RUN_DIR/owner.json"
 jq -e '.schema == 1 and .last_boot_id == "boot-a" and (.last_successful_hardware_projection.cam_width == 640) and .dirty == false and .degraded_reason == null and .degraded_target == null and (.last_invocation_id | strings)' "$PIM_CAMERA_STATE_DIR/service-state.json" >/dev/null || fail "new boot state projection"
 [ -f "$PIM_CAMERA_RUNTIME_JSON" ] || fail "startup did not publish runtime"
 
+echo "=== live owner acquisition is fail closed ==="
+live_pending_id=$(cam_request_submit apply_config operator "must survive second startup")
+mkdir -p "$PIM_CAMERA_STATE_DIR/recovery/history" "$PIM_CAMERA_RUN_DIR/recovery/results"
+printf '{"sentinel":"history"}\n' > "$PIM_CAMERA_STATE_DIR/recovery/history/live-owner-sentinel.json"
+printf '{"sentinel":"result"}\n' > "$PIM_CAMERA_RUN_DIR/recovery/results/live-owner-sentinel.json"
+printf '{"sentinel":"counter"}\n' > "$PIM_CAMERA_STATE_DIR/recovery/state.json"
+owner_before=$(cksum "$PIM_CAMERA_RUN_DIR/owner.json")
+service_before=$(cksum "$PIM_CAMERA_STATE_DIR/service-state.json")
+runtime_before=$(cksum "$PIM_CAMERA_RUNTIME_JSON")
+pending_before=$(cksum "$PIM_CAMERA_RUN_DIR/recovery/pending.json")
+history_before=$(cksum "$PIM_CAMERA_STATE_DIR/recovery/history/live-owner-sentinel.json")
+result_before=$(cksum "$PIM_CAMERA_RUN_DIR/recovery/results/live-owner-sentinel.json")
+counter_before=$(cksum "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+: > "$PIM_CAMERA_CALL_LOG"
+: > "$PIM_CAMERA_HELPER_LOG"
+expect_rc 75 cam_daemon_startup "$DAEMON_PID"
+[ "$owner_before" = "$(cksum "$PIM_CAMERA_RUN_DIR/owner.json")" ] || fail "live-owner rejection mutated owner"
+[ "$service_before" = "$(cksum "$PIM_CAMERA_STATE_DIR/service-state.json")" ] || fail "live-owner rejection mutated service state"
+[ "$runtime_before" = "$(cksum "$PIM_CAMERA_RUNTIME_JSON")" ] || fail "live-owner rejection mutated runtime"
+[ "$pending_before" = "$(cksum "$PIM_CAMERA_RUN_DIR/recovery/pending.json")" ] || fail "live-owner rejection mutated pending lease"
+[ "$history_before" = "$(cksum "$PIM_CAMERA_STATE_DIR/recovery/history/live-owner-sentinel.json")" ] || fail "live-owner rejection mutated existing history"
+[ "$result_before" = "$(cksum "$PIM_CAMERA_RUN_DIR/recovery/results/live-owner-sentinel.json")" ] || fail "live-owner rejection mutated existing result"
+[ "$counter_before" = "$(cksum "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail "live-owner rejection mutated existing counters"
+[ "$(jq -r .id "$PIM_CAMERA_RUN_DIR/recovery/pending.json")" = "$live_pending_id" ] || fail "live-owner rejection replaced pending request"
+[ ! -e "$PIM_CAMERA_STATE_DIR/recovery/history/$live_pending_id.json" ] || fail "live-owner rejection created history"
+[ ! -e "$PIM_CAMERA_RUN_DIR/recovery/results/$live_pending_id.json" ] || fail "live-owner rejection created result"
+[ ! -s "$PIM_CAMERA_CALL_LOG" ] || fail "live-owner rejection acted on consumers"
+[ ! -s "$PIM_CAMERA_HELPER_LOG" ] || fail "live-owner rejection staged or published config"
+
 echo "=== startup source failure has no side effects ==="
 reset_case boot-a
 expect_rc 64 cam_daemon_startup "$DAEMON_PID"
@@ -157,12 +211,49 @@ manual=$(mktemp "$WORK/manual.XXXXXX")
 jq '.VHL_CAM.label="manual-edit"' "$PIM_CAMERA_RUNTIME_JSON" > "$manual" && mv "$manual" "$PIM_CAMERA_RUNTIME_JSON"
 : > "$PIM_CAMERA_CALL_LOG"
 : > "$PIM_CAMERA_HELPER_LOG"
+fake_stat 222
+STARTUP_RACE_PROBE=1
+STARTUP_PROBE_RC=
+STARTUP_PROBE_OWNER=
+REAL_COUNTER_STUB=1
+set +e
 cam_daemon_startup "$DAEMON_PID"
+restart_rc=$?
+set -e
+unset REAL_COUNTER_STUB
+[ "$STARTUP_PROBE_RC" = 75 ] || fail "external apply entered former ACTIVE-before-submit boundary rc=${STARTUP_PROBE_RC:-missing}"
+[ "$restart_rc" -eq 0 ] || fail "reserved same-boot startup failed rc=$restart_rc"
+[ "$STARTUP_PROBE_OWNER" = "$(jq -c '{boot_id,invocation_id,pid,proc_start_time,token,created_at}' "$PIM_CAMERA_RUN_DIR/owner.json")" ] || fail "startup reservation changed daemon identity"
+[ ! -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] || fail "external startup-race request occupied pending lease"
 [ "$(grep -c '^stage$' "$PIM_CAMERA_HELPER_LOG")" -eq 1 ] || fail "same-boot restart did not re-stage exactly once"
 [ "$(count_log action:module_reload)" -eq 1 ] || fail "same-boot restart did not module-reload exactly once"
 [ "$(jq -r .VHL_CAM.label "$PIM_CAMERA_RUNTIME_JSON")" = restart ] || fail "restart used manual runtime as source/fallback"
 startup_history=$(grep -rl '"type":"module_reload"' "$PIM_CAMERA_STATE_DIR/recovery/history" 2>/dev/null || true)
 [ -n "$startup_history" ] || fail "same-boot public action was not attributed to a request history"
+jq -e '[.actions[].action] == ["module_reload"] and [.actions[].status] == ["SUCCEEDED"]' "$startup_history" >/dev/null || fail "same-boot startup action history did not complete"
+jq -e '.actions.module_reload.attempted==1 and .actions.module_reload.succeeded==1' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "same-boot startup action counter did not complete"
+
+echo "=== partial startup reservation is recoverable and never ACTIVE ==="
+reset_case boot-a
+write_source partial 640
+cam_daemon_startup "$DAEMON_PID"
+fake_stat 222
+: > "$PIM_CAMERA_CALL_LOG"
+PIM_CAMERA_TEST_FAILPOINT=startup_reserve_after_active
+export PIM_CAMERA_TEST_FAILPOINT
+expect_rc 70 cam_daemon_startup "$DAEMON_PID"
+unset PIM_CAMERA_TEST_FAILPOINT
+partial_id=$(jq -r .id "$PIM_CAMERA_RUN_DIR/recovery/active.json")
+jq -e '.lifecycle=="STARTING"' "$PIM_CAMERA_RUN_DIR/owner.json" >/dev/null || fail "partial startup reservation exposed ACTIVE"
+jq -e '.status=="PENDING"' "$PIM_CAMERA_RUN_DIR/recovery/active.json" >/dev/null || fail "partial startup reservation lost claimed lease"
+jq -e '.dirty==true' "$PIM_CAMERA_STATE_DIR/service-state.json" >/dev/null || fail "partial startup reservation was not dirty"
+[ ! -s "$PIM_CAMERA_CALL_LOG" ] || fail "partial startup reservation executed action"
+fake_stat 333
+cam_daemon_startup "$DAEMON_PID"
+jq -e --arg id "$partial_id" '.id==$id and .status=="FAILED" and .rc==70' "$PIM_CAMERA_RUN_DIR/recovery/results/$partial_id.json" >/dev/null || fail "partial startup reservation did not produce terminal result"
+jq -e '.request.status=="FAILED" and .request.interrupted==true and (.actions|length)==0' "$PIM_CAMERA_STATE_DIR/recovery/history/$partial_id.json" >/dev/null || fail "partial startup reservation did not reconcile history"
+[ "$(count_log action:camera_hard_reset)" -eq 1 ] || fail "partial startup retry did not use dirty hard reset"
+jq -e '.lifecycle=="ACTIVE"' "$PIM_CAMERA_RUN_DIR/owner.json" >/dev/null || fail "partial startup retry did not recover"
 
 echo "=== restart hard-reset classification ==="
 for mode in projection_changed projection_absent state_corrupt dirty interrupted_history; do
@@ -181,6 +272,7 @@ for mode in projection_changed projection_absent state_corrupt dirty interrupted
             ;;
     esac
     : > "$PIM_CAMERA_CALL_LOG"
+    fake_stat 222
     cam_daemon_startup "$DAEMON_PID"
     [ "$(count_log action:camera_hard_reset)" -eq 1 ] || fail "$mode did not hard reset"
 done
@@ -273,6 +365,56 @@ jq -e '.dirty == false and .degraded_reason == null and .degraded_target == null
 : > "$PIM_CAMERA_CALL_LOG"
 submit_apply overwrite-manual
 [ "$(jq -r .VHL_CAM.label "$PIM_CAMERA_RUNTIME_JSON")" = failed ] || fail "apply did not overwrite manual runtime from source"
+
+echo "=== hard reset preserves semantic policy union ==="
+reset_case boot-a
+write_source baseline 640 one one one
+cam_daemon_startup "$DAEMON_PID"
+rm -f "$PIM_CAMERA_SOURCE_ROOT/edgeconf_baseline.json"
+write_source hardware-policy 800 one one two
+: > "$PIM_CAMERA_CALL_LOG"
+submit_apply hardware-policy
+expected=$'quiesce:consumers\naction:camera_hard_reset\naction:policy_reload\nverify:camera\nverify:processes:1'
+[ "$(cat "$PIM_CAMERA_CALL_LOG")" = "$expected" ] || { cat "$PIM_CAMERA_CALL_LOG" >&2; fail "hardware+ETC apply lost precedence union"; }
+
+reset_case boot-a
+write_source dirty-base 640 one one one
+cam_daemon_startup "$DAEMON_PID"
+jq '.dirty=true' "$PIM_CAMERA_STATE_DIR/service-state.json" > "$WORK/state.next" && mv "$WORK/state.next" "$PIM_CAMERA_STATE_DIR/service-state.json"
+rm -f "$PIM_CAMERA_SOURCE_ROOT/edgeconf_dirty-base.json"
+write_source dirty-policy 640 one one two
+: > "$PIM_CAMERA_CALL_LOG"
+submit_apply dirty-policy
+[ "$(count_log action:camera_hard_reset)" -eq 1 ] || fail "dirty+ETC apply did not hard reset once"
+[ "$(count_log action:policy_reload)" -eq 1 ] || fail "dirty+ETC apply discarded policy reload"
+reject_log action:gstapp_restart
+reject_log start:ord
+reject_log start:vcm
+[ "$(tail -3 "$PIM_CAMERA_CALL_LOG")" = $'action:policy_reload\nverify:camera\nverify:processes:1' ] || { cat "$PIM_CAMERA_CALL_LOG" >&2; fail "dirty+ETC policy/verify order"; }
+
+reset_case boot-a
+write_source hardware-base 640 one one one
+cam_daemon_startup "$DAEMON_PID"
+rm -f "$PIM_CAMERA_SOURCE_ROOT/edgeconf_hardware-base.json"
+write_source hardware-only 800 one one one
+: > "$PIM_CAMERA_CALL_LOG"
+submit_apply hardware-only
+[ "$(count_log action:camera_hard_reset)" -eq 1 ] || fail "hardware-only apply did not hard reset once"
+reject_log action:policy_reload
+
+reset_case boot-a
+write_source policy-fail-base 640 one one one
+cam_daemon_startup "$DAEMON_PID"
+rm -f "$PIM_CAMERA_SOURCE_ROOT/edgeconf_policy-fail-base.json"
+write_source policy-fail 800 one one two
+: > "$PIM_CAMERA_CALL_LOG"
+FAIL_ACTION=policy_reload expect_rc 1 submit_apply hardware-policy-failure
+[ "$(jq -r .VHL_CAM.label "$PIM_CAMERA_RUNTIME_JSON")" = policy-fail ] || fail "policy failure rolled runtime back"
+jq -e '.lifecycle=="DEGRADED"' "$PIM_CAMERA_RUN_DIR/owner.json" >/dev/null || fail "policy failure owner lifecycle"
+jq -e '.dirty==true and .degraded_reason=="hardware-policy-failure" and .degraded_target=="policy"' "$PIM_CAMERA_STATE_DIR/service-state.json" >/dev/null || fail "policy failure degraded state"
+jq -e '.status=="FAILED" and .rc==1' "$PIM_CAMERA_RUN_DIR/recovery/results/$LAST_REQUEST_ID.json" >/dev/null || fail "policy failure request result"
+[ "$(count_log action:camera_hard_reset)" -eq 1 ] && [ "$(count_log action:policy_reload)" -eq 1 ] || fail "policy failure action count"
+reject_log verify:camera
 
 echo "=== apply intake lifecycle guard ==="
 cam_owner_set_lifecycle STOPPING

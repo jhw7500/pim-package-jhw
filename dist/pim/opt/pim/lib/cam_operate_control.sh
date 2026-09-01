@@ -172,21 +172,11 @@ _coc_startup_fail() {
     return "$rc"
 }
 
-_coc_reconcile_runtime_lease() {
-    local file
-    for file in "$(_cr_pending_file)" "$(_cr_active_file)"; do
-        [ ! -e "$file" ] || _cr_remove "$file" || return 70
-    done
-}
-
 _coc_begin_startup_action() {
     local action=$1 source_path source_mtime rc
     source_path=$(jq -r '.path | select(type == "string" and length > 0)' "$(_coc_stage_result_file)") || return 70
     source_mtime=$(jq -r '.mtime_ns | select(type == "number" and floor == . and . >= 0)' "$(_coc_stage_result_file)") || return 70
-    cam_owner_set_lifecycle ACTIVE || return $?
-    cam_request_submit "$action" startup "same-boot daemon restart" "$source_path" "$source_mtime" >/dev/null || return $?
-    cam_request_claim || return $?
-    cam_owner_set_lifecycle RECOVERING || return $?
+    cam_startup_request_reserve "$action" startup "same-boot daemon restart" "$source_path" "$source_mtime" >/dev/null || return $?
     cam_request_transition QUIESCING || return $?
     cam_request_transition RUNNING || return $?
     cam_executor_set_context || return $?
@@ -200,7 +190,6 @@ cam_daemon_startup() {
     cam_owner_create "$pid" || return $?
     _coc_export_owner_context || return $?
     cam_reconcile_interrupted || return $?
-    _coc_reconcile_runtime_lease || return $?
     if [ -f "$(_cr_service_file)" ]; then previous=$(cat "$(_cr_service_file)" 2>/dev/null || printf invalid); fi
     candidate=$(_coc_candidate_file)
     cam_stage_source_candidate "$candidate" "$(_coc_stage_result_file)" || { rc=$?; _coc_startup_fail "$rc" CONFIG_INVALID false; return $?; }
@@ -289,6 +278,7 @@ _coc_effective_steps() {
     state=$(_coc_state_current) || return $?
     if [ "$(jq -r .dirty <<<"$state")" = true ]; then
         printf 'camera_hard_reset\n'
+        jq -e '.steps | index("policy_reload") != null' >/dev/null <<<"$plan" && printf 'policy_reload\n'
         return 0
     fi
     if [ "$(jq -r .semantic_change <<<"$plan")" = true ]; then
@@ -308,7 +298,7 @@ _coc_effective_steps() {
 
 _coc_quiesce_steps() {
     local steps=$1
-    if grep -qx camera_hard_reset <<<"$steps"; then cam_quiesce_consumers "$PIM_CAMERA_RUNTIME_JSON"; return $?; fi
+    if grep -Eq '^(camera_hard_reset|module_reload)$' <<<"$steps"; then cam_quiesce_consumers "$PIM_CAMERA_RUNTIME_JSON"; return $?; fi
     if grep -qx gstapp_restart <<<"$steps" && { grep -qx ord_restart <<<"$steps" || grep -qx vcm_restart <<<"$steps"; }; then
         cam_quiesce_consumers "$PIM_CAMERA_RUNTIME_JSON"; return $?
     fi
@@ -365,7 +355,7 @@ cam_apply_config_transaction() {
         PIM_CAMERA_CONSUMERS_QUIESCED=1 cam_execute_action_step camera_hard_reset "$PIM_CAMERA_RUNTIME_JSON" || rc=$?
         [ "$rc" -eq 0 ] || { _coc_fail_active "$rc" "$reason" camera_health true; return $?; }
     else
-        for step in gstapp_restart ord_restart vcm_restart policy_reload; do
+        for step in gstapp_restart ord_restart vcm_restart; do
             grep -qx "$step" <<<"$steps" || continue
             if [ "$step" = gstapp_restart ]; then PIM_CAMERA_CONSUMERS_QUIESCED=1 cam_execute_action_step "$step" "$PIM_CAMERA_RUNTIME_JSON" || rc=$?; else _coc_run_uncountered_step "$step" || rc=$?; fi
             if [ "$rc" -ne 0 ]; then target=$(_coc_step_target "$step"); _coc_fail_active "$rc" "$reason" "$target" "$dirty"; return $?; fi
@@ -374,6 +364,10 @@ cam_apply_config_transaction() {
             PIM_CAMERA_CONSUMERS_QUIESCED=1 cam_execute_action_step module_reload "$PIM_CAMERA_RUNTIME_JSON" || rc=$?
             [ "$rc" -eq 0 ] || { _coc_fail_active "$rc" "$reason" camera_health true; return $?; }
         fi
+    fi
+    if grep -qx policy_reload <<<"$steps"; then
+        _coc_run_uncountered_step policy_reload || rc=$?
+        if [ "$rc" -ne 0 ]; then _coc_fail_active "$rc" "$reason" policy "$dirty"; return $?; fi
     fi
     cam_request_transition VERIFYING || return $?
     _coc_verify_all || { rc=$?; _coc_fail_active "$rc" "$reason" camera_health "$dirty"; return $?; }

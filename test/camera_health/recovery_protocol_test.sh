@@ -18,11 +18,108 @@ expect_rc() { local expected=$1; shift; set +e; "$@"; local actual=$?; set -e; [
 uuid() { [[ $1 =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || fail "not UUID: $1"; }
 fake_stat() { mkdir -p "$PIM_CAMERA_PROC_ROOT/$DAEMON_PID"; { printf '%s' "$DAEMON_PID (cam operate) S"; for _ in $(seq 1 18); do printf ' 0'; done; printf ' %s 0 0\n' "$1"; } > "$PIM_CAMERA_PROC_ROOT/$DAEMON_PID/stat"; }
 owner_active() { rm -f "$PIM_CAMERA_RUN_DIR/owner.json"; cam_owner_create "$DAEMON_PID"; cam_owner_set_lifecycle ACTIVE; }
+reset_protocol_sandbox() {
+    rm -rf "$PIM_CAMERA_RUN_DIR" "$PIM_CAMERA_STATE_DIR" "$PIM_CAMERA_PROC_ROOT"
+    printf 'test-boot-id\n' > "$PIM_CAMERA_BOOT_ID_FILE"
+    fake_stat 111
+}
 
 printf 'test-boot-id\n' > "$PIM_CAMERA_BOOT_ID_FILE"
 fake_stat 111
 # This source is intentionally the RED boundary: Task 2 has not created it yet.
 source "$PIM_LIB/cam_recovery.sh"
+
+echo "=== stale owner acquisition terminalizes accepted leases ==="
+reset_protocol_sandbox
+owner_active
+mkdir -p "$PIM_CAMERA_STATE_DIR"
+printf '{"dirty":false}\n' > "$PIM_CAMERA_STATE_DIR/service-state.json"
+stale_pending_id=$(cam_request_submit apply_config operator "stale pending" /source/pending 321)
+stale_pending_owner=$(jq -c '{boot_id,invocation_id,pid,proc_start_time,token,created_at}' "$PIM_CAMERA_RUN_DIR/owner.json")
+fake_stat 222
+cam_owner_create "$DAEMON_PID"
+jq -e --arg id "$stale_pending_id" '.id==$id and .type=="apply_config" and .source=="operator" and .reason=="stale pending" and .status=="FAILED" and .rc>0 and .source_path=="/source/pending" and .source_mtime==321' "$PIM_CAMERA_RUN_DIR/recovery/results/$stale_pending_id.json" >/dev/null || fail "stale pending waiter has no complete terminal result"
+jq -e --arg id "$stale_pending_id" '.request.id==$id and .request.type=="apply_config" and .request.source=="operator" and .request.reason=="stale pending" and .request.status=="FAILED" and .request.rc>0 and .request.interrupted==true and (.actions|length)==0' "$PIM_CAMERA_STATE_DIR/recovery/history/$stale_pending_id.json" >/dev/null || fail "stale pending history was not terminalized"
+[ ! -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] || fail "stale pending lease survived acquisition"
+[ "$stale_pending_owner" != "$(jq -c '{boot_id,invocation_id,pid,proc_start_time,token,created_at}' "$PIM_CAMERA_RUN_DIR/owner.json")" ] || fail "stale pending owner was not replaced"
+jq -e '.proc_start_time=="222" and .lifecycle=="STARTING"' "$PIM_CAMERA_RUN_DIR/owner.json" >/dev/null || fail "replacement owner tuple"
+jq -e '.dirty==true' "$PIM_CAMERA_STATE_DIR/service-state.json" >/dev/null || fail "stale pending acquisition did not mark dirty"
+
+echo "=== stale reconciliation resumes after durable result ==="
+reset_protocol_sandbox
+owner_active
+mkdir -p "$PIM_CAMERA_STATE_DIR"
+printf '{"dirty":false}\n' > "$PIM_CAMERA_STATE_DIR/service-state.json"
+stale_retry_id=$(cam_request_submit apply_config operator "stale retry" /source/retry 777)
+stale_retry_owner=$(cksum "$PIM_CAMERA_RUN_DIR/owner.json")
+fake_stat 222
+PIM_CAMERA_TEST_FAILPOINT=owner_reconcile_after_result expect_rc 70 cam_owner_create "$DAEMON_PID"
+[ "$stale_retry_owner" = "$(cksum "$PIM_CAMERA_RUN_DIR/owner.json")" ] || fail "partial reconciliation replaced stale owner"
+[ -f "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] || fail "partial reconciliation removed lease before commit"
+jq -e --arg id "$stale_retry_id" '.request.id==$id and .request.status=="FAILED" and .request.rc==70 and .request.interrupted==true' "$PIM_CAMERA_STATE_DIR/recovery/history/$stale_retry_id.json" >/dev/null || fail "partial reconciliation history is not terminal"
+jq -e --arg id "$stale_retry_id" '.id==$id and .status=="FAILED" and .rc==70' "$PIM_CAMERA_RUN_DIR/recovery/results/$stale_retry_id.json" >/dev/null || fail "partial reconciliation result is not terminal"
+stale_retry_history=$(cksum "$PIM_CAMERA_STATE_DIR/recovery/history/$stale_retry_id.json")
+stale_retry_result=$(cksum "$PIM_CAMERA_RUN_DIR/recovery/results/$stale_retry_id.json")
+cam_owner_create "$DAEMON_PID"
+[ "$stale_retry_history" = "$(cksum "$PIM_CAMERA_STATE_DIR/recovery/history/$stale_retry_id.json")" ] || fail "retry rewrote terminal history"
+[ "$stale_retry_result" = "$(cksum "$PIM_CAMERA_RUN_DIR/recovery/results/$stale_retry_id.json")" ] || fail "retry rewrote terminal result"
+[ ! -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] || fail "retry did not remove reconciled lease"
+jq -e '.proc_start_time=="222" and .lifecycle=="STARTING"' "$PIM_CAMERA_RUN_DIR/owner.json" >/dev/null || fail "retry did not publish replacement owner"
+
+reset_protocol_sandbox
+owner_active
+mkdir -p "$PIM_CAMERA_STATE_DIR"
+printf '{"dirty":false}\n' > "$PIM_CAMERA_STATE_DIR/service-state.json"
+stale_wait_out="$WORK/stale-wait.out"
+"$ROOT/dist/pim/opt/pim/bin/cam-recoveryctl" apply-config --source operator --reason "stale waiter" --wait "$CONTROLLED_WAIT_SECONDS" >"$stale_wait_out" &
+stale_wait_pid=$!
+for _ in $(seq 1 30); do [ -f "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] && break; sleep 0.1; done
+[ -f "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] || fail "stale waiter request was not accepted"
+stale_wait_id=$(jq -r .id "$PIM_CAMERA_RUN_DIR/recovery/pending.json")
+fake_stat 222
+cam_owner_create "$DAEMON_PID"
+set +e; wait "$stale_wait_pid"; stale_wait_rc=$?; set -e
+[ "$stale_wait_rc" -eq 70 ] || fail "stale waiter returned rc=$stale_wait_rc"
+[ "$(cat "$stale_wait_out")" = "CAM_RECOVERY_RESULT id=$stale_wait_id type=apply_config status=FAILED rc=70" ] || fail "stale waiter did not consume terminal result"
+
+reset_protocol_sandbox
+owner_active
+mkdir -p "$PIM_CAMERA_STATE_DIR"
+printf '{"dirty":false}\n' > "$PIM_CAMERA_STATE_DIR/service-state.json"
+stale_active_id=$(cam_request_submit module_reload health "stale active" /source/active 654)
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+cam_action_counter_begin module_reload "$stale_active_id"
+active_actions_before=$(jq -c .actions "$PIM_CAMERA_STATE_DIR/recovery/history/$stale_active_id.json")
+counter_before=$(cksum "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+fake_stat 222
+cam_owner_create "$DAEMON_PID"
+jq -e --arg id "$stale_active_id" '.id==$id and .type=="module_reload" and .source=="health" and .reason=="stale active" and .status=="FAILED" and .rc>0 and .source_path=="/source/active" and .source_mtime==654' "$PIM_CAMERA_RUN_DIR/recovery/results/$stale_active_id.json" >/dev/null || fail "stale active waiter has no complete terminal result"
+jq -e --arg id "$stale_active_id" '.request.id==$id and .request.status=="FAILED" and .request.rc>0 and .request.interrupted==true' "$PIM_CAMERA_STATE_DIR/recovery/history/$stale_active_id.json" >/dev/null || fail "stale active history was not terminalized"
+[ "$active_actions_before" = "$(jq -c .actions "$PIM_CAMERA_STATE_DIR/recovery/history/$stale_active_id.json")" ] || fail "stale active action history was not preserved"
+[ "$counter_before" = "$(cksum "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail "stale active reconciliation mutated counters"
+[ ! -e "$PIM_CAMERA_RUN_DIR/recovery/active.json" ] || fail "stale active lease survived acquisition"
+jq -e '.dirty==true' "$PIM_CAMERA_STATE_DIR/service-state.json" >/dev/null || fail "stale active acquisition did not mark dirty"
+
+echo "=== corrupt abandoned lease fails closed ==="
+reset_protocol_sandbox
+owner_active
+mkdir -p "$PIM_CAMERA_STATE_DIR/recovery" "$PIM_CAMERA_RUN_DIR/recovery"
+printf '{"dirty":false}\n' > "$PIM_CAMERA_STATE_DIR/service-state.json"
+printf '{bad json}\n' > "$PIM_CAMERA_RUN_DIR/recovery/pending.json"
+corrupt_owner_before=$(cksum "$PIM_CAMERA_RUN_DIR/owner.json")
+corrupt_service_before=$(cksum "$PIM_CAMERA_STATE_DIR/service-state.json")
+corrupt_pending_before=$(cksum "$PIM_CAMERA_RUN_DIR/recovery/pending.json")
+fake_stat 222
+expect_rc 70 cam_owner_create "$DAEMON_PID"
+[ "$corrupt_owner_before" = "$(cksum "$PIM_CAMERA_RUN_DIR/owner.json")" ] || fail "corrupt reconciliation replaced owner"
+[ "$corrupt_service_before" = "$(cksum "$PIM_CAMERA_STATE_DIR/service-state.json")" ] || fail "corrupt reconciliation mutated service state"
+[ "$corrupt_pending_before" = "$(cksum "$PIM_CAMERA_RUN_DIR/recovery/pending.json")" ] || fail "corrupt reconciliation deleted or rewrote lease"
+[ ! -d "$PIM_CAMERA_RUN_DIR/recovery/results" ] || fail "corrupt reconciliation created a result"
+[ ! -d "$PIM_CAMERA_STATE_DIR/recovery/history" ] || fail "corrupt reconciliation created history"
+
+reset_protocol_sandbox
 
 cam_owner_create "$DAEMON_PID"
 jq -e '.boot_id == "test-boot-id" and (.invocation_id | strings) and .pid == 4242 and .proc_start_time == "111" and (.token | strings) and (.created_at | numbers) and .lifecycle == "STARTING"' "$PIM_CAMERA_RUN_DIR/owner.json" >/dev/null || fail "owner record tuple"

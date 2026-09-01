@@ -110,17 +110,120 @@ _cr_mutation_guard() {
     _cr_test_owner_rollover "$stage" || return 69
     _cr_record_owner_ready "$record" "$@"
 }
+
+_cr_request_schema() {
+    local request=$1 type
+    jq -e '
+      type=="object" and
+      (.id|type=="string" and test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")) and
+      (.type|type=="string") and (.source|type=="string" and length>0) and
+      (.reason|type=="string" and length>0) and
+      (.status|type=="string") and
+      (.created_at|type=="number" and floor==. and .>0) and
+      (.owner|type=="object") and
+      ((has("source_path")|not) or (.source_path|type=="string" and length>0)) and
+      ((has("source_mtime")|not) or (.source_mtime|type=="number" and floor==. and .>=0))
+    ' >/dev/null 2>&1 <<<"$request" || return 1
+    type=$(jq -r .type <<<"$request") || return 1
+    _cr_request_type "$type" || return 1
+    _cr_owner_schema <<<"$(jq -c .owner <<<"$request")"
+}
+_cr_request_identity_equal() {
+    jq -ne --argjson left "$1" --argjson right "$2" '
+      def identity: {
+        id,type,source,reason,created_at,owner,
+        source_path:(.source_path // null),source_mtime:(.source_mtime // null)
+      };
+      ($left|identity)==($right|identity)
+    ' >/dev/null
+}
+_cr_abandoned_result_valid() {
+    local result=$1 request=$2
+    jq -e '
+      type=="object" and .status=="FAILED" and .rc==70 and
+      (.finished_at|type=="number" and floor==. and .>0)
+    ' >/dev/null <<<"$result" || return 1
+    jq -ne --argjson request "$request" --argjson result "$result" '
+      def identity: {
+        id,type,source,reason,created_at,
+        source_path:(.source_path // null),source_mtime:(.source_mtime // null)
+      };
+      ($request|identity)==($result|identity)
+    ' >/dev/null
+}
+_cr_reconcile_abandoned_lease_locked() {
+    local old_owner=$1 pending_path active_path lease_path kind request status id history_path result_path
+    local history='' result='' terminal history_next result_next finished
+    pending_path=$(_cr_pending_file); active_path=$(_cr_active_file)
+    [ ! -e "$pending_path" ] || [ ! -e "$active_path" ] || return 70
+    if [ -e "$pending_path" ]; then lease_path=$pending_path; kind=pending
+    elif [ -e "$active_path" ]; then lease_path=$active_path; kind=active
+    else return 0
+    fi
+    request=$(cat "$lease_path" 2>/dev/null) || return 70
+    _cr_request_schema "$request" || return 70
+    _cr_owner_immutable_equal "$(jq -c .owner <<<"$request")" "$old_owner" || return 70
+    status=$(jq -r .status <<<"$request") || return 70
+    case "$kind:$status" in
+        pending:PENDING|active:PENDING|active:QUIESCING|active:RUNNING|active:VERIFYING|active:FAILED|active:SUCCEEDED) ;;
+        *) return 70 ;;
+    esac
+    id=$(jq -r .id <<<"$request") || return 70
+    history_path=$(_cr_history_file "$id"); result_path=$(_cr_result_file "$id")
+    if [ -e "$history_path" ]; then
+        history=$(cat "$history_path" 2>/dev/null) || return 70
+        jq -e 'type=="object" and (.request|type=="object") and (.actions|type=="array") and all(.actions[];type=="object")' >/dev/null <<<"$history" || return 70
+        _cr_request_schema "$(jq -c .request <<<"$history")" || return 70
+        _cr_request_identity_equal "$request" "$(jq -c .request <<<"$history")" || return 70
+    elif [ "$kind" = active ]; then
+        return 70
+    else
+        history=$(jq -cn --argjson request "$request" '{request:$request,actions:[]}') || return 70
+    fi
+    if [ -e "$result_path" ]; then
+        result=$(cat "$result_path" 2>/dev/null) || return 70
+        _cr_abandoned_result_valid "$result" "$request" || return 70
+        [ -n "$history" ] || return 70
+        finished=$(jq -r .finished_at <<<"$result") || return 70
+    elif jq -e '.request.status=="FAILED" and .request.rc==70 and .request.interrupted==true and (.request.finished_at|type=="number" and floor==. and .>0)' >/dev/null <<<"$history"; then
+        finished=$(jq -r .request.finished_at <<<"$history") || return 70
+    else
+        finished=$(_cr_now) || return 70
+    fi
+    terminal=$(jq -c --argjson now "$finished" '.status="FAILED" | .rc=70 | .interrupted=true | .finished_at=$now | .interrupted_reason="owner_stale"' <<<"$request") || return 70
+    history_next=$(jq -c --argjson terminal "$terminal" '.request=$terminal' <<<"$history") || return 70
+    result_next=$(jq -c '{id,type,status,rc,source,reason,created_at,finished_at} + (if has("source_path") then {source_path} else {} end) + (if has("source_mtime") then {source_mtime} else {} end)' <<<"$terminal") || return 70
+    [ ! -e "$(_cr_service_file)" ] || jq -e 'type=="object"' "$(_cr_service_file)" >/dev/null 2>&1 || return 70
+    _cr_mark_dirty || return 70
+    _cr_atomic_write "$history_path" "$history_next" || return 70
+    _cr_test_failpoint owner_reconcile_after_history || return 70
+    _cr_atomic_write "$result_path" "$result_next" || return 70
+    _cr_test_failpoint owner_reconcile_after_result || return 70
+    _cr_remove "$lease_path" || return 70
+}
 _cr_owner_create_locked() {
-    local pid=${1:-$$} boot start invocation token now record
+    local pid=${1:-$$} boot start invocation token now record current actual owner_boot owner_start
     [[ $pid =~ ^[0-9]+$ ]] || return 64
-    boot=$(cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null) || return 70; start=$(_cr_proc_start "$pid"); [ -n "$start" ] || return 69
+    boot=$(cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null) || return 70
+    start=$(_cr_proc_start "$pid"); [ -n "$start" ] || return 69
+    if [ -e "$(_cr_owner_file)" ]; then
+        current=$(_cr_owner_json) || return 70
+        _cr_owner_schema <<<"$current" || return 69
+        owner_boot=$(jq -r .boot_id <<<"$current") || return 70
+        owner_start=$(jq -r .proc_start_time <<<"$current") || return 70
+        actual=$(_cr_proc_start "$(jq -r .pid <<<"$current")" 2>/dev/null || true)
+        if [ "$owner_boot" = "$boot" ] && [ -n "$actual" ] && [ "$actual" = "$owner_start" ]; then return 75; fi
+        _cr_reconcile_abandoned_lease_locked "$current" || return $?
+    elif [ -e "$(_cr_pending_file)" ] || [ -e "$(_cr_active_file)" ]; then
+        return 70
+    fi
     invocation=$(_cr_uuid) || return 70; token=$(_cr_uuid) || return 70; now=$(_cr_now)
     record=$(jq -cn --arg boot "$boot" --arg invocation "$invocation" --arg start "$start" --arg token "$token" --argjson pid "$pid" --argjson now "$now" '{boot_id:$boot,invocation_id:$invocation,pid:$pid,proc_start_time:$start,token:$token,created_at:$now,lifecycle:"STARTING"}') || return 70
     _cr_atomic_write "$(_cr_owner_file)" "$record" || return 70
 }
 cam_owner_create() { _cr_lock_call _cr_owner_create_locked "$@"; }
 _cr_lifecycle_allowed() {
-    case "$1:$2" in STARTING:ACTIVE|STARTING:DEGRADED|STARTING:STOPPING|ACTIVE:APPLYING_CONFIG|ACTIVE:RECOVERING|ACTIVE:DEGRADED|ACTIVE:STOPPING|APPLYING_CONFIG:ACTIVE|APPLYING_CONFIG:DEGRADED|APPLYING_CONFIG:STOPPING|RECOVERING:ACTIVE|RECOVERING:DEGRADED|RECOVERING:STOPPING|DEGRADED:APPLYING_CONFIG|DEGRADED:RECOVERING|DEGRADED:STOPPING) return 0;; esac; return 1
+    case "$1:$2" in STARTING:ACTIVE|STARTING:RECOVERING|STARTING:DEGRADED|STARTING:STOPPING|ACTIVE:APPLYING_CONFIG|ACTIVE:RECOVERING|ACTIVE:DEGRADED|ACTIVE:STOPPING|APPLYING_CONFIG:ACTIVE|APPLYING_CONFIG:DEGRADED|APPLYING_CONFIG:STOPPING|RECOVERING:ACTIVE|RECOVERING:DEGRADED|RECOVERING:STOPPING|DEGRADED:APPLYING_CONFIG|DEGRADED:RECOVERING|DEGRADED:STOPPING) return 0;; esac; return 1
 }
 _cr_owner_set_lifecycle_locked() {
     local next=$1 owner current updated
@@ -130,6 +233,37 @@ _cr_owner_set_lifecycle_locked() {
     _cr_owner_snapshot_live "$owner" || return 69; _cr_atomic_write "$(_cr_owner_file)" "$updated" || return 70
 }
 cam_owner_set_lifecycle() { _cr_lock_call _cr_owner_set_lifecycle_locked "$@"; }
+
+_cr_startup_request_reserve_locked() {
+    local type=$1 source=$2 reason=$3 source_path=${4:-} source_mtime=${5:-} owner id now request history
+    _cr_public_action "$type" || return 64
+    [ -n "$source" ] && [ -n "$reason" ] || return 64
+    [ -z "$source_mtime" ] || [[ $source_mtime =~ ^[0-9]+$ ]] || return 64
+    owner=$(_cr_owner_json) || return 69
+    _cr_owner_snapshot_live "$owner" || return 69
+    _cr_owner_snapshot_lifecycle_in "$owner" STARTING || return 69
+    [ ! -e "$(_cr_pending_file)" ] && [ ! -e "$(_cr_active_file)" ] || return 75
+    id=$(_cr_uuid) || return 70
+    now=$(_cr_now) || return 70
+    request=$(jq -cn --arg id "$id" --arg type "$type" --arg source "$source" --arg reason "$reason" --arg source_path "$source_path" --arg source_mtime "$source_mtime" --argjson now "$now" --argjson owner "$owner" '{id:$id,type:$type,source:$source,reason:$reason,status:"PENDING",created_at:$now,owner:$owner} + (if $source_path=="" then {} else {source_path:$source_path} end) + (if $source_mtime=="" then {} else {source_mtime:($source_mtime|tonumber)} end)') || return 70
+    history=$(jq -cn --argjson request "$request" '{request:$request,actions:[]}') || return 70
+    _cr_record_owner_ready "$request" STARTING || return 69
+    _cr_atomic_write "$(_cr_history_file "$id")" "$history" || return 70
+    _cr_test_failpoint startup_reserve_after_history || return 70
+    _cr_record_owner_ready "$request" STARTING || return 69
+    _cr_atomic_write "$(_cr_active_file)" "$request" || return 70
+    _cr_test_failpoint startup_reserve_after_active || return 70
+    _cr_owner_set_lifecycle_locked RECOVERING || return $?
+    _cr_test_failpoint startup_reserve_after_lifecycle || return 70
+    if declare -F _cr_test_startup_reservation_probe >/dev/null 2>&1; then
+        _cr_test_startup_reservation_probe || return $?
+    fi
+    printf '%s\n' "$id"
+}
+cam_startup_request_reserve() {
+    [ "$#" -ge 3 ] && [ "$#" -le 5 ] || return 64
+    _cr_lock_call _cr_startup_request_reserve_locked "$@"
+}
 
 _cr_request_new() {
     local type=$1 source=$2 reason=$3 source_path=${4:-} source_mtime=${5:-} id now owner request

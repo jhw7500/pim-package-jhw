@@ -13,6 +13,9 @@ export PIM_CAMERA_STATE_DIR="$WORK/state"
 export PIM_CAMERA_BOOT_ID_FILE="$WORK/boot-id"
 export PIM_CAMERA_PROC_ROOT="$WORK/proc"
 export PIM_CAMERA_RUNTIME_JSON="$WORK/run/config/pim_runtime.json"
+export PIM_CAMERA_SOURCE_ROOT="$WORK/source"
+export PIM_CAMERA_RUNTIME_HELPER="$PIM_BIN/camera_runtime_config.py"
+export PIM_CAMERA_CONTROL_WORK_DIR="$PIM_CAMERA_RUN_DIR/control"
 export PIM_CAMERA_SYSFS_ROOT="$WORK/sys"
 export PIM_CAMERA_DEVICE_ROOT="$WORK/dev"
 export PIM_CAMERA_CALL_LOG="$WORK/calls"
@@ -39,13 +42,13 @@ prepare_stubs() {
         printf '#!/bin/sh\nprintf "%%s %%s\\n" "$(basename "$0")" "$*" >> "$PIM_CAMERA_CALL_LOG"\n[ "$(basename "$0")" = modprobe ] && [ "$1" = "${FAIL_MODPROBE:-}" ] && exit 23\nexit 0\n' > "$WORK/stub/$cmd"
         chmod +x "$WORK/stub/$cmd"
     done
-    printf '#!/bin/sh\nprintf "kill %%s\\n" "$*" >> "$PIM_CAMERA_CALL_LOG"\nrm -f "$PIM_CAMERA_PROCESS_ROOT/$2/cmdline"\nexit 0\n' > "$WORK/stub/kill"
+    printf '#!/bin/sh\nprintf "kill %%s\\n" "$*" >> "$PIM_CAMERA_CALL_LOG"\n[ "${KEEP_BG:-0}" = 1 ] || rm -f "$PIM_CAMERA_PROCESS_ROOT/$2/cmdline"\nexit 0\n' > "$WORK/stub/kill"
     chmod +x "$WORK/stub/kill"
     printf '#!/bin/sh\nlast=\nfor arg; do last=$arg; done\nprintf "pgrep %%s\\n" "$*" >> "$PIM_CAMERA_CALL_LOG"\ngrep -Fqx "$last" "$WORK/procs" 2>/dev/null\n' > "$WORK/stub/pgrep"
     printf '#!/bin/sh\nlast=\nfor arg; do last=$arg; done\nprintf "pkill %%s\\n" "$*" >> "$PIM_CAMERA_CALL_LOG"\ngrep -Fvx "$last" "$WORK/procs" > "$WORK/procs.next" 2>/dev/null || :\nmv "$WORK/procs.next" "$WORK/procs"\ncase "$last" in *BG_Check_for_pim.sh) rm -f "$PIM_CAMERA_PROCESS_ROOT"/*/cmdline;; esac\n' > "$WORK/stub/pkill"
-    printf '#!/bin/sh\nprintf "lsmod\\n" >> "$PIM_CAMERA_CALL_LOG"\nexit 0\n' > "$WORK/stub/lsmod"
+    printf '#!/bin/sh\nprintf "lsmod\\n" >> "$PIM_CAMERA_CALL_LOG"\nprintf "%%s\\n" "${LSMOD_ROWS:-}"\nexit 0\n' > "$WORK/stub/lsmod"
     printf '#!/bin/sh\nprintf "start_cam\\n" >> "$PIM_CAMERA_CALL_LOG"\nprintf "gstApp\\n" >> "$WORK/procs"\nmkdir -p "$PIM_CAMERA_PROCESS_ROOT/100"\nprintf "%%s" "100 (BG_Check_for_pim) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1000 0" > "$PIM_CAMERA_PROCESS_ROOT/100/stat"\nprintf "/bin/bash\\000'"$PIM_BIN"'/BG_Check_for_pim.sh\\0004\\000" > "$PIM_CAMERA_PROCESS_ROOT/100/cmdline"\nexit 0\n' > "$PIM_CAMERA_START_CAM"
-    for cmd in ord vcm; do printf '#!/bin/sh\nprintf "%%s\\n" "$(basename "$0")" >> "$WORK/procs"\n' > "$WORK/stub/$cmd"; chmod +x "$WORK/stub/$cmd"; done
+    for cmd in ord vcm; do printf '#!/bin/sh\nprintf "start %%s\\n" "$(basename "$0")" >> "$PIM_CAMERA_CALL_LOG"\nprintf "%%s\\n" "$(basename "$0")" >> "$WORK/procs"\n' > "$WORK/stub/$cmd"; chmod +x "$WORK/stub/$cmd"; done
     chmod +x "$WORK/stub/pgrep" "$WORK/stub/pkill" "$WORK/stub/lsmod" "$PIM_CAMERA_START_CAM"
     export PATH="$WORK/stub:$PATH"
 }
@@ -64,6 +67,7 @@ runtime
 # This is the RED boundary: Task 3 must provide the only action executor.
 source "$PIM_LIB/cam_recovery.sh"
 source "$PIM_LIB/cam_recovery_actions.sh"
+source "$PIM_LIB/cam_operate_control.sh"
 # Protocol durability is covered separately; avoid repeated disk flush latency here.
 _cr_fsync_file() { :; }
 _cr_fsync_dir() { :; }
@@ -73,6 +77,60 @@ expect cam_execute_recovery_request "$PIM_CAMERA_RUNTIME_JSON" gstapp_restart te
 grep -q '^pkill .*gstApp' "$PIM_CAMERA_CALL_LOG" || { cat "$PIM_CAMERA_CALL_LOG" >&2; fail "gstapp restart did not quiesce app"; }
 grep -q '^kill -TERM 99$' "$PIM_CAMERA_CALL_LOG" || fail "gstapp restart did not quiesce BG child by exact argv identity"
 grep -q '^start_cam$' "$PIM_CAMERA_CALL_LOG" || fail "gstapp restart did not use internal launcher"
+
+echo "=== degraded camera-health apply uses one real full quiesce ==="
+mkdir -p "$PIM_CAMERA_SOURCE_ROOT"
+cat > "$PIM_CAMERA_SOURCE_ROOT/edgeconf_apply.json" <<JSON
+{"VHL_CAM":{"app":"gstApp","capture":{"enable":false},"tmp_path":"$WORK/recordings","vhl_name":"VD3001"}}
+JSON
+cat > "$PIM_CAMERA_SOURCE_ROOT/ord_vcm_conf.json" <<'JSON'
+{"ORD":{},"VCM":{},"ETC":{"policy":"same"}}
+JSON
+python3 "$PIM_CAMERA_RUNTIME_HELPER" stage --source-root "$PIM_CAMERA_SOURCE_ROOT" --candidate "$WORK/candidate.json" --result "$WORK/source.json" >/dev/null
+python3 "$PIM_CAMERA_RUNTIME_HELPER" publish --candidate "$WORK/candidate.json" --runtime-dir "$(dirname "$PIM_CAMERA_RUNTIME_JSON")" >/dev/null
+python3 "$PIM_CAMERA_RUNTIME_HELPER" projection --file "$PIM_CAMERA_RUNTIME_JSON" --output "$WORK/projection.json" >/dev/null
+projection=$(cat "$WORK/projection.json")
+boot=$(cat "$PIM_CAMERA_BOOT_ID_FILE")
+invocation=$(jq -r .invocation_id "$PIM_CAMERA_RUN_DIR/owner.json")
+jq -cn --arg boot "$boot" --arg invocation "$invocation" --argjson projection "$projection" '{schema:1,last_boot_id:$boot,last_successful_hardware_projection:$projection,dirty:false,degraded_reason:"camera unhealthy",degraded_target:"camera_health",last_invocation_id:$invocation}' > "$PIM_CAMERA_STATE_DIR/service-state.json"
+cam_owner_set_lifecycle DEGRADED
+printf 'ord\nvcm\n' >> "$WORK/procs"
+eval "$(declare -f cam_quiesce_consumers | sed '1s/cam_quiesce_consumers/cam_quiesce_consumers_real/')"
+cam_quiesce_consumers() {
+    local rc=0
+    printf 'quiesce-all-begin\n' >> "$PIM_CAMERA_CALL_LOG"
+    cam_quiesce_consumers_real "$@" || rc=$?
+    [ "$rc" -eq 0 ] && printf 'quiesce-all-complete\n' >> "$PIM_CAMERA_CALL_LOG"
+    return "$rc"
+}
+eval "$(declare -f _coc_verify_all | sed '1s/_coc_verify_all/_coc_verify_all_real/')"
+_coc_verify_all() {
+    _coc_verify_all_real "$@" || return $?
+    printf 'final-verify\n' >> "$PIM_CAMERA_CALL_LOG"
+}
+export LSMOD_ROWS=$'max9296 1 0\nimx8_media_dev 1 0'
+: > "$PIM_CAMERA_CALL_LOG"
+apply_id=$(cam_request_submit apply_config test "degraded camera repair")
+cam_poll_pending_request
+[ "$(grep -c '^quiesce-all-begin$' "$PIM_CAMERA_CALL_LOG")" -eq 1 ] || { cat "$PIM_CAMERA_CALL_LOG" >&2; fail "module apply did not invoke exactly one full quiesce"; }
+[ "$(grep -c '^quiesce-all-complete$' "$PIM_CAMERA_CALL_LOG")" -eq 1 ] || fail "module apply did not confirm all consumers stopped"
+quiesce_line=$(grep -n '^quiesce-all-complete$' "$PIM_CAMERA_CALL_LOG" | cut -d: -f1)
+module_line=$(grep -n -m1 -E '^(rmmod|modprobe) ' "$PIM_CAMERA_CALL_LOG" | cut -d: -f1)
+start_line=$(grep -n -m1 -E '^(start ord|start vcm|start_cam)$' "$PIM_CAMERA_CALL_LOG" | cut -d: -f1)
+verify_line=$(grep -n '^final-verify$' "$PIM_CAMERA_CALL_LOG" | tail -1 | cut -d: -f1)
+[ "$quiesce_line" -lt "$module_line" ] && [ "$module_line" -lt "$start_line" ] && [ "$start_line" -lt "$verify_line" ] || { cat "$PIM_CAMERA_CALL_LOG" >&2; fail "module apply order was not quiesce -> module -> restart -> final verify"; }
+jq -e --arg id "$apply_id" '.id==$id and .status=="SUCCEEDED" and .rc==0' "$PIM_CAMERA_RUN_DIR/recovery/results/$apply_id.json" >/dev/null || fail "module apply result"
+
+cam_owner_set_lifecycle DEGRADED
+jq '.degraded_reason="camera unhealthy" | .degraded_target="camera_health" | .dirty=false' "$PIM_CAMERA_STATE_DIR/service-state.json" > "$WORK/service.next" && mv "$WORK/service.next" "$PIM_CAMERA_STATE_DIR/service-state.json"
+: > "$PIM_CAMERA_CALL_LOG"
+export KEEP_BG=1 PIM_CAMERA_CONSUMERS_QUIESCED=1
+failed_apply_id=$(cam_request_submit apply_config test "quiesce must fail closed")
+expect_rc 1 cam_poll_pending_request
+unset KEEP_BG PIM_CAMERA_CONSUMERS_QUIESCED
+grep -q '^quiesce-all-begin$' "$PIM_CAMERA_CALL_LOG" || fail "forged pre-quiesced apply skipped real quiesce"
+! grep -Eq '^(rmmod|modprobe) ' "$PIM_CAMERA_CALL_LOG" || { cat "$PIM_CAMERA_CALL_LOG" >&2; fail "quiesce failure allowed module effect"; }
+jq -e --arg id "$failed_apply_id" '.id==$id and .status=="FAILED" and .rc>0' "$PIM_CAMERA_RUN_DIR/recovery/results/$failed_apply_id.json" >/dev/null || fail "quiesce failure result"
 # The first request proves the full lease guard before process side effects.  The
 # remaining stub-only order cases do not need to re-run its expensive tuple reads.
 cam_executor_assert_context() { return 0; }
