@@ -44,7 +44,7 @@ prepare_stubs() {
     printf '#!/bin/sh\nlast=\nfor arg; do last=$arg; done\nprintf "pgrep %%s\\n" "$*" >> "$PIM_CAMERA_CALL_LOG"\ngrep -Fqx "$last" "$WORK/procs" 2>/dev/null\n' > "$WORK/stub/pgrep"
     printf '#!/bin/sh\nlast=\nfor arg; do last=$arg; done\nprintf "pkill %%s\\n" "$*" >> "$PIM_CAMERA_CALL_LOG"\ngrep -Fvx "$last" "$WORK/procs" > "$WORK/procs.next" 2>/dev/null || :\nmv "$WORK/procs.next" "$WORK/procs"\ncase "$last" in *BG_Check_for_pim.sh) rm -f "$PIM_CAMERA_PROCESS_ROOT"/*/cmdline;; esac\n' > "$WORK/stub/pkill"
     printf '#!/bin/sh\nprintf "lsmod\\n" >> "$PIM_CAMERA_CALL_LOG"\nexit 0\n' > "$WORK/stub/lsmod"
-    printf '#!/bin/sh\nprintf "start_cam\\n" >> "$PIM_CAMERA_CALL_LOG"\nprintf "gstApp\\n" >> "$WORK/procs"\nmkdir -p "$PIM_CAMERA_PROCESS_ROOT/100"\nprintf "%%s" "100 (BG_Check_for_pim) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1000 0" > "$PIM_CAMERA_PROCESS_ROOT/100/stat"\nprintf "'"$PIM_BIN"'/BG_Check_for_pim.sh\\0004\\000" > "$PIM_CAMERA_PROCESS_ROOT/100/cmdline"\nexit 0\n' > "$PIM_CAMERA_START_CAM"
+    printf '#!/bin/sh\nprintf "start_cam\\n" >> "$PIM_CAMERA_CALL_LOG"\nprintf "gstApp\\n" >> "$WORK/procs"\nmkdir -p "$PIM_CAMERA_PROCESS_ROOT/100"\nprintf "%%s" "100 (BG_Check_for_pim) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1000 0" > "$PIM_CAMERA_PROCESS_ROOT/100/stat"\nprintf "/bin/bash\\000'"$PIM_BIN"'/BG_Check_for_pim.sh\\0004\\000" > "$PIM_CAMERA_PROCESS_ROOT/100/cmdline"\nexit 0\n' > "$PIM_CAMERA_START_CAM"
     for cmd in ord vcm; do printf '#!/bin/sh\nprintf "%%s\\n" "$(basename "$0")" >> "$WORK/procs"\n' > "$WORK/stub/$cmd"; chmod +x "$WORK/stub/$cmd"; done
     chmod +x "$WORK/stub/pgrep" "$WORK/stub/pkill" "$WORK/stub/lsmod" "$PIM_CAMERA_START_CAM"
     export PATH="$WORK/stub:$PATH"
@@ -58,7 +58,7 @@ export PIM_CAMERA_BG_CHECKER="$PIM_BIN/BG_Check_for_pim.sh"
 printf 'gstApp\n%s\n' "$PIM_CAMERA_BG_CHECKER" > "$WORK/procs"
 mkdir -p "$PIM_CAMERA_PROCESS_ROOT/99"
 printf '%s' '99 (BG_Check_for_pim) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 999 0' > "$PIM_CAMERA_PROCESS_ROOT/99/stat"
-printf '%s\0004\000' "$PIM_CAMERA_BG_CHECKER" > "$PIM_CAMERA_PROCESS_ROOT/99/cmdline"
+printf '/bin/bash\000%s\0004\000' "$PIM_CAMERA_BG_CHECKER" > "$PIM_CAMERA_PROCESS_ROOT/99/cmdline"
 prepare_sysfs
 runtime
 # This is the RED boundary: Task 3 must provide the only action executor.

@@ -63,10 +63,11 @@ cam_runtime_app() {
 }
 
 cam_cleanup_recording_orphans() {
-    local runtime=$1 dir canonical vehicle started normalized prefix f
+    local runtime=$1 dir canonical vehicle started normalized prefix f marker=${PIM_CAMERA_SESSION_TIME_FILE:-/tmp/start_video_time_chk}
     dir=$(jq -r '.VHL_CAM.tmp_path // empty' "$runtime") || return 64
     vehicle=$(jq -r '.VHL_CAM.vhl_name // empty' "$runtime") || return 64
-    started=$(cat "${PIM_CAMERA_SESSION_TIME_FILE:-/tmp/start_video_time_chk}" 2>/dev/null | tr -d '\n')
+    [ -r "$marker" ] || return 0
+    IFS= read -r started < "$marker" || return 0
     [[ $dir = /* && $dir != / && $dir != *'..'* && $vehicle =~ ^[A-Za-z0-9_-]+$ ]] || return 64
     [ -L "$dir" ] && return 64
     canonical=$(readlink -f -- "$dir" 2>/dev/null) || return 64
@@ -105,21 +106,33 @@ cam_cleanup_shm_overflow() {
 }
 
 cam_bg_checker_path() { printf '%s\n' "${PIM_CAMERA_BG_CHECKER:-$PIM_BIN/BG_Check_for_pim.sh}"; }
+cam_process_start_time() {
+    local stat tail
+    stat=$(cat "$1" 2>/dev/null) || return 2
+    tail=${stat##*) }
+    set -- $tail
+    [ "$#" -ge 20 ] || return 2
+    [[ $20 =~ ^[0-9]+$ ]] || return 2
+    printf '%s\n' "$20"
+}
+cam_bg_argv_matches() {
+    local cmdline=$1 bg=$2 arg args=()
+    [ -r "$cmdline" ] || return 2
+    while IFS= read -r -d '' arg; do args+=("$arg"); done < "$cmdline"
+    if [ "${args[0]:-}" = "$bg" ] && [[ ${args[1]:-} =~ ^[0-9]+$ ]]; then return 0; fi
+    [ "${args[0]:-}" = /bin/bash ] && [ "${args[1]:-}" = "$bg" ] && [[ ${args[2]:-} =~ ^[0-9]+$ ]]
+}
 cam_bg_checker_records() {
-    local bg=$1 root=${PIM_CAMERA_PROCESS_ROOT:-/proc} cmdline stat arg pid start args=()
+    local bg=$1 root=${PIM_CAMERA_PROCESS_ROOT:-/proc} cmdline stat arg pid start rc
     [ -e "$root/.inspect_error" ] && return 2
     for cmdline in "${PIM_CAMERA_PROCESS_ROOT:-/proc}"/[0-9]*/cmdline; do
         [ -r "$cmdline" ] || continue
-        args=()
-        while IFS= read -r -d '' arg; do
-            args+=("$arg")
-        done < "$cmdline"
-        [ "${args[0]:-}" = "$bg" ] && [[ ${args[1]:-} =~ ^[0-9]+$ ]] || continue
+        cam_bg_argv_matches "$cmdline" "$bg"; rc=$?
+        [ "$rc" -eq 0 ] || { [ "$rc" -eq 1 ] && continue; return "$rc"; }
         pid=${cmdline%/cmdline}; pid=${pid##*/}
         stat=${cmdline%/cmdline}/stat
         [ -r "$stat" ] || return 2
-        start=$(awk '{print $22}' "$stat" 2>/dev/null) || return 2
-        [[ $start =~ ^[0-9]+$ ]] || return 2
+        start=$(cam_process_start_time "$stat") || return $?
         printf '%s %s\n' "$pid" "$start"
     done
 }
@@ -143,12 +156,14 @@ cam_signal_process() {
     case "$kind" in
         app) app=$(cam_runtime_app "$runtime") || return $?; cam_effect "$runtime" pkill "$signal" -x "$app" ;;
         bg)
-            local records pid start current
+            local records pid start current cmdline
             bg=$(cam_bg_checker_path)
             records=$(cam_bg_checker_records "$bg") || return $?
             [ -n "$records" ] || return 1
             while read -r pid start; do
-                current=$(awk '{print $22}' "${PIM_CAMERA_PROCESS_ROOT:-/proc}/$pid/stat" 2>/dev/null) || return 2
+                cmdline="${PIM_CAMERA_PROCESS_ROOT:-/proc}/$pid/cmdline"
+                cam_bg_argv_matches "$cmdline" "$bg" || continue
+                current=$(cam_process_start_time "${PIM_CAMERA_PROCESS_ROOT:-/proc}/$pid/stat") || return $?
                 [ "$current" = "$start" ] || continue
                 cam_effect "$runtime" kill "$signal" "$pid" || return $?
             done <<< "$records"
@@ -163,7 +178,9 @@ cam_stop_process() {
     cam_process_present "$runtime" "$kind"; rc=$?
     [ "$rc" -eq 0 ] || { [ "$rc" -eq 1 ] && return 0; return "$rc"; }
     cam_signal_process "$runtime" -TERM "$kind" || return $?
-    while cam_process_present "$runtime" "$kind"; do
+    while :; do
+        cam_process_present "$runtime" "$kind"; rc=$?
+        [ "$rc" -eq 0 ] || { [ "$rc" -eq 1 ] && break; return "$rc"; }
         [ "$i" -ge "$timeout" ] && break
         sleep 1; i=$((i + 1))
     done
@@ -171,7 +188,9 @@ cam_stop_process() {
     [ "$rc" -eq 0 ] || { [ "$rc" -eq 1 ] && return 0; return "$rc"; }
     cam_signal_process "$runtime" -KILL "$kind" || return $?
     i=0
-    while cam_process_present "$runtime" "$kind"; do
+    while :; do
+        cam_process_present "$runtime" "$kind"; rc=$?
+        [ "$rc" -eq 0 ] || { [ "$rc" -eq 1 ] && return 0; return "$rc"; }
         [ "$i" -ge "$timeout" ] && return 1
         sleep 1; i=$((i + 1))
     done
