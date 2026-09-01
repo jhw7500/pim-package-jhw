@@ -135,19 +135,38 @@ def hardware_projection(document: Mapping[str, object]) -> dict[str, object]:
     }
 
 
+def _json_equal(current: object, candidate: object) -> bool:
+    if type(current) is not type(candidate):
+        return False
+    if isinstance(current, dict):
+        return current.keys() == candidate.keys() and all(
+            _json_equal(value, candidate[key]) for key, value in current.items()
+        )
+    if isinstance(current, list):
+        return len(current) == len(candidate) and all(
+            _json_equal(value, candidate[index]) for index, value in enumerate(current)
+        )
+    return current == candidate
+
+
 def classify_change(current: Mapping[str, object], candidate: Mapping[str, object]) -> ChangePlan:
     current_document = validate_runtime(dict(current))
     candidate_document = validate_runtime(dict(candidate))
-    if current_document == candidate_document:
+    if _json_equal(current_document, candidate_document):
         return ChangePlan(False, False, (), ())
     changed: list[str] = []
     for section in _SECTION_ORDER[:-1]:
-        if current_document.get(section) != candidate_document.get(section):
+        if not _json_equal(current_document.get(section), candidate_document.get(section)):
             changed.append(section)
     known = set(_SECTION_ORDER[:-1])
-    if any(current_document.get(key) != candidate_document.get(key) for key in set(current_document) | set(candidate_document) - known):
+    if any(
+        not _json_equal(current_document.get(key), candidate_document.get(key))
+        for key in (set(current_document) | set(candidate_document)) - known
+    ):
         changed.append("SCRIPT")
-    hardware_changed = hardware_projection(current_document) != hardware_projection(candidate_document)
+    hardware_changed = not _json_equal(
+        hardware_projection(current_document), hardware_projection(candidate_document)
+    )
     steps: list[str] = []
     if hardware_changed:
         steps.append("camera_hard_reset")
@@ -234,6 +253,24 @@ def _write_output(path: Path, document: object) -> None:
     write_json_atomic(path, document)
 
 
+def _paths_alias(first: Path, second: Path) -> bool:
+    try:
+        return first.samefile(second)
+    except FileNotFoundError:
+        return first.resolve(strict=False) == second.resolve(strict=False)
+
+
+def _reject_output_aliases(outputs: Sequence[Path], inputs: Sequence[Path]) -> None:
+    for output in outputs:
+        for input_path in inputs:
+            if _paths_alias(output, input_path):
+                raise ConfigError(f"output must not replace input: {output}")
+    for index, output in enumerate(outputs):
+        for other in outputs[index + 1 :]:
+            if _paths_alias(output, other):
+                raise ConfigError(f"outputs must be distinct: {output}")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -257,12 +294,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if arguments.command == "stage":
             candidate = merge_source_documents(arguments.source_root)
+            _reject_output_aliases(
+                (arguments.candidate, arguments.result),
+                (candidate.source.path, candidate.ord_path),
+            )
             _write_output(arguments.candidate, candidate.document)
             _write_output(arguments.result, asdict(candidate.source) | {"path": str(candidate.source.path)})
         elif arguments.command == "validate":
             _read_runtime(arguments.file)
         elif arguments.command == "plan":
-            _write_output(arguments.output, asdict(classify_change(_read_runtime(arguments.current), _read_runtime(arguments.candidate))))
+            current = _read_runtime(arguments.current)
+            candidate = _read_runtime(arguments.candidate)
+            _reject_output_aliases((arguments.output,), (arguments.current, arguments.candidate))
+            _write_output(arguments.output, asdict(classify_change(current, candidate)))
         elif arguments.command == "projection":
             _write_output(arguments.output, hardware_projection(_read_runtime(arguments.file)))
         elif arguments.command == "publish":

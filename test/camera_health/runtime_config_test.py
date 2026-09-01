@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import stat
@@ -72,6 +74,11 @@ class RuntimeConfigTests(unittest.TestCase):
         self.write_edge(name, mtime_ns=100)
         return runtime.merge_source_documents(self.source)
 
+    def assert_cli_rejected(self, arguments: list[str]) -> None:
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                runtime.main(arguments)
+
     def test_selects_newest_regular_file_by_nanosecond_mtime(self) -> None:
         older = self.write_edge("edgeconf_old.json", mtime_ns=100)
         newer = self.write_edge("edgeconf_new.json", mtime_ns=101)
@@ -137,6 +144,56 @@ class RuntimeConfigTests(unittest.TestCase):
             json.loads(result_path.read_text(encoding="utf-8")),
         )
 
+    def test_stage_rejects_source_output_aliases_without_mutating_sources(self) -> None:
+        selected = self.write_edge("edgeconf_current.json", mtime_ns=100)
+        source_bytes = (selected.read_bytes(), self.ord.read_bytes())
+        candidate_alias = self.root / "candidate-alias.json"
+        candidate_alias.symlink_to(selected)
+        for label, candidate_path, result_path in (
+            ("candidate source", selected, self.root / "stage-result.json"),
+            ("result source", self.root / "candidate.json", self.ord),
+            ("candidate symlink", candidate_alias, self.root / "stage-result.json"),
+        ):
+            with self.subTest(label=label):
+                self.assert_cli_rejected(
+                    [
+                        "stage",
+                        "--source-root",
+                        str(self.source),
+                        "--candidate",
+                        str(candidate_path),
+                        "--result",
+                        str(result_path),
+                    ]
+                )
+                self.assertEqual(source_bytes, (selected.read_bytes(), self.ord.read_bytes()))
+
+    def test_plan_rejects_input_output_aliases_without_mutating_inputs(self) -> None:
+        document = self.candidate().document
+        for label, output_kind in (("current input", "current"), ("candidate symlink", "symlink")):
+            with self.subTest(label=label):
+                current_path = self.root / f"current-{output_kind}.json"
+                candidate_path = self.root / f"candidate-{output_kind}.json"
+                runtime.write_json_atomic(current_path, document)
+                runtime.write_json_atomic(candidate_path, document)
+                output_path = current_path
+                if output_kind == "symlink":
+                    output_path = self.root / "plan-output-alias.json"
+                    output_path.symlink_to(candidate_path)
+                before = (current_path.read_bytes(), candidate_path.read_bytes())
+                self.assert_cli_rejected(
+                    [
+                        "plan",
+                        "--current",
+                        str(current_path),
+                        "--candidate",
+                        str(candidate_path),
+                        "--output",
+                        str(output_path),
+                    ]
+                )
+                self.assertEqual(before, (current_path.read_bytes(), candidate_path.read_bytes()))
+
     def test_publish_is_atomic_mode_0640_and_repairs_relative_aliases(self) -> None:
         candidate = self.candidate()
         candidate_path = self.root / "candidate.json"
@@ -200,6 +257,16 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertFalse(plan.hardware_change)
         self.assertEqual([], list(plan.steps))
 
+    def test_json_boolean_and_number_are_distinct_semantic_hardware_values(self) -> None:
+        current = self.candidate().document
+        changed = json.loads(json.dumps(current))
+        changed["VHL_CAM"]["i2c2"]["ch0"]["enable"] = 1
+        plan = runtime.classify_change(current, changed)
+        self.assertTrue(plan.semantic_change)
+        self.assertTrue(plan.hardware_change)
+        self.assertEqual(["VHL_CAM"], list(plan.changed_sections))
+        self.assertEqual(["camera_hard_reset"], list(plan.steps))
+
     def test_hardware_projection_contains_only_centralized_hardware_fields(self) -> None:
         document = self.candidate().document
         document["VHL_CAM"]["unrelated"] = "not hardware"
@@ -236,6 +303,14 @@ class RuntimeConfigTests(unittest.TestCase):
             ["gstapp_restart", "ord_restart", "vcm_restart", "policy_reload"],
             list(plan.steps),
         )
+
+    def test_known_section_changes_are_not_script_only_changes(self) -> None:
+        current = self.candidate().document
+        changed = json.loads(json.dumps(current))
+        changed["ORD"]["port_num"] = 10008
+        plan = runtime.classify_change(current, changed)
+        self.assertEqual(["ORD"], list(plan.changed_sections))
+        self.assertEqual(["ord_restart"], list(plan.steps))
 
 
 if __name__ == "__main__":
