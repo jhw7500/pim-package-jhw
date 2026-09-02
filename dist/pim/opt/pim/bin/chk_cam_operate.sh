@@ -4,6 +4,9 @@ source /opt/pim/lib/cam_start_policy.sh
 source /opt/pim/lib/cam_recovery.sh
 source /opt/pim/lib/cam_recovery_actions.sh
 source /opt/pim/lib/cam_operate_control.sh
+source /opt/pim/lib/cam_liveness.sh
+
+cam_liveness_install_traps
 
 tag=$(basename "$0")
 KEY=RST
@@ -1275,6 +1278,7 @@ else
     logger -p local0.emerg "[$KEY][$tag:$LINENO] camera startup transaction failed rc=$startup_rc"
     exit "$startup_rc"
 fi
+cam_liveness_init
 modprobe rtc_ds1307
 #/opt/pim/bin/start_cam.sh 20
 
@@ -1366,6 +1370,16 @@ do
             logger -p local0.err "[$KEY][$tag:$LINENO] pending camera request failed type=$pending_type rc=$request_rc"
             sleep 2
             continue
+        fi
+    fi
+
+    owner_lifecycle=$(jq -r '.lifecycle // empty' "$PIM_CAMERA_RUN_DIR/owner.json" 2>/dev/null) || exit 70
+    [ "$owner_lifecycle" != STOPPING ] || break
+    if [ "$owner_lifecycle" = ACTIVE ]; then
+        liveness_rc=0
+        cam_liveness_tick || liveness_rc=$?
+        if [ "$liveness_rc" -ne 0 ]; then
+            [ "$liveness_rc" -eq 75 ] || logger -p local0.err "[$KEY][$tag:$LINENO] liveness tick failed rc=$liveness_rc"
         fi
     fi
 

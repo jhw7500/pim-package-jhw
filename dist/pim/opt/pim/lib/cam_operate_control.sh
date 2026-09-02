@@ -321,6 +321,28 @@ _coc_fail_active() {
     return "$rc"
 }
 
+_coc_fail_retryable_liveness_gstapp() {
+    local rc=$1 active id state history
+    active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69
+    _cr_request_schema "$active" || return 70
+    jq -e '.type=="gstapp_restart" and .source=="liveness" and .reason=="gstapp process absent" and .status=="RUNNING"' >/dev/null <<<"$active" || return 70
+    _cr_record_owner_ready "$active" RECOVERING || return 69
+    id=$(jq -r .id <<<"$active") || return 70
+    state=$(cat "$(_cr_state_file)" 2>/dev/null) || return 70
+    history=$(cat "$(_cr_history_file "$id")" 2>/dev/null) || return 70
+    _cr_counter_finish_pair_valid "$history" "$state" gstapp_restart "$id" || return 70
+    jq -e --arg id "$id" --argjson rc "$rc" '
+      .actions.gstapp_restart.last_request_id==$id and
+      .actions.gstapp_restart.last_status=="FAILED" and
+      .actions.gstapp_restart.last_rc==$rc and
+      .actions.gstapp_restart.consecutive_failures>0
+    ' >/dev/null <<<"$state" || return 70
+    _cr_test_failpoint retryable_liveness_before_finish || return 70
+    cam_request_finish FAILED "$rc" >/dev/null 2>&1 || return $?
+    cam_owner_set_lifecycle ACTIVE >/dev/null 2>&1 || return $?
+    return "$rc"
+}
+
 _coc_finish_preflight_failed() {
     local rc=$1 finish_rc
     cam_request_finish FAILED "$rc"
@@ -412,7 +434,15 @@ _coc_execute_recovery_active() {
         reboot_fallback) cam_execute_action_step reboot_fallback "$PIM_CAMERA_RUNTIME_JSON" || rc=$? ;;
         *) return 64 ;;
     esac
-    [ "$rc" -eq 0 ] || { _coc_fail_active "$rc" "$reason" "$target" "$dirty"; return $?; }
+    if [ "$rc" -ne 0 ]; then
+        if [ "$type" = gstapp_restart ] &&
+           jq -e '.source=="liveness" and .reason=="gstapp process absent"' >/dev/null <<<"$active"; then
+            _coc_fail_retryable_liveness_gstapp "$rc"
+        else
+            _coc_fail_active "$rc" "$reason" "$target" "$dirty"
+        fi
+        return $?
+    fi
     cam_request_transition VERIFYING || return $?
     _coc_verify_all || { rc=$?; _coc_fail_active "$rc" "$reason" camera_health "$dirty"; return $?; }
     projection=$(_coc_projection "$PIM_CAMERA_RUNTIME_JSON") || { rc=$?; _coc_fail_active "$rc" "$reason" camera_health "$dirty"; return $?; }

@@ -21,7 +21,7 @@ cam_validate_runtime() {
 cam_executor_assert_context() {
     local owner active key expected actual
     owner=$(_cr_owner_json) || return 69
-    cam_owner_assert "${PIM_CAMERA_OWNER_INVOCATION:-}" "${PIM_CAMERA_OWNER_TOKEN:-}" || return 69
+    [ "${PIM_CAMERA_STOP_EXECUTOR:-}" = 1 ] || cam_owner_assert "${PIM_CAMERA_OWNER_INVOCATION:-}" "${PIM_CAMERA_OWNER_TOKEN:-}" || return 69
     for key in boot_id invocation_id pid proc_start_time token created_at; do
         expected=$(jq -r --arg key "$key" '.[$key]' <<<"$owner") || return 69
         case "$key" in
@@ -34,6 +34,10 @@ cam_executor_assert_context() {
         esac
         [ "$expected" = "$actual" ] || return 69
     done
+    if [ "${PIM_CAMERA_STOP_EXECUTOR:-}" = 1 ]; then
+        _cr_owner_snapshot_lifecycle_in "$owner" STOPPING || return 69
+        return 0
+    fi
     if [ "${PIM_CAMERA_STARTUP_EXECUTOR:-}" = 1 ]; then
         _cr_owner_snapshot_lifecycle_in "$owner" STARTING || return 69
         return 0
@@ -47,6 +51,7 @@ cam_executor_assert_context() {
 
 cam_side_effect_guard() {
     cam_executor_assert_context || return 69
+    [ "${PIM_CAMERA_STOP_EXECUTOR:-}" != 1 ] || return 0
     cam_validate_runtime "$1"
 }
 
@@ -150,6 +155,8 @@ cam_process_present() {
     local runtime=$1 kind=$2 app bg
     case "$kind" in
         app) app=$(cam_runtime_app "$runtime") || return $?; pgrep -x "$app" >/dev/null 2>&1 ;;
+        gstapp) pgrep -x gstApp >/dev/null 2>&1 ;;
+        pimcam) pgrep -x PIMCAM >/dev/null 2>&1 ;;
         bg) bg=$(cam_bg_checker_path); cam_bg_checker_present "$bg" ;;
         ord|vcm) pgrep -x "$kind" >/dev/null 2>&1 ;;
         *) return 64 ;;
@@ -159,6 +166,8 @@ cam_signal_process() {
     local runtime=$1 signal=$2 kind=$3 app bg records=${4:-}
     case "$kind" in
         app) app=$(cam_runtime_app "$runtime") || return $?; cam_effect "$runtime" pkill "$signal" -x "$app" ;;
+        gstapp) cam_effect "$runtime" pkill "$signal" -x gstApp ;;
+        pimcam) cam_effect "$runtime" pkill "$signal" -x PIMCAM ;;
         bg)
             local records pid start current cmdline
             bg=$(cam_bg_checker_path)
@@ -181,7 +190,7 @@ cam_signal_or_confirm_absent() {
     rc=0; cam_signal_process "$runtime" "$signal" "$kind" "$snapshot" || rc=$?
     [ "$rc" -eq 0 ] && return 0
     [ "$rc" -eq 1 ] || return "$rc"
-    case "$kind" in app|ord|vcm) ;; *) return 1 ;; esac
+    case "$kind" in app|gstapp|pimcam|ord|vcm) ;; *) return 1 ;; esac
     rc=0; cam_process_present "$runtime" "$kind" || rc=$?
     [ "$rc" -eq 1 ] && return 0
     [ "$rc" -eq 0 ] && return 1
