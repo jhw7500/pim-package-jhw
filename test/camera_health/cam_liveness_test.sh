@@ -22,6 +22,7 @@ export PIM_CAMERA_LIVENESS_NOW=100
 export PIM_CAMERA_V4L2_CTL=v4l2-ctl
 export PIM_CAMERA_SYSTEMCTL=systemctl
 export PIM_CAMERA_VCM_COMMAND=vcm
+export PIM_CAMERA_LIVENESS_START_WAIT_SEC=100
 DAEMON_PID=4242
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -30,6 +31,13 @@ count_log() { grep -Fxc "$1" "$PIM_CAMERA_CALL_LOG" 2>/dev/null || true; }
 fingerprint() { [ -e "$1" ] && cksum "$1" || printf 'absent\n'; }
 reject_effects() {
     ! grep -Eq '^(restart:|start:vcm|request:)' "$PIM_CAMERA_CALL_LOG" || { cat "$PIM_CAMERA_CALL_LOG" >&2; fail "$1 performed a liveness effect"; }
+}
+force_tick_guard_rc() {
+    local forced_rc=$1
+    (
+        _cl_active_guard() { return "$forced_rc"; }
+        cam_liveness_tick
+    )
 }
 fake_stat() {
     local start=${1:-111}
@@ -80,9 +88,17 @@ reset_case() {
     write_runtime
 }
 set_counter() {
-    local failures=$1
-    mkdir -p "$PIM_CAMERA_STATE_DIR/recovery"
-    _cr_state_template | jq --argjson failures "$failures" '.actions.gstapp_restart.failed=$failures | .actions.gstapp_restart.attempted=$failures | .actions.gstapp_restart.consecutive_failures=$failures | if $failures>0 then .actions.gstapp_restart.last_request_id="prior" | .actions.gstapp_restart.last_started_at=1 | .actions.gstapp_restart.last_finished_at=1 | .actions.gstapp_restart.last_status="FAILED" | .actions.gstapp_restart.last_rc=1 else . end' > "$PIM_CAMERA_STATE_DIR/recovery/state.json"
+    local failures=$1 id=00000000-0000-4000-8000-000000000001 owner request terminal history result
+    mkdir -p "$PIM_CAMERA_STATE_DIR/recovery" "$PIM_CAMERA_STATE_DIR/recovery/history" "$PIM_CAMERA_RUN_DIR/recovery/results"
+    _cr_state_template | jq --argjson failures "$failures" --arg id "$id" '.actions.gstapp_restart.failed=$failures | .actions.gstapp_restart.attempted=$failures | .actions.gstapp_restart.consecutive_failures=$failures | if $failures>0 then .actions.gstapp_restart.last_request_id=$id | .actions.gstapp_restart.last_started_at=1 | .actions.gstapp_restart.last_finished_at=1 | .actions.gstapp_restart.last_status="FAILED" | .actions.gstapp_restart.last_rc=1 else . end' > "$PIM_CAMERA_STATE_DIR/recovery/state.json"
+    [ "$failures" -gt 0 ] || return 0
+    owner=$(cat "$PIM_CAMERA_RUN_DIR/owner.json")
+    request=$(jq -cn --arg id "$id" --argjson owner "$owner" '{id:$id,type:"gstapp_restart",source:"liveness",reason:"gstapp process absent",status:"PENDING",created_at:1,owner:$owner}')
+    terminal=$(jq -c '.status="FAILED" | .rc=1 | .finished_at=1' <<<"$request")
+    history=$(jq -cn --argjson request "$terminal" --arg id "$id" '{request:$request,actions:[{action:"gstapp_restart",request_id:$id,status:"FAILED",started_at:1,finished_at:1,rc:1}]}')
+    result=$(jq -c '{id,type,status,rc,source,reason,created_at,finished_at}' <<<"$terminal")
+    printf '%s\n' "$history" > "$PIM_CAMERA_STATE_DIR/recovery/history/$id.json"
+    printf '%s\n' "$result" > "$PIM_CAMERA_RUN_DIR/recovery/results/$id.json"
 }
 clear_leases() { rm -f "$PIM_CAMERA_RUN_DIR/recovery/pending.json" "$PIM_CAMERA_RUN_DIR/recovery/active.json"; }
 prepare_gst_missing() {
@@ -123,13 +139,19 @@ printf 'start:vcm\n' >> "$PIM_CAMERA_CALL_LOG"
 printf 'vcm\n' >> "$WORK/procs"
 exit 0
 SH
+cat > "$WORK/stub/vcm-pre-exec" <<'SH'
+#!/bin/sh
+printf 'vcm-pre-exec\n' >> "$PIM_CAMERA_CALL_LOG"
+: > "$WORK/vcm-hook-ready"
+while [ ! -e "$WORK/vcm-hook-release" ]; do /bin/sleep 0.01; done
+SH
 cat > "$WORK/stub/logger" <<'SH'
 #!/bin/sh
 exit 0
 SH
 cat > "$WORK/stub/sleep" <<'SH'
 #!/bin/sh
-exit 0
+/bin/sleep 0.01
 SH
 chmod +x "$WORK/stub"/*
 export WORK PATH="$WORK/stub:$PATH"
@@ -155,6 +177,11 @@ cam_request_submit() {
 }
 
 echo '=== non-active, stale, quiesced, leased, and invalid guards ==='
+for guard_rc in 69 70 75; do
+    reset_case; owner_at ACTIVE
+    expect_rc "$guard_rc" force_tick_guard_rc "$guard_rc"
+    reject_effects "guard-rc-$guard_rc"
+done
 for lifecycle in STARTING APPLYING_CONFIG RECOVERING STOPPING DEGRADED; do
     reset_case; owner_at "$lifecycle"; cam_liveness_tick || :; reject_effects "$lifecycle"
 done
@@ -170,6 +197,38 @@ reset_case; owner_at ACTIVE; printf 'gstApp\n' > "$WORK/procs"; export PIM_CAMER
 cam_liveness_tick || :; reject_effects vcm-inspection-error
 
 echo '=== exact ORD and VCM restart boundaries ==='
+for effect in ord vcm request; do
+    reset_case; owner_at ACTIVE
+    case "$effect" in
+        ord) printf 'vcm\ngstApp\n' > "$WORK/procs"; export ORD_STATE=inactive ;;
+        vcm) printf 'gstApp\n' > "$WORK/procs" ;;
+        request) prepare_gst_missing 0 ;;
+    esac
+    owner_created_at=$(jq -r .created_at "$PIM_CAMERA_RUN_DIR/owner.json")
+    runtime_before=$(fingerprint "$PIM_CAMERA_RUNTIME_JSON")
+    state_before=$(fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+    PIM_CAMERA_TEST_OWNER_ROLLOVER="liveness_$effect" expect_rc 69 cam_liveness_tick
+    [ "$(jq -r .created_at "$PIM_CAMERA_RUN_DIR/owner.json")" -eq $((owner_created_at + 1)) ] || fail "$effect race did not exercise created_at rollover"
+    [ "$runtime_before" = "$(fingerprint "$PIM_CAMERA_RUNTIME_JSON")" ] || fail "$effect owner race mutated runtime"
+    [ "$state_before" = "$(fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail "$effect owner race mutated state"
+    [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] && [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/active.json" ] || fail "$effect owner race created a lease"
+    reject_effects "$effect-created-at-race"
+done
+
+for owner_field in boot_id invocation_id pid proc_start_time token created_at; do
+    reset_case; owner_at ACTIVE; printf 'vcm\ngstApp\n' > "$WORK/procs"; export ORD_STATE=inactive
+    owner_field_before=$(jq -c --arg key "$owner_field" '.[$key]' "$PIM_CAMERA_RUN_DIR/owner.json")
+    runtime_before=$(fingerprint "$PIM_CAMERA_RUNTIME_JSON")
+    state_before=$(fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+    PIM_CAMERA_TEST_OWNER_ROLLOVER=liveness_ord PIM_CAMERA_TEST_OWNER_ROLLOVER_FIELD="$owner_field" expect_rc 69 cam_liveness_tick
+    owner_field_after=$(jq -c --arg key "$owner_field" '.[$key]' "$PIM_CAMERA_RUN_DIR/owner.json")
+    [ "$owner_field_before" != "$owner_field_after" ] || fail "$owner_field rollover hook did not mutate the immutable tuple"
+    [ "$runtime_before" = "$(fingerprint "$PIM_CAMERA_RUNTIME_JSON")" ] || fail "$owner_field owner race mutated runtime"
+    [ "$state_before" = "$(fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail "$owner_field owner race mutated state"
+    [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] && [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/active.json" ] || fail "$owner_field owner race created a lease"
+    reject_effects "$owner_field-immutable-race"
+done
+
 reset_case; owner_at ACTIVE; printf 'vcm\ngstApp\n' > "$WORK/procs"; export ORD_STATE=inactive
 cam_liveness_tick
 [ "$(count_log restart:ord-operate.service)" -eq 1 ] || fail 'inactive ORD was not restarted exactly once'
@@ -186,7 +245,40 @@ for _ in 1 2 3 4 5; do grep -q '^start:vcm$' "$PIM_CAMERA_CALL_LOG" && break; /b
 grep -q '^start:vcm$' "$PIM_CAMERA_CALL_LOG" || fail 'missing VCM was not started through its exact launcher'
 ! grep -q '^restart:' "$PIM_CAMERA_CALL_LOG" || fail 'VCM restart touched ORD'
 
+echo '=== VCM crosses launch readiness while the parent retains the lock ==='
+reset_case; owner_at ACTIVE; printf 'gstApp\n' > "$WORK/procs"
+rm -f "$WORK/vcm-hook-ready" "$WORK/vcm-hook-release"
+export PIM_CAMERA_TEST_VCM_PRE_EXEC_HOOK="$WORK/stub/vcm-pre-exec"
+sleep() { /bin/sleep "$@"; }
+cam_liveness_tick & vcm_tick_pid=$!
+for _ in $(seq 1 100); do [ ! -e "$WORK/vcm-hook-ready" ] || break; /bin/sleep 0.01; done
+[ -e "$WORK/vcm-hook-ready" ] || { wait "$vcm_tick_pid" 2>/dev/null || :; fail 'VCM pre-exec boundary hook was not reached'; }
+expect_rc 75 cam_owner_set_lifecycle STOPPING
+[ "$(jq -r .lifecycle "$PIM_CAMERA_RUN_DIR/owner.json")" = ACTIVE ] || fail 'STOPPING crossed the parent-held VCM launch lock'
+: > "$WORK/vcm-hook-release"
+wait "$vcm_tick_pid"
+unset -f sleep
+cam_owner_set_lifecycle STOPPING
+printf 'stopping-durable\n' >> "$PIM_CAMERA_CALL_LOG"
+start_line=$(grep -n '^start:vcm$' "$PIM_CAMERA_CALL_LOG" | cut -d: -f1)
+stop_line=$(grep -n '^stopping-durable$' "$PIM_CAMERA_CALL_LOG" | cut -d: -f1)
+[ -n "$start_line" ] && [ "$start_line" -lt "$stop_line" ] || fail 'STOPPING became durable before VCM crossed exec'
+unset PIM_CAMERA_TEST_VCM_PRE_EXEC_HOOK
+
 echo '=== ORD and VCM start failure degrade only their target ==='
+reset_case; owner_at ACTIVE; printf 'vcm\ngstApp\n' > "$WORK/procs"; export ORD_STATE=inactive ORD_RESTART_RC=23
+PIM_CAMERA_TEST_OWNER_ROLLOVER=liveness_degraded expect_rc 69 cam_liveness_tick
+[ ! -e "$PIM_CAMERA_STATE_DIR/service-state.json" ] || fail 'owner rollover before degraded mutation wrote service state'
+[ "$(jq -r .lifecycle "$PIM_CAMERA_RUN_DIR/owner.json")" = ACTIVE ] || fail 'owner rollover before degraded mutation changed lifecycle'
+! grep -q '^request:' "$PIM_CAMERA_CALL_LOG" || fail 'owner rollover before degraded mutation requested recovery'
+
+reset_case; owner_at ACTIVE; printf 'vcm\ngstApp\n' > "$WORK/procs"; export ORD_STATE=inactive ORD_RESTART_RC=23
+printf '{malformed service state}\n' > "$PIM_CAMERA_STATE_DIR/service-state.json"
+malformed_service_before=$(fingerprint "$PIM_CAMERA_STATE_DIR/service-state.json")
+expect_rc 70 cam_liveness_tick
+[ "$malformed_service_before" = "$(fingerprint "$PIM_CAMERA_STATE_DIR/service-state.json")" ] || fail 'malformed service-state inspection was overwritten'
+[ "$(jq -r .lifecycle "$PIM_CAMERA_RUN_DIR/owner.json")" = ACTIVE ] || fail 'malformed service-state inspection degraded owner'
+
 reset_case; owner_at ACTIVE; printf 'vcm\ngstApp\n' > "$WORK/procs"; export ORD_STATE=inactive ORD_RESTART_RC=23
 expect_rc 23 cam_liveness_tick
 jq -e '.degraded_target=="ord" and .degraded_reason=="liveness_start_failed"' "$PIM_CAMERA_STATE_DIR/service-state.json" >/dev/null || fail 'ORD failure did not persist exact degraded target'
@@ -203,6 +295,18 @@ jq -e '.degraded_target=="vcm" and .degraded_reason=="liveness_start_failed"' "$
 ! grep -q '^request:' "$PIM_CAMERA_CALL_LOG" || fail 'immediate VCM exit requested camera recovery'
 
 echo '=== gstApp gates, exact process match, and persistent threshold ==='
+reset_case; owner_at ACTIVE; prepare_gst_missing 0
+jq '.actions.gstapp_restart.consecutive_failures=5' "$PIM_CAMERA_STATE_DIR/recovery/state.json" > "$WORK/state.impossible" && mv "$WORK/state.impossible" "$PIM_CAMERA_STATE_DIR/recovery/state.json"
+impossible_owner_before=$(fingerprint "$PIM_CAMERA_RUN_DIR/owner.json")
+impossible_runtime_before=$(fingerprint "$PIM_CAMERA_RUNTIME_JSON")
+impossible_state_before=$(fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+expect_rc 70 cam_liveness_tick
+[ "$impossible_owner_before" = "$(fingerprint "$PIM_CAMERA_RUN_DIR/owner.json")" ] || fail 'impossible gstApp counter mutated owner'
+[ "$impossible_runtime_before" = "$(fingerprint "$PIM_CAMERA_RUNTIME_JSON")" ] || fail 'impossible gstApp counter mutated runtime'
+[ "$impossible_state_before" = "$(fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail 'impossible gstApp counter mutated state'
+[ ! -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] && [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/active.json" ] || fail 'impossible gstApp counter created a lease'
+! grep -q '^request:' "$PIM_CAMERA_CALL_LOG" || fail 'impossible gstApp counter called request submission'
+
 reset_case; owner_at ACTIVE; prepare_gst_missing 0
 jq '.VHL_CAM.i2c2.ch0.enable=false' "$PIM_CAMERA_RUNTIME_JSON" > "$WORK/runtime.next" && mv "$WORK/runtime.next" "$PIM_CAMERA_RUNTIME_JSON"
 cam_liveness_tick; ! grep -q '^request:' "$PIM_CAMERA_CALL_LOG" || fail 'all-disabled runtime requested gstApp recovery'
@@ -291,7 +395,52 @@ for failure in 1 2 3 4 5; do
         [ "$retry_history_before" = "$(fingerprint "$history_file")" ] || fail 'invalid retry evidence mutated history'
         [ "$retry_result_before" = "$(fingerprint "$result_file")" ] || fail 'invalid retry evidence published a result'
         cp "$WORK/retry-history.valid" "$history_file"
+
+        printf '{malformed result}\n' > "$result_file"
+        retry_active_before=$(fingerprint "$PIM_CAMERA_RUN_DIR/recovery/active.json")
+        retry_owner_before=$(fingerprint "$PIM_CAMERA_RUN_DIR/owner.json")
+        retry_state_before=$(fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+        retry_history_before=$(fingerprint "$history_file")
+        retry_result_before=$(fingerprint "$result_file")
+        expect_rc 70 _coc_fail_retryable_liveness_gstapp 23
+        [ "$retry_active_before" = "$(fingerprint "$PIM_CAMERA_RUN_DIR/recovery/active.json")" ] || fail 'malformed result mutated active request'
+        [ "$retry_owner_before" = "$(fingerprint "$PIM_CAMERA_RUN_DIR/owner.json")" ] || fail 'malformed result mutated owner'
+        [ "$retry_state_before" = "$(fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail 'malformed result mutated counters'
+        [ "$retry_history_before" = "$(fingerprint "$history_file")" ] || fail 'malformed result mutated history'
+        [ "$retry_result_before" = "$(fingerprint "$result_file")" ] || fail 'malformed result was overwritten'
+
+        retry_terminal=$(jq -c '.status="FAILED" | .rc=23 | .finished_at=100' "$PIM_CAMERA_RUN_DIR/recovery/active.json")
+        retry_result=$(jq -c '{id,type,status,rc,source,reason,created_at,finished_at}' <<<"$retry_terminal")
+        printf '%s\n' "$retry_result" > "$result_file"
+        retry_result_before=$(fingerprint "$result_file")
         expect_rc 23 _coc_fail_retryable_liveness_gstapp 23
+        [ "$retry_result_before" = "$(fingerprint "$result_file")" ] || fail 'exact result-first retry rewrote result evidence'
+        jq -e '.request.status=="FAILED" and .request.rc==23 and .request.finished_at==100' "$history_file" >/dev/null || fail 'exact result-first retry did not complete history from result'
+    elif [ "$failure" -eq 2 ]; then
+        PIM_CAMERA_TEST_FAILPOINT=retryable_liveness_after_finish expect_rc 70 cam_execute_pending_request
+        request_id=$(jq -r '.actions.gstapp_restart.last_request_id' "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+        history_file="$PIM_CAMERA_STATE_DIR/recovery/history/$request_id.json"
+        result_file="$PIM_CAMERA_RUN_DIR/recovery/results/$request_id.json"
+        [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/active.json" ] || fail 'post-finish failpoint retained active lease'
+        [ "$(jq -r .lifecycle "$PIM_CAMERA_RUN_DIR/owner.json")" = RECOVERING ] || fail 'post-finish failpoint did not preserve RECOVERING owner'
+        repair_state_before=$(fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+        repair_history_before=$(fingerprint "$history_file")
+        repair_result_before=$(fingerprint "$result_file")
+        expect_rc 0 cam_poll_pending_request
+        [ "$(jq -r .lifecycle "$PIM_CAMERA_RUN_DIR/owner.json")" = ACTIVE ] || fail 'same-process next loop did not repair owner ACTIVE'
+        [ "$repair_state_before" = "$(fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail 'same-process repair duplicated counter write'
+        [ "$repair_history_before" = "$(fingerprint "$history_file")" ] || fail 'same-process repair duplicated history write'
+        [ "$repair_result_before" = "$(fingerprint "$result_file")" ] || fail 'same-process repair duplicated result write'
+
+        cam_owner_set_lifecycle RECOVERING
+        unset PIM_CAMERA_OWNER_BOOT_ID PIM_CAMERA_OWNER_INVOCATION PIM_CAMERA_OWNER_PID
+        unset PIM_CAMERA_OWNER_PROC_START_TIME PIM_CAMERA_OWNER_TOKEN PIM_CAMERA_OWNER_CREATED_AT
+        _coc_export_owner_context
+        expect_rc 0 cam_poll_pending_request
+        [ "$(jq -r .lifecycle "$PIM_CAMERA_RUN_DIR/owner.json")" = ACTIVE ] || fail 'restarted-loop repair did not restore owner ACTIVE'
+        [ "$repair_state_before" = "$(fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail 'restarted-loop repair duplicated counter write'
+        [ "$repair_history_before" = "$(fingerprint "$history_file")" ] || fail 'restarted-loop repair duplicated history write'
+        [ "$repair_result_before" = "$(fingerprint "$result_file")" ] || fail 'restarted-loop repair duplicated result write'
     else
         expect_rc 23 cam_execute_pending_request
     fi

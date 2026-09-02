@@ -134,3 +134,75 @@ exact process names, post-daemon executor context, request provenance,
 counter/history pairing, legal lifecycle transitions, launch readiness,
 inspection-error handling, and exact rc propagation. No unresolved in-scope
 concern remains.
+
+## Fix round 1
+
+Base/head before this fix was
+`ebc78bf54ab86ef8caba878204553dfaddf109c3`. The fix stays within the existing
+owner, lock, pending/active/history/result/counter, runtime, and service-state
+paths; it adds no persistent path, schema, queue, owner, monitor, or Task 6+
+script migration.
+
+### RED/GREEN evidence for the ten Important findings
+
+| Finding | Deterministic RED | GREEN contract |
+| --- | --- | --- |
+| Exact liveness guard RC | `force_tick_guard_rc 69` failed `expected rc=69 got=0` (the same regression loops over 69/70/75). | Tick returns the exact 69, 70, or 75 and records zero restart/request/degraded effects. |
+| Complete immutable owner authority | A `created_at` rollover at the ORD/VCM/request boundary failed `expected rc=69 got=0`; the initial all-field regression also reported `boot_id rollover hook did not mutate`. | All six fields (`boot_id`, `invocation_id`, `pid`, `proc_start_time`, `token`, `created_at`) are compared immediately before effects; each rollover returns 69 with runtime/state/lease fingerprints and effect log preserved. New owner creation refreshes the exported tuple, while later rollover remains rejected. |
+| Atomic VCM launch | The close/exec race failed `VCM pre-exec boundary hook was not reached`. | The child closes its inherited lock descriptor, revalidates the full guard, and crosses readiness while the parent retains the recovery lock; competing STOPPING returns 75 until VCM has crossed the launch boundary. Immediate exit still fails VCM only. |
+| Strict gstApp escalation evidence | Impossible `attempted=0, failed=0, consecutive_failures=5` failed `expected rc=70 got=0`. | The gate validates exact action arithmetic plus RUNNING/terminal history/result provenance; impossible evidence returns 70 byte-for-byte and creates no request. Five real failed gstApp attempts remain retryable and the sixth request is `module_reload`. |
+| Existing/malformed/result-first finish evidence | A malformed pre-existing result failed `expected rc=70 got=23`. | Finish preflights active/history/result/attribution before writes. Malformed or conflicting evidence returns 70 unchanged; exact result-first and history-first partials converge without rewriting exact bytes or duplicating counters. |
+| Finish-to-ACTIVE convergence | The post-finish failpoint first failed `expected rc=70 got=23`; after adding the boundary, the unrepaired loop failed `expected rc=0 got=1`. | After durable terminal finish leaves no lease and owner RECOVERING, the same process or a restarted/next loop validates the exact liveness gstApp failure evidence and performs the existing legal RECOVERING-to-ACTIVE transition once, without rewriting result/history/state. Cross-request or malformed evidence cannot authorize repair. |
+| Exact pre-TERM PID/start identity | The absent-daemon regression reported `absent exact daemon was signaled`. | Missing exact PID is idempotent success with no kill; malformed/reused PID is 69 with no kill/cleanup; a live exact PID receives one TERM after a same-lock start-time revalidation. |
+| Exact daemon/action timeout | The original stop path treated a still-live exact daemon as quiesced and continued cleanup. | Timeout zero returns 75, retains the durable STOPPING owner, and performs no managed cleanup. Unresolved pending/active/job work likewise returns 75 unless the already-dead owner qualifies for exact abandoned-lease reconciliation. |
+| Abandoned lease reconciliation | A durable daemon-dead STOPPING owner failed `expected rc=0 got=69`. | External stop adopts only the exact schema-valid STOPPING tuple, then uses the existing abandoned-lease protocol to terminalize accepted pending/active evidence before owner removal. The next owner starts with no orphan lease or RC70. |
+| Resumable/concurrent STOPPING | Partial managed cleanup previously could not be resumed safely, and a second coordinator could enter an incompatible path. | One recovery lock covers coordination. A failed cleanup retains STOPPING and a later external stop completes idempotently; a concurrent loser returns documented BUSY 75 while the winner removes the owner exactly once and last. |
+
+Additional fail-closed REDs covered the effect-adjacent degraded mutation:
+owner rollover failed `expected rc=69 got=23`, and malformed existing service
+state failed `expected rc=70 got=23`. The locked GREEN path validates the full
+owner tuple before the state write and lifecycle transition, refuses malformed
+state without overwriting it, and preserves the legacy exact action failure rc.
+
+### Failure-boundary invariants
+
+- Result/history/state/active/owner are preflighted as one protocol operation;
+  result-first, history-first, and already-complete evidence are idempotent.
+- The VCM parent lock spans child close/guard/exec readiness without leaking the
+  lock into the executable.
+- TERM is preceded by exact `/proc/<pid>/stat` start-time revalidation. A live
+  timeout or unresolved work stops the sequence before managed cleanup.
+- Once the exact daemon is absent, accepted leases are terminalized with the
+  existing abandoned-owner reconciler. Owner removal is refused while a lease
+  exists and remains the final durable stop event.
+- A STOPPING tuple may be adopted even after its daemon dies, but no immutable
+  field may change and non-STOPPING owners still require the exact live PID.
+
+### Final GREEN gates
+
+```text
+rtk bash test/camera_health/cam_liveness_test.sh        exit 0, cam liveness: PASS
+rtk bash test/camera_health/cam_stop_order_test.sh      exit 0, cam stop order: PASS
+rtk bash test/camera_health/cam_operate_control_test.sh exit 0, cam operate control: PASS
+rtk bash test/camera_health/recovery_protocol_test.sh   exit 0, recovery protocol: PASS
+rtk bash test/cam_link/recovery_actions_test.sh         exit 0, recovery actions: PASS
+rtk bash test/cam_link/recovery_actions_safety_test.sh  exit 0, recovery actions safety: PASS
+rtk bash test/cam_link/recovery_launch_safety_test.sh   exit 0, recovery launch safety: PASS
+rtk bash test/cam_link/escalation_test.sh               exit 0, 7 passed / 0 failed
+
+rtk bash test/camera_health/run_all.sh                  exit 0
+rtk bash test/cam_link/run_all.sh -v                    exit 0, all 14 scripts passed
+rtk bash -n <required production/test shell files>      exit 0
+rtk shellcheck --severity=error <all changed shell>     exit 0
+rtk git diff --check                                    exit 0
+```
+
+The code-review graph was used before file exploration and updated
+incrementally at the exact base. `detect_changes` saw five changed files and
+reported risk 0.40; it found no affected flow or dependent file. It models
+only a small subset of these top-level Bash functions (six changed entities and
+many apparent test gaps), so the isolated full diff and the executable focused
+and aggregate gates above are authoritative. The final diff was reviewed for
+the ten findings, exact rc/provenance, byte preservation, legal lifecycle
+transitions, lock inheritance, timeout stop conditions, lease reconciliation,
+and owner-last removal. No residual in-scope concern remains.

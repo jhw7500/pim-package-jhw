@@ -26,8 +26,9 @@ expect_rc() { local wanted=$1; shift; set +e; "$@"; local got=$?; set -e; [ "$go
 fingerprint() { [ -e "$1" ] && cksum "$1" || printf 'absent\n'; }
 review_failures=''
 fake_stat() {
+    local start=${1:-111}
     mkdir -p "$PIM_CAMERA_PROC_ROOT/$DAEMON_PID"
-    { printf '%s' "$DAEMON_PID (cam-operate) S"; for _ in $(seq 1 18); do printf ' 0'; done; printf ' 111 0 0\n'; } > "$PIM_CAMERA_PROC_ROOT/$DAEMON_PID/stat"
+    { printf '%s' "$DAEMON_PID (cam-operate) S"; for _ in $(seq 1 18); do printf ' 0'; done; printf ' %s 0 0\n' "$start"; } > "$PIM_CAMERA_PROC_ROOT/$DAEMON_PID/stat"
 }
 write_runtime() {
     mkdir -p "$(dirname "$PIM_CAMERA_RUNTIME_JSON")"
@@ -73,7 +74,7 @@ SH
 cat > "$WORK/stub/daemon-kill" <<'SH'
 #!/bin/sh
 printf 'daemon-signal:%s:%s\n' "$1" "$2" >> "$PIM_CAMERA_CALL_LOG"
-rm -f "$PIM_CAMERA_PROC_ROOT/$2/stat"
+[ "${DAEMON_KILL_KEEP_ALIVE:-0}" = 1 ] || rm -f "$PIM_CAMERA_PROC_ROOT/$2/stat"
 exit 0
 SH
 cat > "$WORK/stub/pgrep" <<'SH'
@@ -156,6 +157,44 @@ set -e
 [ "$foreign_process_before" = "$(fingerprint "$WORK/managed-procs")" ] || review_failures="$review_failures foreign-process-mutated"
 [ ! -s "$PIM_CAMERA_CALL_LOG" ] || review_failures="$review_failures foreign-effects"
 
+echo '=== TERM revalidates the exact daemon and live timeout stays STOPPING ==='
+reset_case; cam_owner_set_lifecycle STOPPING; rm -f "$PIM_CAMERA_PROC_ROOT/$DAEMON_PID/stat"
+expect_rc 0 cam_liveness_signal_daemon
+! grep -q '^daemon-signal:' "$PIM_CAMERA_CALL_LOG" || fail 'absent exact daemon was signaled'
+
+reset_case; cam_owner_set_lifecycle STOPPING; fake_stat 222
+expect_rc 69 cam_liveness_signal_daemon
+! grep -q '^daemon-signal:' "$PIM_CAMERA_CALL_LOG" || fail 'reused daemon PID was signaled'
+
+reset_case; cam_owner_set_lifecycle STOPPING
+expect_rc 0 cam_liveness_signal_daemon
+[ "$(grep -c '^daemon-signal:-TERM:4242$' "$PIM_CAMERA_CALL_LOG")" -eq 1 ] || fail 'live exact daemon did not receive exactly one TERM'
+
+reset_case; export DAEMON_KILL_KEEP_ALIVE=1
+expect_rc 75 cam_liveness_ordered_stop --external
+unset DAEMON_KILL_KEEP_ALIVE
+[ -e "$PIM_CAMERA_RUN_DIR/owner.json" ] && [ "$(jq -r .lifecycle "$PIM_CAMERA_RUN_DIR/owner.json")" = STOPPING ] || fail 'live daemon timeout removed STOPPING owner'
+! grep -q '^stop:\|^stop-service:' "$PIM_CAMERA_CALL_LOG" || fail 'live daemon timeout continued into managed cleanup'
+
+echo '=== daemon-dead STOPPING resumes and reconciles an abandoned lease ==='
+reset_case; cam_owner_set_lifecycle STOPPING; rm -f "$PIM_CAMERA_PROC_ROOT/$DAEMON_PID/stat"
+expect_rc 0 cam_liveness_ordered_stop --external
+[ ! -e "$PIM_CAMERA_RUN_DIR/owner.json" ] || fail 'daemon-dead STOPPING owner was not removed after resumed cleanup'
+
+reset_case
+cam_request_submit gstapp_restart stop-resume interrupted >/dev/null
+cam_request_claim
+cam_owner_set_lifecycle STOPPING
+abandoned_id=$(jq -r .id "$PIM_CAMERA_RUN_DIR/recovery/active.json")
+rm -f "$PIM_CAMERA_PROC_ROOT/$DAEMON_PID/stat"
+expect_rc 0 cam_liveness_ordered_stop --external
+[ ! -e "$PIM_CAMERA_RUN_DIR/owner.json" ] && [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/active.json" ] && [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] || fail 'resumed stop left owner or lease behind'
+jq -e '.status=="FAILED" and .rc==70' "$PIM_CAMERA_RUN_DIR/recovery/results/$abandoned_id.json" >/dev/null || fail 'abandoned active lease was not terminalized'
+jq -e '.request.status=="FAILED" and .request.rc==70' "$PIM_CAMERA_STATE_DIR/recovery/history/$abandoned_id.json" >/dev/null || fail 'abandoned active history was not terminalized'
+fake_stat
+expect_rc 0 cam_owner_create "$DAEMON_PID"
+[ ! -e "$PIM_CAMERA_RUN_DIR/recovery/active.json" ] && [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] || fail 'next daemon owner inherited an orphan lease'
+
 echo '=== shutdown order and intake closure are exact ==='
 reset_case
 STOP_REQUEST_RC=
@@ -201,9 +240,47 @@ cam_liveness_ordered_stop --external
 
 reset_case
 cam_owner_set_lifecycle STOPPING
-_cl_stop_event() { printf 'unexpected:%s\n' "$1" >> "$PIM_CAMERA_CALL_LOG"; }
+rm -f "$PIM_CAMERA_PROC_ROOT/$DAEMON_PID/stat"
+_cl_stop_event() { printf 'resumed:%s\n' "$1" >> "$PIM_CAMERA_CALL_LOG"; }
+expect_rc 0 cam_liveness_ordered_stop --external
+[ ! -e "$PIM_CAMERA_RUN_DIR/owner.json" ] || fail 'later external stop stranded a durable STOPPING owner'
+grep -q '^resumed:owner_removed$' "$PIM_CAMERA_CALL_LOG" || fail 'resumed STOPPING did not finish with owner removal last'
+
+echo '=== partial managed cleanup is resumable and concurrent callers converge ==='
+reset_case
+rm -f "$WORK/managed-failed-once"
+_cl_stop_event() { printf 'partial:%s\n' "$1" >> "$PIM_CAMERA_CALL_LOG"; }
+cam_stop_process() {
+    printf 'partial-stop:%s\n' "$2" >> "$PIM_CAMERA_CALL_LOG"
+    if [ "$2" = bg ] && [ ! -e "$WORK/managed-failed-once" ]; then : > "$WORK/managed-failed-once"; return 69; fi
+    return 0
+}
+expect_rc 69 cam_liveness_ordered_stop --external
+[ -e "$PIM_CAMERA_RUN_DIR/owner.json" ] && [ "$(jq -r .lifecycle "$PIM_CAMERA_RUN_DIR/owner.json")" = STOPPING ] || fail 'managed cleanup failure did not retain STOPPING owner'
+cam_stop_process() { printf 'resumed-stop:%s\n' "$2" >> "$PIM_CAMERA_CALL_LOG"; return 0; }
+expect_rc 0 cam_liveness_ordered_stop --external
+[ ! -e "$PIM_CAMERA_RUN_DIR/owner.json" ] || fail 'managed cleanup retry stranded STOPPING owner'
+[ "$(tail -n 1 "$PIM_CAMERA_CALL_LOG")" = partial:owner_removed ] || fail 'managed cleanup retry did not remove owner last'
+
+reset_case
+rm -f "$WORK/concurrent-ready" "$WORK/concurrent-release"
+_cl_stop_event() { printf 'concurrent:%s\n' "$1" >> "$PIM_CAMERA_CALL_LOG"; }
+cam_stop_process() {
+    printf 'concurrent-stop:%s\n' "$2" >> "$PIM_CAMERA_CALL_LOG"
+    if [ "$2" = gstapp ]; then
+        : > "$WORK/concurrent-ready"
+        while [ ! -e "$WORK/concurrent-release" ]; do /bin/sleep 0.01; done
+    fi
+    return 0
+}
+cam_liveness_ordered_stop --external & first_stop_pid=$!
+for _ in $(seq 1 1000); do [ ! -e "$WORK/concurrent-ready" ] || break; /bin/sleep 0.01; done
+[ -e "$WORK/concurrent-ready" ] || { : > "$WORK/concurrent-release"; wait "$first_stop_pid" 2>/dev/null || :; fail 'first concurrent stop did not reach managed cleanup'; }
 expect_rc 75 cam_liveness_ordered_stop --external
-! grep -q '^stop:\|^stop-service:' "$PIM_CAMERA_CALL_LOG" || fail 'non-coordinator reordered an in-progress stop'
+: > "$WORK/concurrent-release"
+wait "$first_stop_pid"
+[ ! -e "$PIM_CAMERA_RUN_DIR/owner.json" ] || fail 'concurrent stop winner stranded owner'
+[ "$(grep -c '^concurrent:owner_removed$' "$PIM_CAMERA_CALL_LOG")" -eq 1 ] || fail 'concurrent stops removed owner more than once'
 
 echo '=== TERM INT and EXIT use the shared ordered-stop handler ==='
 for signal in TERM INT; do

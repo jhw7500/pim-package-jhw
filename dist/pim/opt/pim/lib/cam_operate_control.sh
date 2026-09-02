@@ -339,8 +339,41 @@ _coc_fail_retryable_liveness_gstapp() {
     ' >/dev/null <<<"$state" || return 70
     _cr_test_failpoint retryable_liveness_before_finish || return 70
     cam_request_finish FAILED "$rc" >/dev/null 2>&1 || return $?
+    _cr_test_failpoint retryable_liveness_after_finish || return 70
     cam_owner_set_lifecycle ACTIVE >/dev/null 2>&1 || return $?
     return "$rc"
+}
+
+_coc_repair_retryable_liveness_gstapp_locked() {
+    local owner state id history terminal result
+    owner=$(_cr_owner_json) || return 69
+    _cr_owner_matches_exported_context "$owner" || return 69
+    _cr_owner_snapshot_live "$owner" || return 69
+    _cr_owner_snapshot_lifecycle_in "$owner" RECOVERING || return 1
+    [ ! -e "$(_cr_pending_file)" ] && [ ! -e "$(_cr_active_file)" ] || return 1
+    state=$(cat "$(_cr_state_file)" 2>/dev/null) || return 70
+    _cr_state_valid <<<"$state" || return 70
+    id=$(jq -er '.actions.gstapp_restart.last_request_id | select(type=="string" and length>0)' <<<"$state") || return 70
+    history=$(cat "$(_cr_history_file "$id")" 2>/dev/null) || return 70
+    terminal=$(jq -ce '.request | select(type=="object")' <<<"$history") || return 70
+    _cr_terminal_request_valid "$terminal" || return 70
+    _cr_request_interruption_absent "$terminal" || return 70
+    jq -e '.type=="gstapp_restart" and .source=="liveness" and .reason=="gstapp process absent" and .status=="FAILED" and (.rc|type=="number" and floor==. and .>0)' >/dev/null <<<"$terminal" || return 70
+    _cr_record_owner_ready "$terminal" RECOVERING || return 69
+    result=$(cat "$(_cr_result_file "$id")" 2>/dev/null) || return 70
+    _cr_terminal_result_valid "$result" "$terminal" || return 70
+    _cr_terminal_request_result_equal "$terminal" "$result" || return 70
+    _cr_counter_finish_pair_valid "$history" "$state" gstapp_restart "$id" || return 70
+    _cr_terminal_attribution_valid "$history" "$terminal" "$state" || return 70
+    _cr_history_public_state_arithmetic_valid "$history" "$state" "$id" || return 70
+    _cr_owner_set_lifecycle_locked ACTIVE
+}
+
+_coc_repair_retryable_liveness_gstapp() {
+    local lifecycle
+    lifecycle=$(jq -r '.lifecycle // empty' "$(_cr_owner_file)" 2>/dev/null) || return 1
+    [ "$lifecycle" = RECOVERING ] || return 1
+    _cr_lock_call _coc_repair_retryable_liveness_gstapp_locked
 }
 
 _coc_finish_preflight_failed() {
@@ -458,6 +491,9 @@ cam_execute_pending_request() {
 }
 
 cam_poll_pending_request() {
+    local repair_rc=0
+    _coc_repair_retryable_liveness_gstapp || repair_rc=$?
+    case "$repair_rc" in 0) return 0;; 1) ;; *) return "$repair_rc";; esac
     [ -f "$(_cr_pending_file)" ] || return 1
     cam_request_claim || return $?
     cam_execute_pending_request

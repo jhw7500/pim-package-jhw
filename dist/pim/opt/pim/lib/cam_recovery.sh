@@ -87,6 +87,22 @@ _cr_owner_immutable_equal() {
         [ "$(jq -c ".$key" <<<"$saved")" = "$(jq -c ".$key" <<<"$current")" ] || return 1
     done
 }
+_cr_owner_matches_exported_context() {
+    local owner=$1 key expected actual
+    _cr_owner_schema <<<"$owner" || return 69
+    for key in boot_id invocation_id pid proc_start_time token created_at; do
+        expected=$(jq -r --arg key "$key" '.[$key]' <<<"$owner") || return 69
+        case "$key" in
+            boot_id) actual=${PIM_CAMERA_OWNER_BOOT_ID:-} ;;
+            invocation_id) actual=${PIM_CAMERA_OWNER_INVOCATION:-} ;;
+            pid) actual=${PIM_CAMERA_OWNER_PID:-} ;;
+            proc_start_time) actual=${PIM_CAMERA_OWNER_PROC_START_TIME:-} ;;
+            token) actual=${PIM_CAMERA_OWNER_TOKEN:-} ;;
+            created_at) actual=${PIM_CAMERA_OWNER_CREATED_AT:-} ;;
+        esac
+        [ -n "$actual" ] && [ "$expected" = "$actual" ] || return 69
+    done
+}
 cam_owner_assert() { local owner; owner=$(_cr_owner_json); _cr_owner_snapshot_live "$owner" "${1:-}" "${2:-}"; }
 _cr_owner_lifecycle_in() { local owner; owner=$(_cr_owner_json); _cr_owner_snapshot_live "$owner" || return 69; _cr_owner_snapshot_lifecycle_in "$owner" "$@"; }
 _cr_record_owner_matches() { local saved current; saved=$(jq -c .owner <<<"$1") || return 1; current=$(_cr_owner_json) || return 1; _cr_owner_immutable_equal "$saved" "$current" && _cr_owner_snapshot_live "$current"; }
@@ -98,10 +114,18 @@ _cr_record_owner_ready() {
     _cr_owner_snapshot_lifecycle_in "$current" "$@"
 }
 _cr_test_owner_rollover() {
-    local stage=$1 owner changed
+    local stage=$1 owner changed field=${PIM_CAMERA_TEST_OWNER_ROLLOVER_FIELD:-created_at}
     [ "${PIM_CAMERA_TEST_OWNER_ROLLOVER:-}" = "$stage" ] || return 0
     owner=$(_cr_owner_json) || return 1
-    changed=$(jq -c '.created_at += 1' <<<"$owner") || return 1
+    changed=$(jq -c --arg field "$field" '
+      if $field=="boot_id" then .boot_id += "-rolled"
+      elif $field=="invocation_id" then .invocation_id += "-rolled"
+      elif $field=="pid" then .pid += 1
+      elif $field=="proc_start_time" then .proc_start_time = ((.proc_start_time|tonumber)+1|tostring)
+      elif $field=="token" then .token += "-rolled"
+      elif $field=="created_at" then .created_at += 1
+      else error("unsupported owner rollover field") end
+    ' <<<"$owner") || return 1
     _cr_atomic_write "$(_cr_owner_file)" "$changed"
 }
 _cr_mutation_guard() {
@@ -478,7 +502,20 @@ _cr_owner_create_locked() {
     record=$(jq -cn --arg boot "$boot" --arg invocation "$invocation" --arg start "$start" --arg token "$token" --argjson pid "$pid" --argjson now "$now" '{boot_id:$boot,invocation_id:$invocation,pid:$pid,proc_start_time:$start,token:$token,created_at:$now,lifecycle:"STARTING"}') || return 70
     _cr_atomic_write "$(_cr_owner_file)" "$record" || return 70
 }
-cam_owner_create() { _cr_lock_call _cr_owner_create_locked "$@"; }
+cam_owner_create() {
+    local owner
+    _cr_lock_call _cr_owner_create_locked "$@" || return $?
+    owner=$(_cr_owner_json) || return 70
+    _cr_owner_schema <<<"$owner" || return 70
+    PIM_CAMERA_OWNER_BOOT_ID=$(jq -r .boot_id <<<"$owner")
+    PIM_CAMERA_OWNER_INVOCATION=$(jq -r .invocation_id <<<"$owner")
+    PIM_CAMERA_OWNER_PID=$(jq -r .pid <<<"$owner")
+    PIM_CAMERA_OWNER_PROC_START_TIME=$(jq -r .proc_start_time <<<"$owner")
+    PIM_CAMERA_OWNER_TOKEN=$(jq -r .token <<<"$owner")
+    PIM_CAMERA_OWNER_CREATED_AT=$(jq -r .created_at <<<"$owner")
+    export PIM_CAMERA_OWNER_BOOT_ID PIM_CAMERA_OWNER_INVOCATION PIM_CAMERA_OWNER_PID
+    export PIM_CAMERA_OWNER_PROC_START_TIME PIM_CAMERA_OWNER_TOKEN PIM_CAMERA_OWNER_CREATED_AT
+}
 _cr_lifecycle_allowed() {
     case "$1:$2" in STARTING:ACTIVE|STARTING:DEGRADED|STARTING:STOPPING|ACTIVE:APPLYING_CONFIG|ACTIVE:RECOVERING|ACTIVE:DEGRADED|ACTIVE:STOPPING|APPLYING_CONFIG:ACTIVE|APPLYING_CONFIG:DEGRADED|APPLYING_CONFIG:STOPPING|RECOVERING:ACTIVE|RECOVERING:DEGRADED|RECOVERING:STOPPING|DEGRADED:APPLYING_CONFIG|DEGRADED:RECOVERING|DEGRADED:STOPPING) return 0;; esac; return 1
 }
@@ -552,10 +589,18 @@ _cr_request_new() {
     _cr_owner_lifecycle_in ACTIVE DEGRADED || return 69
     [ ! -e "$(_cr_pending_file)" ] && [ ! -e "$(_cr_active_file)" ] || return 75
     id=$(_cr_uuid) || return 70; now=$(_cr_now); owner=$(_cr_owner_json); _cr_owner_schema <<<"$owner" || return 69
+    if [ -n "${PIM_CAMERA_OWNER_INVOCATION:-}" ]; then _cr_owner_matches_exported_context "$owner" || return 69; fi
     request=$(jq -cn --arg id "$id" --arg type "$type" --arg source "$source" --arg reason "$reason" --arg source_path "$source_path" --arg source_mtime "$source_mtime" --argjson now "$now" --argjson owner "$owner" '{id:$id,type:$type,source:$source,reason:$reason,status:"PENDING",created_at:$now,owner:$owner} + (if $source_path=="" then {} else {source_path:$source_path} end) + (if $source_mtime=="" then {} else {source_mtime:($source_mtime|tonumber)} end)') || return 70
     _cr_mutation_guard "$request" pending ACTIVE DEGRADED || return 69; _cr_atomic_write "$(_cr_pending_file)" "$request" || return 70; printf '%s\n' "$id"
 }
-cam_request_submit() { _cr_lock_call _cr_request_new "$@"; }
+cam_request_submit() {
+    if [ -e "$(_cr_pending_file)" ] || [ -e "$(_cr_active_file)" ]; then
+        _cr_owner_lifecycle_in ACTIVE DEGRADED RECOVERING || return $?
+        return 75
+    fi
+    _cr_owner_lifecycle_in ACTIVE DEGRADED || return $?
+    _cr_lock_call _cr_request_new "$@"
+}
 _cr_history_request() {
     local id=$1 request=$2 history updated
     history=$(cat "$(_cr_history_file "$id")" 2>/dev/null) || return 1
@@ -840,13 +885,54 @@ _cr_counter_finish_locked() {
 }
 cam_action_counter_finish() { [ $# -eq 4 ] || return 64; _cr_lock_call _cr_counter_finish_locked "$@"; }
 _cr_finish_locked() {
-    local status=$1 rc=$2 active id result terminal
+    local status=$1 rc=$2 active id result terminal history history_request history_next
+    local result_path history_path write_result=1 write_history=1 now
     _cr_terminal_valid "$status" "$rc" || return 64; _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69
     active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69; _cr_record_owner_matches "$active" || return 69; id=$(jq -r .id <<<"$active")
-    terminal=$(jq -c --arg status "$status" --argjson rc "$rc" --argjson now "$(_cr_now)" '.status=$status | .rc=$rc | .finished_at=$now' <<<"$active") || return 70
-    result=$(jq -c '{id,type,status,rc,source,reason,created_at,finished_at} + (if has("source_path") then {source_path} else {} end) + (if has("source_mtime") then {source_mtime} else {} end)' <<<"$terminal") || return 70
-    _cr_mutation_guard "$active" result ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_result_file "$id")" "$result" || return 70
-    _cr_mutation_guard "$active" finish_history ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_history_request "$id" "$terminal" || return 70
+    result_path=$(_cr_result_file "$id"); history_path=$(_cr_history_file "$id")
+    history=$(cat "$history_path" 2>/dev/null) || return 70
+    jq -e 'type=="object" and (.request|type=="object") and (.actions|type=="array") and all(.actions[];type=="object")' >/dev/null <<<"$history" || return 70
+    history_request=$(jq -c .request <<<"$history") || return 70
+    _cr_request_schema "$history_request" || return 70
+    _cr_request_identity_equal "$active" "$history_request" || return 70
+    if [ -e "$result_path" ]; then
+        result=$(cat "$result_path" 2>/dev/null) || return 70
+        _cr_terminal_result_valid "$result" "$active" || return 70
+        [ "$(jq -r .status <<<"$result")" = "$status" ] && [ "$(jq -r .rc <<<"$result")" = "$rc" ] || return 70
+        terminal=$(jq -c --argjson result "$result" '.status=$result.status | .rc=$result.rc | .finished_at=$result.finished_at' <<<"$active") || return 70
+        write_result=0
+    elif _cr_terminal_request_valid "$history_request"; then
+        [ "$(jq -r .status <<<"$history_request")" = "$status" ] && [ "$(jq -r .rc <<<"$history_request")" = "$rc" ] || return 70
+        terminal=$history_request
+        result=$(_cr_result_from_terminal "$terminal") || return 70
+    else
+        _cr_request_json_equal "$active" "$history_request" || return 70
+        now=$(_cr_now) || return 70
+        terminal=$(jq -c --arg status "$status" --argjson rc "$rc" --argjson now "$now" '.status=$status | .rc=$rc | .finished_at=$now' <<<"$active") || return 70
+        result=$(_cr_result_from_terminal "$terminal") || return 70
+    fi
+    if _cr_terminal_request_valid "$history_request"; then
+        _cr_terminal_request_result_equal "$history_request" "$result" || return 70
+        history_next=$history
+        write_history=0
+    else
+        _cr_request_json_equal "$active" "$history_request" || return 70
+        history_next=$(jq -c --argjson terminal "$terminal" '.request=$terminal' <<<"$history") || return 70
+    fi
+    _cr_terminal_request_valid "$terminal" || return 70
+    _cr_terminal_result_valid "$result" "$active" || return 70
+    _cr_terminal_request_result_equal "$terminal" "$result" || return 70
+    _cr_terminal_attribution_valid "$history_next" "$terminal" || return 70
+    if [ "$write_result" -eq 1 ]; then
+        _cr_mutation_guard "$active" result ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69
+        _cr_atomic_write "$result_path" "$result" || return 70
+        _cr_test_failpoint request_finish_after_result || return 70
+    fi
+    if [ "$write_history" -eq 1 ]; then
+        _cr_mutation_guard "$active" finish_history ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69
+        _cr_atomic_write "$history_path" "$history_next" || return 70
+        _cr_test_failpoint request_finish_after_history || return 70
+    fi
     _cr_mutation_guard "$active" active_remove ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_remove "$(_cr_active_file)" || return 70
 }
 cam_request_finish() { [ $# -eq 2 ] || return 64; _cr_lock_call _cr_finish_locked "$@"; }

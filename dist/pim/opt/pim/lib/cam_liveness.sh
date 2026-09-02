@@ -55,7 +55,8 @@ cam_liveness_quiesce() {
 _cl_active_guard_locked() {
     local owner
     owner=$(_cr_owner_json) || return 69
-    _cr_owner_snapshot_live "$owner" "${PIM_CAMERA_OWNER_INVOCATION:-}" "${PIM_CAMERA_OWNER_TOKEN:-}" || return 69
+    _cr_owner_matches_exported_context "$owner" || return 69
+    _cr_owner_snapshot_live "$owner" || return 69
     _cr_owner_snapshot_lifecycle_in "$owner" ACTIVE || return 69
     [ "$PIM_CAMERA_LIVENESS_QUIESCED" != 1 ] || return 69
     [ ! -e "$(_cr_pending_file)" ] && [ ! -e "$(_cr_active_file)" ] || return 75
@@ -80,6 +81,7 @@ _cl_ord_status() {
 }
 
 _cl_restart_ord_locked() {
+    _cr_test_owner_rollover liveness_ord || return 69
     _cl_active_guard_locked || return $?
     "$PIM_CAMERA_SYSTEMCTL" restart ord-operate.service
 }
@@ -87,17 +89,22 @@ cam_liveness_restart_ord() { _cr_lock_call _cl_restart_ord_locked; }
 
 _cl_restart_vcm_locked() {
     local path=$1
+    _cr_test_owner_rollover liveness_vcm || return 69
     _cl_active_guard_locked || return $?
     (
         exec {fd}>&-
+        if [ -n "${PIM_CAMERA_TEST_VCM_PRE_EXEC_HOOK:-}" ]; then
+            "$PIM_CAMERA_TEST_VCM_PRE_EXEC_HOOK" || exit $?
+        fi
+        _cl_active_guard_locked || exit $?
         exec "$path"
     ) &
+    _cl_wait_named_process vcm "$PIM_CAMERA_LIVENESS_START_WAIT_SEC"
 }
 cam_liveness_restart_vcm() {
     local path
     path=$(command -v "$PIM_CAMERA_VCM_COMMAND") || return 127
-    _cr_lock_call _cl_restart_vcm_locked "$path" || return $?
-    _cl_wait_named_process vcm "$PIM_CAMERA_LIVENESS_START_WAIT_SEC"
+    _cr_lock_call _cl_restart_vcm_locked "$path"
 }
 
 _cl_wait_named_process() {
@@ -113,11 +120,26 @@ _cl_wait_named_process() {
     done
 }
 
-cam_liveness_note_failure() {
-    local target=$1
-    _cl_active_guard || return $?
-    cam_mark_degraded liveness_start_failed "$target" false
+_cl_note_failure_locked() {
+    local target=$1 state next boot invocation
+    _cr_test_owner_rollover liveness_degraded || return 69
+    _cl_active_guard_locked || return $?
+    if [ -e "$(_cr_service_file)" ]; then
+        state=$(cat "$(_cr_service_file)" 2>/dev/null) || return 70
+        _coc_state_schema <<<"$state" || return 70
+    else
+        state=$(_coc_state_default) || return $?
+    fi
+    boot=$(_coc_boot_id) || return 70
+    invocation=$(_coc_invocation_id) || return 69
+    next=$(jq -c --arg boot "$boot" --arg invocation "$invocation" --arg target "$target" \
+      '.schema=1 | .last_boot_id=$boot | .last_invocation_id=$invocation | .dirty=false | .degraded_reason="liveness_start_failed" | .degraded_target=$target' <<<"$state") || return 70
+    _cl_active_guard_locked || return $?
+    _coc_write_state "$next" || return $?
+    _cl_active_guard_locked || return $?
+    _cr_owner_set_lifecycle_locked DEGRADED
 }
+cam_liveness_note_failure() { _cr_lock_call _cl_note_failure_locked "$1"; }
 
 _cl_handle_operation_flags() {
     local now
@@ -184,10 +206,31 @@ cam_liveness_gstapp_gate() {
 }
 
 _cl_gstapp_failures() {
-    local state
+    local state action id status history terminal result
     [ -e "$(_cr_state_file)" ] || { printf '0\n'; return 0; }
     state=$(cat "$(_cr_state_file)" 2>/dev/null) || return 70
     _cr_state_valid <<<"$state" || return 70
+    action=$(jq -c '.actions.gstapp_restart' <<<"$state") || return 70
+    id=$(jq -r '.last_request_id // ""' <<<"$action") || return 70
+    if [ -z "$id" ]; then
+        jq -e '. == {attempted:0,succeeded:0,failed:0,consecutive_failures:0,last_request_id:null,last_started_at:null,last_finished_at:null,last_status:null,last_rc:null}' >/dev/null <<<"$action" || return 70
+    else
+        _cr_counter_finish_state_action_valid "$state" gstapp_restart "$id" || return 70
+        status=$(jq -r '.last_status' <<<"$action") || return 70
+        if [ "$status" = RUNNING ]; then
+            _cr_counter_begin_prior_interruption_valid "$state" gstapp_restart "$id" 2>/dev/null || return 70
+        else
+            history=$(cat "$(_cr_history_file "$id")" 2>/dev/null) || return 70
+            terminal=$(jq -ce '.request | select(type=="object")' <<<"$history") || return 70
+            _cr_terminal_request_valid "$terminal" || return 70
+            _cr_request_interruption_absent "$terminal" || return 70
+            result=$(cat "$(_cr_result_file "$id")" 2>/dev/null) || return 70
+            _cr_terminal_result_valid "$result" "$terminal" || return 70
+            _cr_terminal_request_result_equal "$terminal" "$result" || return 70
+            _cr_terminal_attribution_valid "$history" "$terminal" "$state" || return 70
+            _cr_history_public_state_arithmetic_valid "$history" "$state" "$id" || return 70
+        fi
+    fi
     jq -r '.actions.gstapp_restart.consecutive_failures' <<<"$state"
 }
 
@@ -196,12 +239,14 @@ _cl_request_gstapp_recovery() {
     failures=$(_cl_gstapp_failures) || return $?
     [[ $PIM_CAMERA_LIVENESS_ESCALATION_THRESHOLD =~ ^[0-9]+$ ]] || return 64
     [ "$failures" -lt "$PIM_CAMERA_LIVENESS_ESCALATION_THRESHOLD" ] || action=module_reload
+    _cr_test_owner_rollover liveness_request || return 69
+    _cl_active_guard || return $?
     cam_request_submit "$action" liveness "gstapp process absent" >/dev/null
 }
 
 cam_liveness_tick() {
     local rc app
-    _cl_active_guard || return 0
+    _cl_active_guard || return $?
     _cl_handle_operation_flags || return 0
 
     rc=0; _cl_ord_status || rc=$?
@@ -211,7 +256,7 @@ cam_liveness_tick() {
             rc=0; cam_liveness_restart_ord || rc=$?
             if [ "$rc" -ne 0 ]; then cam_liveness_note_failure ord || return $?; return "$rc"; fi
             ;;
-        *) return 0 ;;
+        *) return "$rc" ;;
     esac
 
     rc=0; _cl_process_status vcm || rc=$?
@@ -221,15 +266,16 @@ cam_liveness_tick() {
             rc=0; cam_liveness_restart_vcm || rc=$?
             if [ "$rc" -ne 0 ]; then cam_liveness_note_failure vcm || return $?; return "$rc"; fi
             ;;
-        *) return 0 ;;
+        *) return "$rc" ;;
     esac
 
-    app=$(cam_runtime_app "$PIM_CAMERA_RUNTIME_JSON") || return 0
+    app=$(cam_runtime_app "$PIM_CAMERA_RUNTIME_JSON") || return $?
     rc=0; _cl_process_status "$app" || rc=$?
     [ "$rc" -ne 0 ] || return 0
-    [ "$rc" -eq 1 ] || return 0
-    cam_liveness_gstapp_gate || return 0
-    _cl_active_guard || return 0
+    [ "$rc" -eq 1 ] || return "$rc"
+    rc=0; cam_liveness_gstapp_gate || rc=$?
+    [ "$rc" -eq 0 ] || { [ "$rc" -eq 1 ] && return 0; return "$rc"; }
+    _cl_active_guard || return $?
     _cl_request_gstapp_recovery
 }
 
@@ -251,32 +297,35 @@ _cl_owner_matches_context() {
 }
 
 _cl_capture_owner_context() {
-    local allow_adopt=${1:-0} owner
+    local allow_adopt=${1:-0} owner lifecycle
     [ -e "$(_cr_owner_file)" ] || return 0
     owner=$(_cr_owner_json) || return 69
-    _cr_owner_snapshot_live "$owner" || return 69
+    _cr_owner_schema <<<"$owner" || return 69
+    lifecycle=$(jq -r .lifecycle <<<"$owner") || return 69
     if [ -n "${PIM_CAMERA_OWNER_INVOCATION:-}" ]; then
         _cl_owner_matches_context "$owner" || return 69
-        return 0
+    else
+        [ "$allow_adopt" = 1 ] || return 69
+        PIM_CAMERA_OWNER_BOOT_ID=$(jq -r .boot_id <<<"$owner")
+        PIM_CAMERA_OWNER_INVOCATION=$(jq -r .invocation_id <<<"$owner")
+        PIM_CAMERA_OWNER_PID=$(jq -r .pid <<<"$owner")
+        PIM_CAMERA_OWNER_PROC_START_TIME=$(jq -r .proc_start_time <<<"$owner")
+        PIM_CAMERA_OWNER_TOKEN=$(jq -r .token <<<"$owner")
+        PIM_CAMERA_OWNER_CREATED_AT=$(jq -r .created_at <<<"$owner")
+        export PIM_CAMERA_OWNER_BOOT_ID PIM_CAMERA_OWNER_INVOCATION PIM_CAMERA_OWNER_PID
+        export PIM_CAMERA_OWNER_PROC_START_TIME PIM_CAMERA_OWNER_TOKEN PIM_CAMERA_OWNER_CREATED_AT
     fi
-    [ "$allow_adopt" = 1 ] || return 69
-    PIM_CAMERA_OWNER_BOOT_ID=$(jq -r .boot_id <<<"$owner")
-    PIM_CAMERA_OWNER_INVOCATION=$(jq -r .invocation_id <<<"$owner")
-    PIM_CAMERA_OWNER_PID=$(jq -r .pid <<<"$owner")
-    PIM_CAMERA_OWNER_PROC_START_TIME=$(jq -r .proc_start_time <<<"$owner")
-    PIM_CAMERA_OWNER_TOKEN=$(jq -r .token <<<"$owner")
-    PIM_CAMERA_OWNER_CREATED_AT=$(jq -r .created_at <<<"$owner")
-    export PIM_CAMERA_OWNER_BOOT_ID PIM_CAMERA_OWNER_INVOCATION PIM_CAMERA_OWNER_PID
-    export PIM_CAMERA_OWNER_PROC_START_TIME PIM_CAMERA_OWNER_TOKEN PIM_CAMERA_OWNER_CREATED_AT
+    [ "$lifecycle" = STOPPING ] || _cr_owner_snapshot_live "$owner" || return 69
 }
 
 _cl_stop_begin_locked() {
     local owner lifecycle
     [ -e "$(_cr_owner_file)" ] || { printf 'done\n'; return 0; }
     owner=$(_cr_owner_json) || return 69
-    _cr_owner_snapshot_live "$owner" "${PIM_CAMERA_OWNER_INVOCATION:-}" "${PIM_CAMERA_OWNER_TOKEN:-}" || return 69
+    _cl_owner_matches_context "$owner" || return 69
     lifecycle=$(jq -r .lifecycle <<<"$owner") || return 69
-    if [ "$lifecycle" = STOPPING ]; then printf 'wait\n'; return 0; fi
+    if [ "$lifecycle" = STOPPING ]; then printf 'coordinator\n'; return 0; fi
+    _cr_owner_snapshot_live "$owner" || return 69
     _cr_owner_set_lifecycle_locked STOPPING || return $?
     printf 'coordinator\n'
 }
@@ -294,13 +343,13 @@ _cl_wait_owner_removed() {
 cam_liveness_wait_for_work() {
     local timeout=$PIM_CAMERA_STOP_WAIT_SEC elapsed=0
     [[ $timeout =~ ^[0-9]+$ ]] || timeout=5
-    while [ -e "$(_cr_active_file)" ]; do
-        [ "$elapsed" -lt "$timeout" ] || break
+    while [ -e "$(_cr_pending_file)" ] || [ -e "$(_cr_active_file)" ]; do
+        [ "$elapsed" -lt "$timeout" ] || return 75
         sleep 1
         elapsed=$((elapsed + 1))
     done
     while [ -n "$(jobs -pr 2>/dev/null)" ]; do
-        [ "$elapsed" -lt "$timeout" ] || break
+        [ "$elapsed" -lt "$timeout" ] || return 75
         sleep 1
         elapsed=$((elapsed + 1))
     done
@@ -313,21 +362,43 @@ _cl_stopping_guard() {
     _cr_owner_snapshot_lifecycle_in "$owner" STOPPING
 }
 
-cam_liveness_signal_daemon() {
+_cl_signal_daemon_locked() {
+    local stat_path actual
     _cl_stopping_guard || return $?
+    stat_path="$PIM_CAMERA_PROC_ROOT/$PIM_CAMERA_OWNER_PID/stat"
+    [ -e "$stat_path" ] || return 0
+    actual=$(_cr_proc_start "$PIM_CAMERA_OWNER_PID" 2>/dev/null) || return 69
+    [ "$actual" = "$PIM_CAMERA_OWNER_PROC_START_TIME" ] || return 69
     "$PIM_CAMERA_KILL" -TERM "$PIM_CAMERA_OWNER_PID"
 }
+cam_liveness_signal_daemon() { _cr_lock_call _cl_signal_daemon_locked; }
 
 cam_liveness_wait_daemon_quiesced() {
-    local timeout=$PIM_CAMERA_STOP_WAIT_SEC elapsed=0 actual
+    local timeout=$PIM_CAMERA_STOP_WAIT_SEC elapsed=0 actual stat_path
     [[ $timeout =~ ^[0-9]+$ ]] || timeout=5
+    stat_path="$PIM_CAMERA_PROC_ROOT/$PIM_CAMERA_OWNER_PID/stat"
     while :; do
-        actual=$(_cr_proc_start "$PIM_CAMERA_OWNER_PID" 2>/dev/null || true)
-        [ "$actual" = "$PIM_CAMERA_OWNER_PROC_START_TIME" ] || return 0
-        [ "$elapsed" -lt "$timeout" ] || return 0
+        [ -e "$stat_path" ] || return 0
+        actual=$(_cr_proc_start "$PIM_CAMERA_OWNER_PID" 2>/dev/null) || return 69
+        [ "$actual" = "$PIM_CAMERA_OWNER_PROC_START_TIME" ] || return 69
+        [ "$elapsed" -lt "$timeout" ] || return 75
         sleep 1
         elapsed=$((elapsed + 1))
     done
+}
+
+_cl_reconcile_stop_lease_locked() {
+    local owner stat_path actual
+    owner=$(_cr_owner_json) || return 69
+    _cl_owner_matches_context "$owner" || return 69
+    _cr_owner_snapshot_lifecycle_in "$owner" STOPPING || return 69
+    stat_path="$PIM_CAMERA_PROC_ROOT/$PIM_CAMERA_OWNER_PID/stat"
+    if [ -e "$stat_path" ]; then
+        actual=$(_cr_proc_start "$PIM_CAMERA_OWNER_PID" 2>/dev/null) || return 69
+        [ "$actual" != "$PIM_CAMERA_OWNER_PROC_START_TIME" ] || return 75
+        return 69
+    fi
+    _cr_reconcile_abandoned_lease_locked "$owner"
 }
 
 cam_liveness_stop_managed() {
@@ -352,17 +423,16 @@ _cl_finish_stop_locked() {
     owner=$(_cr_owner_json) || return 69
     _cl_owner_matches_context "$owner" || return 69
     _cr_owner_snapshot_lifecycle_in "$owner" STOPPING || return 69
+    [ ! -e "$(_cr_pending_file)" ] && [ ! -e "$(_cr_active_file)" ] || return 75
     _cr_remove "$(_cr_owner_file)"
 }
 
-cam_liveness_ordered_stop() {
-    local external=0 mode rc
-    [ "${1:-}" != --external ] || external=1
+_cl_ordered_stop_locked() {
+    local external=$1 mode
     _cl_capture_owner_context "$external" || return $?
-    mode=$(_cr_lock_call _cl_stop_begin_locked) || return $?
+    mode=$(_cl_stop_begin_locked) || return $?
     case "$mode" in
         done) return 0 ;;
-        wait) [ "$external" -eq 0 ] && return 0; _cl_wait_owner_removed; return $? ;;
         coordinator) ;;
         *) return 70 ;;
     esac
@@ -371,17 +441,24 @@ cam_liveness_ordered_stop() {
     cam_liveness_quiesce || return $?
     if [ "$external" -eq 1 ]; then
         _cl_stop_event daemon_quiesce_signaled
-        cam_liveness_signal_daemon || return $?
+        _cl_signal_daemon_locked || return $?
         cam_liveness_wait_daemon_quiesced || return $?
         _cl_stop_event daemon_quiesced
+        _cl_reconcile_stop_lease_locked || return $?
     fi
     cam_liveness_wait_for_work || return $?
     _cl_stop_event action_child_quiesced
     cam_liveness_stop_managed || return $?
     _cl_stop_event managed_stopped
     _cl_stop_event terminal_stop
-    _cr_lock_call _cl_finish_stop_locked || return $?
+    _cl_finish_stop_locked || return $?
     _cl_stop_event owner_removed
+}
+
+cam_liveness_ordered_stop() {
+    local external=0
+    [ "${1:-}" != --external ] || external=1
+    _cr_lock_call _cl_ordered_stop_locked "$external"
 }
 
 _cl_trap_signal() {
