@@ -446,3 +446,58 @@ The complete pre-report diff contains exactly the recovery protocol implementati
 - The graph remains stale and does not index the changed production Bash top-level, so structural review must continue to pair complete diff inspection with executable protocol/action suites.
 
 No Fix round 4 implementation blocker remains.
+
+## Fix round 5
+
+Base: `ff7e0ecde88156103ca5088ccddfe56543f3b7cd`. This final round fixes only the two round-4 re-review findings: synthetic interruption metadata being accepted from an active lease or from a terminal lease paired with synthetic history, and incomplete counter arithmetic/timestamp validation across the three non-idempotent finish phases. Public actions, lifecycle edges, owner/lease identity, queue behavior, exact writer timestamps, and recovery escalation are unchanged.
+
+### RED evidence
+
+The complete round-5 test matrix was added before the production edit.
+
+- Command: `rtk bash test/camera_health/recovery_protocol_test.sh`
+- Exit: `1`
+- Failure: `FAIL: round-5 mutations accepted: interruption: active_synthetic_pair:0 terminal_lease_synthetic_history:0 counter: running_succeeded_preincrement:0 running_failed_preincrement:0 running_both_preincrement:0 running_attempted_extra:0 running_consecutive_exceeds_failed:0 running_clock_before_start:0 state_terminal_attempted_extra:0 state_terminal_success_consecutive:0 history_terminal_state_succeeded:0 history_terminal_state_failed:0 history_terminal_state_both:0 history_terminal_state_attempted_extra:0 history_terminal_state_consecutive:0`
+
+The provenance probes start from real terminal takeover fixtures. The counter probes start from a real request/claim/transition/counter-begin fixture and independently cover `RUNNING:RUNNING`, `RUNNING:TERMINAL`, and `TERMINAL:RUNNING`. Every invalid case requires RC70 and snapshots owner, lease, history, result/absence, recovery state, service state, runtime, and call log; all eight fingerprints must remain byte-identical.
+
+### GREEN behavior and invariants
+
+- Lease requests now require both interruption keys to be absent, regardless of whether their values happen to match the synthetic tuple. Results continue to reject both keys unconditionally.
+- Exact synthetic interruption metadata remains valid only on a terminal history request with `FAILED/70`, `interrupted=true`, and `interrupted_reason=owner_stale`, paired with a nonterminal pending/active lease that contains neither key. A terminal lease paired with synthetic history fails closed.
+- Partial interruption metadata, malformed history metadata, active/pending lease metadata, result metadata, and synthetic metadata paired with a terminal lease return RC70 before dirty marking, reconciliation writes, lease removal, or replacement-owner publication.
+- Current RUNNING counters require `attempted == succeeded + failed + 1`; current terminal counters require `attempted == succeeded + failed`. All totals are nonnegative, `0 <= consecutive_failures <= failed`, terminal success requires zero consecutive failures, and terminal failure requires at least one.
+- Finish time must be a positive integer not earlier than the shared start time. This is checked for a fresh `_cr_now` result and for timestamps copied from either durable reciprocal side.
+- Phase-specific prospective records are built without incrementing an already-terminal state. Before the first write, the prospective history and state must both be valid terminal records and agree exactly on request/action, status, rc, start, and finish while the state totals satisfy terminal arithmetic.
+- Valid normal finish and both reciprocal retry directions preserve the exact authoritative timestamp and cumulative nonzero totals. The added controls prove success `6/4/2/0`, failed reciprocal `6/3/3/3`, and byte-identical already-terminal state on the state-first retry.
+- Existing valid pending synthetic-history retry, active nonterminal synthetic-history retry, normal terminal takeover, owner/request attribution, and per-launch rollover guards continue to pass.
+
+### Fresh final-head verification
+
+| Command | Exit/result |
+| --- | --- |
+| `rtk bash -n dist/pim/opt/pim/lib/cam_recovery.sh dist/pim/opt/pim/lib/cam_operate_control.sh dist/pim/opt/pim/lib/cam_recovery_actions.sh dist/pim/opt/pim/bin/chk_cam_operate.sh` | `0` |
+| `rtk bash test/camera_health/recovery_protocol_test.sh` | `0`, `recovery protocol: PASS` |
+| `rtk bash test/camera_health/cam_operate_control_test.sh` | `0`, `cam operate control: PASS` |
+| `rtk bash test/cam_link/recovery_actions_test.sh` | `0`, `recovery actions: PASS` |
+| `rtk bash test/cam_link/recovery_actions_safety_test.sh` | `0`, `recovery actions safety: PASS` |
+| `rtk bash test/cam_link/recovery_launch_safety_test.sh` | `0`, `recovery launch safety: PASS` |
+| `rtk bash test/cam_link/escalation_test.sh` | `0`, `7 passed / 0 failed` |
+| `rtk bash test/camera_health/run_all.sh` | `0`, including updated protocol/control PASS |
+| `rtk bash test/cam_link/run_all.sh -v` | `0`, `all passed (14)` |
+| `rtk shellcheck -S error dist/pim/opt/pim/lib/cam_recovery.sh test/camera_health/recovery_protocol_test.sh` | `0` |
+| `rtk git diff --check` | `0` |
+
+### Graph and diff review
+
+The graph incremental update identified both changed code/test paths but re-parsed only one file, reporting 26 nodes and 979 edges with no parse errors. `detect_changes` reported risk `0.40`, three indexed test helpers, and zero affected flows. The production `cam_recovery.sh` top-level returned `target not indexed` for both `file_summary` and `tests_for`; its zero-flow/impact output is therefore a Bash parser coverage gap, not evidence of no impact. The focused protocol test and complete aggregate suites above are the authoritative coverage evidence.
+
+The complete pre-report diff contains only the recovery protocol implementation and its executable protocol test: 210 insertions and 13 deletions. Manual full-diff review confirmed that each rejection occurs before a write, each reciprocal finish increments only the missing side, valid synthetic provenance is confined to terminal history paired with a nonterminal clean lease, and no Task 5 or unrelated service behavior was introduced.
+
+### Remaining concerns
+
+- Multi-file durability remains ordered and retry-convergent rather than filesystem-wide atomic; the two reciprocal counter directions and result/history reconciliation directions remain covered by failpoint tests.
+- Verification remains host/stub based. Real target-board timing and device/process teardown remain later system acceptance work.
+- The code-review graph still does not index the production shell top-level, so complete diff inspection and executable protocol/action gates remain necessary.
+
+No Fix round 5 implementation blocker remains.
