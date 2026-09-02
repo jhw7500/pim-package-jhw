@@ -114,6 +114,52 @@ jq -e '.lifecycle=="STARTING"' "$PIM_CAMERA_RUN_DIR/owner.json" >/dev/null || fa
 [ ! -d "$PIM_CAMERA_STATE_DIR/recovery/history" ] || fail "public STARTING recovery created history"
 [ ! -d "$PIM_CAMERA_RUN_DIR/recovery/results" ] || fail "public STARTING recovery created result"
 
+echo "=== stale owner repairs exact history-first counter begin partial ==="
+reset_protocol_sandbox
+owner_active
+mkdir -p "$PIM_CAMERA_STATE_DIR"
+printf '{"dirty":false,"sentinel":"owner-stale-begin-partial"}\n' > "$PIM_CAMERA_STATE_DIR/service-state.json"
+history_first_prior_id=$(cam_request_submit module_reload health "history-first predecessor" /source/stale 108)
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+cam_action_counter_begin module_reload "$history_first_prior_id"
+fake_stat 222
+cam_owner_create "$DAEMON_PID"
+history_first_prior_history="$PIM_CAMERA_STATE_DIR/recovery/history/$history_first_prior_id.json"
+history_first_prior_result="$PIM_CAMERA_RUN_DIR/recovery/results/$history_first_prior_id.json"
+history_first_prior_history_before=$(file_fingerprint "$history_first_prior_history")
+history_first_prior_result_before=$(file_fingerprint "$history_first_prior_result")
+cam_owner_set_lifecycle ACTIVE
+history_first_current_id=$(cam_request_submit module_reload health "history-first current" /source/retry 109)
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+PIM_CAMERA_TEST_FAILPOINT=counter_begin_after_history expect_rc 70 cam_action_counter_begin module_reload "$history_first_current_id"
+fake_stat 333
+expect_rc 0 cam_owner_create "$DAEMON_PID"
+[ ! -e "$PIM_CAMERA_RUN_DIR/recovery/active.json" ] || fail "history-first takeover retained active lease"
+jq -e '.proc_start_time=="333" and .lifecycle=="STARTING"' "$PIM_CAMERA_RUN_DIR/owner.json" >/dev/null || fail "history-first takeover did not publish replacement owner"
+jq -e --arg id "$history_first_current_id" '.request.id==$id and .request.status=="FAILED" and .request.rc==70 and .request.interrupted==true and .request.interrupted_reason=="owner_stale" and ([.actions[] | select(.action=="module_reload" and .request_id==$id and .status=="RUNNING")] | length)==1' "$PIM_CAMERA_STATE_DIR/recovery/history/$history_first_current_id.json" >/dev/null || fail "history-first takeover did not terminalize current history"
+jq -e --arg id "$history_first_current_id" '.id==$id and .status=="FAILED" and .rc==70 and (has("interrupted")|not) and (has("interrupted_reason")|not)' "$PIM_CAMERA_RUN_DIR/recovery/results/$history_first_current_id.json" >/dev/null || fail "history-first takeover did not write strict current result"
+jq -e --arg id "$history_first_current_id" '.actions.module_reload.attempted==2 and .actions.module_reload.succeeded==0 and .actions.module_reload.failed==1 and .actions.module_reload.consecutive_failures==1 and .actions.module_reload.last_request_id==$id and .actions.module_reload.last_status=="RUNNING" and .actions.module_reload.last_rc==null' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "history-first takeover repaired state incorrectly"
+[ "$history_first_prior_history_before" = "$(file_fingerprint "$history_first_prior_history")" ] || fail "history-first takeover rewrote predecessor history"
+[ "$history_first_prior_result_before" = "$(file_fingerprint "$history_first_prior_result")" ] || fail "history-first takeover rewrote predecessor result"
+history_first_current_history="$PIM_CAMERA_STATE_DIR/recovery/history/$history_first_current_id.json"
+history_first_current_before=$(file_fingerprint "$history_first_current_history")
+cam_owner_set_lifecycle ACTIVE
+history_first_third_id=$(cam_request_submit module_reload health "history-first third" /source/retry 110)
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+cam_action_counter_begin module_reload "$history_first_third_id"
+cam_action_counter_finish module_reload "$history_first_third_id" SUCCEEDED 0
+cam_request_transition VERIFYING
+cam_request_finish SUCCEEDED 0
+jq -e --arg id "$history_first_third_id" '.id==$id and .status=="SUCCEEDED" and .rc==0' "$PIM_CAMERA_RUN_DIR/recovery/results/$history_first_third_id.json" >/dev/null || fail "history-first third request did not succeed"
+jq -e '.actions.module_reload.attempted==3 and .actions.module_reload.succeeded==1 and .actions.module_reload.failed==2 and .actions.module_reload.consecutive_failures==0' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "history-first third attempt did not settle exactly once"
+[ "$history_first_current_before" = "$(file_fingerprint "$history_first_current_history")" ] || fail "history-first third attempt rewrote interrupted history"
+
 echo "=== normal terminal active removal is idempotent ==="
 create_normal_terminal_fixture
 
@@ -921,6 +967,159 @@ for mutation in missing_result corrupt_result missing_history corrupt_history no
     fi
 done
 [ -z "$stale_begin_failures" ] || fail "invalid stale settlement evidence accepted:$stale_begin_failures"
+
+round7_history_first_setup() {
+    local label=$1
+    stale_running_retry_setup "$label"
+    PIM_CAMERA_TEST_FAILPOINT=counter_begin_after_history expect_rc 70 cam_action_counter_begin module_reload "$stale_retry_id"
+    round7_current_result="$PIM_CAMERA_RUN_DIR/recovery/results/$stale_retry_id.json"
+    fake_stat 333
+}
+round7_snapshot_bytes() {
+    round7_owner_before=$(file_fingerprint "$PIM_CAMERA_RUN_DIR/owner.json")
+    round7_active_before=$(file_fingerprint "$PIM_CAMERA_RUN_DIR/recovery/active.json")
+    round7_current_history_before=$(file_fingerprint "$stale_retry_current_history")
+    round7_current_result_before=$(file_fingerprint "$round7_current_result")
+    round7_prior_history_before=$(file_fingerprint "$stale_retry_prior_history")
+    round7_prior_result_before=$(file_fingerprint "$stale_retry_prior_result")
+    round7_state_before=$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+    round7_service_before=$(file_fingerprint "$PIM_CAMERA_STATE_DIR/service-state.json")
+    round7_runtime_before=$(file_fingerprint "$PIM_CAMERA_RUNTIME_JSON")
+    round7_call_before=$(file_fingerprint "$PIM_CAMERA_CALL_LOG")
+}
+round7_assert_bytes_unchanged() {
+    local label=$1
+    [ "$round7_owner_before" = "$(file_fingerprint "$PIM_CAMERA_RUN_DIR/owner.json")" ] || fail "$label mutated owner"
+    [ "$round7_active_before" = "$(file_fingerprint "$PIM_CAMERA_RUN_DIR/recovery/active.json")" ] || fail "$label mutated active"
+    [ "$round7_current_history_before" = "$(file_fingerprint "$stale_retry_current_history")" ] || fail "$label mutated current history"
+    [ "$round7_current_result_before" = "$(file_fingerprint "$round7_current_result")" ] || fail "$label mutated current result"
+    [ "$round7_prior_history_before" = "$(file_fingerprint "$stale_retry_prior_history")" ] || fail "$label mutated prior history"
+    [ "$round7_prior_result_before" = "$(file_fingerprint "$stale_retry_prior_result")" ] || fail "$label mutated prior result"
+    [ "$round7_state_before" = "$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail "$label mutated state"
+    [ "$round7_service_before" = "$(file_fingerprint "$PIM_CAMERA_STATE_DIR/service-state.json")" ] || fail "$label mutated service"
+    [ "$round7_runtime_before" = "$(file_fingerprint "$PIM_CAMERA_RUNTIME_JSON")" ] || fail "$label mutated runtime"
+    [ "$round7_call_before" = "$(file_fingerprint "$PIM_CAMERA_CALL_LOG")" ] || fail "$label mutated call log"
+}
+
+echo "=== repaired-state stale takeover retries exactly once ==="
+round7_history_first_setup "round 7 state repair failpoint"
+round7_snapshot_bytes
+PIM_CAMERA_TEST_FAILPOINT=owner_reconcile_after_state_repair expect_rc 70 cam_owner_create "$DAEMON_PID"
+[ "$round7_owner_before" = "$(file_fingerprint "$PIM_CAMERA_RUN_DIR/owner.json")" ] || fail "state repair failpoint replaced owner"
+[ "$round7_active_before" = "$(file_fingerprint "$PIM_CAMERA_RUN_DIR/recovery/active.json")" ] || fail "state repair failpoint removed active"
+[ "$round7_current_history_before" = "$(file_fingerprint "$stale_retry_current_history")" ] || fail "state repair failpoint terminalized history"
+[ "$round7_current_result_before" = "$(file_fingerprint "$round7_current_result")" ] || fail "state repair failpoint wrote result"
+[ "$round7_prior_history_before" = "$(file_fingerprint "$stale_retry_prior_history")" ] || fail "state repair failpoint rewrote prior history"
+[ "$round7_prior_result_before" = "$(file_fingerprint "$stale_retry_prior_result")" ] || fail "state repair failpoint rewrote prior result"
+[ "$round7_service_before" = "$(file_fingerprint "$PIM_CAMERA_STATE_DIR/service-state.json")" ] || fail "state repair failpoint marked service dirty"
+[ "$round7_runtime_before" = "$(file_fingerprint "$PIM_CAMERA_RUNTIME_JSON")" ] || fail "state repair failpoint mutated runtime"
+[ "$round7_call_before" = "$(file_fingerprint "$PIM_CAMERA_CALL_LOG")" ] || fail "state repair failpoint mutated call log"
+jq -e --arg id "$stale_retry_id" '.actions.module_reload.attempted==2 and .actions.module_reload.succeeded==0 and .actions.module_reload.failed==1 and .actions.module_reload.consecutive_failures==1 and .actions.module_reload.last_request_id==$id and .actions.module_reload.last_status=="RUNNING"' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "state repair failpoint did not persist exact repair"
+round7_repaired_state=$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+expect_rc 0 cam_owner_create "$DAEMON_PID"
+[ "$round7_repaired_state" = "$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail "state repair retry settled twice"
+[ "$round7_prior_history_before" = "$(file_fingerprint "$stale_retry_prior_history")" ] || fail "state repair retry rewrote prior history"
+[ "$round7_prior_result_before" = "$(file_fingerprint "$stale_retry_prior_result")" ] || fail "state repair retry rewrote prior result"
+[ ! -e "$PIM_CAMERA_RUN_DIR/recovery/active.json" ] || fail "state repair retry retained active"
+
+echo "=== repaired-state takeover preserves later reconcile failpoints ==="
+for round7_failpoint in owner_reconcile_after_history owner_reconcile_after_result; do
+    round7_history_first_setup "round 7 $round7_failpoint"
+    round7_prior_history_before=$(file_fingerprint "$stale_retry_prior_history")
+    round7_prior_result_before=$(file_fingerprint "$stale_retry_prior_result")
+    PIM_CAMERA_TEST_FAILPOINT="$round7_failpoint" expect_rc 70 cam_owner_create "$DAEMON_PID"
+    round7_repaired_state=$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+    expect_rc 0 cam_owner_create "$DAEMON_PID"
+    [ "$round7_repaired_state" = "$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail "$round7_failpoint retry settled twice"
+    [ "$round7_prior_history_before" = "$(file_fingerprint "$stale_retry_prior_history")" ] || fail "$round7_failpoint rewrote prior history"
+    [ "$round7_prior_result_before" = "$(file_fingerprint "$stale_retry_prior_result")" ] || fail "$round7_failpoint rewrote prior result"
+    jq -e --arg id "$stale_retry_id" '.actions.module_reload.attempted==2 and .actions.module_reload.succeeded==0 and .actions.module_reload.failed==1 and .actions.module_reload.consecutive_failures==1 and .actions.module_reload.last_request_id==$id and .actions.module_reload.last_status=="RUNNING"' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "$round7_failpoint retry counters"
+done
+
+echo "=== completed begin and pre-begin stale takeover remain exact ==="
+stale_running_retry_setup "round 7 completed begin"
+cam_action_counter_begin module_reload "$stale_retry_id"
+round7_completed_state=$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+round7_completed_prior_history=$(file_fingerprint "$stale_retry_prior_history")
+round7_completed_prior_result=$(file_fingerprint "$stale_retry_prior_result")
+fake_stat 333
+expect_rc 0 cam_owner_create "$DAEMON_PID"
+[ "$round7_completed_state" = "$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail "completed begin takeover rewrote state"
+[ "$round7_completed_prior_history" = "$(file_fingerprint "$stale_retry_prior_history")" ] || fail "completed begin takeover rewrote prior history"
+[ "$round7_completed_prior_result" = "$(file_fingerprint "$stale_retry_prior_result")" ] || fail "completed begin takeover rewrote prior result"
+
+stale_running_retry_setup "round 7 pre-begin"
+round7_prebegin_state=$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+round7_prebegin_prior_history=$(file_fingerprint "$stale_retry_prior_history")
+round7_prebegin_prior_result=$(file_fingerprint "$stale_retry_prior_result")
+fake_stat 333
+expect_rc 0 cam_owner_create "$DAEMON_PID"
+[ "$round7_prebegin_state" = "$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail "pre-begin takeover settled unrelated state"
+[ "$round7_prebegin_prior_history" = "$(file_fingerprint "$stale_retry_prior_history")" ] || fail "pre-begin takeover rewrote prior history"
+[ "$round7_prebegin_prior_result" = "$(file_fingerprint "$stale_retry_prior_result")" ] || fail "pre-begin takeover rewrote prior result"
+jq -e '.actions|length==0' "$stale_retry_current_history" >/dev/null || fail "pre-begin takeover invented current action"
+
+echo "=== history-first repair preserves matching other action attribution ==="
+stale_running_retry_setup "round 7 matching other action"
+cam_action_counter_begin gstapp_restart "$stale_retry_id"
+cam_action_counter_finish gstapp_restart "$stale_retry_id" SUCCEEDED 0
+PIM_CAMERA_TEST_FAILPOINT=counter_begin_after_history expect_rc 70 cam_action_counter_begin module_reload "$stale_retry_id"
+fake_stat 333
+expect_rc 0 cam_owner_create "$DAEMON_PID"
+jq -e --arg id "$stale_retry_id" '
+  .actions.module_reload.attempted==2 and
+  .actions.module_reload.succeeded==0 and
+  .actions.module_reload.failed==1 and
+  .actions.module_reload.consecutive_failures==1 and
+  .actions.module_reload.last_request_id==$id and
+  .actions.module_reload.last_status=="RUNNING" and
+  .actions.gstapp_restart.attempted==1 and
+  .actions.gstapp_restart.succeeded==1 and
+  .actions.gstapp_restart.failed==0 and
+  .actions.gstapp_restart.last_request_id==$id and
+  .actions.gstapp_restart.last_status=="SUCCEEDED"
+' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "history-first repair lost matching other action attribution"
+
+echo "=== invalid history-first stale repair evidence fails closed ==="
+round7_failures=''
+for mutation in unexpected_current_result current_request prior_started_at current_action \
+    missing_prior_history corrupt_prior_history missing_prior_result corrupt_prior_result \
+    nonsynthetic_prior bad_prior_arithmetic duplicate_current multiple_current \
+    other_current_state_mismatch; do
+    round7_history_first_setup "round 7 invalid $mutation"
+    case "$mutation" in
+        unexpected_current_result)
+            jq -c --argjson now "$(date +%s)" '.status="FAILED" | .rc=70 | .finished_at=$now | {id,type,status,rc,source,reason,created_at,finished_at,source_path,source_mtime}' "$PIM_CAMERA_RUN_DIR/recovery/active.json" > "$round7_current_result"
+            ;;
+        current_request) jq '.request.reason="mismatched current request"' "$stale_retry_current_history" > "$WORK/round7-mutation" && mv "$WORK/round7-mutation" "$stale_retry_current_history" ;;
+        prior_started_at) jq '.actions[0].started_at+=1' "$stale_retry_prior_history" > "$WORK/round7-mutation" && mv "$WORK/round7-mutation" "$stale_retry_prior_history" ;;
+        current_action) jq '.actions[0].action="gstapp_restart"' "$stale_retry_current_history" > "$WORK/round7-mutation" && mv "$WORK/round7-mutation" "$stale_retry_current_history" ;;
+        missing_prior_history) rm -f "$stale_retry_prior_history" ;;
+        corrupt_prior_history) printf '{bad prior history}\n' > "$stale_retry_prior_history" ;;
+        missing_prior_result) rm -f "$stale_retry_prior_result" ;;
+        corrupt_prior_result) printf '{bad prior result}\n' > "$stale_retry_prior_result" ;;
+        nonsynthetic_prior) jq 'del(.request.interrupted,.request.interrupted_reason)' "$stale_retry_prior_history" > "$WORK/round7-mutation" && mv "$WORK/round7-mutation" "$stale_retry_prior_history" ;;
+        bad_prior_arithmetic) jq '.actions.module_reload.attempted+=1' "$PIM_CAMERA_STATE_DIR/recovery/state.json" > "$WORK/round7-mutation" && mv "$WORK/round7-mutation" "$PIM_CAMERA_STATE_DIR/recovery/state.json" ;;
+        duplicate_current) jq '.actions += [.actions[0]]' "$stale_retry_current_history" > "$WORK/round7-mutation" && mv "$WORK/round7-mutation" "$stale_retry_current_history" ;;
+        multiple_current)
+            jq --arg id "$stale_retry_id" '.actions += [{action:"gstapp_restart",request_id:$id,status:"RUNNING",started_at:(.actions[0].started_at+1)}]' "$stale_retry_current_history" > "$WORK/round7-mutation" && mv "$WORK/round7-mutation" "$stale_retry_current_history"
+            ;;
+        other_current_state_mismatch)
+            jq --arg id "$stale_retry_id" '.actions += [{action:"gstapp_restart",request_id:$id,status:"SUCCEEDED",rc:0,started_at:.actions[0].started_at,finished_at:.actions[0].started_at}]' "$stale_retry_current_history" > "$WORK/round7-mutation" && mv "$WORK/round7-mutation" "$stale_retry_current_history"
+            ;;
+    esac
+    round7_snapshot_bytes
+    set +e
+    cam_owner_create "$DAEMON_PID"
+    round7_rc=$?
+    set -e
+    if [ "$round7_rc" -eq 70 ]; then
+        round7_assert_bytes_unchanged "$mutation"
+    else
+        round7_failures="$round7_failures $mutation:$round7_rc"
+    fi
+done
+[ -z "$round7_failures" ] || fail "invalid history-first repair evidence accepted:$round7_failures"
 
 echo "=== stale owner acquisition terminalizes accepted leases ==="
 reset_protocol_sandbox

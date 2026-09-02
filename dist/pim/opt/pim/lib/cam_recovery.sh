@@ -234,8 +234,12 @@ _cr_terminal_public_counters_valid() {
       .action=="gstapp_restart" or .action=="module_reload" or
       .action=="camera_hard_reset" or .action=="reboot_fallback")]|length' <<<"$history") || return 1
     [ "$count" -eq 0 ] && return 0
-    [ -f "$(_cr_state_file)" ] || return 1
-    state=$(cat "$(_cr_state_file)" 2>/dev/null) || return 1
+    if [ $# -ge 2 ]; then
+        state=$2
+    else
+        [ -f "$(_cr_state_file)" ] || return 1
+        state=$(cat "$(_cr_state_file)" 2>/dev/null) || return 1
+    fi
     _cr_state_valid <<<"$state" 2>/dev/null || return 1
     jq -ne --argjson history "$history" --argjson state "$state" '
       def public_action:
@@ -258,15 +262,93 @@ _cr_terminal_attribution_valid() {
     local history=$1 terminal=$2
     _cr_terminal_interruption_valid "$terminal" || return 1
     _cr_terminal_history_actions_valid "$history" "$terminal" || return 1
-    _cr_terminal_public_counters_valid "$history" || return 1
+    if [ $# -ge 3 ]; then
+        _cr_terminal_public_counters_valid "$history" "$3" || return 1
+    else
+        _cr_terminal_public_counters_valid "$history" || return 1
+    fi
     [ ! -e "$(_cr_service_file)" ] || jq -e 'type=="object"' "$(_cr_service_file)" >/dev/null 2>&1
 }
 _cr_result_from_terminal() {
     jq -c '{id,type,status,rc,source,reason,created_at,finished_at} + (if has("source_path") then {source_path} else {} end) + (if has("source_mtime") then {source_mtime} else {} end)' <<<"$1"
 }
+_cr_history_public_state_arithmetic_valid() {
+    local history=$1 state=$2 id=$3 actions action
+    actions=$(jq -r --arg id "$id" '
+      def public_action:
+        .=="gstapp_restart" or .=="module_reload" or
+        .=="camera_hard_reset" or .=="reboot_fallback";
+      .actions[] | select(.request_id==$id and (.action|public_action)) | .action
+    ' <<<"$history") || return 1
+    for action in $actions; do
+        _cr_counter_finish_state_action_valid "$state" "$action" "$id" || return 1
+    done
+}
+_cr_stale_begin_repair_plan() {
+    local kind=$1 status=$2 request=$3 history=$4 terminal_history=$5 terminal=$6
+    local id public_count state history_request candidate action started prior_id state_next
+    id=$(jq -r .id <<<"$request") || return 1
+    public_count=$(jq -er --arg id "$id" '
+      def public_action:
+        .=="gstapp_restart" or .=="module_reload" or
+        .=="camera_hard_reset" or .=="reboot_fallback";
+      [.actions[] | select(.request_id==$id and (.action|public_action))] | length
+    ' <<<"$history") || return 1
+    if [ "$public_count" -eq 0 ]; then
+        _cr_terminal_attribution_valid "$terminal_history" "$terminal" || return 1
+        jq -cn '{mode:"none"}'
+        return 0
+    fi
+    [ -f "$(_cr_state_file)" ] || return 1
+    state=$(cat "$(_cr_state_file)" 2>/dev/null) || return 1
+    _cr_state_valid <<<"$state" || return 1
+    if _cr_terminal_attribution_valid "$terminal_history" "$terminal" "$state" &&
+       _cr_history_public_state_arithmetic_valid "$terminal_history" "$state" "$id"; then
+        jq -cn '{mode:"none"}'
+        return 0
+    fi
+    [ "$kind" = active ] && [ "$status" = RUNNING ] || return 1
+    _cr_request_schema "$request" || return 1
+    _cr_request_interruption_absent "$request" || return 1
+    [ ! -e "$(_cr_result_file "$id")" ] || return 1
+    history_request=$(jq -ce '.request | select(type=="object")' <<<"$history") || return 1
+    _cr_request_json_equal "$request" "$history_request" || return 1
+    _cr_request_interruption_absent "$history_request" || return 1
+    [ "$(jq -r .status <<<"$history_request")" = RUNNING ] || return 1
+    candidate=$(jq -ce --arg id "$id" '
+      def public_action:
+        .=="gstapp_restart" or .=="module_reload" or
+        .=="camera_hard_reset" or .=="reboot_fallback";
+      [.actions[] | select(
+        .request_id==$id and .status=="RUNNING" and (.action|public_action)
+      )] as $matches |
+      if ($matches|length)==1 then $matches[0] else empty end
+    ' <<<"$history") || return 1
+    action=$(jq -r .action <<<"$candidate") || return 1
+    _cr_counter_finish_history_action_valid "$candidate" "$action" "$id" || return 1
+    started=$(jq -r .started_at <<<"$candidate") || return 1
+    prior_id=$(jq -r --arg action "$action" '.actions[$action].last_request_id // ""' <<<"$state") || return 1
+    [ -n "$prior_id" ] && [ "$prior_id" != "$id" ] || return 1
+    _cr_counter_begin_prior_interruption_valid "$state" "$action" "$prior_id" 2>/dev/null || return 1
+    state_next=$(jq -c --arg action "$action" --arg id "$id" --argjson started "$started" '
+      .actions[$action].failed+=1 |
+      .actions[$action].consecutive_failures+=1 |
+      .actions[$action].attempted+=1 |
+      .actions[$action].last_request_id=$id |
+      .actions[$action].last_started_at=$started |
+      .actions[$action].last_finished_at=null |
+      .actions[$action].last_status="RUNNING" |
+      .actions[$action].last_rc=null
+    ' <<<"$state") || return 1
+    _cr_counter_begin_pair_valid "$history" "$state_next" "$request" "$action" "$id" || return 1
+    _cr_history_public_state_arithmetic_valid "$history" "$state_next" "$id" || return 1
+    _cr_terminal_attribution_valid "$terminal_history" "$terminal" "$state_next" || return 1
+    jq -cn --argjson state "$state_next" '{mode:"repair",state:$state}'
+}
 _cr_reconcile_abandoned_lease_locked() {
     local old_owner=$1 pending_path active_path lease_path kind request status id history_path result_path
     local history='' history_request result='' terminal history_next result_next finished mode
+    local repair_plan='' repair_mode=none repaired_state=''
     pending_path=$(_cr_pending_file); active_path=$(_cr_active_file)
     [ ! -e "$pending_path" ] || [ ! -e "$active_path" ] || return 70
     if [ -e "$pending_path" ]; then lease_path=$pending_path; kind=pending
@@ -343,7 +425,22 @@ _cr_reconcile_abandoned_lease_locked() {
         _cr_terminal_request_valid "$request" || return 70
         _cr_terminal_request_result_equal "$request" "$result_next" || return 70
     fi
-    _cr_terminal_attribution_valid "$history_next" "$terminal" || return 70
+    if [ "$mode" = interrupted ]; then
+        repair_plan=$(_cr_stale_begin_repair_plan "$kind" "$status" "$request" "$history" "$history_next" "$terminal") || return 70
+        repair_mode=$(jq -r '.mode | select(.=="none" or .=="repair")' <<<"$repair_plan") || return 70
+        if [ "$repair_mode" = repair ]; then
+            repaired_state=$(jq -c '.state | select(type=="object")' <<<"$repair_plan") || return 70
+            _cr_terminal_attribution_valid "$history_next" "$terminal" "$repaired_state" || return 70
+        else
+            _cr_terminal_attribution_valid "$history_next" "$terminal" || return 70
+        fi
+    else
+        _cr_terminal_attribution_valid "$history_next" "$terminal" || return 70
+    fi
+    if [ "$repair_mode" = repair ]; then
+        _cr_atomic_write "$(_cr_state_file)" "$repaired_state" || return 70
+        _cr_test_failpoint owner_reconcile_after_state_repair || return 70
+    fi
     if [ "$mode" = interrupted ]; then
         _cr_mark_dirty || return 70
     fi

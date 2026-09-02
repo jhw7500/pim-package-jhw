@@ -544,3 +544,48 @@ Base: `79c77b258001c99342f799de7427f8cf59fc8a28`. This user-approved exception f
 The graph-first pass and final incremental update identified the production, test, and report paths but re-parsed only the test file. Final graph data reported 29 nodes, 1133 edges; the pre-report change analysis reported risk `0.40`, three indexed test helpers, and zero affected flows. Both `file_summary` and `tests_for` report the production `cam_recovery.sh` top-level as `target not indexed`; zero graph flow/coverage is therefore a Bash parser gap, not evidence of no impact. Complete diff inspection plus the executable protocol and aggregate suites are the authoritative evidence.
 
 The implementation/test diff is confined to counter-begin settlement and its recovery protocol matrix. Ordered multi-file durability remains retry-convergent rather than filesystem-wide atomic, and verification remains host/stub based; target-board timing and real device/process teardown remain later system acceptance work. No Fix round 6 implementation blocker remains.
+
+## Fix round 7 (approved exception)
+
+Base: `42e92a6d827bb33bc5c5df6a8253cee4da9ddf48`. This approved exception fixes only the history-first counter-begin partial left by `counter_begin_after_history` when the owner then becomes stale. The repair is confined to the exact current RUNNING lease/history pair, the synthetic predecessor evidence, and the prospective counter state required for existing stale-owner reconciliation. Public actions, lifecycle edges, queue behavior, owner/request identity, finish arithmetic, and Task 5 work remain unchanged.
+
+### RED and GREEN evidence
+
+- First RED command: `rtk bash test/camera_health/recovery_protocol_test.sh`
+- First RED exit/failure: `1`, `FAIL: expected rc=0, got 70: cam_owner_create 4242`. Production was still unchanged; the exact history-first partial could not publish a replacement owner.
+- Second RED after the bounded repair but before the new failpoint: the focused command returned `1`, `FAIL: expected rc=70, got 0: cam_owner_create 4242`, proving that the new after-repair-state interruption point was not yet implemented.
+- Final GREEN focused command: `rtk bash test/camera_health/recovery_protocol_test.sh` returned `0`, `recovery protocol: PASS`.
+- The exact partial now repairs state to `attempted=2,succeeded=0,failed=1,consecutive_failures=1`, terminalizes the current request through the existing synthetic reconciliation, publishes the replacement owner, and leaves predecessor history/result byte-identical.
+- A third same-action request completes normally at `3/1/2/0`. The after-repair-state, after-history, and after-result failpoints each retry without double settlement or predecessor rewrite.
+- Already-completed begin takeover and no-action pre-begin takeover preserve state exactly. A valid completed different action on the current request retains its exact attribution while the partial same-action state is repaired.
+- Thirteen invalid evidence mutations return RC70: unexpected current result, current request mismatch, predecessor start mismatch, current action mismatch, missing/corrupt predecessor history or result, nonsynthetic predecessor, bad predecessor arithmetic, duplicate or multiple current RUNNING candidates, and other-action state mismatch. Owner, active lease, current history/result, predecessor history/result, recovery state, service state, runtime, and call-log fingerprints remain byte-identical.
+
+### Implementation invariants
+
+- Repair requires an active RUNNING lease, an exact clean lease/history request pair, an absent current result, and exactly one current public RUNNING action candidate.
+- The selected state must belong to a different predecessor request and satisfy the strict round-6 unaccounted RUNNING arithmetic and exact predecessor action/start attribution. The predecessor history/result must remain the exact synthetic owner-stale pair already required by the established settlement validator.
+- The prospective state first settles the predecessor failure and then records the current attempt. Before any write, the current begin pair, every current public action's history/state arithmetic, and prospective synthetic terminal attribution are validated together.
+- The repaired state is written before dirty marking or history/result reconciliation. `owner_reconcile_after_state_repair` proves that retry recognizes the already-repaired state and continues existing reconciliation exactly once. Existing after-history and after-result retry behavior remains intact.
+- Ambiguous, malformed, cross-request, or incompletely attributed evidence is not repaired. Rejections occur before any owner, lease, history, result, service, runtime, or call-log mutation.
+
+### Fresh final-head verification
+
+| Command | Exit/result |
+| --- | --- |
+| `rtk bash -n dist/pim/opt/pim/lib/cam_recovery.sh dist/pim/opt/pim/lib/cam_operate_control.sh dist/pim/opt/pim/lib/cam_recovery_actions.sh dist/pim/opt/pim/bin/chk_cam_operate.sh` | `0` |
+| `rtk bash test/camera_health/recovery_protocol_test.sh` | `0`, `recovery protocol: PASS` |
+| `rtk bash test/camera_health/cam_operate_control_test.sh` | `0`, `cam operate control: PASS` |
+| `rtk bash test/cam_link/recovery_actions_test.sh` | `0`, `recovery actions: PASS` |
+| `rtk bash test/cam_link/recovery_actions_safety_test.sh` | `0`, `recovery actions safety: PASS` |
+| `rtk bash test/cam_link/recovery_launch_safety_test.sh` | `0`, `recovery launch safety: PASS` |
+| `rtk bash test/cam_link/escalation_test.sh` | `0`, `7 passed / 0 failed` |
+| `rtk bash test/camera_health/run_all.sh` | `0`, including updated protocol/control and all camera-health suites |
+| `rtk bash test/cam_link/run_all.sh -v` | `0`, `all passed (14)` |
+| `rtk shellcheck -S error dist/pim/opt/pim/lib/cam_recovery.sh test/camera_health/recovery_protocol_test.sh` | `0` |
+| `rtk git diff --check` | `0` |
+
+### Graph, diff, and concerns
+
+The final incremental graph update detected both changed implementation/test paths but re-parsed only one file, producing 32 nodes and 1335 edges. Change analysis reported risk `0.40`, three indexed test-helper gaps, 29 directly changed nodes, zero affected flows, and no additional impacted files. Both `file_summary` and `tests_for` report the production `cam_recovery.sh` top-level as not indexed, so the zero-flow/impact result remains a Bash parser limitation rather than coverage evidence. Complete diff inspection and the focused/aggregate executable suites are the authoritative evidence.
+
+The complete pre-report diff is limited to the recovery protocol implementation and executable protocol test: 300 insertions and 4 deletions. Manual review confirmed state-first repair, exact prospective validation, fail-closed prewrite rejection, forensic predecessor preservation, and no unrelated lifecycle, action, queue, or service-control change. Multi-file durability remains ordered and retry-convergent rather than filesystem-wide atomic, and verification remains host/stub based; target-board timing and real device/process teardown remain later system acceptance work. No Fix round 7 implementation blocker remains.
