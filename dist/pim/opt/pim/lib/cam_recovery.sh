@@ -574,33 +574,109 @@ _cr_counter_finish_pair_valid() {
       $a.last_finished_at==$history_action.finished_at
     ' >/dev/null
 }
+_cr_counter_begin_prior_interruption_valid() {
+    local state=$1 action=$2 prior_id=$3 history request history_action result
+    _cr_counter_finish_state_action_valid "$state" "$action" "$prior_id" || return 1
+    jq -e --arg action "$action" '
+      .actions[$action].last_status=="RUNNING" and
+      .actions[$action].last_finished_at==null
+    ' >/dev/null <<<"$state" || return 1
+    history=$(cat "$(_cr_history_file "$prior_id")" 2>/dev/null) || return 1
+    request=$(jq -ce '.request | select(type=="object")' <<<"$history") || return 1
+    [ "$(jq -r .id <<<"$request")" = "$prior_id" ] || return 1
+    _cr_interrupted_terminal_valid "$request" || return 1
+    _cr_terminal_history_actions_valid "$history" "$request" || return 1
+    history_action=$(_cr_counter_finish_history_action "$history" "$action" "$prior_id" 2>/dev/null) || return 1
+    _cr_counter_finish_history_action_valid "$history_action" "$action" "$prior_id" || return 1
+    jq -ne --argjson history_action "$history_action" --argjson state "$state" --arg action "$action" '
+      $history_action.status=="RUNNING" and
+      $history_action.started_at==$state.actions[$action].last_started_at
+    ' >/dev/null || return 1
+    result=$(cat "$(_cr_result_file "$prior_id")" 2>/dev/null) || return 1
+    _cr_terminal_result_valid "$result" "$request" || return 1
+    _cr_terminal_request_result_equal "$request" "$result"
+}
+_cr_counter_begin_state_mode() {
+    local state=$1 action=$2 id=$3 prior_id prior_status
+    prior_id=$(jq -r --arg action "$action" '.actions[$action].last_request_id // ""' <<<"$state") || return 1
+    if [ -z "$prior_id" ]; then
+        jq -e --arg action "$action" '
+          .actions[$action] == {
+            attempted:0,succeeded:0,failed:0,consecutive_failures:0,
+            last_request_id:null,last_started_at:null,last_finished_at:null,
+            last_status:null,last_rc:null
+          }
+        ' >/dev/null <<<"$state" || return 1
+        printf 'NONE\n'
+        return 0
+    fi
+    _cr_counter_finish_state_action_valid "$state" "$action" "$prior_id" || return 1
+    prior_status=$(jq -r --arg action "$action" '.actions[$action].last_status' <<<"$state") || return 1
+    if [ "$prior_id" = "$id" ]; then
+        [ "$prior_status" = RUNNING ] || return 1
+        printf 'CURRENT\n'
+    elif [ "$prior_status" = RUNNING ]; then
+        _cr_counter_begin_prior_interruption_valid "$state" "$action" "$prior_id" 2>/dev/null || return 1
+        printf 'SETTLE\n'
+    else
+        printf 'NONE\n'
+    fi
+}
+_cr_counter_begin_pair_valid() {
+    local history=$1 state=$2 active=$3 action=$4 id=$5 history_request history_action
+    _cr_state_valid <<<"$state" || return 1
+    history_request=$(jq -ce '.request | select(type=="object")' <<<"$history") || return 1
+    _cr_request_json_equal "$history_request" "$active" || return 1
+    history_action=$(_cr_counter_finish_history_action "$history" "$action" "$id" 2>/dev/null) || return 1
+    _cr_counter_finish_history_action_valid "$history_action" "$action" "$id" || return 1
+    [ "$(jq -r .status <<<"$history_action")" = RUNNING ] || return 1
+    _cr_counter_finish_state_action_valid "$state" "$action" "$id" || return 1
+    jq -ne --argjson history_action "$history_action" --argjson state "$state" --arg action "$action" '
+      $history_action.started_at==$state.actions[$action].last_started_at
+    ' >/dev/null
+}
 _cr_counter_begin_locked() {
-    local action=$1 id=$2 active state history history_action history_next state_next history_phase state_phase now
+    local action=$1 id=$2 active state history history_request history_action history_next state_next
+    local history_count history_phase state_phase state_mode settle=false now
     _cr_public_action "$action" || return 64; _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69
     active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69; _cr_record_owner_matches "$active" || return 69
     [ "$(jq -r .status <<<"$active")" = RUNNING ] && [ "$(jq -r .id <<<"$active")" = "$id" ] || return 64
     _cr_mutation_guard "$active" counter_init ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_state_init || return 70; state=$(cat "$(_cr_state_file)") || return 70; _cr_state_valid <<<"$state" || return 70
     history=$(cat "$(_cr_history_file "$id")" 2>/dev/null) || return 70
-    history_action=$(_cr_history_action "$history" "$action" "$id" 2>/dev/null || true)
-    history_phase=ABSENT; [ -z "$history_action" ] || history_phase=$(jq -r .status <<<"$history_action")
+    history_request=$(jq -ce '.request | select(type=="object")' <<<"$history") || return 70
+    _cr_request_json_equal "$history_request" "$active" || return 70
+    history_count=$(jq -er --arg action "$action" --arg id "$id" '[.actions[] | select(.action==$action and .request_id==$id)] | length' <<<"$history") || return 70
+    [ "$history_count" -le 1 ] || return 70
+    history_phase=ABSENT
+    if [ "$history_count" -eq 1 ]; then
+        history_action=$(_cr_counter_finish_history_action "$history" "$action" "$id" 2>/dev/null) || return 70
+        _cr_counter_finish_history_action_valid "$history_action" "$action" "$id" || return 70
+        history_phase=$(jq -r .status <<<"$history_action") || return 70
+    fi
     state_phase=$(_cr_state_action_phase "$state" "$action" "$id")
+    state_mode=$(_cr_counter_begin_state_mode "$state" "$action" "$id") || return 70
+    [ "$state_mode" != SETTLE ] || settle=true
     case "$history_phase:$state_phase" in
         ABSENT:ABSENT)
             now=$(_cr_now) || return 70
             history_next=$(jq -c --arg action "$action" --arg id "$id" --argjson now "$now" '.actions += [{action:$action,request_id:$id,status:"RUNNING",started_at:$now}]' <<<"$history") || return 70
-            state_next=$(jq -c --arg action "$action" --arg id "$id" --argjson now "$now" '.actions[$action].attempted+=1 | .actions[$action].last_request_id=$id | .actions[$action].last_started_at=$now | .actions[$action].last_status="RUNNING" | .actions[$action].last_rc=null' <<<"$state") || return 70
+            state_next=$(jq -c --arg action "$action" --arg id "$id" --argjson now "$now" --argjson settle "$settle" 'if $settle then .actions[$action].failed+=1 | .actions[$action].consecutive_failures+=1 else . end | .actions[$action].attempted+=1 | .actions[$action].last_request_id=$id | .actions[$action].last_started_at=$now | .actions[$action].last_status="RUNNING" | .actions[$action].last_rc=null' <<<"$state") || return 70
+            _cr_counter_begin_pair_valid "$history_next" "$state_next" "$active" "$action" "$id" || return 70
             _cr_mutation_guard "$active" counter_history ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_history_file "$id")" "$history_next" || return 70
             _cr_test_failpoint counter_begin_after_history || return 70
             _cr_mutation_guard "$active" counter_state ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_state_file)" "$state_next" || return 70;;
         RUNNING:ABSENT)
             now=$(jq -r '.started_at | select(type=="number" and floor==. and .>0)' <<<"$history_action") || return 70
             [[ $now =~ ^[0-9]+$ ]] || return 70
-            state_next=$(jq -c --arg action "$action" --arg id "$id" --argjson now "$now" '.actions[$action].attempted+=1 | .actions[$action].last_request_id=$id | .actions[$action].last_started_at=$now | .actions[$action].last_status="RUNNING" | .actions[$action].last_rc=null' <<<"$state") || return 70
+            state_next=$(jq -c --arg action "$action" --arg id "$id" --argjson now "$now" --argjson settle "$settle" 'if $settle then .actions[$action].failed+=1 | .actions[$action].consecutive_failures+=1 else . end | .actions[$action].attempted+=1 | .actions[$action].last_request_id=$id | .actions[$action].last_started_at=$now | .actions[$action].last_status="RUNNING" | .actions[$action].last_rc=null' <<<"$state") || return 70
+            _cr_counter_begin_pair_valid "$history" "$state_next" "$active" "$action" "$id" || return 70
             _cr_mutation_guard "$active" counter_state ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_state_file)" "$state_next" || return 70;;
         ABSENT:RUNNING)
+            [ "$state_mode" = CURRENT ] || return 70
             now=$(jq -r --arg action "$action" '.actions[$action].last_started_at | select(type=="number" and floor==. and .>0)' <<<"$state") || return 70
             [[ $now =~ ^[0-9]+$ ]] || return 70
             history_next=$(jq -c --arg action "$action" --arg id "$id" --argjson now "$now" '.actions += [{action:$action,request_id:$id,status:"RUNNING",started_at:$now}]' <<<"$history") || return 70
+            _cr_counter_begin_pair_valid "$history_next" "$state" "$active" "$action" "$id" || return 70
             _cr_mutation_guard "$active" counter_history ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_history_file "$id")" "$history_next" || return 70;;
         *) return 64;;
     esac

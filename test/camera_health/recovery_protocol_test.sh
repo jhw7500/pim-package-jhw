@@ -769,6 +769,159 @@ expect_rc 0 cam_owner_create "$DAEMON_PID"
 [ "$interrupted_service" = "$(cksum "$PIM_CAMERA_STATE_DIR/service-state.json")" ] || fail "interrupted retry rewrote dirty service state"
 [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/active.json" ] || fail "interrupted retry retained active lease"
 
+echo "=== same-action retry settles owner-stale running attempt exactly once ==="
+reset_protocol_sandbox
+owner_active
+mkdir -p "$PIM_CAMERA_STATE_DIR"
+printf '{"dirty":false,"sentinel":"stale-running-settlement"}\n' > "$PIM_CAMERA_STATE_DIR/service-state.json"
+stale_running_id=$(cam_request_submit module_reload health "stale running predecessor" /source/stale 103)
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+cam_action_counter_begin module_reload "$stale_running_id"
+fake_stat 222
+expect_rc 0 cam_owner_create "$DAEMON_PID"
+stale_running_history=$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/history/$stale_running_id.json")
+cam_owner_set_lifecycle ACTIVE
+retry_running_id=$(cam_request_submit module_reload health "same action retry" /source/retry 104)
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+expect_rc 0 cam_action_counter_begin module_reload "$retry_running_id"
+expect_rc 0 cam_action_counter_finish module_reload "$retry_running_id" SUCCEEDED 0
+jq -e '.actions.module_reload.attempted==2 and .actions.module_reload.succeeded==1 and .actions.module_reload.failed==1 and .actions.module_reload.consecutive_failures==0' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "same-action retry did not settle stale attempt exactly once"
+[ "$stale_running_history" = "$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/history/$stale_running_id.json")" ] || fail "same-action retry rewrote predecessor history"
+
+stale_running_retry_setup() {
+    local label=$1
+    reset_protocol_sandbox
+    owner_active
+    mkdir -p "$PIM_CAMERA_STATE_DIR"
+    printf '{"dirty":false,"sentinel":"%s"}\n' "$label" > "$PIM_CAMERA_STATE_DIR/service-state.json"
+    printf '{"sentinel":"round-6-runtime"}\n' > "$PIM_CAMERA_RUNTIME_JSON"
+    printf 'round-6-call\n' > "$PIM_CAMERA_CALL_LOG"
+    stale_retry_prior_id=$(cam_request_submit module_reload health "$label predecessor" /source/stale 105)
+    cam_request_claim
+    cam_request_transition QUIESCING
+    cam_request_transition RUNNING
+    cam_action_counter_begin module_reload "$stale_retry_prior_id"
+    fake_stat 222
+    cam_owner_create "$DAEMON_PID"
+    stale_retry_prior_history="$PIM_CAMERA_STATE_DIR/recovery/history/$stale_retry_prior_id.json"
+    stale_retry_prior_result="$PIM_CAMERA_RUN_DIR/recovery/results/$stale_retry_prior_id.json"
+    cam_owner_set_lifecycle ACTIVE
+    stale_retry_id=$(cam_request_submit module_reload health "$label current" /source/retry 106)
+    cam_request_claim
+    cam_request_transition QUIESCING
+    cam_request_transition RUNNING
+    stale_retry_current_history="$PIM_CAMERA_STATE_DIR/recovery/history/$stale_retry_id.json"
+}
+
+echo "=== same-action stale settlement preserves failure and failpoint arithmetic ==="
+stale_running_retry_setup "same action failure"
+stale_retry_old_history=$(file_fingerprint "$stale_retry_prior_history")
+cam_action_counter_begin module_reload "$stale_retry_id"
+cam_action_counter_finish module_reload "$stale_retry_id" FAILED 17
+jq -e '.actions.module_reload.attempted==2 and .actions.module_reload.succeeded==0 and .actions.module_reload.failed==2 and .actions.module_reload.consecutive_failures==2' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "same-action failure double-counted stale settlement"
+[ "$stale_retry_old_history" = "$(file_fingerprint "$stale_retry_prior_history")" ] || fail "same-action failure rewrote predecessor history"
+
+stale_running_retry_setup "same action begin failpoint"
+stale_retry_old_history=$(file_fingerprint "$stale_retry_prior_history")
+PIM_CAMERA_TEST_FAILPOINT=counter_begin_after_history expect_rc 70 cam_action_counter_begin module_reload "$stale_retry_id"
+jq -e '.actions.module_reload.attempted==1 and .actions.module_reload.succeeded==0 and .actions.module_reload.failed==0 and .actions.module_reload.last_status=="RUNNING"' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "same-action begin failpoint changed state"
+cam_action_counter_begin module_reload "$stale_retry_id"
+cam_action_counter_finish module_reload "$stale_retry_id" SUCCEEDED 0
+jq -e '.actions.module_reload.attempted==2 and .actions.module_reload.succeeded==1 and .actions.module_reload.failed==1 and .actions.module_reload.consecutive_failures==0' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "same-action failpoint retry settled more than once"
+[ "$stale_retry_old_history" = "$(file_fingerprint "$stale_retry_prior_history")" ] || fail "same-action failpoint rewrote predecessor history"
+
+stale_running_retry_setup "same action state-only retry"
+cam_action_counter_begin module_reload "$stale_retry_id"
+jq '.actions=[]' "$stale_retry_current_history" > "$WORK/stale-state-only" && mv "$WORK/stale-state-only" "$stale_retry_current_history"
+cam_action_counter_begin module_reload "$stale_retry_id"
+cam_action_counter_finish module_reload "$stale_retry_id" SUCCEEDED 0
+jq -e '.actions.module_reload.attempted==2 and .actions.module_reload.succeeded==1 and .actions.module_reload.failed==1 and .actions.module_reload.consecutive_failures==0' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "same-action state-only retry resettled predecessor"
+
+echo "=== consecutive stale interruptions settle once each ==="
+stale_running_retry_setup "first interruption"
+cam_action_counter_begin module_reload "$stale_retry_id"
+second_stale_history="$stale_retry_current_history"
+fake_stat 333
+cam_owner_create "$DAEMON_PID"
+second_stale_fingerprint=$(file_fingerprint "$second_stale_history")
+cam_owner_set_lifecycle ACTIVE
+third_retry_id=$(cam_request_submit module_reload health "third attempt" /source/retry 107)
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+cam_action_counter_begin module_reload "$third_retry_id"
+cam_action_counter_finish module_reload "$third_retry_id" SUCCEEDED 0
+jq -e '.actions.module_reload.attempted==3 and .actions.module_reload.succeeded==1 and .actions.module_reload.failed==2 and .actions.module_reload.consecutive_failures==0' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "consecutive stale interruptions were not settled once each"
+[ "$second_stale_fingerprint" = "$(file_fingerprint "$second_stale_history")" ] || fail "third attempt rewrote second interruption history"
+
+echo "=== different action leaves stale action unresolved ==="
+stale_running_retry_setup "different action first"
+module_before=$(jq -c '.actions.module_reload' "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+cam_action_counter_begin gstapp_restart "$stale_retry_id"
+cam_action_counter_finish gstapp_restart "$stale_retry_id" SUCCEEDED 0
+[ "$module_before" = "$(jq -c '.actions.module_reload' "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail "different action settled module_reload"
+jq -e '.actions.gstapp_restart.attempted==1 and .actions.gstapp_restart.succeeded==1 and .actions.gstapp_restart.failed==0' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "different action did not finish independently"
+cam_action_counter_begin module_reload "$stale_retry_id"
+cam_action_counter_finish module_reload "$stale_retry_id" SUCCEEDED 0
+jq -e '.actions.module_reload.attempted==2 and .actions.module_reload.succeeded==1 and .actions.module_reload.failed==1' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "later same action did not settle predecessor"
+
+snapshot_stale_begin_bytes() {
+    stale_begin_owner=$(file_fingerprint "$PIM_CAMERA_RUN_DIR/owner.json")
+    stale_begin_active=$(file_fingerprint "$PIM_CAMERA_RUN_DIR/recovery/active.json")
+    stale_begin_current_history=$(file_fingerprint "$stale_retry_current_history")
+    stale_begin_prior_history=$(file_fingerprint "$stale_retry_prior_history")
+    stale_begin_result=$(file_fingerprint "$stale_retry_prior_result")
+    stale_begin_state=$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+    stale_begin_service=$(file_fingerprint "$PIM_CAMERA_STATE_DIR/service-state.json")
+    stale_begin_runtime=$(file_fingerprint "$PIM_CAMERA_RUNTIME_JSON")
+    stale_begin_call=$(file_fingerprint "$PIM_CAMERA_CALL_LOG")
+}
+assert_stale_begin_bytes_unchanged() {
+    local label=$1
+    [ "$stale_begin_owner" = "$(file_fingerprint "$PIM_CAMERA_RUN_DIR/owner.json")" ] || fail "$label mutated owner"
+    [ "$stale_begin_active" = "$(file_fingerprint "$PIM_CAMERA_RUN_DIR/recovery/active.json")" ] || fail "$label mutated active"
+    [ "$stale_begin_current_history" = "$(file_fingerprint "$stale_retry_current_history")" ] || fail "$label mutated current history"
+    [ "$stale_begin_prior_history" = "$(file_fingerprint "$stale_retry_prior_history")" ] || fail "$label mutated prior history"
+    [ "$stale_begin_result" = "$(file_fingerprint "$stale_retry_prior_result")" ] || fail "$label mutated result"
+    [ "$stale_begin_state" = "$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail "$label mutated state"
+    [ "$stale_begin_service" = "$(file_fingerprint "$PIM_CAMERA_STATE_DIR/service-state.json")" ] || fail "$label mutated service"
+    [ "$stale_begin_runtime" = "$(file_fingerprint "$PIM_CAMERA_RUNTIME_JSON")" ] || fail "$label mutated runtime"
+    [ "$stale_begin_call" = "$(file_fingerprint "$PIM_CAMERA_CALL_LOG")" ] || fail "$label mutated call log"
+}
+
+echo "=== invalid stale settlement evidence fails closed byte-for-byte ==="
+stale_begin_failures=''
+for mutation in missing_result corrupt_result missing_history corrupt_history nonsynthetic request_id started_at duplicate_action missing_action bad_arithmetic; do
+    stale_running_retry_setup "invalid $mutation"
+    case "$mutation" in
+        missing_result) rm -f "$stale_retry_prior_result" ;;
+        corrupt_result) printf '{bad result}\n' > "$stale_retry_prior_result" ;;
+        missing_history) rm -f "$stale_retry_prior_history" ;;
+        corrupt_history) printf '{bad history}\n' > "$stale_retry_prior_history" ;;
+        nonsynthetic) jq 'del(.request.interrupted,.request.interrupted_reason)' "$stale_retry_prior_history" > "$WORK/stale-mutation" && mv "$WORK/stale-mutation" "$stale_retry_prior_history" ;;
+        request_id) jq '.request.id="00000000-0000-4000-8000-000000000008"' "$stale_retry_prior_history" > "$WORK/stale-mutation" && mv "$WORK/stale-mutation" "$stale_retry_prior_history" ;;
+        started_at) jq '.actions[0].started_at+=1' "$stale_retry_prior_history" > "$WORK/stale-mutation" && mv "$WORK/stale-mutation" "$stale_retry_prior_history" ;;
+        duplicate_action) jq '.actions += [.actions[0]]' "$stale_retry_prior_history" > "$WORK/stale-mutation" && mv "$WORK/stale-mutation" "$stale_retry_prior_history" ;;
+        missing_action) jq '.actions=[]' "$stale_retry_prior_history" > "$WORK/stale-mutation" && mv "$WORK/stale-mutation" "$stale_retry_prior_history" ;;
+        bad_arithmetic) jq '.actions.module_reload.attempted+=1' "$PIM_CAMERA_STATE_DIR/recovery/state.json" > "$WORK/stale-mutation" && mv "$WORK/stale-mutation" "$PIM_CAMERA_STATE_DIR/recovery/state.json" ;;
+    esac
+    snapshot_stale_begin_bytes
+    set +e
+    cam_action_counter_begin module_reload "$stale_retry_id"
+    stale_begin_rc=$?
+    set -e
+    if [ "$stale_begin_rc" -eq 70 ]; then
+        assert_stale_begin_bytes_unchanged "$mutation"
+    else
+        stale_begin_failures="$stale_begin_failures $mutation:$stale_begin_rc"
+    fi
+done
+[ -z "$stale_begin_failures" ] || fail "invalid stale settlement evidence accepted:$stale_begin_failures"
+
 echo "=== stale owner acquisition terminalizes accepted leases ==="
 reset_protocol_sandbox
 owner_active

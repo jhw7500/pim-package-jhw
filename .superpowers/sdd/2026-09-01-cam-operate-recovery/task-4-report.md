@@ -501,3 +501,46 @@ The complete pre-report diff contains only the recovery protocol implementation 
 - The code-review graph still does not index the production shell top-level, so complete diff inspection and executable protocol/action gates remain necessary.
 
 No Fix round 5 implementation blocker remains.
+
+## Fix round 6 (approved exception)
+
+Base: `79c77b258001c99342f799de7427f8cf59fc8a28`. This user-approved exception fixes only the final-review same-action compatibility regression: a legitimate owner-stale RUNNING attempt remained unaccounted, so the next begin produced `attempted=2,succeeded=0,failed=0` and strict finish correctly returned RC70.
+
+### RED and GREEN evidence
+
+- RED command: `rtk bash test/camera_health/recovery_protocol_test.sh`
+- RED exit/failure: `1`, `FAIL: expected rc=0, got 70: cam_action_counter_finish module_reload <new-id> SUCCEEDED 0`. The new begin had returned RC0 while the state had two attempts and zero completed outcomes.
+- GREEN focused command: the same protocol test returned `0`, `recovery protocol: PASS`.
+- The exact reproduction now finishes at `attempted=2,succeeded=1,failed=1,consecutive_failures=0`; a new failure finishes at `2/0/2/2`. Both retain the prior synthetic history action byte-for-byte as forensic RUNNING evidence.
+- `counter_begin_after_history` retry settles the prior attempt once, and the reciprocal state-only retry restores current history without resettlement. Two consecutive owner-stale interruptions followed by success finish at `3/1/2/0`.
+- A different public action completes independently without changing the unresolved module counter; the later same-action begin performs the one deferred settlement.
+- Missing/corrupt prior result or history, non-synthetic terminal history, request-ID/start mismatch, duplicate/missing prior action, and bad prior arithmetic each return RC70. Owner, active lease, current history, prior history, result, recovery state, service state, runtime, and call-log fingerprints remain unchanged.
+
+### Implementation invariants
+
+- Settlement is allowed only when the selected action state belongs to a different request, is strict unaccounted RUNNING arithmetic (`attempted == succeeded + failed + 1`), has no finish time, and matches exactly one RUNNING action/start in the prior history.
+- The prior history request must be the synthetic `FAILED/70`, `interrupted=true`, `interrupted_reason=owner_stale` terminal. Its result must exist, contain no interruption metadata, and match identity, status, rc, and finish time exactly.
+- For `ABSENT:ABSENT` and history-first `RUNNING:ABSENT`, one prospective state performs prior `failed += 1`, prior `consecutive_failures += 1`, and new `attempted += 1`; the history/state pair and RUNNING arithmetic are validated before the first write. `ABSENT:RUNNING` requires state ownership by the new request and writes only the missing history side.
+- Valid template starts and valid prior terminal totals remain unchanged. Different actions are not inspected or settled by this path. Strict round-5 finish provenance, timestamp, reciprocal retry, and terminal arithmetic validators are unchanged.
+
+### Fresh final-head verification
+
+| Command | Exit/result |
+| --- | --- |
+| `rtk bash -n dist/pim/opt/pim/lib/cam_recovery.sh dist/pim/opt/pim/lib/cam_operate_control.sh dist/pim/opt/pim/lib/cam_recovery_actions.sh dist/pim/opt/pim/bin/chk_cam_operate.sh` | `0` |
+| `rtk bash test/camera_health/recovery_protocol_test.sh` | `0`, `recovery protocol: PASS` |
+| `rtk bash test/camera_health/cam_operate_control_test.sh` | `0`, `cam operate control: PASS` |
+| `rtk bash test/cam_link/recovery_actions_test.sh` | `0`, `recovery actions: PASS` |
+| `rtk bash test/cam_link/recovery_actions_safety_test.sh` | `0`, `recovery actions safety: PASS` |
+| `rtk bash test/cam_link/recovery_launch_safety_test.sh` | `0`, `recovery launch safety: PASS` |
+| `rtk bash test/cam_link/escalation_test.sh` | `0`, `7 passed / 0 failed` |
+| `rtk bash test/camera_health/run_all.sh` | `0`, including updated protocol/control PASS |
+| `rtk bash test/cam_link/run_all.sh -v` | `0`, `all passed (14)` |
+| `rtk shellcheck -S error dist/pim/opt/pim/lib/cam_recovery.sh test/camera_health/recovery_protocol_test.sh` | `0` |
+| `rtk git diff --check` | `0` |
+
+### Graph, diff, and concerns
+
+The graph-first pass and final incremental update identified the production, test, and report paths but re-parsed only the test file. Final graph data reported 29 nodes, 1133 edges; the pre-report change analysis reported risk `0.40`, three indexed test helpers, and zero affected flows. Both `file_summary` and `tests_for` report the production `cam_recovery.sh` top-level as `target not indexed`; zero graph flow/coverage is therefore a Bash parser gap, not evidence of no impact. Complete diff inspection plus the executable protocol and aggregate suites are the authoritative evidence.
+
+The implementation/test diff is confined to counter-begin settlement and its recovery protocol matrix. Ordered multi-file durability remains retry-convergent rather than filesystem-wide atomic, and verification remains host/stub based; target-board timing and real device/process teardown remain later system acceptance work. No Fix round 6 implementation blocker remains.
