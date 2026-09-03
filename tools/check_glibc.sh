@@ -55,12 +55,38 @@ newer_than() {
     [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" != "$2" ]
 }
 
+# ELF 매직으로 검사 대상을 가른다. pim_gate 산출물 트리에는 실행 권한이 붙은 셸/파이썬
+# 스크립트가 섞여 있고, 그것들은 GLIBC 요구가 없으므로 검사 대상이 아니다.
+elf_magic() {
+    [ "$(head -c 4 "$1" 2>/dev/null | od -An -tx1 | tr -d ' \n')" = "7f454c46" ]
+}
+
 failed=0
 checked=0
+skipped=0
+unreadable=0
 for path in "$@"; do
     [ -f "$path" ] || continue
+
+    if ! elf_magic "$path"; then
+        skipped=$((skipped + 1))
+        continue
+    fi
+
+    # readelf 는 잘린 ELF 에서도 rc=0 을 돌려주면서 stderr 에만 "readelf: Error" 를
+    # 찍는다(실측). 종료 코드만 보면 "요구 버전이 없다" 로 오독해 그대로 통과시킨다.
+    # 검사하지 못한 것은 통과가 아니므로 두 신호를 모두 본다.
+    ver_out=$(readelf -V "$path" 2>&1)
+    ver_rc=$?
+    if [ "$ver_rc" -ne 0 ] || printf '%s' "$ver_out" | grep -q 'readelf: Error'; then
+        echo "  ${path}: readelf failed — cannot verify GLIBC requirements" >&2
+        printf '%s\n' "$ver_out" | grep 'readelf: Error' | head -2 | sed 's/^/    /' >&2
+        unreadable=$((unreadable + 1))
+        continue
+    fi
+
     checked=$((checked + 1))
-    for v in $(readelf -V "$path" 2>/dev/null | grep -oE 'GLIBC_[0-9.]+' | sed 's/^GLIBC_//' | sort -uV); do
+    for v in $(printf '%s\n' "$ver_out" | grep -oE 'GLIBC_[0-9.]+' | sed 's/^GLIBC_//' | sort -uV); do
         newer_than "$v" "$MAX" || continue
         syms=$(readelf -sW --dyn-syms "$path" 2>/dev/null \
             | grep -oE "[A-Za-z_][A-Za-z0-9_]*@+GLIBC_${v}" | sed 's/@@/@/' | sort -u)
@@ -72,22 +98,40 @@ for path in "$@"; do
     done
 done
 
+problem=0
+
 if [ "$failed" -ne 0 ]; then
     echo "ERROR: binaries require a newer GLIBC than the target rootfs (${MAX})." >&2
     echo "       This is what building with the Yocto SDK on an x86_64 host produces." >&2
     echo "       Use ./docker/build.sh <module> instead." >&2
+    problem=1
+fi
+
+if [ "$unreadable" -ne 0 ]; then
+    echo "ERROR: ${unreadable} ELF file(s) could not be inspected." >&2
+    echo "       손상됐거나 LFS 포인터일 수 있다. 검사하지 못한 것은 통과가 아니다." >&2
+    problem=1
+fi
+
+if [ "$problem" -ne 0 ]; then
     if [ "$GATE" = "strict" ]; then
         exit 2
     fi
-    echo "WARNING: continuing anyway (PIM_GLIBC_GATE=warn)" >&2
+    echo "WARNING: continuing anyway (PIM_GLIBC_GATE=${GATE})" >&2
     exit 0
 fi
 
 if [ "$checked" -eq 0 ]; then
     # 통과가 아니라 "볼 것이 없었다". OK 로 적으면 경로 지정 실수가 성공으로 읽힌다.
-    echo "GLIBC check: no binaries to check (none of the given paths exist)"
+    if [ "$skipped" -ne 0 ]; then
+        echo "GLIBC check: no ELF binaries to check (${skipped} non-ELF file(s) skipped)"
+    else
+        echo "GLIBC check: no binaries to check (none of the given paths exist)"
+    fi
     exit 0
 fi
 
-echo "GLIBC check OK: ${checked} binary(ies) within GLIBC_${MAX}"
+summary="GLIBC check OK: ${checked} binary(ies) within GLIBC_${MAX}"
+[ "$skipped" -ne 0 ] && summary="${summary} (${skipped} non-ELF skipped)"
+echo "$summary"
 exit 0
