@@ -98,6 +98,16 @@ else
     BUILD_CMD="echo 'Building in Docker container (sequential build for stability)...' && ./build.sh"
 fi
 
+# 컨테이너는 root 로 실행되므로 빌드 산출물이 root 소유로 남는다. 그대로 두면 호스트에서
+# './docker/build.sh clean <module>' 의 rm -rf 가 Permission denied 로 실패한다. 컨테이너
+# 안에서(=root 권한으로) 호스트 사용자에게 되돌려 준다. 호스트 sudo 가 필요 없다.
+# 빌드가 실패해도 수행하고, 원래 종료 코드는 그대로 돌려준다. chown -h 여야 한다 —
+# -h 가 없으면 심링크를 따라가 대상만 바꾸고 링크 자체는 root 로 남는다.
+HOST_UID=$(id -u)
+HOST_GID=$(id -g)
+RESTORE_OWNER="find /workspace -path /workspace/.git -prune -o -path /workspace/.worktrees -prune -o -user 0 -exec chown -h ${HOST_UID}:${HOST_GID} {} + 2>/dev/null || true"
+CONTAINER_CMD="${BUILD_CMD}; build_rc=\$?; ${RESTORE_OWNER}; exit \$build_rc"
+
 docker run --rm \
     --platform linux/arm64 \
     --memory=4g \
@@ -107,7 +117,7 @@ docker run --rm \
     -e MAKEFLAGS="-j1" \
     -e PIM_VERIFY_BINARIES="${PIM_VERIFY_BINARIES:-warn}" \
     ${IMAGE_NAME} \
-    /bin/bash -c "${BUILD_CMD}"
+    /bin/bash -c "${CONTAINER_CMD}"
 
 if [ $? -eq 0 ]; then
     echo ""
@@ -122,7 +132,11 @@ if [ $? -eq 0 ]; then
     echo ""
     # Verify built binaries: arch (ARM aarch64) + GLIBC version requirements.
     # build.sh already ran the manifest verifier; this checks release artifacts.
-    VERIFY_MODE=${PIM_VERIFY_BINARIES:-warn}
+    # release 산출물 검사(존재/arch/GLIBC)는 기본으로 빌드를 세운다. 여기서 걸리는 것은
+    # .deb 에 그대로 실릴 결함이지 중간 상태가 아니다. PIM_VERIFY_BINARIES=warn 으로 낮출 수 있다.
+    # 컨테이너로 넘기는 값(위 -e)은 매니페스트 드리프트 검사용이라 warn 으로 남긴다 —
+    # .github/binary-manifest.json 이 "불일치는 경고이지 실패가 아니다"라고 규정한다.
+    VERIFY_MODE=${PIM_VERIFY_BINARIES:-strict}
     if [ "$VERIFY_MODE" = "off" ]; then
         echo "Release artifact verification disabled (PIM_VERIFY_BINARIES=off)"
         exit 0
@@ -144,8 +158,19 @@ if [ $? -eq 0 ]; then
             return 1
         fi
         local glibc
-        glibc=$(readelf -V "$path" 2>/dev/null | grep GLIBC | awk '{print $NF}' | sort -uV | tail -1)
+        glibc=$(readelf -V "$path" 2>/dev/null | grep -oE 'GLIBC_[0-9.]+' | sort -uV | tail -1)
         [ -n "$glibc" ] && echo "  [${label}] max GLIBC: ${glibc}"
+
+        # 타깃 rootfs 가 제공하는 것보다 새 GLIBC 를 요구하면 실패로 처리한다. 표시만 하고
+        # 넘어가면 Yocto SDK 로 만든 GLIBC_2.33 바이너리가 그대로 .deb 에 실린다.
+        # 판정 기준(PIM_MAX_GLIBC 천장, PIM_GLIBC_GATE 모드)은 tools/check_glibc.sh 한 곳에 둔다.
+        local glibc_out glibc_rc
+        glibc_out=$(bash "${PROJECT_ROOT}/tools/check_glibc.sh" "$path" 2>&1)
+        glibc_rc=$?
+        if echo "$glibc_out" | grep -q "requires GLIBC_"; then
+            echo "$glibc_out" | grep -v '^GLIBC check OK' | sed "s|^|  [${label}] |"
+        fi
+        [ "$glibc_rc" -eq 0 ] || return 1
         return 0
     }
 
@@ -189,10 +214,22 @@ if [ $? -eq 0 ]; then
             verify_binary "$SUBMODULE" "${MODULE_BIN[$SUBMODULE]}" || verify_failed=1
         fi
     else
+        # build.sh 가 소스 디렉터리 없는 모듈을 건너뛰므로 검증도 같이 건너뛴다.
+        # 이 저장소의 .deb 는 ord/vsd/vcm 만 담는다 — 보드에 설치된 pim-mp 도
+        # adab/adab_ecat/cism/stm32update/mcp_trust_test/pim_gate 를 소유하지 않는다
+        # (dpkg -L pim-mp 로 확인). 건너뛰지 않으면 정상 빌드가 MISSING 으로 실패한다.
         for m in ord vsd vcm adab adab_ecat cism stm32update mcp_trust_test; do
+            if [ ! -d "${PROJECT_ROOT}/${m}" ]; then
+                echo "  [${m}] SKIP: no source directory"
+                continue
+            fi
             verify_binary "$m" "${MODULE_BIN[$m]}" || verify_failed=1
         done
-        verify_directory "pim_gate" "$PIM_GATE_DIR" || verify_failed=1
+        if [ -d "${PROJECT_ROOT}/pim_gate" ]; then
+            verify_directory "pim_gate" "$PIM_GATE_DIR" || verify_failed=1
+        else
+            echo "  [pim_gate] SKIP: no source directory"
+        fi
     fi
     echo "=========================================="
 

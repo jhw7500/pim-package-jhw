@@ -22,6 +22,18 @@ run_binary_verification() {
     bash "${BASEDIR}/tools/run_binary_verification.sh"
 }
 
+# 타깃 rootfs(Ubuntu 20.04, glibc 2.31)보다 새로운 GLIBC 를 요구하는 바이너리를 막는다.
+# Yocto SDK 는 glibc 2.33 으로 빌드하므로 x86_64 호스트 빌드가 여기서 걸린다.
+verify_glibc() {
+    local paths=()
+    local m
+    for m in ord vsd vcm; do
+        [ -z "$TARGET_MODULE" ] || [ "$TARGET_MODULE" = "$m" ] || continue
+        paths+=("${BASEDIR}/${m}/build/${m}")
+    done
+    bash "${BASEDIR}/tools/check_glibc.sh" "${paths[@]}"
+}
+
 # Handle clean command
 if [ "$1" == "clean" ]; then
     CLEAN_TARGET="$2"
@@ -61,10 +73,32 @@ fi
 # Target module (empty = all)
 TARGET_MODULE="$1"
 
-# Function to check if module should be built
+# Function to check if module should be built.
+# 소스 디렉터리가 없는 모듈은 건너뛴다. 이 저장소에는 ord/vsd/vcm 만 있고 adab,
+# adab_ecat, cism, stm32update, mcp_trust_test, pim_gate 는 GitLab 쪽에만 있다.
+# 건너뛰지 않으면 mkdir/cd 가 실패한 채로 진행돼 직전 모듈의 build 디렉터리에서
+# make 가 돌고(=엉뚱한 모듈 재빌드) 컴파일 에러 없이 통과한다.
 should_build() {
     local module="$1"
-    [ -z "$TARGET_MODULE" ] || [ "$TARGET_MODULE" == "$module" ]
+    [ -z "$TARGET_MODULE" ] || [ "$TARGET_MODULE" == "$module" ] || return 1
+    if [ ! -d "${BASEDIR}/${module}" ]; then
+        if [ -n "$TARGET_MODULE" ]; then
+            echo "ERROR: module '${module}' requested but ${BASEDIR}/${module} does not exist" >&2
+            exit 1
+        fi
+        echo "Skipping ${module} (no source directory)"
+        return 1
+    fi
+    return 0
+}
+
+# 빌드되지 않은 모듈의 산출물 복사는 건너뛴다.
+copy_built() {
+    if [ -f "$1" ]; then
+        cp "$1" "$2"
+    else
+        echo "Skipping copy: $1 (not built)"
+    fi
 }
 
 # Cross-compile setup for NXP i.MX8 (same as gstApp)
@@ -78,6 +112,10 @@ if [ "$HOST_ARCH" = "x86_64" ]; then
     if [ -e ${SDK_ENV} ]; then
         echo "Cross-compiling for i.MX8 using Yocto SDK"
         echo "SDK: ${SDK_ENV}"
+        echo "WARNING: this SDK links against glibc 2.33 but the target rootfs"
+        echo "         (Ubuntu 20.04) provides glibc 2.31. ord/vsd/vcm built here fail"
+        echo "         at the loader with \"GLIBC_2.33 not found\" on the device."
+        echo "         Use ./docker/build.sh <module> for those modules."
         . ${SDK_ENV}
 
         # Configure pkg-config to use SDK sysroot (like gstApp's make-for-imx8)
@@ -244,20 +282,24 @@ if [ -z "$TARGET_MODULE" ]; then
     cp ${BASEDIR}/docs/pim-guardian-runbook.md ${BASEDIR}/release/pim/opt/pim/docs/
     cp ${BASEDIR}/docs/camera-startup-timing.md ${BASEDIR}/release/pim/opt/pim/docs/
 
-    cp ${BASEDIR}/adab/build/adab ${BASEDIR}/release/pim/opt/cis/bin/adab_adc
-    cp ${BASEDIR}/adab_ecat/build/adab_ecat ${BASEDIR}/release/pim/opt/cis/bin/adab_ecat
-    cp ${BASEDIR}/cism/build/cism ${BASEDIR}/release/pim/opt/cis/bin/
-    cp ${BASEDIR}/stm32update/build/stm32update ${BASEDIR}/release/pim/opt/cis/bin/
-    cp ${BASEDIR}/mcp_trust_test/build/mcp_trust_test ${BASEDIR}/release/pim/opt/pim/bin/
+    copy_built ${BASEDIR}/adab/build/adab ${BASEDIR}/release/pim/opt/cis/bin/adab_adc
+    copy_built ${BASEDIR}/adab_ecat/build/adab_ecat ${BASEDIR}/release/pim/opt/cis/bin/adab_ecat
+    copy_built ${BASEDIR}/cism/build/cism ${BASEDIR}/release/pim/opt/cis/bin/
+    copy_built ${BASEDIR}/stm32update/build/stm32update ${BASEDIR}/release/pim/opt/cis/bin/
+    copy_built ${BASEDIR}/mcp_trust_test/build/mcp_trust_test ${BASEDIR}/release/pim/opt/pim/bin/
     cp -R ${BASEDIR}/test ${BASEDIR}/release/pim/opt/pim/bin/
 
     # build pim_gate
     SOURCEDIR=${BASEDIR}/pim_gate
     WORKDIR=${BASEDIR}/release/pim
-    cd ${SOURCEDIR}
-    ${SOURCEDIR}/build.sh
+    if [ -d "${SOURCEDIR}" ]; then
+        cd ${SOURCEDIR}
+        ${SOURCEDIR}/build.sh
 
-    cp -R ${SOURCEDIR}/release/pim-gate/opt/pim_gate/  ${WORKDIR}/opt/
+        cp -R ${SOURCEDIR}/release/pim-gate/opt/pim_gate/  ${WORKDIR}/opt/
+    else
+        echo "Skipping pim_gate (no source directory)"
+    fi
 else
     # Single module build - just copy the built binary
     echo "Single module build: ${TARGET_MODULE}"
@@ -307,6 +349,7 @@ else
     esac
 
     echo "Module ${TARGET_MODULE} built and copied to release/"
+    verify_glibc || exit $?
     run_binary_verification || exit $?
     exit 0
 fi
@@ -352,4 +395,5 @@ tar cvf "../${ugrade_old_zip_file}" ./
 
 echo "create ${ugrade_old_zip_file}"
 
+verify_glibc || exit $?
 run_binary_verification || exit $?
