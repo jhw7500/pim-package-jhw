@@ -14,6 +14,12 @@ fail() {
 mkdir -p "$TMP_ROOT/bin"
 cat > "$TMP_ROOT/bin/readelf" <<'STUB'
 #!/usr/bin/env bash
+# FIXTURE_READELF_ERR=1 이면 실물 동작을 흉내낸다: 잘린 ELF 에서 readelf 는
+# rc=0 을 돌려주면서 stderr 에만 "readelf: Error" 를 찍는다(2026-09-03 실측).
+if [ -n "${FIXTURE_READELF_ERR:-}" ]; then
+    echo "readelf: Error: Reading 1920 bytes extends past end of file" >&2
+    exit 0
+fi
 for arg in "$@"; do
     case "$arg" in
         -V) echo "  0x0020: Name: GLIBC_${FIXTURE_GLIBC:-2.17}  Flags: none" ;;
@@ -23,7 +29,9 @@ done
 exit 0
 STUB
 chmod +x "$TMP_ROOT/bin/readelf"
-touch "$TMP_ROOT/fake-binary"
+# ELF 매직을 갖춘 fixture — 게이트가 ELF 만 검사 대상으로 삼는다.
+printf '\177ELF\002\001\001\000\000\000\000\000\000\000\000\000' > "$TMP_ROOT/fake-binary"
+printf '#!/bin/sh\necho not-an-elf\n' > "$TMP_ROOT/fake-script.sh"
 
 run() {  # $1=FIXTURE_GLIBC  나머지=env 선언
     local glibc=$1; shift
@@ -121,4 +129,30 @@ run_nore warn
 run_nore off
 [ "$RUN_RC" -eq 0 ] || fail "readelf 없음 + off 는 rc=0 이어야 한다 (rc=$RUN_RC)"
 
-echo "PASS: check_glibc.sh 13 케이스"
+# 14) 비-ELF 파일은 실패가 아니라 건너뛰기다 (pim_gate 트리의 스크립트 등)
+set +e
+env PATH="$TMP_ROOT/bin:$PATH" PIM_GLIBC_GATE=strict \
+    bash "$ROOT/tools/check_glibc.sh" "$TMP_ROOT/fake-script.sh" >"$TMP_ROOT/out" 2>&1
+rc=$?
+set -e
+[ "$rc" -eq 0 ] || fail "비-ELF 는 통과해야 한다 (rc=$rc): $(cat "$TMP_ROOT/out")"
+grep -q "non-ELF" "$TMP_ROOT/out" || fail "비-ELF 건너뛰기가 보고되지 않았다: $(cat "$TMP_ROOT/out")"
+
+# 15) ELF 인데 readelf 가 실패하면 strict 는 닫힌다 — 종료 코드가 0 이어도 그렇다
+run_err() {  # $1=gate
+    set +e
+    env PATH="$TMP_ROOT/bin:$PATH" FIXTURE_READELF_ERR=1 PIM_GLIBC_GATE="$1" \
+        bash "$ROOT/tools/check_glibc.sh" "$TMP_ROOT/fake-binary" >"$TMP_ROOT/out" 2>&1
+    RUN_RC=$?
+    set -e
+}
+run_err strict
+[ "$RUN_RC" -eq 2 ] || fail "readelf 오류 + strict 는 rc=2 여야 한다 (rc=$RUN_RC): $(cat "$TMP_ROOT/out")"
+grep -q "could not be inspected" "$TMP_ROOT/out" || fail "검사 불가 사유가 보고되지 않았다"
+grep -q "GLIBC check OK" "$TMP_ROOT/out" && fail "검사 못 한 파일을 OK 로 보고했다"
+
+run_err warn
+[ "$RUN_RC" -eq 0 ] || fail "readelf 오류 + warn 은 rc=0 이어야 한다 (rc=$RUN_RC)"
+grep -q "could not be inspected" "$TMP_ROOT/out" || fail "warn 에서도 검사 불가는 보고해야 한다"
+
+echo "PASS: check_glibc.sh 15 케이스"
