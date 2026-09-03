@@ -155,4 +155,50 @@ run_err warn
 [ "$RUN_RC" -eq 0 ] || fail "readelf 오류 + warn 은 rc=0 이어야 한다 (rc=$RUN_RC)"
 grep -q "could not be inspected" "$TMP_ROOT/out" || fail "warn 에서도 검사 불가는 보고해야 한다"
 
-echo "PASS: check_glibc.sh 15 케이스"
+# 16) 빈 파일·4바이트 미만은 읽기에 성공한 "비-ELF" 다 (검사 불가가 아니다)
+: > "$TMP_ROOT/empty"
+printf 'ab' > "$TMP_ROOT/tiny"
+set +e
+env PATH="$TMP_ROOT/bin:$PATH" PIM_GLIBC_GATE=strict \
+    bash "$ROOT/tools/check_glibc.sh" "$TMP_ROOT/empty" "$TMP_ROOT/tiny" >"$TMP_ROOT/out" 2>&1
+rc=$?
+set -e
+[ "$rc" -eq 0 ] || fail "빈/짧은 파일은 비-ELF 로 통과해야 한다 (rc=$rc): $(cat "$TMP_ROOT/out")"
+grep -q "2 non-ELF" "$TMP_ROOT/out" || fail "비-ELF 2건으로 세어야 한다: $(cat "$TMP_ROOT/out")"
+
+# 17) 읽을 수 없는 파일은 비-ELF 가 아니라 "검사 불가" 다 (root 는 권한 무시하므로 건너뜀)
+if [ "$(id -u)" -ne 0 ]; then
+    cp "$TMP_ROOT/fake-binary" "$TMP_ROOT/noperm"
+    chmod 000 "$TMP_ROOT/noperm"
+    set +e
+    env PATH="$TMP_ROOT/bin:$PATH" PIM_GLIBC_GATE=strict \
+        bash "$ROOT/tools/check_glibc.sh" "$TMP_ROOT/noperm" >"$TMP_ROOT/out" 2>&1
+    rc=$?
+    set -e
+    chmod 644 "$TMP_ROOT/noperm"
+    [ "$rc" -eq 2 ] || fail "읽을 수 없는 파일 + strict 는 rc=2 여야 한다 (rc=$rc): $(cat "$TMP_ROOT/out")"
+    grep -q "could not read file header" "$TMP_ROOT/out" || fail "판독 실패 사유가 보고되지 않았다"
+    grep -q "non-ELF" "$TMP_ROOT/out" && fail "판독 실패를 비-ELF 로 분류했다 — fail-open"
+fi
+
+# 18) od 가 없으면 매직 판독이 불가능하므로 strict 는 닫힌다
+mkdir -p "$TMP_ROOT/nood"
+for c in bash grep sed sort head tr cut cat wc env dirname; do
+    src=$(which "$c" 2>/dev/null)
+    [ -n "$src" ] && [ -x "$src" ] && ln -sf "$src" "$TMP_ROOT/nood/$c"
+done
+ln -sf "$TMP_ROOT/bin/readelf" "$TMP_ROOT/nood/readelf"
+run_nood() {  # $1=gate
+    set +e
+    env PATH="$TMP_ROOT/nood" PIM_GLIBC_GATE="$1" \
+        bash "$ROOT/tools/check_glibc.sh" "$TMP_ROOT/fake-binary" >"$TMP_ROOT/out" 2>&1
+    RUN_RC=$?
+    set -e
+}
+run_nood strict
+[ "$RUN_RC" -eq 2 ] || fail "od 없음 + strict 는 rc=2 여야 한다 (rc=$RUN_RC): $(cat "$TMP_ROOT/out")"
+grep -q "od not found" "$TMP_ROOT/out" || fail "od 부재 사유가 보고되지 않았다"
+run_nood warn
+[ "$RUN_RC" -eq 0 ] || fail "od 없음 + warn 은 rc=0 이어야 한다 (rc=$RUN_RC)"
+
+echo "PASS: check_glibc.sh 18 케이스"

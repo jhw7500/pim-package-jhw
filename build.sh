@@ -374,6 +374,13 @@ else
         pim_gate)
             SOURCEDIR=${BASEDIR}/pim_gate
             WORKDIR=${BASEDIR}/release/pim
+            # 명시적으로 요청된 모듈이 없으면 건너뛰지 않고 멈춘다 — should_build 가
+            # 다른 모듈에 적용하는 규칙과 같다. pim_gate 는 case 분기라 그 경로를
+            # 타지 않으므로 여기서 따로 막는다.
+            if [ ! -d "${SOURCEDIR}" ]; then
+                echo "ERROR: module 'pim_gate' requested but ${SOURCEDIR} does not exist" >&2
+                exit 1
+            fi
             cd ${SOURCEDIR}
             ${SOURCEDIR}/build.sh
             cd ${BASEDIR}
