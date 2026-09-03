@@ -38,17 +38,20 @@ if ! printf '%s' "$MAX" | grep -qE '^[0-9]+(\.[0-9]+)*$'; then
     exit 2
 fi
 
-if ! command -v readelf >/dev/null 2>&1; then
-    # 검사할 수 없다는 것은 통과가 아니다. strict 에서 그냥 넘기면, 게이트가 막으려던
-    # 비호환 바이너리가 "검사 도구가 없었다"는 이유로 패키징된다.
+# 검사할 수 없다는 것은 통과가 아니다. strict 에서 그냥 넘기면, 게이트가 막으려던
+# 비호환 바이너리가 "검사 도구가 없었다"는 이유로 패키징된다.
+# od 도 필수다 — ELF 매직 판독에 쓰므로, 없으면 모든 파일이 비-ELF 로 분류돼 조용히
+# 건너뛰어진다(fail-open).
+for _tool in readelf od; do
+    command -v "$_tool" >/dev/null 2>&1 && continue
     if [ "$GATE" = "strict" ]; then
-        echo "ERROR: readelf not found — cannot verify GLIBC requirements." >&2
-        echo "       Install binutils, or set PIM_GLIBC_GATE=warn|off to skip deliberately." >&2
+        echo "ERROR: ${_tool} not found — cannot verify GLIBC requirements." >&2
+        echo "       Install binutils/coreutils, or set PIM_GLIBC_GATE=warn|off to skip deliberately." >&2
         exit 2
     fi
-    echo "WARNING: readelf not found; skipping GLIBC check (PIM_GLIBC_GATE=${GATE})" >&2
+    echo "WARNING: ${_tool} not found; skipping GLIBC check (PIM_GLIBC_GATE=${GATE})" >&2
     exit 0
-fi
+done
 
 # $1 이 $2 보다 새 버전이면 0 을 돌려준다.
 newer_than() {
@@ -57,8 +60,20 @@ newer_than() {
 
 # ELF 매직으로 검사 대상을 가른다. pim_gate 산출물 트리에는 실행 권한이 붙은 셸/파이썬
 # 스크립트가 섞여 있고, 그것들은 GLIBC 요구가 없으므로 검사 대상이 아니다.
+# 반환값을 셋으로 나눈다 — "ELF 가 아니다"(정상 판별)와 "읽지 못했다"(판별 실패)를
+# 같은 false 로 뭉개면, 권한·I/O 오류로 못 읽은 산출물이 조용히 건너뛰어진다(fail-open).
+#   0 = ELF,  1 = ELF 아님,  2 = 읽지 못함
 elf_magic() {
-    [ "$(head -c 4 "$1" 2>/dev/null | od -An -tx1 | tr -d ' \n')" = "7f454c46" ]
+    local f=$1 size magic
+    [ -r "$f" ] || return 2
+    size=$(wc -c < "$f" 2>/dev/null) || return 2
+    # 4바이트도 안 되는 파일은 ELF 일 수 없다. 읽기는 성공했으므로 "아님"이다.
+    [ "${size:-0}" -ge 4 ] || return 1
+    magic=$(head -c 4 -- "$f" 2>/dev/null | od -An -tx1 2>/dev/null | tr -d ' \n')
+    # 4바이트 = hex 8자. 못 채웠으면 읽다가 실패한 것이다.
+    [ "${#magic}" -eq 8 ] || return 2
+    [ "$magic" = "7f454c46" ] && return 0
+    return 1
 }
 
 failed=0
@@ -68,10 +83,16 @@ unreadable=0
 for path in "$@"; do
     [ -f "$path" ] || continue
 
-    if ! elf_magic "$path"; then
-        skipped=$((skipped + 1))
-        continue
-    fi
+    elf_magic "$path"
+    case $? in
+        0) ;;                       # ELF — 계속 검사한다
+        1) skipped=$((skipped + 1)); continue ;;
+        *)
+            echo "  ${path}: could not read file header — cannot verify GLIBC requirements" >&2
+            unreadable=$((unreadable + 1))
+            continue
+            ;;
+    esac
 
     # readelf 는 잘린 ELF 에서도 rc=0 을 돌려주면서 stderr 에만 "readelf: Error" 를
     # 찍는다(실측). 종료 코드만 보면 "요구 버전이 없다" 로 오독해 그대로 통과시킨다.
