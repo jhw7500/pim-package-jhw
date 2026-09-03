@@ -24,22 +24,30 @@ run_binary_verification() {
 
 # 타깃 rootfs(Ubuntu 20.04, glibc 2.31)보다 새로운 GLIBC 를 요구하는 바이너리를 막는다.
 # Yocto SDK 는 glibc 2.33 으로 빌드하므로 x86_64 호스트 빌드가 여기서 걸린다.
+# 검사 범위를 인자로 받는다. pim_gate 는 CMake 모듈들과 빌드 시점이 달라(패키징
+# 단계에서 자체 build.sh 로 만들어진다) 한 번에 검사할 수 없다. 각 산출물이 생긴
+# 직후·패키징 전에 각각 부른다.
+#   $1: "modules"(기본, CMake 모듈 8종) | "pim_gate"
 verify_glibc() {
+    local scope=${1:-modules}
     local paths=()
-    local m
-    # docker/build.sh 의 MODULE_BIN 과 **같은 집합**을 본다. 한쪽만 늘어나면 게이트에
-    # 구멍이 난다. 이 저장소에는 ord/vsd/vcm 만 있지만 GitLab 전체 체크아웃에서는
-    # 나머지도 같은 SDK 로 컴파일돼 패키지에 실리므로 반드시 함께 검사한다.
-    for m in ord vsd vcm adab adab_ecat cism stm32update mcp_trust_test; do
-        [ -z "$TARGET_MODULE" ] || [ "$TARGET_MODULE" = "$m" ] || continue
-        paths+=("${BASEDIR}/${m}/build/${m}")
-    done
-    # pim_gate 는 단일 바이너리가 아니라 디렉터리 산출물이다.
-    if [ -z "$TARGET_MODULE" ] || [ "$TARGET_MODULE" = "pim_gate" ]; then
+    local m f
+
+    if [ "$scope" = "pim_gate" ]; then
+        # 단일 바이너리가 아니라 디렉터리 산출물이라 실행 파일을 훑는다.
         while IFS= read -r f; do
             [ -n "$f" ] && paths+=("$f")
         done < <(find "${BASEDIR}/pim_gate/release" -type f -perm -u+x 2>/dev/null)
+    else
+        # docker/build.sh 의 MODULE_BIN 과 **같은 집합**을 본다. 한쪽만 늘어나면
+        # 게이트에 구멍이 난다. 이 저장소에는 ord/vsd/vcm 만 있지만 GitLab 전체
+        # 체크아웃에서는 나머지도 같은 SDK 로 컴파일돼 패키지에 실린다.
+        for m in ord vsd vcm adab adab_ecat cism stm32update mcp_trust_test; do
+            [ -z "$TARGET_MODULE" ] || [ "$TARGET_MODULE" = "$m" ] || continue
+            paths+=("${BASEDIR}/${m}/build/${m}")
+        done
     fi
+
     bash "${BASEDIR}/tools/check_glibc.sh" "${paths[@]}"
 }
 
@@ -309,6 +317,8 @@ if [ -z "$TARGET_MODULE" ]; then
     if [ -d "${SOURCEDIR}" ]; then
         cd ${SOURCEDIR}
         ${SOURCEDIR}/build.sh
+        cd ${BASEDIR}
+        verify_glibc pim_gate || exit $?
 
         cp -R ${SOURCEDIR}/release/pim-gate/opt/pim_gate/  ${WORKDIR}/opt/
     else
@@ -353,6 +363,8 @@ else
             WORKDIR=${BASEDIR}/release/pim
             cd ${SOURCEDIR}
             ${SOURCEDIR}/build.sh
+            cd ${BASEDIR}
+            verify_glibc pim_gate || exit $?
             cp -R ${SOURCEDIR}/release/pim-gate/opt/pim_gate/  ${WORKDIR}/opt/
             ;;
         *)
