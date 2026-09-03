@@ -6,3 +6,4 @@ set -eu
 cd "$(dirname "$0")"
 python3 verify_binaries_test.py
 bash run_binary_verification_test.sh
+bash check_glibc_test.sh

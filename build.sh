@@ -22,6 +22,35 @@ run_binary_verification() {
     bash "${BASEDIR}/tools/run_binary_verification.sh"
 }
 
+# 타깃 rootfs(Ubuntu 20.04, glibc 2.31)보다 새로운 GLIBC 를 요구하는 바이너리를 막는다.
+# Yocto SDK 는 glibc 2.33 으로 빌드하므로 x86_64 호스트 빌드가 여기서 걸린다.
+# 검사 범위를 인자로 받는다. pim_gate 는 CMake 모듈들과 빌드 시점이 달라(패키징
+# 단계에서 자체 build.sh 로 만들어진다) 한 번에 검사할 수 없다. 각 산출물이 생긴
+# 직후·패키징 전에 각각 부른다.
+#   $1: "modules"(기본, CMake 모듈 8종) | "pim_gate"
+verify_glibc() {
+    local scope=${1:-modules}
+    local paths=()
+    local m f
+
+    if [ "$scope" = "pim_gate" ]; then
+        # 단일 바이너리가 아니라 디렉터리 산출물이라 실행 파일을 훑는다.
+        while IFS= read -r f; do
+            [ -n "$f" ] && paths+=("$f")
+        done < <(find "${BASEDIR}/pim_gate/release" -type f -perm -u+x 2>/dev/null)
+    else
+        # docker/build.sh 의 MODULE_BIN 과 **같은 집합**을 본다. 한쪽만 늘어나면
+        # 게이트에 구멍이 난다. 이 저장소에는 ord/vsd/vcm 만 있지만 GitLab 전체
+        # 체크아웃에서는 나머지도 같은 SDK 로 컴파일돼 패키지에 실린다.
+        for m in ord vsd vcm adab adab_ecat cism stm32update mcp_trust_test; do
+            [ -z "$TARGET_MODULE" ] || [ "$TARGET_MODULE" = "$m" ] || continue
+            paths+=("${BASEDIR}/${m}/build/${m}")
+        done
+    fi
+
+    bash "${BASEDIR}/tools/check_glibc.sh" "${paths[@]}"
+}
+
 # Handle clean command
 if [ "$1" == "clean" ]; then
     CLEAN_TARGET="$2"
@@ -61,10 +90,45 @@ fi
 # Target module (empty = all)
 TARGET_MODULE="$1"
 
-# Function to check if module should be built
+# 이 패키지 없이는 .deb 가 성립하지 않는 모듈. 나머지는 GitLab 전체 체크아웃에만 있다.
+REQUIRED_MODULES="ord vsd vcm"
+
+# Function to check if module should be built.
+# 소스 디렉터리가 없는 모듈은 건너뛴다. 이 저장소에는 ord/vsd/vcm 만 있고 adab,
+# adab_ecat, cism, stm32update, mcp_trust_test, pim_gate 는 GitLab 쪽에만 있다.
+# 건너뛰지 않으면 mkdir/cd 가 실패한 채로 진행돼 직전 모듈의 build 디렉터리에서
+# make 가 돌고(=엉뚱한 모듈 재빌드) 컴파일 에러 없이 통과한다.
 should_build() {
     local module="$1"
-    [ -z "$TARGET_MODULE" ] || [ "$TARGET_MODULE" == "$module" ]
+    [ -z "$TARGET_MODULE" ] || [ "$TARGET_MODULE" == "$module" ] || return 1
+    if [ ! -d "${BASEDIR}/${module}" ]; then
+        # ord/vsd/vcm 은 이 패키지의 필수 구성요소다. 없으면 건너뛰지 않고 멈춘다 —
+        # 건너뛰면 뒤의 가드 없는 cp 가 실패해도 set -e 가 없어 계속 진행하고,
+        # 결국 필수 실행 파일이 빠진 .deb 가 성공적으로 만들어진다(동기화 누락 등).
+        case " ${REQUIRED_MODULES} " in
+            *" ${module} "*)
+                echo "ERROR: required module '${module}' has no source directory: ${BASEDIR}/${module}" >&2
+                echo "       체크아웃이 불완전하다. 건너뛰면 필수 바이너리가 빠진 패키지가 만들어진다." >&2
+                exit 1
+                ;;
+        esac
+        if [ -n "$TARGET_MODULE" ]; then
+            echo "ERROR: module '${module}' requested but ${BASEDIR}/${module} does not exist" >&2
+            exit 1
+        fi
+        echo "Skipping ${module} (no source directory)"
+        return 1
+    fi
+    return 0
+}
+
+# 빌드되지 않은 모듈의 산출물 복사는 건너뛴다.
+copy_built() {
+    if [ -f "$1" ]; then
+        cp "$1" "$2"
+    else
+        echo "Skipping copy: $1 (not built)"
+    fi
 }
 
 # Cross-compile setup for NXP i.MX8 (same as gstApp)
@@ -78,6 +142,10 @@ if [ "$HOST_ARCH" = "x86_64" ]; then
     if [ -e ${SDK_ENV} ]; then
         echo "Cross-compiling for i.MX8 using Yocto SDK"
         echo "SDK: ${SDK_ENV}"
+        echo "WARNING: this SDK links against glibc 2.33 but the target rootfs"
+        echo "         (Ubuntu 20.04) provides glibc 2.31. ord/vsd/vcm built here fail"
+        echo "         at the loader with \"GLIBC_2.33 not found\" on the device."
+        echo "         Use ./docker/build.sh <module> for those modules."
         . ${SDK_ENV}
 
         # Configure pkg-config to use SDK sysroot (like gstApp's make-for-imx8)
@@ -230,6 +298,11 @@ fi
 
 cd ${BASEDIR}
 
+# GLIBC 게이트는 복사·패키징 **전에** 돌린다. 뒤에 두면 위반 빌드도 dist/release 복사와
+# .deb / upgrade zip / tar 생성을 끝낸 다음에야 멈춰서, 게이트가 막으려던 바이너리가
+# 배포 가능한 형태로 남는다 — 수동 배포가 그대로 집어갈 수 있다.
+verify_glibc || exit $?
+
 # Only do full release packaging when building all modules
 if [ -z "$TARGET_MODULE" ]; then
     rm -rf ${BASEDIR}/release
@@ -244,20 +317,26 @@ if [ -z "$TARGET_MODULE" ]; then
     cp ${BASEDIR}/docs/pim-guardian-runbook.md ${BASEDIR}/release/pim/opt/pim/docs/
     cp ${BASEDIR}/docs/camera-startup-timing.md ${BASEDIR}/release/pim/opt/pim/docs/
 
-    cp ${BASEDIR}/adab/build/adab ${BASEDIR}/release/pim/opt/cis/bin/adab_adc
-    cp ${BASEDIR}/adab_ecat/build/adab_ecat ${BASEDIR}/release/pim/opt/cis/bin/adab_ecat
-    cp ${BASEDIR}/cism/build/cism ${BASEDIR}/release/pim/opt/cis/bin/
-    cp ${BASEDIR}/stm32update/build/stm32update ${BASEDIR}/release/pim/opt/cis/bin/
-    cp ${BASEDIR}/mcp_trust_test/build/mcp_trust_test ${BASEDIR}/release/pim/opt/pim/bin/
+    copy_built ${BASEDIR}/adab/build/adab ${BASEDIR}/release/pim/opt/cis/bin/adab_adc
+    copy_built ${BASEDIR}/adab_ecat/build/adab_ecat ${BASEDIR}/release/pim/opt/cis/bin/adab_ecat
+    copy_built ${BASEDIR}/cism/build/cism ${BASEDIR}/release/pim/opt/cis/bin/
+    copy_built ${BASEDIR}/stm32update/build/stm32update ${BASEDIR}/release/pim/opt/cis/bin/
+    copy_built ${BASEDIR}/mcp_trust_test/build/mcp_trust_test ${BASEDIR}/release/pim/opt/pim/bin/
     cp -R ${BASEDIR}/test ${BASEDIR}/release/pim/opt/pim/bin/
 
     # build pim_gate
     SOURCEDIR=${BASEDIR}/pim_gate
     WORKDIR=${BASEDIR}/release/pim
-    cd ${SOURCEDIR}
-    ${SOURCEDIR}/build.sh
+    if [ -d "${SOURCEDIR}" ]; then
+        cd ${SOURCEDIR}
+        ${SOURCEDIR}/build.sh
+        cd ${BASEDIR}
+        verify_glibc pim_gate || exit $?
 
-    cp -R ${SOURCEDIR}/release/pim-gate/opt/pim_gate/  ${WORKDIR}/opt/
+        cp -R ${SOURCEDIR}/release/pim-gate/opt/pim_gate/  ${WORKDIR}/opt/
+    else
+        echo "Skipping pim_gate (no source directory)"
+    fi
 else
     # Single module build - just copy the built binary
     echo "Single module build: ${TARGET_MODULE}"
@@ -297,6 +376,8 @@ else
             WORKDIR=${BASEDIR}/release/pim
             cd ${SOURCEDIR}
             ${SOURCEDIR}/build.sh
+            cd ${BASEDIR}
+            verify_glibc pim_gate || exit $?
             cp -R ${SOURCEDIR}/release/pim-gate/opt/pim_gate/  ${WORKDIR}/opt/
             ;;
         *)
