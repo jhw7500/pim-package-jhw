@@ -74,5 +74,15 @@ env PATH="$TMP_ROOT/bin:$PATH" bash "$ROOT/tools/check_glibc.sh" "$TMP_ROOT/nope
 rc=$?
 set -e
 [ "$rc" -eq 0 ] || fail "없는 파일은 통과해야 한다 (rc=$rc)"
+grep -q "no binaries to check" "$TMP_ROOT/out" || fail "0건은 'OK' 가 아니라 '볼 것이 없었다' 로 보고해야 한다: $(cat "$TMP_ROOT/out")"
+grep -q "GLIBC check OK" "$TMP_ROOT/out" && fail "0건인데 OK 로 보고했다 — 공허한 통과"
 
-echo "PASS: check_glibc.sh 8 케이스"
+# 9) 인자가 아예 없어도 OK 로 보고하지 않는다
+set +e
+env PATH="$TMP_ROOT/bin:$PATH" bash "$ROOT/tools/check_glibc.sh" >"$TMP_ROOT/out" 2>&1
+rc=$?
+set -e
+[ "$rc" -eq 0 ] || fail "인자 없음은 통과해야 한다 (rc=$rc)"
+grep -q "no binaries to check" "$TMP_ROOT/out" || fail "인자 없음도 0건으로 보고해야 한다"
+
+echo "PASS: check_glibc.sh 9 케이스"

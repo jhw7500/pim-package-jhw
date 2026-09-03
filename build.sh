@@ -27,10 +27,19 @@ run_binary_verification() {
 verify_glibc() {
     local paths=()
     local m
-    for m in ord vsd vcm; do
+    # docker/build.sh 의 MODULE_BIN 과 **같은 집합**을 본다. 한쪽만 늘어나면 게이트에
+    # 구멍이 난다. 이 저장소에는 ord/vsd/vcm 만 있지만 GitLab 전체 체크아웃에서는
+    # 나머지도 같은 SDK 로 컴파일돼 패키지에 실리므로 반드시 함께 검사한다.
+    for m in ord vsd vcm adab adab_ecat cism stm32update mcp_trust_test; do
         [ -z "$TARGET_MODULE" ] || [ "$TARGET_MODULE" = "$m" ] || continue
         paths+=("${BASEDIR}/${m}/build/${m}")
     done
+    # pim_gate 는 단일 바이너리가 아니라 디렉터리 산출물이다.
+    if [ -z "$TARGET_MODULE" ] || [ "$TARGET_MODULE" = "pim_gate" ]; then
+        while IFS= read -r f; do
+            [ -n "$f" ] && paths+=("$f")
+        done < <(find "${BASEDIR}/pim_gate/release" -type f -perm -u+x 2>/dev/null)
+    fi
     bash "${BASEDIR}/tools/check_glibc.sh" "${paths[@]}"
 }
 
