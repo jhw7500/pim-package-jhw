@@ -101,4 +101,24 @@ grep -q "target provides 2.31" "$TMP_ROOT/out" || fail "빈 천장이 기본값 
 run 2.33 PIM_MAX_GLIBC=2.40
 [ "$RUN_RC" -eq 0 ] || fail "PIM_MAX_GLIBC=2.40 은 통과해야 한다 (rc=$RUN_RC)"
 
-echo "PASS: check_glibc.sh 12 케이스"
+# 13) readelf 가 없으면 strict 는 닫히고 warn/off 는 넘어간다
+mkdir -p "$TMP_ROOT/nore"
+for c in bash grep sed sort head tr cut cat env dirname printf; do
+    src=$(command -v "$c" 2>/dev/null) && ln -sf "$src" "$TMP_ROOT/nore/$c"
+done
+run_nore() {  # $1=gate
+    set +e
+    env -i PATH="$TMP_ROOT/nore" HOME="$TMP_ROOT" PIM_GLIBC_GATE="$1" \
+        bash "$ROOT/tools/check_glibc.sh" "$TMP_ROOT/fake-binary" >"$TMP_ROOT/out" 2>&1
+    RUN_RC=$?
+    set -e
+}
+run_nore strict
+[ "$RUN_RC" -eq 2 ] || fail "readelf 없음 + strict 는 rc=2 여야 한다 (rc=$RUN_RC): $(cat "$TMP_ROOT/out")"
+grep -q "readelf not found" "$TMP_ROOT/out" || fail "readelf 부재 사유가 보고되지 않았다"
+run_nore warn
+[ "$RUN_RC" -eq 0 ] || fail "readelf 없음 + warn 은 rc=0 이어야 한다 (rc=$RUN_RC)"
+run_nore off
+[ "$RUN_RC" -eq 0 ] || fail "readelf 없음 + off 는 rc=0 이어야 한다 (rc=$RUN_RC)"
+
+echo "PASS: check_glibc.sh 13 케이스"

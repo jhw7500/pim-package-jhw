@@ -39,7 +39,14 @@ if ! printf '%s' "$MAX" | grep -qE '^[0-9]+(\.[0-9]+)*$'; then
 fi
 
 if ! command -v readelf >/dev/null 2>&1; then
-    echo "WARNING: readelf not found; skipping GLIBC check" >&2
+    # 검사할 수 없다는 것은 통과가 아니다. strict 에서 그냥 넘기면, 게이트가 막으려던
+    # 비호환 바이너리가 "검사 도구가 없었다"는 이유로 패키징된다.
+    if [ "$GATE" = "strict" ]; then
+        echo "ERROR: readelf not found — cannot verify GLIBC requirements." >&2
+        echo "       Install binutils, or set PIM_GLIBC_GATE=warn|off to skip deliberately." >&2
+        exit 2
+    fi
+    echo "WARNING: readelf not found; skipping GLIBC check (PIM_GLIBC_GATE=${GATE})" >&2
     exit 0
 fi
 

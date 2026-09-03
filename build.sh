@@ -90,6 +90,9 @@ fi
 # Target module (empty = all)
 TARGET_MODULE="$1"
 
+# 이 패키지 없이는 .deb 가 성립하지 않는 모듈. 나머지는 GitLab 전체 체크아웃에만 있다.
+REQUIRED_MODULES="ord vsd vcm"
+
 # Function to check if module should be built.
 # 소스 디렉터리가 없는 모듈은 건너뛴다. 이 저장소에는 ord/vsd/vcm 만 있고 adab,
 # adab_ecat, cism, stm32update, mcp_trust_test, pim_gate 는 GitLab 쪽에만 있다.
@@ -99,6 +102,16 @@ should_build() {
     local module="$1"
     [ -z "$TARGET_MODULE" ] || [ "$TARGET_MODULE" == "$module" ] || return 1
     if [ ! -d "${BASEDIR}/${module}" ]; then
+        # ord/vsd/vcm 은 이 패키지의 필수 구성요소다. 없으면 건너뛰지 않고 멈춘다 —
+        # 건너뛰면 뒤의 가드 없는 cp 가 실패해도 set -e 가 없어 계속 진행하고,
+        # 결국 필수 실행 파일이 빠진 .deb 가 성공적으로 만들어진다(동기화 누락 등).
+        case " ${REQUIRED_MODULES} " in
+            *" ${module} "*)
+                echo "ERROR: required module '${module}' has no source directory: ${BASEDIR}/${module}" >&2
+                echo "       체크아웃이 불완전하다. 건너뛰면 필수 바이너리가 빠진 패키지가 만들어진다." >&2
+                exit 1
+                ;;
+        esac
         if [ -n "$TARGET_MODULE" ]; then
             echo "ERROR: module '${module}' requested but ${BASEDIR}/${module} does not exist" >&2
             exit 1
