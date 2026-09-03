@@ -268,6 +268,11 @@ fi
 
 cd ${BASEDIR}
 
+# GLIBC 게이트는 복사·패키징 **전에** 돌린다. 뒤에 두면 위반 빌드도 dist/release 복사와
+# .deb / upgrade zip / tar 생성을 끝낸 다음에야 멈춰서, 게이트가 막으려던 바이너리가
+# 배포 가능한 형태로 남는다 — 수동 배포가 그대로 집어갈 수 있다.
+verify_glibc || exit $?
+
 # Only do full release packaging when building all modules
 if [ -z "$TARGET_MODULE" ]; then
     rm -rf ${BASEDIR}/release
@@ -349,7 +354,6 @@ else
     esac
 
     echo "Module ${TARGET_MODULE} built and copied to release/"
-    verify_glibc || exit $?
     run_binary_verification || exit $?
     exit 0
 fi
@@ -395,5 +399,4 @@ tar cvf "../${ugrade_old_zip_file}" ./
 
 echo "create ${ugrade_old_zip_file}"
 
-verify_glibc || exit $?
 run_binary_verification || exit $?
