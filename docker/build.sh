@@ -108,6 +108,9 @@ HOST_GID=$(id -g)
 RESTORE_OWNER="find /workspace -path /workspace/.git -prune -o -path /workspace/.worktrees -prune -o -user 0 -exec chown -h ${HOST_UID}:${HOST_GID} {} + 2>/dev/null || true"
 CONTAINER_CMD="${BUILD_CMD}; build_rc=\$?; ${RESTORE_OWNER}; exit \$build_rc"
 
+# PIM_GLIBC_GATE / PIM_MAX_GLIBC 는 값 없이 넘긴다 — 호스트에 설정된 경우에만 전달되어
+# 컨테이너 안 tools/check_glibc.sh 의 기본값(strict / 2.31)을 덮는다. 여기서 기본값을
+# 다시 적으면 정의가 두 곳으로 갈라진다.
 docker run --rm \
     --platform linux/arm64 \
     --memory=4g \
@@ -116,10 +119,13 @@ docker run --rm \
     -w /workspace \
     -e MAKEFLAGS="-j1" \
     -e PIM_VERIFY_BINARIES="${PIM_VERIFY_BINARIES:-warn}" \
+    -e PIM_GLIBC_GATE \
+    -e PIM_MAX_GLIBC \
     ${IMAGE_NAME} \
     /bin/bash -c "${CONTAINER_CMD}"
+docker_rc=$?
 
-if [ $? -eq 0 ]; then
+if [ $docker_rc -eq 0 ]; then
     echo ""
     echo "=========================================="
     if [ -n "$SUBMODULE" ]; then
@@ -241,5 +247,8 @@ if [ $? -eq 0 ]; then
     fi
 else
     echo "ERROR: Build failed"
+    # 실패 신호를 구분해 전달한다: 컴파일 실패는 1, 컨테이너 안 산출물/GLIBC 검증
+    # 실패는 2. 여기서 뭉개면 CI·운영자가 원인을 좁힐 수 없다.
+    [ $docker_rc -eq 2 ] && exit 2
     exit 1
 fi
