@@ -85,4 +85,20 @@ set -e
 [ "$rc" -eq 0 ] || fail "인자 없음은 통과해야 한다 (rc=$rc)"
 grep -q "no binaries to check" "$TMP_ROOT/out" || fail "인자 없음도 0건으로 보고해야 한다"
 
-echo "PASS: check_glibc.sh 9 케이스"
+# 10) 잘못된 천장 값은 통과시키지 않고 닫힌다 (fail-open 방지)
+for bad in foo 2.. .2 "2.3x" "2 31"; do
+    run 2.33 PIM_MAX_GLIBC="$bad"
+    [ "$RUN_RC" -eq 2 ] || fail "PIM_MAX_GLIBC='$bad' 는 rc=2 여야 한다 (rc=$RUN_RC) — 오타로 게이트가 열리면 안 된다"
+    grep -q "must be a dotted numeric version" "$TMP_ROOT/out" || fail "'$bad' 거부 사유가 보고되지 않았다"
+done
+
+# 11) 빈 값은 오류가 아니라 기본 천장(2.31)으로 폴백한다 — 안전한 쪽으로 닫힌다
+run 2.33 PIM_MAX_GLIBC=
+[ "$RUN_RC" -eq 2 ] || fail "빈 천장은 기본 2.31 로 폴백해 2.33 을 막아야 한다 (rc=$RUN_RC)"
+grep -q "target provides 2.31" "$TMP_ROOT/out" || fail "빈 천장이 기본값 2.31 로 폴백하지 않았다: $(cat "$TMP_ROOT/out")"
+
+# 12) 정상 형식은 그대로 동작한다
+run 2.33 PIM_MAX_GLIBC=2.40
+[ "$RUN_RC" -eq 0 ] || fail "PIM_MAX_GLIBC=2.40 은 통과해야 한다 (rc=$RUN_RC)"
+
+echo "PASS: check_glibc.sh 12 케이스"

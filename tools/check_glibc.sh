@@ -30,6 +30,14 @@ case "$GATE" in
         ;;
 esac
 
+# 천장 값을 먼저 검증한다. sort -V 는 "foo" 같은 비버전 문자열을 숫자 버전보다 크게
+# 놓으므로, 오타 하나로 모든 비교가 통과해 게이트가 조용히 열린다(fail-open).
+# 안전장치는 잘못된 입력에 닫히는 쪽으로 실패해야 한다.
+if ! printf '%s' "$MAX" | grep -qE '^[0-9]+(\.[0-9]+)*$'; then
+    echo "ERROR: PIM_MAX_GLIBC must be a dotted numeric version like 2.31 (got: '${MAX}')" >&2
+    exit 2
+fi
+
 if ! command -v readelf >/dev/null 2>&1; then
     echo "WARNING: readelf not found; skipping GLIBC check" >&2
     exit 0

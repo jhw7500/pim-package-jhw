@@ -71,7 +71,8 @@ ARM aarch64/GLIBC 정보도 추가로 확인한다.
 |---|---|---|---|
 | 매니페스트 대조 | git 추적 바이너리(gstApp, `.ko` 등) | `PIM_VERIFY_BINARIES` | `warn` |
 | release 산출물 검증 | 존재 / ARM aarch64 / GLIBC | `PIM_VERIFY_BINARIES` | **`strict`** |
-| GLIBC 게이트 | 빌드된 ord/vsd/vcm | `PIM_GLIBC_GATE` | **`strict`** |
+| GLIBC 게이트 | 컴파일된 모듈 8종(ord, vsd, vcm, adab, adab_ecat, cism, stm32update,
+mcp_trust_test)과 pim_gate 산출물 | `PIM_GLIBC_GATE` | **`strict`** |
 
 매니페스트 불일치는 경고로 남긴다(검증 전 중간 상태 작업이 흔하다). 반면 release
 산출물 결함과 GLIBC 초과는 `.deb`에 그대로 실릴 문제라 기본으로 빌드를 세운다.
@@ -91,6 +92,7 @@ PIM_GLIBC_GATE=warn ./docker/build.sh
 PIM_GLIBC_GATE=off  ./docker/build.sh
 
 # 타깃 rootfs 가 바뀌어 천장을 올릴 때 (기본 2.31)
+# 점으로 구분된 숫자만 받는다 — 형식이 어긋나면 통과시키지 않고 exit 2 로 멈춘다.
 PIM_MAX_GLIBC=2.35 ./docker/build.sh
 ```
 
