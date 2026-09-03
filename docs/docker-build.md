@@ -71,8 +71,11 @@ ARM aarch64/GLIBC 정보도 추가로 확인한다.
 |---|---|---|---|
 | 매니페스트 대조 | git 추적 바이너리(gstApp, `.ko` 등) | `PIM_VERIFY_BINARIES` | `warn` |
 | release 산출물 검증 | 존재 / ARM aarch64 / GLIBC | `PIM_VERIFY_BINARIES` | **`strict`** |
-| GLIBC 게이트 | 컴파일된 모듈 8종(ord, vsd, vcm, adab, adab_ecat, cism, stm32update,
-mcp_trust_test)과 pim_gate 산출물 | `PIM_GLIBC_GATE` | **`strict`** |
+| GLIBC 게이트 | 컴파일된 모듈 8종과 pim_gate 산출물 | `PIM_GLIBC_GATE` | **`strict`** |
+
+GLIBC 게이트가 보는 모듈 8종은 `ord`, `vsd`, `vcm`, `adab`, `adab_ecat`, `cism`,
+`stm32update`, `mcp_trust_test` 이고, `pim_gate` 는 자체 빌드 산출물의 실행 파일을
+검사한다. 즉 `docker/build.sh` 의 `MODULE_BIN` 과 같은 집합이다.
 
 매니페스트 불일치는 경고로 남긴다(검증 전 중간 상태 작업이 흔하다). 반면 release
 산출물 결함과 GLIBC 초과는 `.deb`에 그대로 실릴 문제라 기본으로 빌드를 세운다.
