@@ -86,11 +86,19 @@ fi
 done
 END
 
+# 프로세스 검색은 '실행 대상' 으로 한정한다.
+# `ps -ef | grep $service` 는 명령줄 전체를 보므로 그 문자열이 인자·경로에 들어간
+# 무관한 프로세스까지 죽인다 — tail -f .../gstApp.log, 편집기, 빌드·시험 스크립트 등.
+# `grep -v grep` 은 grep 자신만 제외할 뿐 이 문제를 막지 못한다.
+# `pgrep -x` 는 comm 이 15자로 잘려 BG_Check_for_pim.sh 를 놓치므로 쓸 수 없다
+# (실측: -x 는 0건). `(^|/)name( |$)` 는 실행 경로의 마지막 성분으로만 맞춘다.
+# 실측(2026-09-05 pim-camera-v016): gstApp / BG_Check_for_pim.sh 각각 정확히 1건 매칭,
+# 유인 프로세스(.../gstApp.fix87 인자, 메모 문자열) 모두 배제. (#80)
 for service in $list; do
     cnt=0
     if [ ! -z "$service" ]; then
         logger -p local0.info "[$KEY][$tag:$LINENO] kill $service"
-        pid=$(ps -ef |grep $service |grep -v grep |awk '{print $2}')
+        pid=$(pgrep -f "(^|/)${service}( |\$)")
         #sudo pkill $service
         if [ -n "$pid" ]; then
             kill $pid
@@ -101,7 +109,7 @@ for service in $list; do
         while :
         do
             #sudo killall $service
-            pid=$(ps -ef |grep $service |grep -v grep |awk '{print $2}')
+            pid=$(pgrep -f "(^|/)${service}( |\$)")
             if [ -n "$pid" ]; then
                 if [ "$cnt" -ge "$rebootcnt" ]; then
                     if is_cam_disconnected; then
@@ -118,7 +126,7 @@ for service in $list; do
                     #logger -p local0.notice [$KEY][$tag:$LINENO] $defunct
                     #umount /mnt/sd_cam
                     #defunct=$(ps -ef | grep defunct | grep -v grep | awk '{print $3}' | xargs -t -I % sh -c '{ cat /proc/%/status |grep Name; }')
-                    defunct=$(ps -ef | grep $service | grep defunct | awk '{print $8}')
+                    defunct=$(ps -o stat=,comm= -p $pid 2>/dev/null | awk '$1 ~ /Z/ {print $2}')
                     #logger -p local0.err "[$KEY][$tag:$LINENO] defunct : $defunct"
                     if [ -z "$defunct" ]; then
                         logger -p local0.notice "[$KEY][$tag:$LINENO] no defunct"

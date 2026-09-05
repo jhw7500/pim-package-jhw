@@ -343,12 +343,29 @@ makeDirectory /root/fwupgrade
 makeDirectory /mnt/sd
 makeDirectory /shared
 
+# sd_mount_flag 는 원래 sd-mount.service(automnt_sd_for_emmc_boot.sh:164)가 세운다.
+# 그런데 preinst 가 그 서비스를 정지시키고(preinst:41) ExecStop(sd_mount_stop.sh:35,47)이
+# 플래그를 지운다. 아래에서 마운트만 직접 복구하고 플래그를 쓰지 않으면
+# chk_cam_operate.sh 의 is_sd_ok() 가 계속 false 라 RAM_ONLY 로 고착되고,
+# 녹화가 SD 에 전혀 보관되지 않는다. 재부팅이 뒤따르면 부팅 시 automnt 가 플래그를
+# 세워 가려지므로 '재부팅 없는 업그레이드' 에서만 드러난다.
+# 실측: pim-camera-v016 에서 2026-09-03 03:47 ~ 09-04 07:16 약 27시간 미보관. (#76)
+set_sd_mount_flag() {
+    if awk -v dev="$DEVICE" '$1 == dev && $4 ~ /^rw/ {found=1} END {exit !found}' /proc/mounts; then
+        echo '1' > /dev/shm/sd_mount_flag
+        logger -s -p local0.notice "[$KEY][$tag:$LINENO] sd_mount_flag set (postinst)"
+    else
+        logger -s -p local0.err "[$KEY][$tag:$LINENO] $DEVICE is not mounted rw - sd_mount_flag not set"
+    fi
+}
+
 if mount | grep -q "$DEVICE on $MOUNT_POINT"; then
     #echo "$DEVICE is already mounted on $MOUNT_POINT."
     logger -s -p local0.err "[$KEY][$tag:$LINENO] $DEVICE is already mounted on $MOUNT_POINT."
     makeDirectory $MOUNT_POINT/event
     makeDirectory $MOUNT_POINT/recycle
     makeDirectory $MOUNT_POINT/capture
+    set_sd_mount_flag
 else
     #echo "Trying to mount $DEVICE on $MOUNT_POINT..."
     logger -s -p local0.notice "[$KEY][$tag:$LINENO] Trying to mount $DEVICE on $MOUNT_POINT..."
@@ -359,6 +376,7 @@ else
         makeDirectory $MOUNT_POINT/event
         makeDirectory $MOUNT_POINT/recycle
         makeDirectory $MOUNT_POINT/capture
+        set_sd_mount_flag
     else
         #echo "Failed to mount $DEVICE on $MOUNT_POINT."
         logger -s -p local0.err "[$KEY][$tag:$LINENO] Failed to mount $DEVICE on $MOUNT_POINT"
