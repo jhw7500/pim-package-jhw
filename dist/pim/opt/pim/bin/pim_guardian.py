@@ -314,27 +314,17 @@ class PIMHealthGuardian:
         return None
 
     def _recover_sd_ro(self) -> bool:
-        total = 7
+        total = 6
         step = 0
 
         step += 1
-        print(f"[RECOVERY] [{step}/{total}] Requesting camera writer quiesce...")
-        camera_rc = self._request_camera_recovery(
-            "gstapp_restart", "guardian-sd-quiesce", wait_sec=120
-        )
-        if camera_rc != 0:
-            print(f" FAILED (exit code {camera_rc})")
-            return False
-        print(" OK")
-
-        step += 1
-        self._run_recovery_step(
+        if not self._run_recovery_step(
             step,
             total,
             f"Stopping {SD_MOUNT_SERVICE} service",
             ["systemctl", "stop", SD_MOUNT_SERVICE],
-            allow_fail=True,
-        )
+        ):
+            return False
 
         step += 1
         if not self._run_recovery_step(
@@ -343,12 +333,13 @@ class PIMHealthGuardian:
             f"Unmounting {SD_MOUNT_PATH}",
             ["umount", SD_MOUNT_PATH],
         ):
-            self._run_recovery_step(
+            if not self._run_recovery_step(
                 step,
                 total,
                 f"Force unmounting {SD_MOUNT_PATH}",
                 ["umount", "-f", SD_MOUNT_PATH],
-            )
+            ):
+                return False
 
         step += 1
         fs_type = self._detect_sd_fstype()
@@ -362,13 +353,13 @@ class PIMHealthGuardian:
             print(
                 f"[RECOVERY] SD card may be physically damaged or partition table corrupted."
             )
-            self._run_recovery_step(
+            if not self._run_recovery_step(
                 total - 1,
                 total,
                 f"Starting {SD_MOUNT_SERVICE} service",
                 ["systemctl", "start", SD_MOUNT_SERVICE],
-                allow_fail=True,
-            )
+            ):
+                return False
             print(
                 f"[RECOVERY] [{total}/{total}] Requesting camera pipeline restart..."
             )
@@ -448,13 +439,13 @@ class PIMHealthGuardian:
                 print(f"[RECOVERY] [{step}/{total}] Failed to set recovery flag: {e}")
 
         step += 1
-        self._run_recovery_step(
+        if not self._run_recovery_step(
             step,
             total,
             f"Starting {SD_MOUNT_SERVICE} service",
             ["systemctl", "start", SD_MOUNT_SERVICE],
-            allow_fail=True,
-        )
+        ):
+            return False
 
         step += 1
         print(f"[RECOVERY] [{step}/{total}] Requesting camera pipeline restart...")
@@ -463,7 +454,7 @@ class PIMHealthGuardian:
         )
         print(" OK" if camera_rc == 0 else f" FAILED (exit code {camera_rc})")
 
-        return fsck_ok
+        return fsck_ok and camera_rc == 0
 
     def _recover_cam_disconnect(self) -> bool:
         selection = select_guardian_camera_action(GUARD_BIT_CAM_MISMATCH)

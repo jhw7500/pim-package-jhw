@@ -17,19 +17,18 @@ config_invalid() {
 }
 
 command -v jq >/dev/null 2>&1 || config_invalid
-jq -e '
-    type == "object" and
-    (.VHL_CAM | type == "object") and
-    (.ORD | type == "object") and
-    (.VCM | type == "object")
-' "$PIM_CAMERA_RUNTIME_JSON" >/dev/null 2>&1 || config_invalid
-
-FILE_JSON="$PIM_CAMERA_RUNTIME_JSON"
+runtime_json=$(<"$PIM_CAMERA_RUNTIME_JSON") || config_invalid
 #cam_ch0=$(jq '.VHL_CAM.i2c2.ch0.enable' "$FILE_JSON")
 #cam_ch1=$(jq '.VHL_CAM.i2c2.ch1.enable' "$FILE_JSON")
 #cam_ch2=$(jq '.VHL_CAM.i2c1.ch2.enable' "$FILE_JSON")
 #cam_ch3=$(jq '.VHL_CAM.i2c1.ch3.enable' "$FILE_JSON")
-runtime_values=$(jq -er '[
+runtime_values=$(jq -er '
+    if type != "object" or
+       (.VHL_CAM | type) != "object" or
+       (.ORD | type) != "object" or
+       (.VCM | type) != "object"
+    then error("invalid camera runtime")
+    else [
         (.VHL_CAM.i2c2.ch0.enable // false),
         (.VHL_CAM.i2c2.ch1.enable // false),
         (.VHL_CAM.i2c1.ch2.enable // false),
@@ -37,7 +36,8 @@ runtime_values=$(jq -er '[
         (.VHL_CAM.vhl_name // "VD3001"),
         (.VHL_CAM.tmp_path // "/dev/shm"),
         (.VHL_CAM.muxer // "mp4")
-    ] | @tsv' "$FILE_JSON") || config_invalid
+    ] | @tsv end
+' <<<"$runtime_json") || config_invalid
 IFS=$'\t' read -r \
     cam_ch0 cam_ch1 cam_ch2 cam_ch3 vhl_name tmp_path muxer <<<"$runtime_values"
 unset IFS
@@ -64,11 +64,19 @@ else
 fi
 cam_ch_bit=$((cam_ch3<<3|cam_ch2<<2|cam_ch1<<1|cam_ch0))
 
-camera_startup_grace_sec=$(cam_policy_camera_startup_grace_sec "$PIM_CAMERA_RUNTIME_JSON")
+camera_startup_grace_sec=$(jq -r '
+    .ETC.camera_startup_grace_sec as $v
+    | if ($v | type) == "number" then
+          if ($v >= 0) and (($v | floor) == $v) then $v else empty end
+      else empty end
+' <<<"$runtime_json") || config_invalid
+camera_startup_grace_sec=$(cam_policy_nonnegative_or_default \
+    "$camera_startup_grace_sec" "$CAMERA_STARTUP_GRACE_SEC_DEFAULT")
 # 기본값 40은 패키지 배포 설정(opt/pim/config/ord_vcm_conf.json)·update_ordvcmconf.sh·
 # chk_cam_operate.sh 와 일치시킨 값이다. 어긋나면 설정 키가 없는 장비에서 두 스크립트가
 # 서로 다른 쿨다운으로 동작한다.
-init_cooldown_sec=$(jq -r '(.ETC.init_cooldown_sec // 40)' "$PIM_CAMERA_RUNTIME_JSON" 2>/dev/null || echo 40)
+init_cooldown_sec=$(jq -r '(.ETC.init_cooldown_sec // 40)' \
+    <<<"$runtime_json" 2>/dev/null) || config_invalid
 now_ts() { date +%s; }
 read_ts() { [ -f "$1" ] && cat "$1" 2>/dev/null | tr -d '\n' || echo 0; }
 

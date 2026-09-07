@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import builtins
 import importlib.util
 import json
 import tempfile
@@ -340,55 +341,137 @@ class Tests:
             guardian_module.CAM_RECOVERYCTL = old_ctl
 
     def sd_recovery_order_test(self) -> None:
-        obj = object.__new__(guardian_module.PIMHealthGuardian)
-        events: list[tuple[object, ...]] = []
+        with tempfile.TemporaryDirectory(prefix="guardian-sd-order.") as raw:
+            root = Path(raw)
+            recovery_flag = root / "sd-ro-recovered"
+            obj = object.__new__(guardian_module.PIMHealthGuardian)
+            obj.args = argparse.Namespace(fsck_timeout=30)
+            events: list[tuple[object, ...]] = []
+            writer = {"active": True}
+            fail_service_stop = {"value": False}
 
-        def request(action: str, reason: str, wait_sec: object = None) -> int:
-            events.append(("request", action, reason, wait_sec))
-            return 0
+            def request(
+                action: str, reason: str, wait_sec: object = None
+            ) -> int:
+                events.append(("request", action, reason, wait_sec))
+                if action == "gstapp_restart":
+                    # The established action is stop-then-immediate-restart;
+                    # it is not a pre-unmount quiescence primitive.
+                    writer["active"] = False
+                    writer["active"] = True
+                return 0
 
-        def step(
-            step_number: int,
-            total: int,
-            _description: str,
-            command: list[str],
-            allow_fail: bool = False,
-        ) -> bool:
-            events.append(
-                ("step", step_number, total, tuple(command), allow_fail)
-            )
-            return True
+            def step(
+                _step_number: int,
+                _total: int,
+                _description: str,
+                command: list[str],
+                allow_fail: bool = False,
+            ) -> bool:
+                event = ("step", tuple(command), allow_fail)
+                events.append(event)
+                if command == ["systemctl", "stop", "sd-mount"]:
+                    if fail_service_stop["value"]:
+                        return False
+                    writer["active"] = False
+                elif command and command[0] == "umount":
+                    events.append(("unmount-boundary", writer["active"]))
+                return True
 
-        def no_fstype() -> None:
-            events.append(("detect-fstype",))
-            return None
+            def detect_fstype() -> str:
+                events.append(("detect-fstype",))
+                return "ext4"
 
-        obj._request_camera_recovery = request
-        obj._run_recovery_step = step
-        obj._detect_sd_fstype = no_fstype
-        result = obj._recover_sd_ro()
-        expected = [
-            (
-                "request",
-                "gstapp_restart",
-                "guardian-sd-quiesce",
-                120,
-            ),
-            ("step", 2, 7, ("systemctl", "stop", "sd-mount"), True),
-            ("step", 3, 7, ("umount", "/mnt/sd_cam"), False),
-            ("detect-fstype",),
-            ("step", 6, 7, ("systemctl", "start", "sd-mount"), True),
-            (
-                "request",
-                "gstapp_restart",
-                "guardian-sd-remount",
-                120,
-            ),
-        ]
-        self.check(
-            result is False and events == expected,
-            "SD repair preserves quiesce, mount-service, and restart order",
-        )
+            class FakeProcess:
+                def __init__(self) -> None:
+                    self.stdout = tempfile.TemporaryFile()
+
+                def poll(self) -> int:
+                    return 0
+
+                def wait(self) -> int:
+                    return 0
+
+                def kill(self) -> None:
+                    return None
+
+            def fake_popen(
+                command: list[str], **_kwargs: object
+            ) -> FakeProcess:
+                events.append(("fsck", tuple(command)))
+                return FakeProcess()
+
+            original_popen = guardian_module.subprocess.Popen
+            original_open = builtins.open
+
+            def redirected_open(
+                file: object, *args: object, **kwargs: object
+            ) -> object:
+                if file == "/tmp/sd_ro_recovered":
+                    file = recovery_flag
+                return original_open(file, *args, **kwargs)
+
+            obj._request_camera_recovery = request
+            obj._run_recovery_step = step
+            obj._detect_sd_fstype = detect_fstype
+            guardian_module.subprocess.Popen = fake_popen
+            builtins.open = redirected_open
+            try:
+                result = obj._recover_sd_ro()
+                stop_event = (
+                    "step",
+                    ("systemctl", "stop", "sd-mount"),
+                    False,
+                )
+                boundary_event = ("unmount-boundary", False)
+                fsck_event = next(
+                    (event for event in events if event[0] == "fsck"),
+                    None,
+                )
+                start_event = (
+                    "step",
+                    ("systemctl", "start", "sd-mount"),
+                    False,
+                )
+                restart_event = (
+                    "request",
+                    "gstapp_restart",
+                    "guardian-sd-remount",
+                    120,
+                )
+                requests = [event for event in events if event[0] == "request"]
+                self.check(
+                    result is True
+                    and fsck_event is not None
+                    and requests == [restart_event]
+                    and stop_event in events
+                    and boundary_event in events
+                    and start_event in events
+                    and events.index(stop_event) < events.index(boundary_event)
+                    < events.index(fsck_event) < events.index(start_event)
+                    < events.index(restart_event),
+                    "SD recovery stops the writer before unmount and restarts only after remount",
+                )
+
+                events.clear()
+                writer["active"] = True
+                fail_service_stop["value"] = True
+                result = obj._recover_sd_ro()
+                self.check(
+                    result is False
+                    and events
+                    == [
+                        (
+                            "step",
+                            ("systemctl", "stop", "sd-mount"),
+                            False,
+                        )
+                    ],
+                    "sd-mount stop failure aborts before raw unmount or fsck",
+                )
+            finally:
+                guardian_module.subprocess.Popen = original_popen
+                builtins.open = original_open
 
 
 if __name__ == "__main__":

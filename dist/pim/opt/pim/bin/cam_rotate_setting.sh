@@ -15,28 +15,27 @@ config_invalid() {
 }
 
 command -v jq >/dev/null 2>&1 || config_invalid
-jq -e '
-    type == "object" and
-    (.VHL_CAM | type == "object") and
-    (.ORD | type == "object") and
-    (.VCM | type == "object") and
-    (.VHL_CAM.cam_ch0 | type == "boolean") and
-    (.VHL_CAM.cam_ch0_rotate | type == "boolean") and
-    (.VHL_CAM.cam_ch1 | type == "boolean") and
-    (.VHL_CAM.cam_ch1_rotate | type == "boolean") and
-    (.VHL_CAM.cam_ch2 | type == "boolean") and
-    (.VHL_CAM.cam_ch2_rotate | type == "boolean") and
-    (.VHL_CAM.cam_ch3 | type == "boolean") and
-    (.VHL_CAM.cam_ch3_rotate | type == "boolean")
-' "$PIM_CAMERA_RUNTIME_JSON" >/dev/null 2>&1 || config_invalid
-
-mapfile -t camera_values < <(jq -r '
-    .VHL_CAM |
-    .cam_ch0, .cam_ch0_rotate,
-    .cam_ch1, .cam_ch1_rotate,
-    .cam_ch2, .cam_ch2_rotate,
-    .cam_ch3, .cam_ch3_rotate
-' "$PIM_CAMERA_RUNTIME_JSON")
+runtime_json=$(<"$PIM_CAMERA_RUNTIME_JSON") || config_invalid
+camera_line=$(jq -er '
+    if type == "object" and
+       (.VHL_CAM | type) == "object" and
+       (.ORD | type) == "object" and
+       (.VCM | type) == "object" and
+       (.VHL_CAM.cam_ch0 | type) == "boolean" and
+       (.VHL_CAM.cam_ch0_rotate | type) == "boolean" and
+       (.VHL_CAM.cam_ch1 | type) == "boolean" and
+       (.VHL_CAM.cam_ch1_rotate | type) == "boolean" and
+       (.VHL_CAM.cam_ch2 | type) == "boolean" and
+       (.VHL_CAM.cam_ch2_rotate | type) == "boolean" and
+       (.VHL_CAM.cam_ch3 | type) == "boolean" and
+       (.VHL_CAM.cam_ch3_rotate | type) == "boolean"
+    then [.VHL_CAM.cam_ch0, .VHL_CAM.cam_ch0_rotate,
+          .VHL_CAM.cam_ch1, .VHL_CAM.cam_ch1_rotate,
+          .VHL_CAM.cam_ch2, .VHL_CAM.cam_ch2_rotate,
+          .VHL_CAM.cam_ch3, .VHL_CAM.cam_ch3_rotate] | @tsv
+    else error("invalid camera runtime") end
+' <<<"$runtime_json") || config_invalid
+IFS=$'\t' read -r -a camera_values <<<"$camera_line"
 [[ "${#camera_values[@]}" -eq 8 ]] || config_invalid
 
 sleep "$ROTATE_DELAY_SEC"

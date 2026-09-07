@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -132,6 +133,10 @@ FORBIDDEN_CONFIG_CONTRACTS = (
 SIMPLE_ASSIGNMENT = re.compile(
     r"^\s*(?:(?:export|readonly|local)\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$"
 )
+SIMPLE_PRINTF_SUBSTITUTION = re.compile(
+    r"^\$\(\s*(?:command\s+)?printf\s+(?:--\s+)?%s\s+"
+    r"([A-Za-z0-9_./*:+?-]+)\s*\)$"
+)
 PARAMETER_DEFAULT = re.compile(
     r"\$\{([A-Za-z_][A-Za-z0-9_]*):-([^{}]*)\}"
 )
@@ -221,9 +226,205 @@ def normalized_contract_lines(text: str) -> list[str]:
             continue
         name, value = assignment.groups()
         value = value.rstrip(";")
+        printf_substitution = SIMPLE_PRINTF_SUBSTITUTION.fullmatch(value)
+        if printf_substitution is not None:
+            value = printf_substitution.group(1)
         if re.fullmatch(r"[A-Za-z0-9_./*:+?-]+", value):
             constants[name] = value
     return normalized
+
+
+def python_config_read_paths(text: str) -> list[str]:
+    """Return statically-resolved Python JSON reader operands.
+
+    This intentionally models only the small, executable data-flow surface used
+    by deployed camera consumers: constant/path assignments, ``open`` and
+    ``Path.open``/``read_text``, plus direct calls to simple local helpers.
+    Unknown expressions remain unknown instead of being guessed safe or unsafe.
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return []
+
+    functions = {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    reads: list[str] = []
+    active_functions: set[int] = set()
+
+    def call_name(node: ast.AST) -> str:
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            prefix = call_name(node.value)
+            return f"{prefix}.{node.attr}" if prefix else node.attr
+        return ""
+
+    def resolve(node: ast.AST | None, env: dict[str, set[str]]) -> set[str]:
+        if node is None:
+            return set()
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return {node.value}
+        if isinstance(node, ast.Name):
+            return set(env.get(node.id, ()))
+        if isinstance(node, ast.JoinedStr):
+            parts: list[set[str]] = []
+            for value in node.values:
+                if isinstance(value, ast.FormattedValue):
+                    part = resolve(value.value, env)
+                else:
+                    part = resolve(value, env)
+                if not part:
+                    return set()
+                parts.append(part)
+            values = {""}
+            for part in parts:
+                values = {left + right for left in values for right in part}
+            return values
+        if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Div)):
+            left = resolve(node.left, env)
+            right = resolve(node.right, env)
+            if isinstance(node.op, ast.Add):
+                return {a + b for a in left for b in right}
+            return {f"{a.rstrip('/')}/{b.lstrip('/')}" for a in left for b in right}
+        if isinstance(node, ast.Call):
+            name = call_name(node.func)
+            if name in {"Path", "PurePath", "pathlib.Path", "pathlib.PurePath"}:
+                return resolve(node.args[0], env) if node.args else set()
+            if name in {"os.getenv", "os.environ.get", "environ.get"}:
+                if len(node.args) > 1:
+                    return resolve(node.args[1], env)
+                for keyword in node.keywords:
+                    if keyword.arg == "default":
+                        return resolve(keyword.value, env)
+        return set()
+
+    def bind(target: ast.AST, values: set[str], env: dict[str, set[str]]) -> None:
+        if isinstance(target, ast.Name):
+            env[target.id] = set(values)
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            for element in target.elts:
+                bind(element, set(), env)
+
+    def open_mode(call: ast.Call, env: dict[str, set[str]]) -> str | None:
+        mode_node = call.args[1] if len(call.args) > 1 else None
+        for keyword in call.keywords:
+            if keyword.arg == "mode":
+                mode_node = keyword.value
+        modes = resolve(mode_node, env)
+        return next(iter(modes)) if len(modes) == 1 else None
+
+    def analyze_function(
+        function: ast.FunctionDef | ast.AsyncFunctionDef,
+        call: ast.Call | None,
+        outer_env: dict[str, set[str]],
+    ) -> None:
+        identity = id(function)
+        if identity in active_functions:
+            return
+        active_functions.add(identity)
+        local_env = dict(outer_env)
+        parameters = list(function.args.posonlyargs) + list(function.args.args)
+        defaults = [None] * (len(parameters) - len(function.args.defaults)) + list(
+            function.args.defaults
+        )
+        for parameter, default in zip(parameters, defaults, strict=True):
+            local_env[parameter.arg] = resolve(default, outer_env)
+        if call is not None:
+            for parameter, argument in zip(parameters, call.args):
+                local_env[parameter.arg] = resolve(argument, outer_env)
+            keyword_values = {
+                keyword.arg: resolve(keyword.value, outer_env)
+                for keyword in call.keywords
+                if keyword.arg is not None
+            }
+            for parameter in parameters:
+                if parameter.arg in keyword_values:
+                    local_env[parameter.arg] = keyword_values[parameter.arg]
+        analyze_statements(function.body, local_env)
+        active_functions.remove(identity)
+
+    def analyze_expr(node: ast.AST | None, env: dict[str, set[str]]) -> set[str]:
+        if node is None:
+            return set()
+        if isinstance(node, ast.Call):
+            name = call_name(node.func)
+            operand: ast.AST | None = None
+            if name == "open":
+                operand = node.args[0] if node.args else None
+            elif isinstance(node.func, ast.Attribute) and node.func.attr in {
+                "open",
+                "read_text",
+            }:
+                operand = node.func.value
+            if operand is not None:
+                mode = open_mode(node, env)
+                if mode is None or not mode.startswith(("w", "a", "x")):
+                    paths = resolve(operand, env)
+                    reads.extend(paths)
+                    for argument in node.args:
+                        analyze_expr(argument, env)
+                    for keyword in node.keywords:
+                        analyze_expr(keyword.value, env)
+                    return paths
+
+            helper = functions.get(name) if isinstance(node.func, ast.Name) else None
+            if helper is not None:
+                analyze_function(helper, node, env)
+            analyze_expr(node.func, env)
+            for argument in node.args:
+                analyze_expr(argument, env)
+            for keyword in node.keywords:
+                analyze_expr(keyword.value, env)
+        else:
+            for child in ast.iter_child_nodes(node):
+                analyze_expr(child, env)
+        return resolve(node, env)
+
+    def analyze_statements(
+        statements: list[ast.stmt], env: dict[str, set[str]]
+    ) -> None:
+        for statement in statements:
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+                value = analyze_expr(statement.value, env)
+                targets = statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+                for target in targets:
+                    bind(target, value, env)
+            elif isinstance(statement, ast.With):
+                scoped = dict(env)
+                for item in statement.items:
+                    value = analyze_expr(item.context_expr, scoped)
+                    if item.optional_vars is not None:
+                        bind(item.optional_vars, value, scoped)
+                analyze_statements(statement.body, scoped)
+            elif isinstance(statement, ast.If):
+                analyze_expr(statement.test, env)
+                analyze_statements(statement.body, dict(env))
+                analyze_statements(statement.orelse, dict(env))
+            elif isinstance(statement, (ast.For, ast.AsyncFor)):
+                analyze_expr(statement.iter, env)
+                analyze_statements(statement.body, dict(env))
+                analyze_statements(statement.orelse, dict(env))
+            elif isinstance(statement, ast.Try):
+                analyze_statements(statement.body, dict(env))
+                for handler in statement.handlers:
+                    analyze_statements(handler.body, dict(env))
+                analyze_statements(statement.orelse, dict(env))
+                analyze_statements(statement.finalbody, dict(env))
+            else:
+                for child in ast.iter_child_nodes(statement):
+                    analyze_expr(child, env)
+
+    globals_env: dict[str, set[str]] = {}
+    analyze_statements(tree.body, globals_env)
+    for function in functions.values():
+        analyze_function(function, None, globals_env)
+    return list(dict.fromkeys(reads))
 
 
 def logical_config_read_lines(text: str, lines: list[str]) -> list[str]:
@@ -299,6 +500,15 @@ def runtime_boundary_violations(
             if allow_source and path.startswith("/root/shared_v/"):
                 continue
             violations.append(f"alternate config read: {path}")
+
+    for path in python_config_read_paths(text):
+        if not path.startswith("/") or not path.endswith(".json"):
+            continue
+        if path == RUNTIME_PATH:
+            continue
+        if allow_source and path.startswith("/root/shared_v/"):
+            continue
+        violations.append(f"alternate config read: {path}")
 
     return list(dict.fromkeys(violations))
 
@@ -504,6 +714,39 @@ jq -e '
   | type == "object"
   and (.app | type == "string")
 ' "$ACTUAL_CONFIG"
+''',
+            "alternate config read:",
+        ),
+        (
+            "Path.open data flow cannot hide an alternate JSON read",
+            f'''\
+from pathlib import Path
+import json
+PIM_CAMERA_RUNTIME_JSON = "{RUNTIME_PATH}"
+actual = Path("/etc/pim/camera.json")
+with actual.open(encoding="utf-8") as stream:
+    json.load(stream)
+''',
+            "alternate config read:",
+        ),
+        (
+            "helper parameter flow cannot hide an alternate JSON read",
+            f'''\
+import json
+PIM_CAMERA_RUNTIME_JSON = "{RUNTIME_PATH}"
+def load(path):
+    with open(path, encoding="utf-8") as stream:
+        return json.load(stream)
+load("/etc/pim/camera.json")
+''',
+            "alternate config read:",
+        ),
+        (
+            "command substitution cannot hide an alternate JSON read",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="${{PIM_CAMERA_RUNTIME_JSON:-{RUNTIME_PATH}}}"
+ACTUAL_CONFIG=$(printf %s /etc/pim/camera.json)
+jq -r '.VHL_CAM.app' "$ACTUAL_CONFIG"
 ''',
             "alternate config read:",
         ),

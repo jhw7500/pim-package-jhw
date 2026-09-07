@@ -2,6 +2,29 @@
 
 # Tests may override one file, but consumers never select a source directory.
 PIM_CAMERA_RUNTIME_JSON="${PIM_CAMERA_RUNTIME_JSON:-/run/pim-camera/config/pim_runtime.json}"
+PIM_CAMERA_RUNTIME_SNAPSHOT=""
+PIM_CAMERA_RUNTIME_SNAPSHOT_FD=""
+PIM_CAMERA_RUNTIME_CAPTURE_FAILED=0
+
+if [[ -e "$PIM_CAMERA_RUNTIME_JSON" ]]; then
+    runtime_snapshot_file=$(mktemp "${TMPDIR:-/tmp}/pim-camera-runtime.XXXXXX") || \
+        PIM_CAMERA_RUNTIME_CAPTURE_FAILED=1
+    if [[ "$PIM_CAMERA_RUNTIME_CAPTURE_FAILED" -eq 0 ]]; then
+        if ! cat -- "$PIM_CAMERA_RUNTIME_JSON" > "$runtime_snapshot_file"; then
+            rm -f -- "$runtime_snapshot_file"
+            PIM_CAMERA_RUNTIME_CAPTURE_FAILED=1
+        else
+            chmod 400 "$runtime_snapshot_file"
+            if exec {PIM_CAMERA_RUNTIME_SNAPSHOT_FD}<"$runtime_snapshot_file"; then
+                PIM_CAMERA_RUNTIME_SNAPSHOT="/proc/$$/fd/$PIM_CAMERA_RUNTIME_SNAPSHOT_FD"
+            else
+                PIM_CAMERA_RUNTIME_CAPTURE_FAILED=1
+            fi
+            rm -f -- "$runtime_snapshot_file"
+        fi
+    fi
+    unset runtime_snapshot_file
+fi
 
 validate_camera_runtime() {
     local file=$1
@@ -16,8 +39,10 @@ validate_camera_runtime() {
 }
 
 find_edgeconf_file() {
-    validate_camera_runtime "$PIM_CAMERA_RUNTIME_JSON" || return 1
-    printf '%s\n' "$PIM_CAMERA_RUNTIME_JSON"
+    [[ "$PIM_CAMERA_RUNTIME_CAPTURE_FAILED" -eq 0 ]] || return 1
+    [[ -n "$PIM_CAMERA_RUNTIME_SNAPSHOT" ]] || return 1
+    validate_camera_runtime "$PIM_CAMERA_RUNTIME_SNAPSHOT" || return 1
+    printf '%s\n' "$PIM_CAMERA_RUNTIME_SNAPSHOT"
 }
 
 channel_alias_addr() {
@@ -100,10 +125,13 @@ resolve_channel_context() {
     RESOLVE_SOURCE=""
     MODE=""
 
-    if [[ -e "$PIM_CAMERA_RUNTIME_JSON" ]]; then
-        validate_camera_runtime "$PIM_CAMERA_RUNTIME_JSON" || \
+    if [[ "$PIM_CAMERA_RUNTIME_CAPTURE_FAILED" -ne 0 ]]; then
+        die "CONFIG_INVALID: $PIM_CAMERA_RUNTIME_JSON"
+    fi
+    if [[ -n "$PIM_CAMERA_RUNTIME_SNAPSHOT" ]]; then
+        validate_camera_runtime "$PIM_CAMERA_RUNTIME_SNAPSHOT" || \
             die "CONFIG_INVALID: $PIM_CAMERA_RUNTIME_JSON"
-        EDGECONF_FILE="$PIM_CAMERA_RUNTIME_JSON"
+        EDGECONF_FILE="$PIM_CAMERA_RUNTIME_SNAPSHOT"
         MODE=$(detect_mode_from_config "$CHANNEL" "$EDGECONF_FILE" 2>/dev/null || true)
         if [[ -n "$MODE" ]]; then
             RESOLVE_SOURCE="edgeconf"

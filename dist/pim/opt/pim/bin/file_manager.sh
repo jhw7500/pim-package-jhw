@@ -20,21 +20,21 @@ config_invalid() {
 }
 
 command -v jq >/dev/null 2>&1 || config_invalid
-jq -e '
-    type == "object" and
-    (.VHL_CAM | type == "object") and
-    (.ORD | type == "object") and
-    (.VCM | type == "object") and
-    ((.VHL_CAM.vhl_name // "") | type == "string")
-' "$PIM_CAMERA_RUNTIME_JSON" >/dev/null 2>&1 || config_invalid
-
-VHL_NAME=$(jq -r '(.VHL_CAM.vhl_name // "")' "$PIM_CAMERA_RUNTIME_JSON")
+runtime_json=$(<"$PIM_CAMERA_RUNTIME_JSON") || config_invalid
+VHL_NAME=$(jq -er '
+    if type == "object" and
+       (.VHL_CAM | type) == "object" and
+       (.ORD | type) == "object" and
+       (.VCM | type) == "object" and
+       ((.VHL_CAM.vhl_name // "") | type) == "string"
+    then (.VHL_CAM.vhl_name // "") else error("invalid camera runtime") end
+' <<<"$runtime_json") || config_invalid
 if [[ -n "$VHL_NAME" ]]; then
     KEY="$VHL_NAME"
 fi
 
-if [[ -z "$KEY" ]]; then
-    logger -p local0.err "[$tag:$LINENO] CONFIG_INVALID: empty effective file key" 2>/dev/null
+if [[ "$KEY" == "." || "$KEY" == ".." || ! "$KEY" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    logger -p local0.err "[$tag:$LINENO] CONFIG_INVALID: unsafe effective file key" 2>/dev/null
     exit 64
 fi
 
@@ -45,6 +45,7 @@ if [[ ! -d "$INPUT_PATH" ]]; then
     logger -p local0.crit "[$tag:$LINENO] failed : $INPUT_PATH is not directory"
     exit 1
 fi
+INPUT_PATH=$(realpath -e -- "$INPUT_PATH") || exit 1
 
 if [[ "$LIMIT" -le 1 ]]; then
     logger -p local0.crit "[$tag:$LINENO] failed : LIMIT:$LIMIT greater than 1"
@@ -58,7 +59,10 @@ collect_matching_files() {
     MATCHING_FILES=()
     local candidate
     for candidate in "$INPUT_PATH"/"$KEY"*; do
-        [[ -f "$candidate" ]] && MATCHING_FILES+=("$candidate")
+        [[ -f "$candidate" ]] || continue
+        candidate=$(realpath -m -- "$candidate") || config_invalid
+        [[ "$(dirname -- "$candidate")" == "$INPUT_PATH" ]] || config_invalid
+        MATCHING_FILES+=("$candidate")
     done
 }
 

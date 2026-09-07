@@ -61,6 +61,18 @@ case "$cmd" in
         exit 0
         ;;
     sleep)
+        if [ -n "${PIM_TEST_KILL_PARENT_AFTER_SLEEPS:-}" ]; then
+            sleep_count=0
+            if [ -f "$PIM_TEST_SLEEP_COUNT_FILE" ]; then
+                read -r sleep_count < "$PIM_TEST_SLEEP_COUNT_FILE"
+            fi
+            sleep_count=$((sleep_count + 1))
+            printf '%s\n' "$sleep_count" > "$PIM_TEST_SLEEP_COUNT_FILE"
+            if [ "$sleep_count" -ge "$PIM_TEST_KILL_PARENT_AFTER_SLEEPS" ]; then
+                kill -TERM "$PPID"
+                exit 0
+            fi
+        fi
         if [ "${1:-}" = 60 ] && [ "${PIM_TEST_REMOVE_DURING_BACKOFF:-0}" = 1 ]; then
             rm -rf -- "$PIM_SD_PRESENT_PATH"
             : > "${PIM_SD_PRESENT_PATH}.removed"
@@ -75,14 +87,30 @@ case "$cmd" in
         ;;
     systemctl)
         case "${1:-}" in
-            is-active) printf '%s\n' "${PIM_TEST_CAM_ACTIVE:-active}"; exit 0 ;;
+            is-active)
+                if [ "${PIM_TEST_TRACK_CAM_STATE:-0}" = 1 ]; then
+                    cat "$PIM_TEST_CAM_STATE_FILE"
+                else
+                    printf '%s\n' "${PIM_TEST_CAM_ACTIVE:-active}"
+                fi
+                exit 0
+                ;;
             is-enabled) printf '%s\n' "${PIM_TEST_CAM_ENABLED:-enabled}"; exit 0 ;;
-            stop) exit "${PIM_TEST_STOP_RC:-0}" ;;
+            stop)
+                stop_rc=${PIM_TEST_STOP_RC:-0}
+                if [ "$stop_rc" -eq 0 ] && [ "${PIM_TEST_TRACK_CAM_STATE:-0}" = 1 ] && [ "${2:-}" = cam-operate ]; then
+                    printf 'inactive\n' > "$PIM_TEST_CAM_STATE_FILE"
+                fi
+                exit "$stop_rc"
+                ;;
             start|restart) exit 0 ;;
         esac
         exit 0
         ;;
     umount)
+        if [ "${PIM_TEST_TRACK_CAM_STATE:-0}" = 1 ] && [ "$(cat "$PIM_TEST_CAM_STATE_FILE")" = active ]; then
+            printf 'writer-active-at-unmount\n' >> "$PIM_TEST_EVENT_LOG"
+        fi
         if [ -n "${PIM_SD_PROC_MOUNTS:-}" ]; then : > "$PIM_SD_PROC_MOUNTS"; fi
         exit "${PIM_TEST_UMOUNT_RC:-0}"
         ;;
@@ -155,7 +183,21 @@ exit 97
             "printf 'jq' >> \"$PIM_TEST_EVENT_LOG\"\n"
             "for arg in \"$@\"; do printf ' <%s>' \"$arg\" >> \"$PIM_TEST_EVENT_LOG\"; done\n"
             "printf '\\n' >> \"$PIM_TEST_EVENT_LOG\"\n"
-            f"exec {self.real_jq} \"$@\"\n",
+            "if [ -z \"${PIM_TEST_JQ_SWAP_FILE:-}\" ]; then\n"
+            f"    exec {self.real_jq} \"$@\"\n"
+            "fi\n"
+            f"{self.real_jq} \"$@\"\n"
+            "jq_rc=$?\n"
+            "swap_count=0\n"
+            "if [ -f \"$PIM_TEST_JQ_SWAP_COUNT_FILE\" ]; then\n"
+            "    read -r swap_count < \"$PIM_TEST_JQ_SWAP_COUNT_FILE\"\n"
+            "fi\n"
+            "swap_count=$((swap_count + 1))\n"
+            "printf '%s\\n' \"$swap_count\" > \"$PIM_TEST_JQ_SWAP_COUNT_FILE\"\n"
+            "if [ \"$swap_count\" -eq 1 ]; then\n"
+            "    mv -f -- \"$PIM_TEST_JQ_SWAP_FILE\" \"$PIM_CAMERA_RUNTIME_JSON\"\n"
+            "fi\n"
+            "exit \"$jq_rc\"\n",
             encoding="utf-8",
         )
         jq.chmod(0o755)
@@ -170,6 +212,8 @@ exit 97
         present.mkdir()
         sys_ro = root / "sd-ro"
         sys_ro.write_text("0\n", encoding="utf-8")
+        cam_state = root / "cam-operate.state"
+        cam_state.write_text("active\n", encoding="utf-8")
         fake_bin = self.fake_bin(root)
         return {
             **os.environ,
@@ -194,6 +238,24 @@ exit 97
             "PIM_NCSFTP_TRANSFER_PATH": str(root / "sd-mount"),
             "PIM_TEST_CAM_ACTIVE": "active",
             "PIM_TEST_CAM_ENABLED": "enabled",
+            "PIM_TEST_CAM_STATE_FILE": str(cam_state),
+        }
+
+    def swap_env(
+        self,
+        root: Path,
+        env: Mapping[str, str],
+        name: str,
+        replacement: Mapping[str, object],
+    ) -> dict[str, str]:
+        replacement_path = root / f"{name}.replacement.json"
+        count_path = root / f"{name}.jq-count"
+        self.write_json(replacement_path, replacement)
+        count_path.unlink(missing_ok=True)
+        return {
+            **env,
+            "PIM_TEST_JQ_SWAP_FILE": str(replacement_path),
+            "PIM_TEST_JQ_SWAP_COUNT_FILE": str(count_path),
         }
 
     @staticmethod
@@ -278,14 +340,24 @@ exit 97
                 Path(env["PIM_CAMERA_RUNTIME_JSON"]),
                 runtime_document(tmp_path="/dev/shm"),
             )
-            result = self.run_script(BIN / "sd_mount_stop.sh", root, env)
+            Path(env["PIM_TEST_CAM_STATE_FILE"]).write_text(
+                "active\n", encoding="utf-8"
+            )
+            tracked_env = {**env, "PIM_TEST_TRACK_CAM_STATE": "1"}
+            result = self.run_script(
+                BIN / "sd_mount_stop.sh", root, tracked_env
+            )
+            stop_at = self.event_index(env, "systemctl <stop> <cam-operate>")
+            unmount_at = self.event_index(env, f"umount <{env['PIM_SD_DEVICE']}>")
             self.check(
                 result.returncode == 0
-                and "systemctl <stop> <cam-operate>" not in self.events(env)
+                and stop_at >= 0
+                and unmount_at > stop_at
+                and "writer-active-at-unmount" not in self.events(env)
                 and self.command_lines(env, "umount")
                 == [f"umount <{env['PIM_SD_DEVICE']}>"]
                 and not Path(env["PIM_SD_MOUNT_FLAG"]).exists(),
-                "valid non-SD runtime avoids an unnecessary camera stop",
+                "active cached writer stops before unmount despite current non-SD runtime",
             )
 
             self.clear_events(env)
@@ -321,13 +393,24 @@ exit 97
 
             self.clear_events(env)
             Path(env["PIM_SD_MOUNT_FLAG"]).write_text("1\n", encoding="utf-8")
-            failed_env = {**env, "PIM_TEST_STOP_RC": "42"}
+            Path(env["PIM_TEST_CAM_STATE_FILE"]).write_text(
+                "active\n", encoding="utf-8"
+            )
+            self.write_json(
+                Path(env["PIM_CAMERA_RUNTIME_JSON"]),
+                runtime_document(tmp_path="/dev/shm"),
+            )
+            failed_env = {
+                **env,
+                "PIM_TEST_TRACK_CAM_STATE": "1",
+                "PIM_TEST_STOP_RC": "42",
+            }
             result = self.run_script(BIN / "sd_mount_stop.sh", root, failed_env)
             self.check(
                 result.returncode == 42
                 and not self.command_lines(env, "umount")
                 and Path(env["PIM_SD_MOUNT_FLAG"]).exists(),
-                "camera stop failure propagates exactly and blocks unmount",
+                "cached-writer stop failure propagates exactly and blocks unmount",
             )
 
             self.clear_events(env)
@@ -756,6 +839,360 @@ exit 97
                 "empty file-check exits its bounded iteration without transfer",
             )
 
+    def runtime_atomic_swap_test(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="runtime-atomic-swap.") as raw:
+            root = Path(raw)
+            env = self.base_env(root)
+            runtime_path = Path(env["PIM_CAMERA_RUNTIME_JSON"])
+
+            bg_original = runtime_document(
+                i2c2={"ch0": {"enable": True}, "ch1": {"enable": True}},
+                i2c1={"ch2": {"enable": True}, "ch3": {"enable": True}},
+                vhl_name="atomic-a",
+                tmp_path="/dev/shm",
+                muxer="mp4",
+            )
+            bg_replacement = runtime_document(
+                i2c2={"ch0": {"enable": False}, "ch1": {"enable": False}},
+                i2c1={"ch2": {"enable": False}, "ch3": {"enable": False}},
+                vhl_name="atomic-b",
+                tmp_path="/dev/shm",
+                muxer="mkv",
+            )
+            self.write_json(runtime_path, bg_original)
+            bg_env = self.swap_env(root, env, "bg", bg_replacement)
+            bg_env_file = root / "bg-env.sh"
+            bg_env_file.write_text(
+                """source() {
+    case "$1" in
+        */cam_state.sh)
+            cam_state_init() { :; }
+            cam_channel_error() { :; }
+            ;;
+        */cam_start_policy.sh)
+            cam_policy_camera_startup_grace_sec() { printf '25\\n'; }
+            cam_in_startup_grace() { return 1; }
+            ;;
+        *) builtin source "$@" ;;
+    esac
+}
+""",
+                encoding="utf-8",
+            )
+            bg_bin = root / "bg-bin"
+            bg_bin.mkdir()
+            for command in ("rm", "touch"):
+                stub = bg_bin / command
+                stub.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+                stub.chmod(0o755)
+            bg_env.update(
+                {
+                    "BASH_ENV": str(bg_env_file),
+                    "PATH": f"{bg_bin}:{bg_env['PATH']}",
+                    "PIM_TEST_KILL_PARENT_AFTER_SLEEPS": "2",
+                    "PIM_TEST_SLEEP_COUNT_FILE": str(root / "bg-sleep-count"),
+                }
+            )
+            self.clear_events(env)
+            self.run_script(BIN / "BG_Check_for_pim.sh", root, bg_env, ("0",))
+            self.check(
+                "BG check loop start(ch0:1, ch1:1, ch2:1, ch3:1)"
+                in self.events(env),
+                "BG checker uses one immutable runtime snapshot across validation and extraction",
+            )
+
+            channel_original = runtime_document(
+                i2c2={"ch0": {"enable": True}, "ch1": {"enable": True}},
+                i2c1={"ch2": {"enable": False}, "ch3": {"enable": False}},
+            )
+            channel_replacement = runtime_document(
+                i2c2={"ch0": {"enable": True}, "ch1": {"enable": False}},
+                i2c1={"ch2": {"enable": False}, "ch3": {"enable": False}},
+            )
+            self.write_json(runtime_path, channel_original)
+            channel_env = self.swap_env(
+                root, env, "channel", channel_replacement
+            )
+            result = subprocess.run(
+                [
+                    "/usr/bin/bash",
+                    "-c",
+                    'source "$1"; resolve_channel_context 0; printf "%s %s %s\\n" "$MODE" "$AP_ADDR" "$RESOLVE_SOURCE"',
+                    "atomic-channel",
+                    str(BIN / "cam_channel_resolve.sh"),
+                ],
+                env=channel_env,
+                text=True,
+                capture_output=True,
+                timeout=1.5,
+                check=False,
+            )
+            self.check(
+                result.returncode == 0
+                and result.stdout.strip() == "dual 0x11 edgeconf",
+                "channel resolver uses one immutable runtime snapshot per resolution",
+            )
+
+            self.write_json(runtime_path, channel_original)
+            result = subprocess.run(
+                [
+                    "/usr/bin/bash",
+                    "-c",
+                    'die() { exit 70; }; source "$1"; '
+                    'resolve_channel_context 0; first="$MODE $AP_ADDR $RESOLVE_SOURCE"; '
+                    'resolve_channel_context 1; printf "%s|%s %s %s\\n" '
+                    '"$first" "$MODE" "$AP_ADDR" "$RESOLVE_SOURCE"',
+                    "atomic-channel-multiple",
+                    str(BIN / "cam_channel_resolve.sh"),
+                ],
+                env=env,
+                text=True,
+                capture_output=True,
+                timeout=1.5,
+                check=False,
+            )
+            self.check(
+                result.returncode == 0
+                and result.stdout.strip()
+                == "dual 0x11 edgeconf|dual 0x12 edgeconf",
+                "channel snapshot survives multiple resolutions in one consumer invocation",
+            )
+
+            recording = root / "atomic-recording"
+            recording.mkdir()
+            then = time.time() - 60
+            for index in range(3):
+                for prefix in ("atomic-a", "atomic-b"):
+                    path = recording / f"{prefix}_{index}.mp4"
+                    path.write_text(prefix, encoding="utf-8")
+                    os.utime(path, (then + index, then + index))
+            self.write_json(
+                runtime_path, runtime_document(vhl_name="atomic-a")
+            )
+            file_env = self.swap_env(
+                root,
+                env,
+                "file-manager",
+                runtime_document(vhl_name="atomic-b"),
+            )
+            result = self.run_script(
+                BIN / "file_manager.sh",
+                root,
+                file_env,
+                (str(recording), "2", "100", "caller"),
+            )
+            self.check(
+                result.returncode == 0
+                and len(list(recording.glob("atomic-a_*"))) == 2
+                and len(list(recording.glob("atomic-b_*"))) == 3,
+                "file manager retains one runtime VHL value for the invocation",
+            )
+
+            self.clear_events(env)
+            self.write_json(runtime_path, runtime_document(app="atomic-app-a"))
+            cpu_env = self.swap_env(
+                root,
+                {**env, "PIM_TEST_PID": "4242"},
+                "cpu-limit",
+                runtime_document(app="atomic-app-b"),
+            )
+            result = self.run_script(
+                BIN / "cpu_limit.sh", root, cpu_env, ("50",)
+            )
+            self.check(
+                result.returncode == 0
+                and self.command_lines(env, "pgrep")
+                == ["pgrep <-f> <--> <atomic-app-a>"]
+                and self.command_lines(env, "cpulimit")
+                == ["cpulimit <-p> <4242> <-l> <50>"],
+                "CPU limiter retains one runtime app value for the invocation",
+            )
+
+            rotate_original = runtime_document(
+                cam_ch0=True,
+                cam_ch0_rotate=True,
+                cam_ch1=True,
+                cam_ch1_rotate=False,
+                cam_ch2=True,
+                cam_ch2_rotate=True,
+                cam_ch3=True,
+                cam_ch3_rotate=False,
+            )
+            rotate_replacement = runtime_document(
+                cam_ch0=False,
+                cam_ch0_rotate=False,
+                cam_ch1=False,
+                cam_ch1_rotate=False,
+                cam_ch2=False,
+                cam_ch2_rotate=False,
+                cam_ch3=False,
+                cam_ch3_rotate=False,
+            )
+            self.clear_events(env)
+            self.write_json(runtime_path, rotate_original)
+            rotate_env = self.swap_env(
+                root, env, "rotate", rotate_replacement
+            )
+            result = self.run_script(
+                BIN / "cam_rotate_setting.sh", root, rotate_env
+            )
+            expected_writes = [
+                "i2ctransfer <-f> <-y> <-a> <2> <w4@0x11> <0x10> <0x0c> <0x00> <0x03>",
+                "i2ctransfer <-f> <-y> <-a> <2> <w4@0x12> <0x10> <0x0c> <0x00> <0x00>",
+                "i2ctransfer <-f> <-y> <-a> <1> <w4@0x11> <0x10> <0x0c> <0x00> <0x03>",
+                "i2ctransfer <-f> <-y> <-a> <1> <w4@0x12> <0x10> <0x0c> <0x00> <0x00>",
+            ]
+            self.check(
+                result.returncode == 0
+                and self.command_lines(env, "i2ctransfer") == expected_writes,
+                "rotation retains one runtime channel map for the invocation",
+            )
+
+            self.clear_events(env)
+            Path(env["PIM_NCSFTP_FILE_CHECK"]).write_text(
+                "ready\n", encoding="utf-8"
+            )
+            self.write_json(
+                runtime_path,
+                runtime_document(recording_time=7, vhl_name="atomic-a"),
+            )
+            ftp_env = self.swap_env(
+                root,
+                env,
+                "ncsftp",
+                runtime_document(recording_time=9, vhl_name="atomic-b"),
+            )
+            result = self.run_script(BIN / "ncsftp.sh", root, ftp_env)
+            self.check(
+                result.returncode == 0
+                and self.command_lines(env, "date")
+                == ["date <+%Y%m%d_%H%M00> <-d> <7 min ago>"]
+                and self.command_lines(env, "ncftpput")
+                == [
+                    "ncftpput <-u> <jhw> <-p> <jhw> <192.168.1.129> "
+                    "</opt/sda/Downloads> "
+                    f"<{env['PIM_NCSFTP_TRANSFER_PATH']}/atomic-a_20260907_120000*>"
+                ],
+                "FTP consumer retains one runtime time/name pair for the invocation",
+            )
+
+            self.clear_events(env)
+            Path(env["PIM_TEST_CAM_STATE_FILE"]).write_text(
+                "active\n", encoding="utf-8"
+            )
+            Path(env["PIM_SD_MOUNT_FLAG"]).write_text("1\n", encoding="utf-8")
+            self.write_json(
+                runtime_path,
+                runtime_document(tmp_path=env["PIM_SD_MOUNT_DIR"]),
+            )
+            stop_env = self.swap_env(
+                root,
+                {**env, "PIM_TEST_TRACK_CAM_STATE": "1"},
+                "sd-stop",
+                runtime_document(tmp_path="/dev/shm"),
+            )
+            result = self.run_script(BIN / "sd_mount_stop.sh", root, stop_env)
+            stop_at = self.event_index(env, "systemctl <stop> <cam-operate>")
+            unmount_at = self.event_index(
+                env, f"umount <{env['PIM_SD_DEVICE']}>"
+            )
+            self.check(
+                result.returncode == 0
+                and stop_at >= 0
+                and unmount_at > stop_at
+                and "writer-active-at-unmount" not in self.events(env),
+                "SD stop cannot change writer ownership after runtime validation",
+            )
+
+    def vhl_path_safety_test(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="runtime-vhl-path-safety.") as raw:
+            root = Path(raw)
+            env = self.base_env(root)
+            runtime_path = Path(env["PIM_CAMERA_RUNTIME_JSON"])
+            then = time.time() - 60
+            file_cases = (
+                ("runtime traversal", "../escape-runtime", "caller", True),
+                ("runtime wildcard", "wild*runtime", "caller", False),
+                ("runtime control character", "bad\nname", "caller", False),
+                ("caller traversal", "", "../escape-caller", True),
+                ("caller wildcard", "", "call*wild", False),
+                ("caller control character", "", "call\nname", False),
+            )
+            for index, (label, runtime_name, caller_key, escapes_root) in enumerate(
+                file_cases
+            ):
+                recording = root / f"file-case-{index}"
+                recording.mkdir()
+                effective = runtime_name or caller_key
+                prefix = effective.removeprefix("../")
+                candidate_parent = root if escapes_root else recording
+                candidates = []
+                for file_index in range(3):
+                    candidate = candidate_parent / f"{prefix}_{file_index}.mp4"
+                    candidate.write_text(label, encoding="utf-8")
+                    os.utime(
+                        candidate,
+                        (then + file_index, then + file_index),
+                    )
+                    candidates.append(candidate)
+                before = {path: path.read_bytes() for path in candidates}
+                self.write_json(
+                    runtime_path,
+                    runtime_document(vhl_name=runtime_name),
+                )
+                result = self.run_script(
+                    BIN / "file_manager.sh",
+                    root,
+                    env,
+                    (str(recording), "2", "100", caller_key),
+                )
+                after = {
+                    path: path.read_bytes()
+                    for path in candidates
+                    if path.exists()
+                }
+                self.check(
+                    result.returncode == 64 and after == before,
+                    f"file manager rejects {label} with zero deletion",
+                )
+
+            transfer_root = Path(env["PIM_NCSFTP_TRANSFER_PATH"])
+            transfer_root.mkdir(exist_ok=True)
+            ftp_cases = (
+                ("traversal VHL", "../escape-ftp", True),
+                ("wildcard VHL", "ftp*wild", False),
+                ("control-character VHL", "ftp\nname", False),
+            )
+            for index, (label, vhl_name, escapes_root) in enumerate(ftp_cases):
+                prefix = vhl_name.removeprefix("../")
+                candidate_parent = root if escapes_root else transfer_root
+                candidate = (
+                    candidate_parent
+                    / f"{prefix}_20260907_120000_{index}.mp4"
+                )
+                candidate.write_text(label, encoding="utf-8")
+                before = candidate.read_bytes()
+                self.clear_events(env)
+                Path(env["PIM_NCSFTP_FILE_CHECK"]).write_text(
+                    "ready\n", encoding="utf-8"
+                )
+                self.write_json(
+                    runtime_path,
+                    runtime_document(recording_time=7, vhl_name=vhl_name),
+                )
+                result = self.run_script(BIN / "ncsftp.sh", root, env)
+                self.check(
+                    result.returncode == 64
+                    and not self.command_lines(env, "date")
+                    and not self.command_lines(env, "ncftpput")
+                    and candidate.read_bytes() == before
+                    and Path(env["PIM_NCSFTP_FILE_CHECK"]).read_text(
+                        encoding="utf-8"
+                    )
+                    == "ready\n",
+                    f"FTP consumer rejects {label} before date or network access",
+                )
+
     def automount_test(self) -> None:
         with tempfile.TemporaryDirectory(prefix="runtime-automount.") as raw:
             root = Path(raw)
@@ -989,6 +1426,8 @@ exit 97
             "cpu_limit": self.cpu_limit_test,
             "cam_rotate": self.cam_rotate_test,
             "ncsftp": self.ncsftp_test,
+            "runtime_atomic_swap": self.runtime_atomic_swap_test,
+            "vhl_path_safety": self.vhl_path_safety_test,
             "automount": self.automount_test,
             "automount_retry": self.automount_retry_test,
         }

@@ -18,15 +18,16 @@ config_invalid() {
 }
 
 command -v jq >/dev/null 2>&1 || config_invalid
-jq -e '
-    type == "object" and
-    (.VHL_CAM | type == "object") and
-    (.ORD | type == "object") and
-    (.VCM | type == "object") and
-    (.VHL_CAM.app | type == "string" and length > 0)
-' "$PIM_CAMERA_RUNTIME_JSON" >/dev/null 2>&1 || config_invalid
-
-app=$(jq -r '.VHL_CAM.app' "$PIM_CAMERA_RUNTIME_JSON")
+runtime_json=$(<"$PIM_CAMERA_RUNTIME_JSON") || config_invalid
+app=$(jq -er '
+    if type == "object" and
+       (.VHL_CAM | type) == "object" and
+       (.ORD | type) == "object" and
+       (.VCM | type) == "object" and
+       (.VHL_CAM.app | type) == "string" and
+       (.VHL_CAM.app | length) > 0
+    then .VHL_CAM.app else error("invalid camera runtime") end
+' <<<"$runtime_json") || config_invalid
 logger -p local0.notice "[$KEY][$tag:$LINENO] runtime json : $PIM_CAMERA_RUNTIME_JSON"
 
 limit=$1
