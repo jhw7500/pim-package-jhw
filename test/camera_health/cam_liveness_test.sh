@@ -446,7 +446,17 @@ for failure in 1 2 3 4 5; do
         _coc_export_owner_context
         monitor_effects_before=$(monitor_effect_count)
         monitor_liveness_before=$(grep -c '^systemctl:is-active ord-operate.service$' "$PIM_CAMERA_CALL_LOG" || true)
-        expect_rc 0 cam_monitor_control_iteration monitor_config_reload
+        set +e
+        PIM_CAMERA_TEST_MONITOR_ONCE=1 \
+        PIM_CAMERA_TEST_MONITOR_RELOAD_TRACE="$PIM_CAMERA_CALL_LOG" \
+            /usr/bin/timeout 10 bash "$PIM_BIN/chk_cam_operate.sh"
+        daemon_loop_rc=$?
+        set -e
+        daemon_loop_lifecycle=$(jq -r '.lifecycle // empty' "$PIM_CAMERA_RUN_DIR/owner.json")
+        if [ "$daemon_loop_rc" -ne 0 ] || [ "$daemon_loop_lifecycle" != ACTIVE ]; then
+            printf 'ROUND3_RED: daemon_callsite_rc=%s lifecycle=%s\n' "$daemon_loop_rc" "$daemon_loop_lifecycle" >&2
+            fail 'actual daemon monitor callsite did not repair the no-pending partial'
+        fi
         [ "$(jq -r .lifecycle "$PIM_CAMERA_RUN_DIR/owner.json")" = ACTIVE ] || fail 'restarted-loop repair did not restore owner ACTIVE'
         [ "$repair_state_before" = "$(fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail 'restarted-loop repair duplicated counter write'
         [ "$repair_history_before" = "$(fingerprint "$history_file")" ] || fail 'restarted-loop repair duplicated history write'
@@ -454,6 +464,10 @@ for failure in 1 2 3 4 5; do
         [ "$monitor_effects_before" = "$(monitor_effect_count)" ] || fail 'restarted-loop monitor repair created an action or reloaded config'
         [ "$(grep -c '^systemctl:is-active ord-operate.service$' "$PIM_CAMERA_CALL_LOG" || true)" -gt "$monitor_liveness_before" ] || fail 'restarted-loop monitor repair did not make ACTIVE liveness eligible'
         [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] && [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/active.json" ] || fail 'restarted-loop monitor repair created a lease'
+        monitor_effects_before=$(monitor_effect_count)
+        expect_rc 1 cam_monitor_control_iteration monitor_config_reload
+        [ -z "${PIM_CAMERA_MONITOR_WORK_TYPE:-}" ] || fail 'post-repair no-work iteration retained stale work type'
+        [ "$monitor_effects_before" = "$(monitor_effect_count)" ] || fail 'post-repair no-work iteration reused repair work'
         printf 'vcm\n' > "$WORK/procs"
     else
         expect_rc 23 cam_execute_pending_request

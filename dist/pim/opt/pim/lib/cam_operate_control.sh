@@ -491,28 +491,36 @@ cam_execute_pending_request() {
 }
 
 cam_poll_pending_request() {
-    local repair_rc=0
+    local repair_rc=0 active type
+    PIM_CAMERA_POLL_WORK_TYPE=
     _coc_repair_retryable_liveness_gstapp || repair_rc=$?
-    case "$repair_rc" in 0) return 0;; 1) ;; *) return "$repair_rc";; esac
+    case "$repair_rc" in
+        0) PIM_CAMERA_POLL_WORK_TYPE=repair; return 0 ;;
+        1) ;;
+        *) return "$repair_rc" ;;
+    esac
     [ -f "$(_cr_pending_file)" ] || return 1
     cam_request_claim || return $?
+    active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69
+    _cr_request_schema "$active" || return 70
+    _cr_record_owner_matches "$active" || return 69
+    type=$(jq -r .type <<<"$active") || return 70
+    PIM_CAMERA_POLL_WORK_TYPE=$type
     cam_execute_pending_request
 }
 
 cam_monitor_control_iteration() {
     local reload_config=${1:-:} control_rc=0 lifecycle
-    PIM_CAMERA_MONITOR_PENDING_TYPE=
+    PIM_CAMERA_MONITOR_WORK_TYPE=
     PIM_CAMERA_MONITOR_DID_WORK=0
     PIM_CAMERA_MONITOR_STOPPING=0
     PIM_CAMERA_MONITOR_LIVENESS_RC=0
-    if [ -f "$(_cr_pending_file)" ]; then
-        PIM_CAMERA_MONITOR_PENDING_TYPE=$(jq -r '.type // empty' "$(_cr_pending_file)" 2>/dev/null) || return 70
-    fi
     cam_poll_pending_request || control_rc=$?
+    PIM_CAMERA_MONITOR_WORK_TYPE=${PIM_CAMERA_POLL_WORK_TYPE:-}
     case "$control_rc" in
         0)
             PIM_CAMERA_MONITOR_DID_WORK=1
-            if [ "$PIM_CAMERA_MONITOR_PENDING_TYPE" = apply_config ]; then
+            if [ "$PIM_CAMERA_MONITOR_WORK_TYPE" = apply_config ]; then
                 "$reload_config" || return $?
             fi
             ;;

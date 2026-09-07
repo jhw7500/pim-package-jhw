@@ -316,6 +316,45 @@ for mode in projection_changed projection_absent state_corrupt dirty interrupted
     [ "$(count_log action:camera_hard_reset)" -eq 1 ] || fail "$mode did not hard reset"
 done
 
+echo "=== monitor reload follows the actually claimed apply request ==="
+reset_case boot-a
+write_source arrival-base 640 one one one
+cam_daemon_startup "$DAEMON_PID"
+rm -f "$PIM_CAMERA_SOURCE_ROOT/edgeconf_arrival-base.json"
+write_source arrival-new 640 two one one
+: > "$PIM_CAMERA_CALL_LOG"
+reload_calls=0
+reload_observed=
+inject_apply_before_poll=1
+arrival_request_id=
+monitor_reload_from_runtime() {
+    reload_calls=$((reload_calls + 1))
+    reload_observed=$(jq -r '.VHL_CAM.label // empty' "$PIM_CAMERA_RUNTIME_JSON")
+}
+cam_liveness_tick() { :; }
+eval "$(declare -f cam_poll_pending_request | sed '1s/cam_poll_pending_request/cam_poll_pending_request_without_arrival/')"
+cam_poll_pending_request() {
+    if [ "$inject_apply_before_poll" -eq 1 ]; then
+        inject_apply_before_poll=0
+        [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] || fail "arrival race did not enter without pending"
+        arrival_request_id=$(cam_request_submit apply_config test "arrival before poll")
+    fi
+    cam_poll_pending_request_without_arrival
+}
+expect_rc 0 cam_monitor_control_iteration monitor_reload_from_runtime
+executed_type=$(jq -r .type "$PIM_CAMERA_RUN_DIR/recovery/results/$arrival_request_id.json")
+if [ "$reload_calls" -ne 1 ]; then
+    printf 'ROUND3_RED: executed_type=%s reload_calls=%s\n' "$executed_type" "$reload_calls" >&2
+    fail "actually executed apply request did not reload daemon configuration exactly once"
+fi
+jq -e '.type=="apply_config" and .status=="SUCCEEDED" and .rc==0' "$PIM_CAMERA_RUN_DIR/recovery/results/$arrival_request_id.json" >/dev/null || fail "arrival request did not execute successfully"
+[ "${PIM_CAMERA_MONITOR_WORK_TYPE:-}" = apply_config ] || fail "monitor did not expose the actually executed apply type"
+[ "$reload_observed" = arrival-new ] || fail "reload callback observed stale runtime configuration"
+[ ! -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] && [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/active.json" ] || fail "arrival request retained a lease"
+expect_rc 1 cam_monitor_control_iteration monitor_reload_from_runtime
+[ "$reload_calls" -eq 1 ] || fail "no-work iteration reused the prior apply type"
+[ -z "${PIM_CAMERA_MONITOR_WORK_TYPE:-}" ] || fail "no-work iteration retained stale work type"
+
 echo "=== apply validation and owner/lease continuity ==="
 reset_case boot-a
 write_source active 640

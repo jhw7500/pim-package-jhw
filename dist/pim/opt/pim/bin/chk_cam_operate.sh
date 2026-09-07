@@ -1,12 +1,20 @@
 #!/bin/bash
-source /opt/pim/lib/cam_state.sh
-source /opt/pim/lib/cam_start_policy.sh
-source /opt/pim/lib/cam_recovery.sh
-source /opt/pim/lib/cam_recovery_actions.sh
-source /opt/pim/lib/cam_operate_control.sh
-source /opt/pim/lib/cam_liveness.sh
-
-cam_liveness_install_traps
+if [ "${PIM_CAMERA_TEST_MONITOR_ONCE:-0}" = 1 ]; then
+    source "${PIM_LIB:?}/cam_state.sh"
+    source "$PIM_LIB/cam_start_policy.sh"
+    source "$PIM_LIB/cam_recovery.sh"
+    source "$PIM_LIB/cam_recovery_actions.sh"
+    source "$PIM_LIB/cam_operate_control.sh"
+    source "$PIM_LIB/cam_liveness.sh"
+else
+    source /opt/pim/lib/cam_state.sh
+    source /opt/pim/lib/cam_start_policy.sh
+    source /opt/pim/lib/cam_recovery.sh
+    source /opt/pim/lib/cam_recovery_actions.sh
+    source /opt/pim/lib/cam_operate_control.sh
+    source /opt/pim/lib/cam_liveness.sh
+    cam_liveness_install_traps
+fi
 
 tag=$(basename "$0")
 KEY=RST
@@ -1269,6 +1277,7 @@ CheckDiskSpace() {
     return 0
 }
 
+if [ "${PIM_CAMERA_TEST_MONITOR_ONCE:-0}" != 1 ]; then
 logger -p local0.emerg "[$KEY][$tag:$LINENO] cam-operate daemon start : Booting"
 #/opt/pim/bin/automnt_sd_for_emmc_boot.sh /mnt/sd_cam &
 if cam_daemon_startup "$$"; then
@@ -1348,10 +1357,17 @@ if [ ! -d "$final_path" ]; then
 fi
 
 GetConfig_
+else
+    timer=0
+fi
 
 logger -p local0.notice "[$KEY][$tag:$LINENO] ch0:$cam_ch0, ch1:$cam_ch1, ch2:$cam_ch2, ch3:$cam_ch3, srt:$srt_en, time_rec_en:$time_rec_en, vhl_name:$vhl_name, rec_time:$rec_time, rst_time:$rst_time, cap_en:$cap_en, mnt_path:$mnt_path, tmp_path:$tmp_path, sd_tmp_path:$sd_tmp_path, final_path:$final_path, app_delay:$app_delay, camera_startup_grace_sec:$camera_startup_grace_sec, muxer:$muxer, file_check_delay:$file_check_delay file_chk_reboot:$file_chk_reboot"
 
 cam_monitor_reload_config() {
+    if [ "${PIM_CAMERA_TEST_MONITOR_ONCE:-0}" = 1 ]; then
+        [ -z "${PIM_CAMERA_TEST_MONITOR_RELOAD_TRACE:-}" ] || printf 'config-reload\n' >> "$PIM_CAMERA_TEST_MONITOR_RELOAD_TRACE"
+        return 0
+    fi
     GetConfig
     apply_storage_mode_overrides
 }
@@ -1368,7 +1384,8 @@ do
         0) [ "$PIM_CAMERA_MONITOR_DID_WORK" -eq 0 ] || timer=0 ;;
         1) ;;
         *)
-            logger -p local0.err "[$KEY][$tag:$LINENO] pending camera request failed type=$PIM_CAMERA_MONITOR_PENDING_TYPE rc=$request_rc"
+            logger -p local0.err "[$KEY][$tag:$LINENO] pending camera request failed type=$PIM_CAMERA_MONITOR_WORK_TYPE rc=$request_rc"
+            [ "${PIM_CAMERA_TEST_MONITOR_ONCE:-0}" != 1 ] || exit "$request_rc"
             sleep 2
             continue
             ;;
@@ -1379,6 +1396,7 @@ do
     if [ "$liveness_rc" -ne 0 ]; then
         [ "$liveness_rc" -eq 75 ] || logger -p local0.err "[$KEY][$tag:$LINENO] liveness tick failed rc=$liveness_rc"
     fi
+    [ "${PIM_CAMERA_TEST_MONITOR_ONCE:-0}" != 1 ] || exit "$liveness_rc"
 
     if ! cam_validate_runtime "$PIM_CAMERA_RUNTIME_JSON"; then
         logger -p local0.err "[$KEY][$tag:$LINENO] CONFIG_INVALID: runtime validation failed"

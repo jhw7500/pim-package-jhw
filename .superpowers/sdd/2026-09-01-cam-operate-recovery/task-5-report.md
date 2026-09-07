@@ -316,3 +316,109 @@ exact RC propagation, apply-only reload selection, real liveness eligibility,
 same-process/re-export convergence, before-write arithmetic validation,
 normal/result-first/history-first byte preservation, and the no-public-action
 compatibility path. No residual in-scope concern remains.
+
+## Fix round 3
+
+Base/head before this fix is
+`28aaa6f8a6cdd5fe0f9dcc197846ddde5358c6d7`. Before any production edit, the
+two executable regressions produced these exact RED results:
+
+```text
+rtk bash test/camera_health/cam_liveness_test.sh
+exit 1
+ROUND3_RED: daemon_callsite_rc=127 lifecycle=RECOVERING
+FAIL: actual daemon monitor callsite did not repair the no-pending partial
+
+rtk bash test/camera_health/cam_operate_control_test.sh
+exit 1
+ROUND3_RED: executed_type=apply_config reload_calls=0
+FAIL: actually executed apply request did not reload daemon configuration exactly once
+```
+
+The first RED executes the packaged `chk_cam_operate.sh` artifact in a wished-for
+tightly gated single-iteration mode from the exact post-finish partial. At the
+base it cannot select packaged libraries or reach a bounded loop callsite, so
+the fresh process exits 127 and leaves the owner RECOVERING. The second enters
+the monitor iteration with no pending lease, injects a real `apply_config`
+immediately before the real poll/claim, and proves that the request executes
+while the pre-poll empty snapshot suppresses its reload callback.
+
+### Production fix and GREEN behavior
+
+- `chk_cam_operate.sh` has an exact `PIM_CAMERA_TEST_MONITOR_ONCE=1` gate that
+  selects the packaged libraries, skips daemon startup and trap installation,
+  and exits after the real loop callsite's control/liveness decision. With the
+  gate unset, the absolute production libraries, traps, startup, and continuous
+  loop are unchanged. The fresh-process post-finish regression now restores the
+  exact owner to ACTIVE, keeps state/history/result byte-identical, creates no
+  lease or action/config effect, and reaches normal ACTIVE liveness.
+- `cam_poll_pending_request` clears its per-call work type before any work. It
+  reports `repair` only for a successful liveness repair; after a successful
+  claim it reads, schema-validates, and owner-validates the active lease and
+  exposes that claimed type before execution. `cam_monitor_control_iteration`
+  therefore invokes its reload callback exactly once only for the real
+  `apply_config` request that returned success, rather than for a pre-poll
+  pending snapshot. A following no-work call clears both poll and monitor type.
+
+The daemon regression also passed the required mutation check. Temporarily
+wrapping the production `cam_monitor_control_iteration` callsite in a
+`pending.json` existence guard produced the following deterministic failure;
+the mutation was then removed and the same focused test passed:
+
+```text
+rtk bash test/camera_health/cam_liveness_test.sh
+exit 1
+ROUND3_RED: daemon_callsite_rc=0 lifecycle=RECOVERING
+FAIL: actual daemon monitor callsite did not repair the no-pending partial
+
+rtk bash test/camera_health/cam_liveness_test.sh
+exit 0, cam liveness: PASS
+```
+
+The arrival-race GREEN executes a real request submitted from an entry state
+with no pending lease immediately before the real poll. Its terminal result is
+`apply_config`/`SUCCEEDED`/RC0, the callback count is exactly one, and the
+callback reads the newly committed runtime label `arrival-new`. The immediately
+following no-work iteration returns RC1, performs no second reload, and exposes
+no stale work type. The repair-only case likewise performs no reload.
+
+### Final GREEN gates
+
+```text
+rtk bash test/camera_health/cam_liveness_test.sh        exit 0, cam liveness: PASS
+rtk bash test/camera_health/recovery_protocol_test.sh   exit 0, recovery protocol: PASS
+rtk bash test/camera_health/cam_operate_control_test.sh exit 0, cam operate control: PASS
+rtk bash test/camera_health/cam_stop_order_test.sh      exit 0, cam stop order: PASS
+rtk bash test/cam_link/recovery_actions_test.sh         exit 0, recovery actions: PASS
+rtk bash test/cam_link/recovery_actions_safety_test.sh  exit 0, recovery actions safety: PASS
+rtk bash test/cam_link/recovery_launch_safety_test.sh   exit 0, recovery launch safety: PASS
+rtk bash test/cam_link/escalation_test.sh               exit 0, 7 passed / 0 failed
+
+rtk bash test/camera_health/run_all.sh                  exit 0
+rtk bash test/cam_link/run_all.sh -v                    exit 0, all 14 scripts passed
+rtk bash -n <three production and three test files>     exit 0
+rtk shellcheck --severity=error <same six files>        exit 0
+rtk git diff --check                                    exit 0
+```
+
+### Files and self-review
+
+Production changes are limited to
+`dist/pim/opt/pim/bin/chk_cam_operate.sh` and
+`dist/pim/opt/pim/lib/cam_operate_control.sh`. Executable regressions are in
+`test/camera_health/cam_liveness_test.sh` and
+`test/camera_health/cam_operate_control_test.sh`; this report is the fifth
+changed file. No persistent path, schema field, owner, queue, marker, hash,
+generation, source rescan, or Task 6+ consumer migration was added.
+
+The code-review graph was queried before file exploration and updated after
+the final edits. It reports risk 0.60, no affected flow or additional impacted
+file within two hops, and apparent gaps for the newly named shell helpers. It
+does not index the top-level daemon loop/callsite or recognize these executable
+shell regressions, so the actual packaged-script mutation test plus the focused
+and aggregate gates are the authoritative coverage. Final review checked the
+test gate's unset production path, unconditional callsite reachability, exact
+non-benign RC propagation, claimed-active type validation, apply-only exact-once
+reload, repair/no-work stale-type clearing, fresh owner export, immutable
+terminal evidence, lease/effect absence, and ACTIVE liveness eligibility. No
+residual in-scope concern remains.
