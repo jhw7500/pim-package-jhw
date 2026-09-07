@@ -68,6 +68,7 @@ detect_fstype() {
 }
 
 mount_sd() {
+    mount_quarantined=0
     case "$FSTYPE" in
         vfat|fat|fat32|msdos)
             mount -t vfat -o noatime,nodiratime,flush,dirsync,utf8=1,shortname=mixed \
@@ -83,6 +84,14 @@ mount_sd() {
         *)
             logger -p local0.crit "[$KEY][$TAG:$LINENO] $DEVICE fstype is undefined : $FSTYPE"
             reinsert_fail_cnt=$((reinsert_fail_cnt + 1))
+            if [[ "$reinsert_fail_cnt" -ge "$REINSERT_FAIL_MAX" ]]; then
+                logger -p local0.emerg "[$KEY][$TAG:$LINENO] $DEVICE fstype detection failed $reinsert_fail_cnt times. SD card may be damaged. Waiting ${REINSERT_BACKOFF_SEC}s before retry."
+                publish_available 0
+                mnt_state=2
+                mount_quarantined=1
+                sleep "$REINSERT_BACKOFF_SEC"
+                return 1
+            fi
             mount "$DEVICE" "$DIR"
             ;;
     esac
@@ -144,6 +153,9 @@ while true; do
                     logger -p local0.notice "[$KEY][$TAG:$LINENO] $DEVICE fstype : $FSTYPE, mounting to $DIR"
                     mount_sd
                     mount_rc=$?
+                    if [[ "$mount_quarantined" -eq 1 ]]; then
+                        continue
+                    fi
                     mnt_folder=$(awk -v dev="$DEVICE" '$1 == dev {print $2}' "$PROC_MOUNTS")
 
                     if [[ "$mount_rc" -eq 0 && "$mnt_folder" == "$DIR" ]]; then
@@ -167,7 +179,6 @@ while true; do
                     else
                         logger -p local0.err "[$KEY][$TAG:$LINENO] sd mount failed"
                         publish_available 0
-                        reinsert_fail_cnt=$((reinsert_fail_cnt + 1))
                         mnt_state=2
                     fi
                 elif [[ "$mnt_dev" != "$DEVICE" ]]; then

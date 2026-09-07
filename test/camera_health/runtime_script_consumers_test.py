@@ -61,7 +61,13 @@ case "$cmd" in
         exit 0
         ;;
     sleep)
-        if [ "${PIM_TEST_PRESENT_AFTER_SLEEP:-0}" = 1 ] && [ -n "${PIM_SD_PRESENT_PATH:-}" ]; then
+        if [ "${1:-}" = 60 ] && [ "${PIM_TEST_REMOVE_DURING_BACKOFF:-0}" = 1 ]; then
+            rm -rf -- "$PIM_SD_PRESENT_PATH"
+            : > "${PIM_SD_PRESENT_PATH}.removed"
+        elif [ "${1:-}" = 3 ] && [ -f "${PIM_SD_PRESENT_PATH:-}.removed" ]; then
+            mkdir -p "$PIM_SD_PRESENT_PATH"
+            rm -f -- "${PIM_SD_PRESENT_PATH}.removed"
+        elif [ "${PIM_TEST_PRESENT_AFTER_SLEEP:-0}" = 1 ] && [ -n "${PIM_SD_PRESENT_PATH:-}" ]; then
             mkdir -p "$PIM_SD_PRESENT_PATH"
         fi
         /bin/sleep "${PIM_TEST_SLEEP_SEC:-0.02}"
@@ -897,6 +903,84 @@ exit 97
                 "bounded reinsert transition returns to mounted/available state",
             )
 
+    def automount_retry_test(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="runtime-automount-retry.") as raw:
+            root = Path(raw)
+            env = {
+                **self.base_env(root),
+                "PIM_AUTOMOUNT_MAX_ITERATIONS": "12",
+                "PIM_TEST_CAM_ACTIVE": "inactive",
+                "PIM_TEST_MOUNT_RC": "5",
+                "PIM_TEST_SEED_MOUNT": "0",
+            }
+            source = root / "source.json"
+            runtime = Path(env["PIM_CAMERA_RUNTIME_JSON"])
+            source.write_bytes(b"SOURCE-RETRY-SENTINEL\n")
+            runtime.write_bytes(b"RUNTIME-RETRY-SENTINEL\n")
+            source_before = source.read_bytes()
+            runtime_before = runtime.read_bytes()
+            flag = Path(env["PIM_SD_MOUNT_FLAG"])
+
+            known_env = {**env, "PIM_TEST_FSTYPE": "ext4"}
+            result = self.run_script(
+                BIN / "automnt_sd_for_emmc_boot.sh",
+                root,
+                known_env,
+                timeout=3.0,
+            )
+            self.check(
+                result.returncode == 0
+                and len(self.command_lines(env, "mount")) == 6
+                and "sleep <60>" not in self.command_lines(env, "sleep")
+                and flag.read_text(encoding="utf-8").strip() == "0"
+                and source.read_bytes() == source_before
+                and runtime.read_bytes() == runtime_before,
+                "known-fstype failures keep retrying without unknown-fstype quarantine",
+            )
+
+            self.clear_events(env)
+            Path(env["PIM_SD_PROC_MOUNTS"]).write_text("", encoding="utf-8")
+            unknown_env = {**env, "PIM_TEST_FSTYPE": "unknown-fstype"}
+            result = self.run_script(
+                BIN / "automnt_sd_for_emmc_boot.sh",
+                root,
+                unknown_env,
+                timeout=3.0,
+            )
+            self.check(
+                result.returncode == 0
+                and len(self.command_lines(env, "mount")) == 4
+                and self.command_lines(env, "sleep").count("sleep <60>") == 1
+                and flag.read_text(encoding="utf-8").strip() == "0"
+                and source.read_bytes() == source_before
+                and runtime.read_bytes() == runtime_before,
+                "unknown fstype counts once and backs off exactly on the fifth detection",
+            )
+
+            self.clear_events(env)
+            Path(env["PIM_SD_PROC_MOUNTS"]).write_text("", encoding="utf-8")
+            Path(env["PIM_SD_PRESENT_PATH"]).mkdir(exist_ok=True)
+            reset_env = {
+                **unknown_env,
+                "PIM_TEST_REMOVE_DURING_BACKOFF": "1",
+            }
+            result = self.run_script(
+                BIN / "automnt_sd_for_emmc_boot.sh",
+                root,
+                reset_env,
+                timeout=3.0,
+            )
+            self.check(
+                result.returncode == 0
+                and len(self.command_lines(env, "mount")) == 5
+                and self.command_lines(env, "sleep").count("sleep <60>") == 1
+                and Path(env["PIM_SD_PRESENT_PATH"]).is_dir()
+                and flag.read_text(encoding="utf-8").strip() == "0"
+                and source.read_bytes() == source_before
+                and runtime.read_bytes() == runtime_before,
+                "physical removal resets unknown-fstype quarantine for reinsertion retry",
+            )
+
     def run(self, selected: Sequence[str] = ()) -> int:
         print("=== deployed runtime script consumers ===")
         tests = {
@@ -906,6 +990,7 @@ exit 97
             "cam_rotate": self.cam_rotate_test,
             "ncsftp": self.ncsftp_test,
             "automount": self.automount_test,
+            "automount_retry": self.automount_retry_test,
         }
         names = tuple(selected) or tuple(tests)
         unknown = sorted(set(names) - set(tests))

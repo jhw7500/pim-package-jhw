@@ -226,6 +226,48 @@ def normalized_contract_lines(text: str) -> list[str]:
     return normalized
 
 
+def logical_config_read_lines(text: str, lines: list[str]) -> list[str]:
+    """Join shell continuations and quoted spans within the finite input."""
+    logical: list[str] = []
+    command_parts: list[str] = []
+    quote = ""
+    for raw_line, line in zip(text.splitlines(), lines, strict=True):
+        escaped = False
+        code_end = len(raw_line)
+        for index, char in enumerate(raw_line):
+            if quote == "'":
+                if char == "'":
+                    quote = ""
+                continue
+            if escaped:
+                escaped = False
+                continue
+            if char == "\\":
+                escaped = True
+                continue
+            if quote:
+                if char == quote:
+                    quote = ""
+                continue
+            if char in "'\"":
+                quote = char
+            elif char == "#":
+                code_end = index
+                break
+
+        code = raw_line[:code_end].rstrip()
+        trailing_backslashes = len(code) - len(code.rstrip("\\"))
+        continued = trailing_backslashes % 2 == 1
+        command_parts.append(line[:-1].rstrip() if continued else line)
+        if continued or quote:
+            continue
+        logical.append(" ".join(command_parts))
+        command_parts = []
+    if command_parts:
+        logical.append(" ".join(command_parts))
+    return logical
+
+
 def runtime_boundary_violations(
     text: str,
     marker: str,
@@ -247,7 +289,7 @@ def runtime_boundary_violations(
     if not allow_source and "/root/shared_v" in normalized_text:
         violations.append("source-root read")
 
-    for line in lines:
+    for line in logical_config_read_lines(text, lines):
         if CONFIG_READ_CALL.search(line) is None:
             continue
         for match in ABSOLUTE_JSON_INPUT.finditer(line):
@@ -420,6 +462,48 @@ def main() -> int:
 PIM_CAMERA_RUNTIME_JSON="${{PIM_CAMERA_RUNTIME_JSON:-{RUNTIME_PATH}}}"
 ACTUAL_CONFIG=/etc/pim/camera.json
 jq -r '.VHL_CAM.app' "$ACTUAL_CONFIG"
+''',
+            "alternate config read:",
+        ),
+        (
+            "multiline config reader cannot hide an alternate JSON read",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="${{PIM_CAMERA_RUNTIME_JSON:-{RUNTIME_PATH}}}"
+ACTUAL_CONFIG=/etc/pim/camera.json
+jq -r \\
+  .VHL_CAM.app \\
+  "$ACTUAL_CONFIG"
+''',
+            "alternate config read:",
+        ),
+        (
+            "long continued config reader retains alternate operand context",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="${{PIM_CAMERA_RUNTIME_JSON:-{RUNTIME_PATH}}}"
+ACTUAL_CONFIG=/etc/pim/camera.json
+jq -r \\
+  --arg a a \\
+  --arg b b \\
+  --arg c c \\
+  --arg d d \\
+  --arg e e \\
+  --arg f f \\
+  --arg g g \\
+  .VHL_CAM.app \\
+  "$ACTUAL_CONFIG"
+''',
+            "alternate config read:",
+        ),
+        (
+            "quoted multiline jq filter retains alternate operand context",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="${{PIM_CAMERA_RUNTIME_JSON:-{RUNTIME_PATH}}}"
+ACTUAL_CONFIG=/etc/pim/camera.json
+jq -e '
+  .VHL_CAM
+  | type == "object"
+  and (.app | type == "string")
+' "$ACTUAL_CONFIG"
 ''',
             "alternate config read:",
         ),
