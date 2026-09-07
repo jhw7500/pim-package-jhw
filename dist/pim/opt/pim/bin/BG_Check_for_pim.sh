@@ -8,16 +8,28 @@ result=0
 delay=25
 i=0
 # bg_cam_err_streak는 cam_state/streak로 통합됨
-JSON_PREFIX=edgeconf_
-JSON_SUFFIX=.json
-FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' | grep "${JSON_SUFFIX}$" | tail -1 | tr -d '\r\n')
+PIM_CAMERA_RUNTIME_JSON="${PIM_CAMERA_RUNTIME_JSON:-/run/pim-camera/config/pim_runtime.json}"
+
+config_invalid() {
+    logger -p local0.err "[CHK][$tag:$LINENO] CONFIG_INVALID: $PIM_CAMERA_RUNTIME_JSON" 2>/dev/null
+    echo "CONFIG_INVALID: $PIM_CAMERA_RUNTIME_JSON" >&2
+    exit 64
+}
+
+command -v jq >/dev/null 2>&1 || config_invalid
+jq -e '
+    type == "object" and
+    (.VHL_CAM | type == "object") and
+    (.ORD | type == "object") and
+    (.VCM | type == "object")
+' "$PIM_CAMERA_RUNTIME_JSON" >/dev/null 2>&1 || config_invalid
+
+FILE_JSON="$PIM_CAMERA_RUNTIME_JSON"
 #cam_ch0=$(jq '.VHL_CAM.i2c2.ch0.enable' "$FILE_JSON")
 #cam_ch1=$(jq '.VHL_CAM.i2c2.ch1.enable' "$FILE_JSON")
 #cam_ch2=$(jq '.VHL_CAM.i2c1.ch2.enable' "$FILE_JSON")
 #cam_ch3=$(jq '.VHL_CAM.i2c1.ch3.enable' "$FILE_JSON")
-IFS=$'\t' read -r \
-    cam_ch0 cam_ch1 cam_ch2 cam_ch3 vhl_name tmp_path muxer < <(
-    jq -r '[
+runtime_values=$(jq -er '[
         (.VHL_CAM.i2c2.ch0.enable // false),
         (.VHL_CAM.i2c2.ch1.enable // false),
         (.VHL_CAM.i2c1.ch2.enable // false),
@@ -25,8 +37,9 @@ IFS=$'\t' read -r \
         (.VHL_CAM.vhl_name // "VD3001"),
         (.VHL_CAM.tmp_path // "/dev/shm"),
         (.VHL_CAM.muxer // "mp4")
-    ] | @tsv' "$FILE_JSON"
-)
+    ] | @tsv' "$FILE_JSON") || config_invalid
+IFS=$'\t' read -r \
+    cam_ch0 cam_ch1 cam_ch2 cam_ch3 vhl_name tmp_path muxer <<<"$runtime_values"
 unset IFS
 
 if [[ $cam_ch0 == "true" ]]; then
@@ -51,16 +64,11 @@ else
 fi
 cam_ch_bit=$((cam_ch3<<3|cam_ch2<<2|cam_ch1<<1|cam_ch0))
 
-ORD_VCM_JSON="/root/shared_v/ord_vcm_conf.json"
-if [ ! -f "$ORD_VCM_JSON" ]; then
-    ORD_VCM_JSON="/tmp/shared_v/ord_vcm_conf.json"
-fi
-
-camera_startup_grace_sec=$(cam_policy_camera_startup_grace_sec "$ORD_VCM_JSON")
+camera_startup_grace_sec=$(cam_policy_camera_startup_grace_sec "$PIM_CAMERA_RUNTIME_JSON")
 # 기본값 40은 패키지 배포 설정(opt/pim/config/ord_vcm_conf.json)·update_ordvcmconf.sh·
 # chk_cam_operate.sh 와 일치시킨 값이다. 어긋나면 설정 키가 없는 장비에서 두 스크립트가
 # 서로 다른 쿨다운으로 동작한다.
-init_cooldown_sec=$(jq -r '(.ETC.init_cooldown_sec // 40)' "$ORD_VCM_JSON" 2>/dev/null || echo 40)
+init_cooldown_sec=$(jq -r '(.ETC.init_cooldown_sec // 40)' "$PIM_CAMERA_RUNTIME_JSON" 2>/dev/null || echo 40)
 now_ts() { date +%s; }
 read_ts() { [ -f "$1" ] && cat "$1" 2>/dev/null | tr -d '\n' || echo 0; }
 

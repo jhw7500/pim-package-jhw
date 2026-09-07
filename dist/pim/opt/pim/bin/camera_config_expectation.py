@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Resolve /tmp/config into read-only camera stream-domain expectations."""
+"""Resolve the merged camera runtime into stream-domain expectations."""
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import tempfile
@@ -26,7 +25,7 @@ CHANNEL_PATHS = {
 
 
 class ConfigError(ValueError):
-    """The boot snapshot or camera configuration is invalid."""
+    """The current boot identity or merged runtime is invalid."""
 
 
 def load_object(path: Path, label: str) -> Dict[str, Any]:
@@ -37,20 +36,6 @@ def load_object(path: Path, label: str) -> Dict[str, Any]:
     if not isinstance(document, dict):
         raise ConfigError(f"{label} must be an object")
     return document
-
-
-def load_hashed_object(path: Path, label: str) -> Tuple[Dict[str, Any], str]:
-    try:
-        payload = path.read_bytes()
-    except OSError as exc:
-        raise ConfigError(f"{label} unavailable: {path}: {exc}") from exc
-    try:
-        document = json.loads(payload)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ConfigError(f"{label} unavailable: {path}: {exc}") from exc
-    if not isinstance(document, dict):
-        raise ConfigError(f"{label} must be an object")
-    return document, hashlib.sha256(payload).hexdigest()
 
 
 def positive_int(value: object, name: str) -> int:
@@ -74,16 +59,15 @@ def channel_enabled(vhl: Mapping[str, Any], channel: int) -> bool:
 
 
 def resolve_expectation(
-    edgeconf: Mapping[str, Any],
+    runtime: Mapping[str, Any],
     boot_id: str,
-    current_hash: str,
-    import_hash: str,
     source_path: Path,
     observed_monotonic_ms: int,
 ) -> Dict[str, Any]:
-    vhl = edgeconf.get("VHL_CAM")
-    if not isinstance(vhl, dict):
-        raise ConfigError("edgeconf requires object VHL_CAM")
+    for section in ("VHL_CAM", "ORD", "VCM"):
+        if not isinstance(runtime.get(section), dict):
+            raise ConfigError(f"runtime requires object {section}")
+    vhl = runtime["VHL_CAM"]
     width = positive_int(vhl.get("cam_width"), "VHL_CAM.cam_width")
     height = positive_int(vhl.get("cam_height"), "VHL_CAM.cam_height")
     fps = positive_int(vhl.get("fps"), "VHL_CAM.fps")
@@ -135,9 +119,6 @@ def resolve_expectation(
         "boot_id": boot_id,
         "observed_monotonic_ms": observed_monotonic_ms,
         "source": str(source_path),
-        "config_sha256": current_hash,
-        "boot_import_sha256": import_hash,
-        "runtime_override": current_hash != import_hash,
         "configured_channel_mask": configured_mask,
         "stream_mode": stream_mode,
         "sensor_format": {"width": width, "height": height, "fps": fps},
@@ -170,46 +151,30 @@ def atomic_write(path: Path, document: Mapping[str, Any]) -> None:
 
 
 def resolve_from_files(
-    config_dir: Path, boot_id_file: Path, observed_monotonic_ms: int
+    runtime_path: Path, boot_id_file: Path, observed_monotonic_ms: int
 ) -> Dict[str, Any]:
-    boot_id = boot_id_file.read_text(encoding="utf-8").strip()
+    try:
+        boot_id = boot_id_file.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise ConfigError(f"boot ID unavailable: {boot_id_file}: {exc}") from exc
     if not boot_id:
         raise ConfigError("boot ID is empty")
-    ready_path = config_dir / "READY"
-    edge_path = config_dir / "edgeconf_pim.json"
-    ready = load_object(ready_path, "READY")
-    if ready.get("schema") != 1 or ready.get("boot_id") != boot_id:
-        raise ConfigError("READY is missing or belongs to another boot")
-    files = ready.get("files")
-    if not isinstance(files, dict):
-        raise ConfigError("READY.files must be an object")
-    edge_record = files.get("edgeconf_pim")
-    if not isinstance(edge_record, dict):
-        raise ConfigError("READY edgeconf record is missing")
-    import_hash = edge_record.get("sha256")
-    if (
-        not isinstance(import_hash, str)
-        or len(import_hash) != 64
-        or any(char not in "0123456789abcdef" for char in import_hash)
-    ):
-        raise ConfigError("READY edgeconf hash is invalid")
-    # Parse and hash one byte snapshot. An engineer may atomically replace the
-    # runtime JSON while this resolver is running; never label one generation
-    # with another generation's digest.
-    edgeconf, current_hash = load_hashed_object(edge_path, "edgeconf")
+    runtime = load_object(runtime_path, "runtime")
     return resolve_expectation(
-        edgeconf,
+        runtime,
         boot_id,
-        current_hash,
-        import_hash,
-        edge_path,
+        runtime_path,
         observed_monotonic_ms,
     )
 
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config-dir", type=Path, default=Path("/tmp/config"))
+    parser.add_argument(
+        "--runtime-config",
+        type=Path,
+        default=Path("/run/pim-camera/config/pim_runtime.json"),
+    )
     parser.add_argument("--boot-id-file", type=Path, default=Path("/proc/sys/kernel/random/boot_id"))
     parser.add_argument("--output", type=Path, default=Path("/run/pim-camera/config-expectation.json"))
     return parser.parse_args(argv)
@@ -218,7 +183,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
     document = resolve_from_files(
-        args.config_dir,
+        args.runtime_config,
         args.boot_id_file,
         time.monotonic_ns() // 1_000_000,
     )

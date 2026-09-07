@@ -339,7 +339,7 @@ def load_expectation(
     path: Path,
     boot_id: str,
     available_domains: Mapping[str, Set[int]],
-) -> Tuple[Set[str], Dict[str, Any], str, str]:
+) -> Tuple[Set[str], Dict[str, Any], str]:
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -351,6 +351,13 @@ def load_expectation(
     domains = document.get("domains")
     if not isinstance(domains, list):
         raise ProbeError("expectation domains must be an array")
+    sensor_format = document.get("sensor_format")
+    if not isinstance(sensor_format, dict):
+        raise ProbeError("expectation sensor format must be an object")
+    for field in ("width", "height", "fps"):
+        value = sensor_format.get(field)
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise ProbeError(f"expectation sensor {field} must be a positive integer")
     indexed: Dict[str, Any] = {}
     enabled: Set[str] = set()
     for item in domains:
@@ -385,6 +392,19 @@ def load_expectation(
         expected_mask = sum(1 << channel for channel in active_channels)
         if item.get("configured_channel_mask") != expected_mask:
             raise ProbeError(f"invalid configured channel mask for {domain_id}")
+        expected_format = item.get("expected_format")
+        if not isinstance(expected_format, dict):
+            raise ProbeError(f"invalid expected format for {domain_id}")
+        if active_channels:
+            required_format = {
+                "width": sensor_format["width"] * len(active_channels),
+                "height": sensor_format["height"],
+                "fps": sensor_format["fps"],
+            }
+        else:
+            required_format = {"width": 0, "height": 0, "fps": 0}
+        if expected_format != required_format:
+            raise ProbeError(f"inconsistent expected format for {domain_id}")
         indexed[domain_id] = dict(item)
         if enabled_flag:
             enabled.add(domain_id)
@@ -398,9 +418,6 @@ def load_expectation(
     )
     if document.get("configured_channel_mask") != configured_mask:
         raise ProbeError("expectation configured channel mask is inconsistent")
-    config_hash = document.get("config_sha256")
-    if not isinstance(config_hash, str) or re.fullmatch(r"[0-9a-f]{64}", config_hash) is None:
-        raise ProbeError("expectation config hash is invalid")
     enabled_modes = [indexed[domain_id]["mode"] for domain_id in sorted(enabled)]
     if not enabled_modes:
         expected_stream_mode = "unknown"
@@ -413,7 +430,7 @@ def load_expectation(
     stream_mode = document.get("stream_mode")
     if stream_mode != expected_stream_mode:
         raise ProbeError("expectation stream mode is inconsistent")
-    return enabled, indexed, config_hash, stream_mode
+    return enabled, indexed, stream_mode
 
 
 def parse_domains(value: str, available: Set[str]) -> Set[str]:
@@ -455,10 +472,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         raise SystemExit("boot ID is empty")
     explicit_enabled = parse_domains(args.enabled_domains, available)
     expectation_domains: Dict[str, Any] = {}
-    config_hash: Optional[str] = None
     stream_mode: Optional[str] = None
     if args.expectation is not None:
-        expected_enabled, expectation_domains, config_hash, stream_mode = load_expectation(
+        expected_enabled, expectation_domains, stream_mode = load_expectation(
             args.expectation, boot_id, available_domains
         )
         if explicit_enabled and explicit_enabled != expected_enabled:
@@ -499,8 +515,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             now_ms,
             expectation_domains,
         )
-        if config_hash is not None:
-            document["producer_data"]["config_sha256"] = config_hash
         if stream_mode is not None:
             document["stream_mode"] = stream_mode
         atomic_write(args.output, document)

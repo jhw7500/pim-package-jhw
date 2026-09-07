@@ -8,6 +8,7 @@ python3 max9296_package_config_test.py
 python3 max9296_config_migration_test.py
 python3 max9296_package_tools_test.py
 python3 pim_guardian_startup_grace_test.py
+python3 runtime_consumer_path_test.py
 python3 config_expectation_test.py
 python3 runtime_config_test.py
 bash recovery_protocol_test.sh
