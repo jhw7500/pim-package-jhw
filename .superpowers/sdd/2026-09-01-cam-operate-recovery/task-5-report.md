@@ -206,3 +206,113 @@ and aggregate gates above are authoritative. The final diff was reviewed for
 the ten findings, exact rc/provenance, byte preservation, legal lifecycle
 transitions, lock inheritance, timeout stop conditions, lease reconciliation,
 and owner-last removal. No residual in-scope concern remains.
+
+## Fix round 2
+
+Base/head before this fix is
+`63b332f5c32a6d281c8a766af6dcd733efc39cd9`. Before any production edit, the
+two executable regressions produced these exact RED results:
+
+```text
+rtk bash test/camera_health/cam_liveness_test.sh
+exit 1
+test/camera_health/cam_liveness_test.sh: line 29: cam_monitor_control_iteration: command not found
+FAIL: expected rc=0 got=127: cam_monitor_control_iteration monitor_config_reload
+
+rtk bash test/camera_health/recovery_protocol_test.sh
+exit 1
+ROUND2_RED: normal finish expected rc=70 got=0
+ROUND2_RED: result_first finish expected rc=70 got=0
+ROUND2_RED: history_first finish expected rc=70 got=0
+FAIL: 3 finish arithmetic variants accepted impossible attempted count
+```
+
+The first regression executes the wished-for production monitor control
+iteration rather than calling `cam_poll_pending_request` directly. It will
+catch a pending-file gate around the only reconciliation call. The second
+uses a real RUNNING public-action request whose last-action tuple remains
+valid while only cumulative `attempted` changes from 1 to 2; all three finish
+storage orderings currently publish/remove instead of failing before writes.
+
+### Production fix and GREEN behavior
+
+- `cam_monitor_control_iteration` is now the daemon's bounded control decision
+  sequence on every monitor iteration. It calls poll/reconciliation even with
+  no pending lease, treats only RC1 as benign no-work, returns every other
+  nonzero control RC before liveness, and makes ACTIVE liveness eligible after
+  an exact repair. Its apply-config callback is selected only from an existing
+  successful `apply_config` request, so repair-only success cannot call
+  `GetConfig` or reload configuration.
+- The exact post-finish liveness regression drives a real gstApp request to
+  the injected RC70 boundary, then runs that production sequence in both the
+  same exported context and a freshly exported context. Both runs restore
+  only `owner.lifecycle` to ACTIVE: state/history/result fingerprints remain
+  exact, no pending/active lease appears, no action/config-reload is logged,
+  and the real ACTIVE liveness path runs.
+- `_cr_finish_locked` now preflights persistent counter state and strict public
+  history/state arithmetic before its first result/history/active mutation.
+  The invalid normal, result-first, and history-first variants all return 70
+  byte-for-byte. Restoring `attempted=1`, `failed=1`, and
+  `consecutive_failures=1` makes all three paths converge while preserving
+  exact pre-existing result/history bytes and all unrelated fingerprints.
+  Histories without a public action retain the prior counter-free path.
+
+The first camera-health aggregate exposed a test-oracle timing assumption,
+not a production failure: normal finish sampled `_cr_now` once in the fixture
+and the implementation sampled it again at commit, so equality depended on
+both calls occurring in the same wall-clock second. A forced public-API
+boundary probe demonstrated the distinction while preserving the real
+invariant:
+
+```text
+pre_sample=1788753212 actual_result=1788753215 actual_history=1788753215 delta=3
+```
+
+The final oracle remains strict: the committed timestamp must be a positive
+integer no earlier than the fixture sample; terminal history and result must
+have complete identity and the exact same committed timestamp. Result-first
+and history-first additionally retain the precomputed timestamp and their
+byte-for-byte fingerprints. The final focused and aggregate runs below use
+this strengthened deterministic oracle.
+
+### Final GREEN gates
+
+```text
+rtk bash test/camera_health/cam_liveness_test.sh        exit 0, cam liveness: PASS
+rtk bash test/camera_health/recovery_protocol_test.sh   exit 0, recovery protocol: PASS
+rtk bash test/camera_health/cam_operate_control_test.sh exit 0, cam operate control: PASS
+rtk bash test/camera_health/cam_stop_order_test.sh      exit 0, cam stop order: PASS
+rtk bash test/cam_link/recovery_actions_test.sh         exit 0, recovery actions: PASS
+rtk bash test/cam_link/recovery_actions_safety_test.sh  exit 0, recovery actions safety: PASS
+rtk bash test/cam_link/recovery_launch_safety_test.sh   exit 0, recovery launch safety: PASS
+rtk bash test/cam_link/escalation_test.sh               exit 0, 7 passed / 0 failed
+
+rtk bash test/camera_health/run_all.sh                  exit 0
+rtk bash test/cam_link/run_all.sh -v                    exit 0, all 14 scripts passed
+rtk bash -n <three production and two test shell files> exit 0
+rtk shellcheck --severity=error <same five shell files> exit 0
+rtk git diff --check                                    exit 0
+```
+
+### Files and self-review
+
+The production changes are limited to
+`dist/pim/opt/pim/bin/chk_cam_operate.sh`,
+`dist/pim/opt/pim/lib/cam_operate_control.sh`, and
+`dist/pim/opt/pim/lib/cam_recovery.sh`. The two executable regressions are in
+`test/camera_health/cam_liveness_test.sh` and
+`test/camera_health/recovery_protocol_test.sh`; this report is the sixth
+changed file. No persistent path, schema, owner, queue, marker, hash,
+generation, source rescan, or Task 6+ consumer migration was added.
+
+The graph was used before file exploration and incrementally updated after
+the final test edit. It reports 879 nodes and 11,302 edges across 105 files,
+risk 0.40, no affected flow/dependent file within two hops, and three apparent
+test gaps for the newly named shell helpers. It does not model the changed
+top-level Bash functions/control loop as callable entities or discover their
+executable shell coverage, so the complete diff and focused/aggregate gates
+are authoritative. Final review checked unconditional loop reachability,
+exact RC propagation, apply-only reload selection, real liveness eligibility,
+same-process/re-export convergence, before-write arithmetic validation,
+normal/result-first/history-first byte preservation, and the no-public-action
+compatibility path. No residual in-scope concern remains.

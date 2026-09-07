@@ -1351,36 +1351,33 @@ GetConfig_
 
 logger -p local0.notice "[$KEY][$tag:$LINENO] ch0:$cam_ch0, ch1:$cam_ch1, ch2:$cam_ch2, ch3:$cam_ch3, srt:$srt_en, time_rec_en:$time_rec_en, vhl_name:$vhl_name, rec_time:$rec_time, rst_time:$rst_time, cap_en:$cap_en, mnt_path:$mnt_path, tmp_path:$tmp_path, sd_tmp_path:$sd_tmp_path, final_path:$final_path, app_delay:$app_delay, camera_startup_grace_sec:$camera_startup_grace_sec, muxer:$muxer, file_check_delay:$file_check_delay file_chk_reboot:$file_chk_reboot"
 
+cam_monitor_reload_config() {
+    GetConfig
+    apply_storage_mode_overrides
+}
+
 while :
 do
 
     check_num=0
     file_cnt=0
 
-    if [ -f "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ]; then
-        pending_type=$(jq -r '.type // empty' "$PIM_CAMERA_RUN_DIR/recovery/pending.json" 2>/dev/null)
-        if cam_poll_pending_request; then
-            if [ "$pending_type" = apply_config ]; then
-                GetConfig
-                apply_storage_mode_overrides
-            fi
-            timer=0
-        else
-            request_rc=$?
-            logger -p local0.err "[$KEY][$tag:$LINENO] pending camera request failed type=$pending_type rc=$request_rc"
+    request_rc=0
+    cam_monitor_control_iteration cam_monitor_reload_config || request_rc=$?
+    case "$request_rc" in
+        0) [ "$PIM_CAMERA_MONITOR_DID_WORK" -eq 0 ] || timer=0 ;;
+        1) ;;
+        *)
+            logger -p local0.err "[$KEY][$tag:$LINENO] pending camera request failed type=$PIM_CAMERA_MONITOR_PENDING_TYPE rc=$request_rc"
             sleep 2
             continue
-        fi
-    fi
+            ;;
+    esac
 
-    owner_lifecycle=$(jq -r '.lifecycle // empty' "$PIM_CAMERA_RUN_DIR/owner.json" 2>/dev/null) || exit 70
-    [ "$owner_lifecycle" != STOPPING ] || break
-    if [ "$owner_lifecycle" = ACTIVE ]; then
-        liveness_rc=0
-        cam_liveness_tick || liveness_rc=$?
-        if [ "$liveness_rc" -ne 0 ]; then
-            [ "$liveness_rc" -eq 75 ] || logger -p local0.err "[$KEY][$tag:$LINENO] liveness tick failed rc=$liveness_rc"
-        fi
+    [ "$PIM_CAMERA_MONITOR_STOPPING" -eq 0 ] || break
+    liveness_rc=$PIM_CAMERA_MONITOR_LIVENESS_RC
+    if [ "$liveness_rc" -ne 0 ]; then
+        [ "$liveness_rc" -eq 75 ] || logger -p local0.err "[$KEY][$tag:$LINENO] liveness tick failed rc=$liveness_rc"
     fi
 
     if ! cam_validate_runtime "$PIM_CAMERA_RUNTIME_JSON"; then

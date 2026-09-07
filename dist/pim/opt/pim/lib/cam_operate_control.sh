@@ -499,6 +499,35 @@ cam_poll_pending_request() {
     cam_execute_pending_request
 }
 
+cam_monitor_control_iteration() {
+    local reload_config=${1:-:} control_rc=0 lifecycle
+    PIM_CAMERA_MONITOR_PENDING_TYPE=
+    PIM_CAMERA_MONITOR_DID_WORK=0
+    PIM_CAMERA_MONITOR_STOPPING=0
+    PIM_CAMERA_MONITOR_LIVENESS_RC=0
+    if [ -f "$(_cr_pending_file)" ]; then
+        PIM_CAMERA_MONITOR_PENDING_TYPE=$(jq -r '.type // empty' "$(_cr_pending_file)" 2>/dev/null) || return 70
+    fi
+    cam_poll_pending_request || control_rc=$?
+    case "$control_rc" in
+        0)
+            PIM_CAMERA_MONITOR_DID_WORK=1
+            if [ "$PIM_CAMERA_MONITOR_PENDING_TYPE" = apply_config ]; then
+                "$reload_config" || return $?
+            fi
+            ;;
+        1) ;;
+        *) return "$control_rc" ;;
+    esac
+    lifecycle=$(jq -r '.lifecycle // empty' "$(_cr_owner_file)" 2>/dev/null) || return 70
+    if [ "$lifecycle" = STOPPING ]; then
+        PIM_CAMERA_MONITOR_STOPPING=1
+    elif [ "$lifecycle" = ACTIVE ]; then
+        cam_liveness_tick || PIM_CAMERA_MONITOR_LIVENESS_RC=$?
+    fi
+    return "$control_rc"
+}
+
 cam_daemon_begin_stop() {
     cam_owner_set_lifecycle STOPPING
 }

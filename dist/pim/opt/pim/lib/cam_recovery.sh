@@ -885,8 +885,8 @@ _cr_counter_finish_locked() {
 }
 cam_action_counter_finish() { [ $# -eq 4 ] || return 64; _cr_lock_call _cr_counter_finish_locked "$@"; }
 _cr_finish_locked() {
-    local status=$1 rc=$2 active id result terminal history history_request history_next
-    local result_path history_path write_result=1 write_history=1 now
+    local status=$1 rc=$2 active id result terminal history history_request history_next state
+    local result_path history_path write_result=1 write_history=1 now public_count
     _cr_terminal_valid "$status" "$rc" || return 64; _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69
     active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69; _cr_record_owner_matches "$active" || return 69; id=$(jq -r .id <<<"$active")
     result_path=$(_cr_result_file "$id"); history_path=$(_cr_history_file "$id")
@@ -922,7 +922,17 @@ _cr_finish_locked() {
     _cr_terminal_request_valid "$terminal" || return 70
     _cr_terminal_result_valid "$result" "$active" || return 70
     _cr_terminal_request_result_equal "$terminal" "$result" || return 70
-    _cr_terminal_attribution_valid "$history_next" "$terminal" || return 70
+    public_count=$(jq '[.actions[] | select(
+      .action=="gstapp_restart" or .action=="module_reload" or
+      .action=="camera_hard_reset" or .action=="reboot_fallback")]|length' <<<"$history_next") || return 70
+    if [ "$public_count" -gt 0 ]; then
+        state=$(cat "$(_cr_state_file)" 2>/dev/null) || return 70
+        _cr_state_valid <<<"$state" || return 70
+        _cr_terminal_attribution_valid "$history_next" "$terminal" "$state" || return 70
+        _cr_history_public_state_arithmetic_valid "$history_next" "$state" "$id" || return 70
+    else
+        _cr_terminal_attribution_valid "$history_next" "$terminal" || return 70
+    fi
     if [ "$write_result" -eq 1 ]; then
         _cr_mutation_guard "$active" result ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69
         _cr_atomic_write "$result_path" "$result" || return 70

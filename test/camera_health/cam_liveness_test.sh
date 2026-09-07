@@ -39,6 +39,8 @@ force_tick_guard_rc() {
         cam_liveness_tick
     )
 }
+monitor_config_reload() { printf 'config-reload\n' >> "$PIM_CAMERA_CALL_LOG"; }
+monitor_effect_count() { grep -Ec '^(request:|restart:|start:vcm|config-reload$)' "$PIM_CAMERA_CALL_LOG" || true; }
 fake_stat() {
     local start=${1:-111}
     mkdir -p "$PIM_CAMERA_PROC_ROOT/$DAEMON_PID"
@@ -426,21 +428,33 @@ for failure in 1 2 3 4 5; do
         repair_state_before=$(fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")
         repair_history_before=$(fingerprint "$history_file")
         repair_result_before=$(fingerprint "$result_file")
-        expect_rc 0 cam_poll_pending_request
+        printf 'vcm\ngstApp\n' > "$WORK/procs"
+        monitor_effects_before=$(monitor_effect_count)
+        monitor_liveness_before=$(grep -c '^systemctl:is-active ord-operate.service$' "$PIM_CAMERA_CALL_LOG" || true)
+        expect_rc 0 cam_monitor_control_iteration monitor_config_reload
         [ "$(jq -r .lifecycle "$PIM_CAMERA_RUN_DIR/owner.json")" = ACTIVE ] || fail 'same-process next loop did not repair owner ACTIVE'
         [ "$repair_state_before" = "$(fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail 'same-process repair duplicated counter write'
         [ "$repair_history_before" = "$(fingerprint "$history_file")" ] || fail 'same-process repair duplicated history write'
         [ "$repair_result_before" = "$(fingerprint "$result_file")" ] || fail 'same-process repair duplicated result write'
+        [ "$monitor_effects_before" = "$(monitor_effect_count)" ] || fail 'same-process monitor repair created an action or reloaded config'
+        [ "$(grep -c '^systemctl:is-active ord-operate.service$' "$PIM_CAMERA_CALL_LOG" || true)" -gt "$monitor_liveness_before" ] || fail 'same-process monitor repair did not make ACTIVE liveness eligible'
+        [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] && [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/active.json" ] || fail 'same-process monitor repair created a lease'
 
         cam_owner_set_lifecycle RECOVERING
         unset PIM_CAMERA_OWNER_BOOT_ID PIM_CAMERA_OWNER_INVOCATION PIM_CAMERA_OWNER_PID
         unset PIM_CAMERA_OWNER_PROC_START_TIME PIM_CAMERA_OWNER_TOKEN PIM_CAMERA_OWNER_CREATED_AT
         _coc_export_owner_context
-        expect_rc 0 cam_poll_pending_request
+        monitor_effects_before=$(monitor_effect_count)
+        monitor_liveness_before=$(grep -c '^systemctl:is-active ord-operate.service$' "$PIM_CAMERA_CALL_LOG" || true)
+        expect_rc 0 cam_monitor_control_iteration monitor_config_reload
         [ "$(jq -r .lifecycle "$PIM_CAMERA_RUN_DIR/owner.json")" = ACTIVE ] || fail 'restarted-loop repair did not restore owner ACTIVE'
         [ "$repair_state_before" = "$(fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail 'restarted-loop repair duplicated counter write'
         [ "$repair_history_before" = "$(fingerprint "$history_file")" ] || fail 'restarted-loop repair duplicated history write'
         [ "$repair_result_before" = "$(fingerprint "$result_file")" ] || fail 'restarted-loop repair duplicated result write'
+        [ "$monitor_effects_before" = "$(monitor_effect_count)" ] || fail 'restarted-loop monitor repair created an action or reloaded config'
+        [ "$(grep -c '^systemctl:is-active ord-operate.service$' "$PIM_CAMERA_CALL_LOG" || true)" -gt "$monitor_liveness_before" ] || fail 'restarted-loop monitor repair did not make ACTIVE liveness eligible'
+        [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] && [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/active.json" ] || fail 'restarted-loop monitor repair created a lease'
+        printf 'vcm\n' > "$WORK/procs"
     else
         expect_rc 23 cam_execute_pending_request
     fi

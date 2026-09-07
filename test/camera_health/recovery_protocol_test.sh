@@ -94,6 +94,46 @@ assert_terminal_bytes_unchanged() {
     [ "$terminal_runtime_before" = "$(file_fingerprint "$PIM_CAMERA_RUNTIME_JSON")" ] || fail "$label mutated runtime"
     [ "$terminal_call_before" = "$(file_fingerprint "$PIM_CAMERA_CALL_LOG")" ] || fail "$label mutated call log"
 }
+create_finish_arithmetic_fixture() {
+    local variant=$1 active terminal result history
+    reset_protocol_sandbox
+    owner_active
+    mkdir -p "$PIM_CAMERA_STATE_DIR"
+    printf '{"dirty":false,"sentinel":"finish-arithmetic"}\n' > "$PIM_CAMERA_STATE_DIR/service-state.json"
+    printf '{"sentinel":"runtime"}\n' > "$PIM_CAMERA_RUNTIME_JSON"
+    printf 'sentinel:call\n' > "$PIM_CAMERA_CALL_LOG"
+    normal_terminal_id=$(cam_request_submit gstapp_restart test "finish arithmetic")
+    cam_request_claim
+    cam_request_transition QUIESCING
+    cam_request_transition RUNNING
+    cam_action_counter_begin gstapp_restart "$normal_terminal_id"
+    cam_action_counter_finish gstapp_restart "$normal_terminal_id" FAILED 23
+    jq -e --arg id "$normal_terminal_id" '
+      .actions.gstapp_restart == {
+        attempted:1,succeeded:0,failed:1,consecutive_failures:1,
+        last_request_id:$id,last_started_at:.actions.gstapp_restart.last_started_at,
+        last_finished_at:.actions.gstapp_restart.last_finished_at,
+        last_status:"FAILED",last_rc:23
+      }
+    ' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "invalid exact arithmetic fixture"
+    active=$(cat "$PIM_CAMERA_RUN_DIR/recovery/active.json")
+    finish_arithmetic_finished=$(_cr_now)
+    terminal=$(jq -c --argjson finished "$finish_arithmetic_finished" '.status="FAILED" | .rc=23 | .finished_at=$finished' <<<"$active")
+    result=$(jq -c '{id,type,status,rc,source,reason,created_at,finished_at}' <<<"$terminal")
+    case "$variant" in
+        normal) ;;
+        result_first)
+            mkdir -p "$PIM_CAMERA_RUN_DIR/recovery/results"
+            printf '%s\n' "$result" > "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json"
+            ;;
+        history_first)
+            history=$(cat "$PIM_CAMERA_STATE_DIR/recovery/history/$normal_terminal_id.json")
+            jq -c --argjson terminal "$terminal" '.request=$terminal' <<<"$history" > "$WORK/finish-arithmetic.history"
+            mv "$WORK/finish-arithmetic.history" "$PIM_CAMERA_STATE_DIR/recovery/history/$normal_terminal_id.json"
+            ;;
+        *) fail "unknown finish arithmetic variant: $variant" ;;
+    esac
+}
 
 printf 'test-boot-id\n' > "$PIM_CAMERA_BOOT_ID_FILE"
 fake_stat 111
@@ -101,6 +141,57 @@ fake_stat 111
 source "$PIM_LIB/cam_recovery.sh"
 # shellcheck source=/dev/null
 source "$PIM_LIB/cam_operate_control.sh"
+
+echo "=== request finish rejects impossible public-counter arithmetic ==="
+finish_arithmetic_failures=0
+for finish_variant in normal result_first history_first; do
+    create_finish_arithmetic_fixture "$finish_variant"
+    jq '.actions.gstapp_restart.attempted=2' "$PIM_CAMERA_STATE_DIR/recovery/state.json" > "$WORK/finish-arithmetic.state" && mv "$WORK/finish-arithmetic.state" "$PIM_CAMERA_STATE_DIR/recovery/state.json"
+    snapshot_terminal_bytes
+    set +e
+    cam_request_finish FAILED 23
+    finish_arithmetic_rc=$?
+    set -e
+    if [ "$finish_arithmetic_rc" -ne 70 ]; then
+        printf 'ROUND2_RED: %s finish expected rc=70 got=%s\n' "$finish_variant" "$finish_arithmetic_rc" >&2
+        finish_arithmetic_failures=$((finish_arithmetic_failures + 1))
+    else
+        assert_terminal_bytes_unchanged "$finish_variant impossible arithmetic"
+    fi
+done
+[ "$finish_arithmetic_failures" -eq 0 ] || fail "$finish_arithmetic_failures finish arithmetic variants accepted impossible attempted count"
+
+for finish_variant in normal result_first history_first; do
+    create_finish_arithmetic_fixture "$finish_variant"
+    finish_counter_before=$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+    finish_owner_before=$(file_fingerprint "$PIM_CAMERA_RUN_DIR/owner.json")
+    finish_service_before=$(file_fingerprint "$PIM_CAMERA_STATE_DIR/service-state.json")
+    finish_runtime_before=$(file_fingerprint "$PIM_CAMERA_RUNTIME_JSON")
+    finish_call_before=$(file_fingerprint "$PIM_CAMERA_CALL_LOG")
+    finish_result_before=$(file_fingerprint "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json")
+    finish_history_before=$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/history/$normal_terminal_id.json")
+    expect_rc 0 cam_request_finish FAILED 23
+    [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/active.json" ] || fail "$finish_variant exact arithmetic retained active lease"
+    finish_converged=$(jq -r .finished_at "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json")
+    [[ $finish_converged =~ ^[0-9]+$ ]] && [ "$finish_converged" -ge "$finish_arithmetic_finished" ] || fail "$finish_variant exact arithmetic used an invalid terminal timestamp"
+    jq -e --argjson finished "$finish_converged" '.request.status=="FAILED" and .request.rc==23 and .request.finished_at==$finished' "$PIM_CAMERA_STATE_DIR/recovery/history/$normal_terminal_id.json" >/dev/null || fail "$finish_variant exact arithmetic did not converge history"
+    jq -e --argjson finished "$finish_converged" '.status=="FAILED" and .rc==23 and .finished_at==$finished' "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json" >/dev/null || fail "$finish_variant exact arithmetic did not converge result"
+    finish_terminal=$(jq -c .request "$PIM_CAMERA_STATE_DIR/recovery/history/$normal_terminal_id.json")
+    finish_result=$(cat "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json")
+    _cr_terminal_request_result_equal "$finish_terminal" "$finish_result" || fail "$finish_variant exact arithmetic lost terminal/result identity"
+    [ "$finish_counter_before" = "$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail "$finish_variant exact arithmetic rewrote counters"
+    [ "$finish_owner_before" = "$(file_fingerprint "$PIM_CAMERA_RUN_DIR/owner.json")" ] || fail "$finish_variant exact arithmetic rewrote owner"
+    [ "$finish_service_before" = "$(file_fingerprint "$PIM_CAMERA_STATE_DIR/service-state.json")" ] || fail "$finish_variant exact arithmetic rewrote service state"
+    [ "$finish_runtime_before" = "$(file_fingerprint "$PIM_CAMERA_RUNTIME_JSON")" ] || fail "$finish_variant exact arithmetic rewrote runtime"
+    [ "$finish_call_before" = "$(file_fingerprint "$PIM_CAMERA_CALL_LOG")" ] || fail "$finish_variant exact arithmetic rewrote call log"
+    case "$finish_variant" in
+        result_first) [ "$finish_result_before" = "$(file_fingerprint "$PIM_CAMERA_RUN_DIR/recovery/results/$normal_terminal_id.json")" ] || fail "result-first exact arithmetic rewrote result" ;;
+        history_first) [ "$finish_history_before" = "$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/history/$normal_terminal_id.json")" ] || fail "history-first exact arithmetic rewrote history" ;;
+    esac
+    if [ "$finish_variant" != normal ]; then
+        [ "$finish_converged" -eq "$finish_arithmetic_finished" ] || fail "$finish_variant exact arithmetic changed terminal timestamp"
+    fi
+done
 
 echo "=== STARTING recovery transition is private ==="
 reset_protocol_sandbox
