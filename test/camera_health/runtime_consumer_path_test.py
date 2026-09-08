@@ -197,27 +197,28 @@ def strip_inline_comment(line: str) -> str:
 
 
 def remove_shell_continuations(text: str) -> str:
-    """Remove Bash continuations outside single-quoted data in finite input."""
+    """Remove Bash continuations with nested ``$()`` lexical contexts."""
     normalized: list[str] = []
-    quote = ""
-    comment = False
+    quotes = [""]
+    comments = [False]
+    paren_depths = [0]
     index = 0
     while index < len(text):
         char = text[index]
-        if comment:
+        next_char = text[index + 1] if index + 1 < len(text) else ""
+        if comments[-1]:
             normalized.append(char)
             if char == "\n":
-                comment = False
+                comments[-1] = False
             index += 1
             continue
-        if quote == "'":
+        if quotes[-1] == "'":
             normalized.append(char)
             if char == "'":
-                quote = ""
+                quotes[-1] = ""
             index += 1
             continue
         if char == "\\":
-            next_char = text[index + 1] if index + 1 < len(text) else ""
             if next_char == "\n":
                 index += 2
                 continue
@@ -228,16 +229,32 @@ def remove_shell_continuations(text: str) -> str:
             else:
                 index += 1
             continue
-        if quote:
+        if char == "$" and next_char == "(":
+            normalized.extend((char, next_char))
+            quotes.append("")
+            comments.append(False)
+            paren_depths.append(1)
+            index += 2
+            continue
+        if quotes[-1]:
             normalized.append(char)
-            if char == quote:
-                quote = ""
+            if char == quotes[-1]:
+                quotes[-1] = ""
             index += 1
             continue
         if char in "'\"":
-            quote = char
+            quotes[-1] = char
         elif char == "#":
-            comment = True
+            comments[-1] = True
+        elif len(quotes) > 1:
+            if char == "(":
+                paren_depths[-1] += 1
+            elif char == ")":
+                paren_depths[-1] -= 1
+                if paren_depths[-1] == 0:
+                    quotes.pop()
+                    comments.pop()
+                    paren_depths.pop()
         normalized.append(char)
         index += 1
     return "".join(normalized)
@@ -438,7 +455,7 @@ def python_config_read_paths(text: str) -> list[str]:
             name = call_name(node.func)
             operand: ast.AST | None = None
             mode_position: int | None = None
-            if name == "open":
+            if isinstance(node.func, ast.Name) and node.func.id == "open":
                 operand = node.args[0] if node.args else None
                 mode_position = 1
                 if operand is None:
@@ -797,6 +814,27 @@ ACTUAL_CONFIG="$(command printf -- %s \\
 ACTUAL_CONFIG="/etc/pim/\\
 camera.json"
 """
+    nested_single_quoted_assignment = """\
+ACTUAL_CONFIG="$(command printf -- %s '\\
+/etc/pim/camera.json')"
+"""
+    inner_double_quoted_assignment = """\
+ACTUAL_CONFIG="$(command printf -- %s "/etc/pim/\\
+inner-double.json")"
+"""
+    nested_continued_assignment = """\
+ACTUAL_CONFIG="$(command printf -- %s "$( (command printf -- %s /etc/pim/\\
+nested.json) )")"
+"""
+    escaped_substitution_assignment = """\
+ACTUAL_CONFIG="\\$(command printf -- %s /etc/pim/escaped.json)"
+"""
+    commented_substitution_assignment = f"""\
+ACTUAL_CONFIG="$(
+  # $(command printf -- %s /etc/pim/commented.json)
+  command printf -- %s {RUNTIME_PATH}
+)"
+"""
     mutation_fixtures = (
         (
             "decoy runtime marker cannot hide an alternate JSON read",
@@ -932,6 +970,23 @@ PIM_CAMERA_RUNTIME_JSON="${{PIM_CAMERA_RUNTIME_JSON:-{RUNTIME_PATH}}}"
             "alternate config read:",
         ),
         (
+            "inner double-quoted continuation remains an alternate JSON read",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="${{PIM_CAMERA_RUNTIME_JSON:-{RUNTIME_PATH}}}"
+{inner_double_quoted_assignment}jq -r '.VHL_CAM.app' "$ACTUAL_CONFIG"
+''',
+            "alternate config read:",
+        ),
+        (
+            "nested command-substitution continuation remains an alternate JSON read",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="${{PIM_CAMERA_RUNTIME_JSON:-{RUNTIME_PATH}}}"
+jq -r '.VHL_CAM.app' "$(command printf -- %s "$( (command printf -- %s /etc/pim/\\
+nested.json) )")"
+''',
+            "alternate config read:",
+        ),
+        (
             "keyword-only helper argument cannot hide an alternate JSON read",
             f'''\
 import json
@@ -995,6 +1050,50 @@ jq -r '.VHL_CAM.app' "$PIM_CAMERA_RUNTIME_JSON"
             failures,
         )
 
+    nested_single_quoted_fixture = f'''\
+PIM_CAMERA_RUNTIME_JSON="${{PIM_CAMERA_RUNTIME_JSON:-{RUNTIME_PATH}}}"
+{nested_single_quoted_assignment}jq -r '.VHL_CAM.app' "$ACTUAL_CONFIG"
+'''
+    check(
+        not any(
+            item.startswith("alternate config read:")
+            for item in runtime_boundary_violations(
+                nested_single_quoted_fixture,
+                "PIM_CAMERA_RUNTIME_JSON",
+                RUNTIME_PATH,
+            )
+        ),
+        "nested single-quoted continuation remains data, not an alternate read",
+        failures,
+    )
+
+    for label, assignment in (
+        (
+            "escaped command-substitution opener remains literal data",
+            escaped_substitution_assignment,
+        ),
+        (
+            "commented command-substitution opener remains non-executable",
+            commented_substitution_assignment,
+        ),
+    ):
+        fixture = f'''\
+PIM_CAMERA_RUNTIME_JSON="${{PIM_CAMERA_RUNTIME_JSON:-{RUNTIME_PATH}}}"
+{assignment}jq -r '.VHL_CAM.app' "$ACTUAL_CONFIG"
+'''
+        check(
+            not any(
+                item.startswith("alternate config read:")
+                for item in runtime_boundary_violations(
+                    fixture,
+                    "PIM_CAMERA_RUNTIME_JSON",
+                    RUNTIME_PATH,
+                )
+            ),
+            label,
+            failures,
+        )
+
     bash_result = subprocess.run(
         [
             "/bin/bash",
@@ -1042,6 +1141,116 @@ jq -r '.VHL_CAM.app' "$PIM_CAMERA_RUNTIME_JSON"
         "Bash evaluates both double-quoted continuations to alternate paths",
         failures,
     )
+
+    nested_shell_oracles = (
+        (
+            "Bash preserves the nested single-quoted backslash and newline",
+            nested_single_quoted_assignment,
+            "\\\n/etc/pim/camera.json",
+        ),
+        (
+            "Bash removes an inner double-quoted continuation",
+            inner_double_quoted_assignment,
+            "/etc/pim/inner-double.json",
+        ),
+        (
+            "Bash removes a continuation in a nested command substitution",
+            nested_continued_assignment,
+            "/etc/pim/nested.json",
+        ),
+        (
+            "Bash keeps an escaped command-substitution opener literal",
+            escaped_substitution_assignment,
+            "$(command printf -- %s /etc/pim/escaped.json)",
+        ),
+        (
+            "Bash ignores a commented command-substitution opener",
+            commented_substitution_assignment,
+            RUNTIME_PATH,
+        ),
+    )
+    for label, assignment, expected_stdout in nested_shell_oracles:
+        oracle = subprocess.run(
+            [
+                "/bin/bash",
+                "--noprofile",
+                "--norc",
+                "-c",
+                assignment + 'printf %s "$ACTUAL_CONFIG"\n',
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            env={"BASH_ENV": "/dev/null", "PATH": "/usr/bin:/bin"},
+            check=False,
+        )
+        check(
+            oracle.returncode == 0
+            and oracle.stdout == expected_stdout
+            and oracle.stderr == "",
+            label,
+            failures,
+        )
+
+    path_open_mode_cases = (
+        ("default", "", True),
+        ("positional read", '"r"', True),
+        ("keyword read", 'mode="r"', True),
+        ("read-write", '"w+"', True),
+        ("pure write", '"w"', False),
+        ("pure append", '"a"', False),
+        ("pure create", '"x"', False),
+    )
+    for index, (label, arguments, expected_read) in enumerate(
+        path_open_mode_cases
+    ):
+        alternate_path = f"/etc/pim/inline-{index}.json"
+        fixture = f'''\
+from pathlib import Path
+PIM_CAMERA_RUNTIME_JSON = "{RUNTIME_PATH}"
+Path("{alternate_path}").open({arguments}).close()
+'''
+        violation = f"alternate config read: {alternate_path}"
+        violations = runtime_boundary_violations(
+            fixture,
+            "PIM_CAMERA_RUNTIME_JSON",
+            RUNTIME_PATH,
+        )
+        check(
+            (violation in violations) == expected_read,
+            f"inline Path.open {label} mode has callable-specific read semantics",
+            failures,
+        )
+
+    builtin_open_mode_cases = (
+        ("default", "", True),
+        ("positional read", ', "r"', True),
+        ("keyword read", ', mode="r"', True),
+        ("read-write r+", ', "r+"', True),
+        ("read-write w+", ', "w+"', True),
+        ("pure write", ', "w"', False),
+        ("pure append", ', "a"', False),
+        ("pure create", ', "x"', False),
+    )
+    for index, (label, suffix, expected_read) in enumerate(
+        builtin_open_mode_cases
+    ):
+        alternate_path = f"/etc/pim/builtin-{index}.json"
+        fixture = f'''\
+PIM_CAMERA_RUNTIME_JSON = "{RUNTIME_PATH}"
+open("{alternate_path}"{suffix}).close()
+'''
+        violation = f"alternate config read: {alternate_path}"
+        violations = runtime_boundary_violations(
+            fixture,
+            "PIM_CAMERA_RUNTIME_JSON",
+            RUNTIME_PATH,
+        )
+        check(
+            (violation in violations) == expected_read,
+            f"built-in open {label} mode retains read semantics",
+            failures,
+        )
 
     path_open_write_fixture = f'''\
 from pathlib import Path
