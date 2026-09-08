@@ -197,6 +197,7 @@ class ShellCommand:
     malformed: bool = False
     piped_input: bool = False
     may_skip: bool = False
+    subshell_isolated: bool = False
 
 
 @dataclass(frozen=True)
@@ -543,11 +544,12 @@ def lex_shell(text: str) -> ShellLexicalResult:
         index = 0
         piped_input = False
         pending_may_skip = False
+        group_may_skip: list[bool] = []
 
         def finish() -> None:
             nonlocal pending_may_skip, piped_input
             command = "".join(current).strip()
-            inherited_may_skip = pending_may_skip
+            inherited_may_skip = pending_may_skip or any(group_may_skip)
             parsed.extend(
                 ShellCommand(
                     nested.raw,
@@ -555,6 +557,7 @@ def lex_shell(text: str) -> ShellLexicalResult:
                     nested.malformed,
                     nested.piped_input,
                     nested.may_skip or inherited_may_skip,
+                    nested.subshell_isolated,
                 )
                 for nested in pending_nested
             )
@@ -581,7 +584,17 @@ def lex_shell(text: str) -> ShellLexicalResult:
                     current.append(scope[index:])
                     break
                 substitution = scope[index : end + 1]
-                pending_nested.extend(commands(substitution[2:-1]))
+                pending_nested.extend(
+                    ShellCommand(
+                        nested.raw,
+                        nested.words,
+                        nested.malformed,
+                        nested.piped_input,
+                        nested.may_skip,
+                        True,
+                    )
+                    for nested in commands(substitution[2:-1])
+                )
                 current.append(substitution)
                 index = end
             elif char == "$" and following == "{":
@@ -608,7 +621,13 @@ def lex_shell(text: str) -> ShellLexicalResult:
                 is_pipe = char == "|" and following != "|"
                 is_and_or = char in "|&" and following == char
                 finish()
-                if is_pipe:
+                if char == "{":
+                    group_may_skip.append(
+                        pending_may_skip or any(group_may_skip)
+                    )
+                elif char == "}" and group_may_skip:
+                    group_may_skip.pop()
+                elif is_pipe:
                     piped_input = True
                 elif is_and_or:
                     pending_may_skip = True
@@ -680,6 +699,7 @@ class ShellProvenanceProof:
             helper_bodies = {**imported.functions, **helper_bodies}
         self.helpers: dict[str, ShellOrigin] = {}
         self.helpers = self.proven_helpers(helper_bodies)
+        self.function_effects = self.reachable_function_effects()
 
     @staticmethod
     def literal(word: ShellWord) -> str | None:
@@ -777,6 +797,87 @@ class ShellProvenanceProof:
                 else UNKNOWN_ORIGIN
             )
         return joined
+
+    def reachable_function_effects(self) -> dict[str, frozenset[str]]:
+        """Summarize only caller-visible names touched by known functions."""
+
+        functions = self.lexical.functions
+        local_names: dict[str, set[str]] = {}
+        direct: dict[str, set[str]] = {}
+        callees: dict[str, set[str]] = {}
+
+        for function_name, (_, commands) in functions.items():
+            locals_for_function: set[str] = set()
+            for command in commands:
+                if command.subshell_isolated:
+                    continue
+                argv = self.argv(command.words)
+                executable = self.literal(argv[0]) if argv else None
+                if executable not in {"local", "declare", "typeset"}:
+                    continue
+                literals = tuple(self.literal(word) for word in argv[1:])
+                if executable in {"declare", "typeset"} and any(
+                    literal == "-g" for literal in literals
+                ):
+                    continue
+                for word in argv[1:]:
+                    literal = self.literal(word)
+                    if literal == "--" or (literal and literal.startswith("-")):
+                        continue
+                    assignment = self.assignment(word)
+                    name = assignment[0] if assignment else literal
+                    if name and SHELL_ASSIGNMENT_NAME.fullmatch(name):
+                        locals_for_function.add(name)
+            local_names[function_name] = locals_for_function
+
+        for function_name, (_, commands) in functions.items():
+            touched: set[str] = set()
+            called: set[str] = set()
+            for command in commands:
+                if command.subshell_isolated:
+                    continue
+                argv = self.argv(command.words)
+                executable = self.literal(argv[0]) if argv else None
+                declaration = executable in {
+                    "export",
+                    "readonly",
+                    "declare",
+                    "typeset",
+                }
+                if not argv or declaration:
+                    touched.update(
+                        name for name, _ in self.state_assignments(command.words)
+                    )
+                if executable == "unset":
+                    option_mode = True
+                    for word in argv[1:]:
+                        name = self.literal(word)
+                        if name == "--":
+                            option_mode = False
+                        elif option_mode and name and name.startswith("-"):
+                            continue
+                        elif name and SHELL_ASSIGNMENT_NAME.fullmatch(name):
+                            touched.add(name)
+                if executable in functions:
+                    called.add(executable)
+            direct[function_name] = touched - local_names[function_name]
+            callees[function_name] = called
+
+        effects = {name: set(names) for name, names in direct.items()}
+        while True:
+            changed = False
+            for function_name in functions:
+                reachable = set(direct[function_name])
+                for callee in callees[function_name]:
+                    reachable.update(effects[callee])
+                reachable.difference_update(local_names[function_name])
+                if reachable != effects[function_name]:
+                    effects[function_name] = reachable
+                    changed = True
+            if not changed:
+                return {
+                    name: frozenset(names) for name, names in effects.items()
+                }
 
     def simple_command(
         self,
@@ -1318,13 +1419,17 @@ class ShellProvenanceProof:
             ):
                 self.violations.append("unproven config reader operand")
             if executable in self.lexical.functions:
+                call_values = dict(values)
                 calls.append(
                     (
                         executable,
                         tuple(self.value(word, values) for word in argv[1:]),
-                        dict(values),
+                        call_values,
                     )
                 )
+                if not command.subshell_isolated:
+                    for name in self.function_effects[executable]:
+                        values[name] = UNKNOWN_ORIGIN
 
     def run(self) -> tuple[str, ...]:
         values: dict[str, ShellOrigin] = {}
@@ -2348,6 +2453,126 @@ jq -r . "$ACTUAL_CONFIG" ''',
             failures,
         )
 
+    residual_state_transfer_cases = (
+        (
+            "conditional brace group keeps may-skip through its later assignment",
+            '''\
+ACTUAL=/absolute/edgeconf_pim_base.json
+false && { :; ACTUAL=$PIM_CAMERA_RUNTIME_JSON; }
+jq -r 'keys|length' "$ACTUAL" ''',
+            ["unproven config reader operand"],
+        ),
+        (
+            "conditional brace group keeps may-skip across newline and comment",
+            '''\
+ACTUAL=/etc/pim/brace-comment.json
+false && {
+  :
+  # the assignment remains inside the possibly skipped group
+  ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+}
+jq -r . "$ACTUAL" ''',
+            ["unproven config reader operand"],
+        ),
+        (
+            "nested conditional brace group inherits may-skip",
+            '''\
+ACTUAL=/etc/pim/brace-nested.json
+false && { :; { :; ACTUAL=$PIM_CAMERA_RUNTIME_JSON; }; }
+jq -r . "$ACTUAL" ''',
+            ["unproven config reader operand"],
+        ),
+        (
+            "known function assignment invalidates stale trusted caller provenance",
+            '''\
+replace_actual() { ACTUAL=/etc/pim/function-assignment.json; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r . "$ACTUAL" ''',
+            ["unproven config reader operand"],
+        ),
+        (
+            "known function unset exposes the alternate caller fallback",
+            '''\
+clear_actual() { unset ACTUAL; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+clear_actual
+jq -r 'keys|length' "${ACTUAL:-/absolute/edgeconf_pim_base.json}" ''',
+            ["alternate config read: /absolute/edgeconf_pim_base.json"],
+        ),
+        (
+            "transitive known function unset exposes the alternate caller fallback",
+            '''\
+clear_actual_inner() { unset ACTUAL; }
+clear_actual_outer() { clear_actual_inner; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+clear_actual_outer
+jq -r . "${ACTUAL:-/etc/pim/function-transitive-unset.json}" ''',
+            ["alternate config read: /etc/pim/function-transitive-unset.json"],
+        ),
+        (
+            "conditionally called effectful function remains a possible effect",
+            '''\
+clear_actual_conditionally() { unset ACTUAL; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+false && clear_actual_conditionally
+jq -r . "${ACTUAL:-/etc/pim/function-conditional-unset.json}" ''',
+            ["alternate config read: /etc/pim/function-conditional-unset.json"],
+        ),
+        (
+            "unconditional brace group retains overwrite semantics",
+            '''\
+ACTUAL=/etc/pim/brace-unconditional.json
+{ :; ACTUAL=$PIM_CAMERA_RUNTIME_JSON; }
+jq -r . "$ACTUAL" ''',
+            [],
+        ),
+        (
+            "identical runtime conditional brace group remains proven",
+            '''\
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+false && { :; ACTUAL=$PIM_CAMERA_RUNTIME_JSON; }
+jq -r . "$ACTUAL" ''',
+            [],
+        ),
+        (
+            "later unconditional runtime assignment replaces brace-group unknown",
+            '''\
+ACTUAL=/etc/pim/brace-replaced.json
+false && { :; ACTUAL=$PIM_CAMERA_RUNTIME_JSON; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+jq -r . "$ACTUAL" ''',
+            [],
+        ),
+        (
+            "function-local positional shadow and unset do not taint the caller",
+            '''\
+shadow_actual() {
+  local ACTUAL="$1"
+  unset ACTUAL
+}
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+shadow_actual /etc/pim/function-local.json
+jq -r . "$ACTUAL" ''',
+            [],
+        ),
+        (
+            "function call inside command substitution cannot taint the caller",
+            '''\
+replace_actual_in_subshell() { ACTUAL=/etc/pim/function-subshell.json; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+IGNORED="$(replace_actual_in_subshell)"
+jq -r . "$ACTUAL" ''',
+            [],
+        ),
+    )
+    for label, body, expected in residual_state_transfer_cases:
+        check(
+            shell_reader_violations(reviewed_shell(body)) == expected,
+            label,
+            failures,
+        )
+
     provenance_allow_cases = (
         (
             "exact runtime literal remains an approved reader operand",
@@ -3249,6 +3474,143 @@ printf '%s\n' "$I"
 """
         and conditional_oracle.stderr == "",
         "Bash preserves skipped, unset, and argv assignment semantics",
+        failures,
+    )
+
+    with tempfile.TemporaryDirectory(
+        prefix="pim-state-transfer-oracle-"
+    ) as directory:
+        alternate_json = Path(directory) / "alternate.json"
+        alternate_json.write_text(
+            '{"one":1,"two":2,"three":3}\n', encoding="utf-8"
+        )
+        reviewer_state_transfer_oracles = (
+            (
+                "Bash and jq prove the reviewer conditional brace-group read",
+                '''\
+PIM_CAMERA_RUNTIME_JSON="$2"
+ACTUAL="$1"
+false && { :; ACTUAL=$PIM_CAMERA_RUNTIME_JSON; }
+jq -r 'keys|length' "$ACTUAL"
+''',
+            ),
+            (
+                "Bash and jq prove the reviewer caller-visible function unset",
+                '''\
+PIM_CAMERA_RUNTIME_JSON="$2"
+clear_actual() { unset ACTUAL; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+clear_actual
+jq -r 'keys|length' "${ACTUAL:-$1}"
+''',
+            ),
+        )
+        for label, script in reviewer_state_transfer_oracles:
+            oracle = subprocess.run(
+                [
+                    "/bin/bash",
+                    "--noprofile",
+                    "--norc",
+                    "-c",
+                    script,
+                    "pim-state-transfer-oracle",
+                    str(alternate_json),
+                    RUNTIME_PATH,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                env={"BASH_ENV": "/dev/null", "PATH": "/usr/bin:/bin"},
+                check=False,
+            )
+            check(
+                oracle.returncode == 0
+                and oracle.stdout == "3\n"
+                and oracle.stderr == "",
+                label,
+                failures,
+            )
+
+    residual_state_oracle = subprocess.run(
+        [
+            "/bin/bash",
+            "--noprofile",
+            "--norc",
+            "-c",
+            '''\
+PIM_CAMERA_RUNTIME_JSON="$1"
+A=/etc/pim/oracle-brace-inline.json
+false && { :; A=$PIM_CAMERA_RUNTIME_JSON; }
+printf '%s\n' "$A"
+B=/etc/pim/oracle-brace-comment.json
+false && {
+  :
+  # preserve the complete group as a possibly skipped command
+  B=$PIM_CAMERA_RUNTIME_JSON
+}
+printf '%s\n' "$B"
+C=/etc/pim/oracle-brace-nested.json
+false && { :; { :; C=$PIM_CAMERA_RUNTIME_JSON; }; }
+printf '%s\n' "$C"
+D=/etc/pim/oracle-brace-unconditional.json
+{ :; D=$PIM_CAMERA_RUNTIME_JSON; }
+printf '%s\n' "$D"
+E=$PIM_CAMERA_RUNTIME_JSON
+false && { :; E=$PIM_CAMERA_RUNTIME_JSON; }
+printf '%s\n' "$E"
+F=/etc/pim/oracle-brace-replaced.json
+false && { :; F=$PIM_CAMERA_RUNTIME_JSON; }
+F=$PIM_CAMERA_RUNTIME_JSON
+printf '%s\n' "$F"
+assign_g() { G=/etc/pim/oracle-function-assignment.json; }
+G=$PIM_CAMERA_RUNTIME_JSON
+assign_g
+printf '%s\n' "$G"
+unset_h_inner() { unset H; }
+unset_h_outer() { unset_h_inner; }
+H=$PIM_CAMERA_RUNTIME_JSON
+unset_h_outer
+printf '%s\n' "${H:-/etc/pim/oracle-function-unset.json}"
+unset_i() { unset I; }
+I=$PIM_CAMERA_RUNTIME_JSON
+true && unset_i
+printf '%s\n' "${I:-/etc/pim/oracle-function-conditional.json}"
+shadow_j() { local J="$1"; unset J; }
+J=$PIM_CAMERA_RUNTIME_JSON
+shadow_j /etc/pim/oracle-function-local.json
+printf '%s\n' "$J"
+assign_k() { K=/etc/pim/oracle-function-subshell.json; }
+K=$PIM_CAMERA_RUNTIME_JSON
+IGNORED="$(assign_k)"
+printf '%s\n' "$K"
+''',
+            "pim-state-transfer-oracle",
+            RUNTIME_PATH,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        env={"BASH_ENV": "/dev/null", "PATH": "/usr/bin:/bin"},
+        check=False,
+    )
+    check(
+        residual_state_oracle.returncode == 0
+        and residual_state_oracle.stdout
+        == f'''\
+/etc/pim/oracle-brace-inline.json
+/etc/pim/oracle-brace-comment.json
+/etc/pim/oracle-brace-nested.json
+{RUNTIME_PATH}
+{RUNTIME_PATH}
+{RUNTIME_PATH}
+/etc/pim/oracle-function-assignment.json
+/etc/pim/oracle-function-unset.json
+/etc/pim/oracle-function-conditional.json
+{RUNTIME_PATH}
+{RUNTIME_PATH}
+'''
+        and residual_state_oracle.stderr == "",
+        "Bash preserves bounded brace-group and function caller effects",
         failures,
     )
 
