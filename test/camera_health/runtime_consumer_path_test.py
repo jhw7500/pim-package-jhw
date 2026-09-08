@@ -656,10 +656,10 @@ class ShellProvenanceProof:
             if operator in {"<", "<<<", "<<", "<&", "<>", ">", ">>", ">&"}:
                 operand_index = operator_index + 1
                 default_descriptor = (
-                    "0" if operator in {"<", "<<<", "<<", "<&", "<>"} else "1"
+                    0 if operator in {"<", "<<<", "<<", "<&", "<>"} else 1
                 )
-                destination = descriptor or default_descriptor
-                if destination == "0" and operator in {"<", "<<<", "<&", "<>", ">&"}:
+                destination = int(descriptor) if descriptor is not None else default_descriptor
+                if destination == 0 and operator in {"<", "<<<", "<&", "<>", ">&"}:
                     explicit_stdin = True
                     origin = (
                         UNKNOWN_ORIGIN
@@ -2322,6 +2322,68 @@ PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
     for label, fixture, expected in fd_destination_audit_cases:
         check(shell_reader_violations(fixture) == expected, label, failures)
 
+    fd_normalization_audit_cases = (
+        (
+            "leading-zero fd0 output duplication remains unproven stdin",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+exec 3<"/etc/pim/zero-output-fd.json"
+00>&3 jq -r .
+''',
+            ["unproven config reader operand"],
+        ),
+        (
+            "leading-zero fd0 input duplication remains unproven stdin",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+00<&3 jq -r .
+''',
+            ["unproven config reader operand"],
+        ),
+        (
+            "leading-zero fd0 read-write redirect rejects alternate path",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+00<>"/etc/pim/zero-rw.json" jq -r .
+''',
+            ["alternate config read: /etc/pim/zero-rw.json"],
+        ),
+        (
+            "multiple-leading-zero fd0 input redirects command jq",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+000<"/etc/pim/zero-in.json" command -- jq -r .
+''',
+            ["alternate config read: /etc/pim/zero-in.json"],
+        ),
+        (
+            "leading-zero fd1 output duplication is not jq stdin",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+01>&3 jq -n .
+''',
+            [],
+        ),
+        (
+            "leading-zero fd2 input duplication is not jq stdin",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+02<&3 jq -n .
+''',
+            [],
+        ),
+        (
+            "leading-zero fd3 file setup is not jq stdin",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+03<"/etc/pim/leading-zero-fd3.json" jq -n .
+''',
+            [],
+        ),
+    )
+    for label, fixture, expected in fd_normalization_audit_cases:
+        check(shell_reader_violations(fixture) == expected, label, failures)
+
     reviewer_shell_oracles = (
         (
             "Bash preserves reviewer nested single-quoted reader bytes",
@@ -2401,6 +2463,46 @@ exec 3<<<fd-input
 jq() { IFS= read -r value; printf '%s\\n' "$value"; }
 exec 3<<<fd-input
 0>&3 jq -r .
+''',
+            b"fd-input\n",
+            b"",
+        ),
+        (
+            "Bash normalizes 00 as fd0 for output-family duplication",
+            '''\
+jq() { IFS= read -r value; printf '%s\\n' "$value"; }
+exec 3<<<fd-input
+00>&3 jq -r .
+''',
+            b"fd-input\n",
+            b"",
+        ),
+        (
+            "Bash normalizes 00 as fd0 for input-family duplication",
+            '''\
+jq() { IFS= read -r value; printf '%s\\n' "$value"; }
+exec 3<<<fd-input
+00<&3 jq -r .
+''',
+            b"fd-input\n",
+            b"",
+        ),
+        (
+            "Bash normalizes 00 as fd0 for read-write input",
+            '''\
+jq() { IFS= read -r value; printf '%s\\n' "$value"; }
+exec 3<<<fd-input
+00<>/dev/fd/3 jq -r .
+''',
+            b"fd-input\n",
+            b"",
+        ),
+        (
+            "Bash normalizes 000 as fd0 for file input",
+            '''\
+jq() { IFS= read -r value; printf '%s\\n' "$value"; }
+exec 3<<<fd-input
+000</dev/fd/3 jq -r .
 ''',
             b"fd-input\n",
             b"",
