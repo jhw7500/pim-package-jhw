@@ -216,16 +216,32 @@ def normalized_contract_lines(text: str) -> list[str]:
     """Expose static shell/Python string composition without executing source."""
     constants: dict[str, str] = {}
     normalized: list[str] = []
+    pending_assignment: tuple[str, list[str]] | None = None
     for raw_line in text.splitlines():
         expanded = expand_constants(strip_inline_comment(raw_line), constants)
         canonical = expanded.replace("'", "").replace('"', "").strip()
         normalized.append(canonical)
+
+        if pending_assignment is not None:
+            name, parts = pending_assignment
+            parts.append(canonical)
+            value = " ".join(parts).rstrip(";")
+            if not value.rstrip().endswith(")"):
+                continue
+            printf_substitution = SIMPLE_PRINTF_SUBSTITUTION.fullmatch(value)
+            if printf_substitution is not None:
+                constants[name] = printf_substitution.group(1)
+            pending_assignment = None
+            continue
 
         assignment = SIMPLE_ASSIGNMENT.match(canonical.rstrip(";"))
         if assignment is None:
             continue
         name, value = assignment.groups()
         value = value.rstrip(";")
+        if value.startswith("$(") and not value.rstrip().endswith(")"):
+            pending_assignment = (name, [value])
+            continue
         printf_substitution = SIMPLE_PRINTF_SUBSTITUTION.fullmatch(value)
         if printf_substitution is not None:
             value = printf_substitution.group(1)
@@ -355,6 +371,15 @@ def python_config_read_paths(text: str) -> list[str]:
             operand: ast.AST | None = None
             if name == "open":
                 operand = node.args[0] if node.args else None
+                if operand is None:
+                    operand = next(
+                        (
+                            keyword.value
+                            for keyword in node.keywords
+                            if keyword.arg == "file"
+                        ),
+                        None,
+                    )
             elif isinstance(node.func, ast.Attribute) and node.func.attr in {
                 "open",
                 "read_text",
@@ -742,10 +767,33 @@ load("/etc/pim/camera.json")
             "alternate config read:",
         ),
         (
+            "built-in open file keyword flow cannot hide an alternate JSON read",
+            f'''\
+from pathlib import Path
+import json
+PIM_CAMERA_RUNTIME_JSON = "{RUNTIME_PATH}"
+actual = Path("/etc/pim/camera.json")
+with open(file=actual, encoding="utf-8") as stream:
+    json.load(stream)
+''',
+            "alternate config read:",
+        ),
+        (
             "command substitution cannot hide an alternate JSON read",
             f'''\
 PIM_CAMERA_RUNTIME_JSON="${{PIM_CAMERA_RUNTIME_JSON:-{RUNTIME_PATH}}}"
 ACTUAL_CONFIG=$(printf %s /etc/pim/camera.json)
+jq -r '.VHL_CAM.app' "$ACTUAL_CONFIG"
+''',
+            "alternate config read:",
+        ),
+        (
+            "multiline command substitution cannot hide an alternate JSON read",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="${{PIM_CAMERA_RUNTIME_JSON:-{RUNTIME_PATH}}}"
+ACTUAL_CONFIG=$(
+  command printf -- %s /etc/pim/camera.json
+)
 jq -r '.VHL_CAM.app' "$ACTUAL_CONFIG"
 ''',
             "alternate config read:",

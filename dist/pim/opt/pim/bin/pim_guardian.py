@@ -87,6 +87,9 @@ RECOVERY_PROMPT_TIMEOUT_SEC = 30
 SD_DEV_PARTITION = "/dev/mmcblk1p1"
 SD_MOUNT_PATH = "/mnt/sd_cam"
 SD_MOUNT_SERVICE = "sd-mount"
+SD_MOUNT_FLAG_PATH = "/dev/shm/sd_mount_flag"
+SD_READY_TIMEOUT_SEC = 120.0
+SD_READY_POLL_INTERVAL_SEC = 1.0
 FSCK_TOOLS: Dict[str, List[str]] = {
     "ext4": ["fsck.ext4", "-y"],
     "ext3": ["fsck.ext3", "-y"],
@@ -313,8 +316,78 @@ class PIMHealthGuardian:
                 pass
         return None
 
+    def _wait_for_sd_mount_ready(self, step: int, total: int) -> bool:
+        timeout = getattr(self.args, "sd_ready_timeout_sec", SD_READY_TIMEOUT_SEC)
+        poll_interval = getattr(
+            self.args,
+            "sd_ready_poll_interval_sec",
+            SD_READY_POLL_INTERVAL_SEC,
+        )
+        if (
+            not isinstance(timeout, (int, float))
+            or isinstance(timeout, bool)
+            or timeout < 0
+        ):
+            timeout = SD_READY_TIMEOUT_SEC
+        if (
+            not isinstance(poll_interval, (int, float))
+            or isinstance(poll_interval, bool)
+            or poll_interval < 0
+        ):
+            poll_interval = SD_READY_POLL_INTERVAL_SEC
+
+        print(
+            f"[RECOVERY] [{step}/{total}] Waiting for SD availability and cam-operate..."
+        )
+        deadline = time.monotonic() + float(timeout)
+        while True:
+            try:
+                mount_service = subprocess.run(
+                    ["systemctl", "is-active", SD_MOUNT_SERVICE],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                print(f"[RECOVERY] [{step}/{total}] Readiness check... FAILED ({exc})")
+                return False
+            if mount_service.returncode != 0:
+                print(
+                    f"[RECOVERY] [{step}/{total}] Readiness check... FAILED "
+                    f"({SD_MOUNT_SERVICE} is not active)"
+                )
+                return False
+
+            try:
+                with open(SD_MOUNT_FLAG_PATH, "r", encoding="utf-8") as stream:
+                    available = stream.read().strip() == "1"
+            except OSError:
+                available = False
+
+            try:
+                camera_service = subprocess.run(
+                    ["systemctl", "is-active", "cam-operate"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                camera_active = camera_service.returncode == 0
+            except (OSError, subprocess.TimeoutExpired):
+                camera_active = False
+
+            if available and camera_active:
+                print(f"[RECOVERY] [{step}/{total}] SD and cam-operate ready... OK")
+                return True
+            if time.monotonic() >= deadline:
+                print(
+                    f"[RECOVERY] [{step}/{total}] Readiness check... FAILED "
+                    f"(timeout {float(timeout):g}s)"
+                )
+                return False
+            time.sleep(float(poll_interval))
+
     def _recover_sd_ro(self) -> bool:
-        total = 6
+        total = 5
         step = 0
 
         step += 1
@@ -325,21 +398,6 @@ class PIMHealthGuardian:
             ["systemctl", "stop", SD_MOUNT_SERVICE],
         ):
             return False
-
-        step += 1
-        if not self._run_recovery_step(
-            step,
-            total,
-            f"Unmounting {SD_MOUNT_PATH}",
-            ["umount", SD_MOUNT_PATH],
-        ):
-            if not self._run_recovery_step(
-                step,
-                total,
-                f"Force unmounting {SD_MOUNT_PATH}",
-                ["umount", "-f", SD_MOUNT_PATH],
-            ):
-                return False
 
         step += 1
         fs_type = self._detect_sd_fstype()
@@ -360,13 +418,8 @@ class PIMHealthGuardian:
                 ["systemctl", "start", SD_MOUNT_SERVICE],
             ):
                 return False
-            print(
-                f"[RECOVERY] [{total}/{total}] Requesting camera pipeline restart..."
-            )
-            camera_rc = self._request_camera_recovery(
-                "gstapp_restart", "guardian-sd-remount", wait_sec=120
-            )
-            print(" OK" if camera_rc == 0 else f" FAILED (exit code {camera_rc})")
+            if not self._wait_for_sd_mount_ready(total, total):
+                return False
             return False
 
         step += 1
@@ -448,13 +501,8 @@ class PIMHealthGuardian:
             return False
 
         step += 1
-        print(f"[RECOVERY] [{step}/{total}] Requesting camera pipeline restart...")
-        camera_rc = self._request_camera_recovery(
-            "gstapp_restart", "guardian-sd-remount", wait_sec=120
-        )
-        print(" OK" if camera_rc == 0 else f" FAILED (exit code {camera_rc})")
-
-        return fsck_ok and camera_rc == 0
+        ready = self._wait_for_sd_mount_ready(step, total)
+        return fsck_ok and ready
 
     def _recover_cam_disconnect(self) -> bool:
         selection = select_guardian_camera_action(GUARD_BIT_CAM_MISMATCH)
