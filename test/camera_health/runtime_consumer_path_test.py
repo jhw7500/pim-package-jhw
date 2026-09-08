@@ -416,14 +416,22 @@ def lex_shell(text: str) -> ShellLexicalResult:
         substitutions: dict[str, str] = {}
         io_numbers: dict[str, str] = {}
         quote = ""
+        word_open = False
         index = 0
         while index < len(command):
             char = command[index]
             following = command[index + 1] if index + 1 < len(command) else ""
             if quote == "'":
                 quote = "" if char == "'" else quote
+                word_open = True
             elif char == "\\":
-                masked.extend((char, following) if following else (char,))
+                if following and (following.isspace() or following in ";|&()<>"):
+                    key = f"__PIM_SUB_{len(substitutions)}__"
+                    substitutions[key] = command[index : index + 2]
+                    masked.extend(key)
+                else:
+                    masked.extend((char, following) if following else (char,))
+                word_open = True
                 index += bool(following)
                 index += 1
                 continue
@@ -434,14 +442,14 @@ def lex_shell(text: str) -> ShellLexicalResult:
                 key = f"__PIM_SUB_{len(substitutions)}__"
                 substitutions[key] = command[index : end + 1]
                 masked.extend(key)
+                word_open = True
                 index = end + 1
                 continue
             elif not quote and char in "0123456789":
                 end = index + 1
                 while end < len(command) and command[end] in "0123456789":
                     end += 1
-                preceding = command[index - 1] if index else ""
-                at_word_start = not preceding or preceding.isspace() or preceding in ";|&()<>"
+                at_word_start = not word_open
                 if at_word_start and end < len(command) and command[end] in "<>":
                     key = f"__PIM_IO_NUMBER_{len(io_numbers)}__"
                     while key in command:
@@ -449,12 +457,18 @@ def lex_shell(text: str) -> ShellLexicalResult:
                     value = command[index:end]
                     io_numbers[key] = value
                     masked.extend((value, key))
+                    word_open = True
                     index = end
                     continue
+                word_open = True
             elif quote:
                 quote = "" if char == quote else quote
+                word_open = True
             elif char in "'\"":
                 quote = char
+                word_open = True
+            else:
+                word_open = not (char.isspace() or char in ";|&()<>")
             masked.append(char)
             index += 1
         try:
@@ -2505,6 +2519,84 @@ PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
             actual = [f"raised {type(error).__name__}"]
         check(actual == expected, label, failures)
 
+    escaped_word_boundary_audit_cases = (
+        (
+            "escaped-space data remains one direct-jq word",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+jq -n --arg value x\\ 00>&3 .
+''',
+            [],
+        ),
+        (
+            "escaped-space data remains one command-jq word",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+command jq -n --arg value x\\ 00>&3 .
+''',
+            [],
+        ),
+        (
+            "escaped-space data remains one command-double-dash jq word",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+command -- jq -n --arg value x\\ 00>&3 .
+''',
+            [],
+        ),
+        (
+            "escaped-space data remains one absolute-jq word",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+/usr/bin/jq -n --arg value x\\ 00>&3 .
+''',
+            [],
+        ),
+        (
+            "escaped operator does not create an IO-number boundary",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+jq -n --arg value x\\>00>&3 .
+''',
+            [],
+        ),
+        (
+            "quoted segment does not create an IO-number boundary",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+jq -n --arg value x" "00>&3 .
+''',
+            [],
+        ),
+        (
+            "real whitespace permits an adjacent fd0 after direct jq",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+exec 3<"/etc/pim/escaped-boundary-zero.json"
+jq -r . 0<&3
+''',
+            ["unproven config reader operand"],
+        ),
+        (
+            "real whitespace permits an adjacent double-zero after command jq",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+command jq -r . 00>&3
+''',
+            ["unproven config reader operand"],
+        ),
+        (
+            "real whitespace permits an adjacent triple-zero after absolute jq",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+/usr/bin/jq -r . 000<>"/etc/pim/escaped-boundary-triple-zero.json"
+''',
+            ["alternate config read: /etc/pim/escaped-boundary-triple-zero.json"],
+        ),
+    )
+    for label, fixture, expected in escaped_word_boundary_audit_cases:
+        check(shell_reader_violations(fixture) == expected, label, failures)
+
     reviewer_shell_oracles = (
         (
             "Bash preserves reviewer nested single-quoted reader bytes",
@@ -2697,6 +2789,87 @@ exec 3</dev/null
 03</dev/null command printf '%s\\n' fd03
 ''',
             b"fd03\n",
+            b"",
+        ),
+        (
+            "Bash keeps escaped-space data in direct jq argv",
+            '''\
+exec 3>&1
+jq -n --arg value x\\ 00>&3 .
+''',
+            b"null\n",
+            b"",
+        ),
+        (
+            "Bash keeps escaped-space data in command jq argv",
+            '''\
+exec 3>&1
+command jq -n --arg value x\\ 00>&3 .
+''',
+            b"null\n",
+            b"",
+        ),
+        (
+            "Bash keeps escaped-space data in command-double-dash jq argv",
+            '''\
+exec 3>&1
+command -- jq -n --arg value x\\ 00>&3 .
+''',
+            b"null\n",
+            b"",
+        ),
+        (
+            "Bash keeps escaped-space data in absolute jq argv",
+            '''\
+exec 3>&1
+/usr/bin/jq -n --arg value x\\ 00>&3 .
+''',
+            b"null\n",
+            b"",
+        ),
+        (
+            "Bash keeps an escaped operator in jq argv",
+            '''\
+exec 3>&1
+jq -n --arg value x\\>00>&3 .
+''',
+            b"null\n",
+            b"",
+        ),
+        (
+            "Bash keeps a quoted segment in the current jq word",
+            '''\
+exec 3>&1
+jq -n --arg value x" "00>&3 .
+''',
+            b"null\n",
+            b"",
+        ),
+        (
+            "Bash treats whitespace-adjacent fd0 as stdin",
+            '''\
+exec 3<<<null
+jq -c . 0<&3
+''',
+            b"null\n",
+            b"",
+        ),
+        (
+            "Bash treats whitespace-adjacent double-zero as stdin",
+            '''\
+exec 3<<<null
+jq -c . 00<&3
+''',
+            b"null\n",
+            b"",
+        ),
+        (
+            "Bash treats whitespace-adjacent triple-zero as stdin",
+            '''\
+exec 3<<<null
+jq -c . 000</dev/fd/3
+''',
+            b"null\n",
             b"",
         ),
     )
