@@ -193,6 +193,7 @@ class ShellCommand:
     raw: str
     words: tuple[ShellWord, ...]
     malformed: bool = False
+    piped_input: bool = False
 
 
 @dataclass(frozen=True)
@@ -409,7 +410,7 @@ def lex_shell(text: str) -> ShellLexicalResult:
         flush()
         return tuple(parts), bad or bool(quote)
 
-    def tokenize(command: str) -> ShellCommand:
+    def tokenize(command: str, piped_input: bool = False) -> ShellCommand:
         masked: list[str] = []
         substitutions: dict[str, str] = {}
         quote = ""
@@ -427,7 +428,7 @@ def lex_shell(text: str) -> ShellLexicalResult:
             elif char == "$" and following == "(":
                 end = substitution_end(command, index)
                 if end is None:
-                    return ShellCommand(command, (ShellWord(command, (), True),), True)
+                    return ShellCommand(command, (ShellWord(command, (), True),), True, piped_input)
                 key = f"__PIM_SUB_{len(substitutions)}__"
                 substitutions[key] = command[index : end + 1]
                 masked.extend(key)
@@ -445,7 +446,7 @@ def lex_shell(text: str) -> ShellLexicalResult:
             lexer.commenters = ""
             raw_words = list(lexer)
         except ValueError:
-            return ShellCommand(command, (ShellWord(command, (), True),), True)
+            return ShellCommand(command, (ShellWord(command, (), True),), True, piped_input)
         words: list[ShellWord] = []
         for raw in raw_words:
             raw = re.sub(
@@ -455,7 +456,12 @@ def lex_shell(text: str) -> ShellLexicalResult:
             )
             parts, bad = word_parts(raw)
             words.append(ShellWord(raw, parts, bad))
-        return ShellCommand(command, tuple(words), bool(quote) or any(word.malformed for word in words))
+        return ShellCommand(
+            command,
+            tuple(words),
+            bool(quote) or any(word.malformed for word in words),
+            piped_input,
+        )
 
     def commands(scope: str) -> tuple[ShellCommand, ...]:
         parsed: list[ShellCommand] = []
@@ -463,14 +469,17 @@ def lex_shell(text: str) -> ShellLexicalResult:
         current: list[str] = []
         quote = ""
         index = 0
+        piped_input = False
 
         def finish() -> None:
+            nonlocal piped_input
             command = "".join(current).strip()
             parsed.extend(pending_nested)
             pending_nested.clear()
             if command:
-                parsed.append(tokenize(command))
+                parsed.append(tokenize(command, piped_input))
             current.clear()
+            piped_input = False
 
         while index < len(scope):
             char = scope[index]
@@ -508,8 +517,11 @@ def lex_shell(text: str) -> ShellLexicalResult:
                     index += 1
                 continue
             elif char in "\n;{}|&":
+                is_pipe = char == "|" and following != "|"
                 finish()
-                if following == char and char in "|&":
+                if is_pipe:
+                    piped_input = True
+                if (following == char and char in "|&") or (char == "|" and following == "&"):
                     index += 1
             else:
                 current.append(char)
@@ -576,7 +588,6 @@ class ShellProvenanceProof:
             imported = lex_shell(executable_text(Path("dist/pim/opt/pim/lib/cam_recovery.sh")))
             helper_bodies = {**imported.functions, **helper_bodies}
         self.helpers = self.proven_helpers(helper_bodies)
-        self.validator_available = "cam_recovery_actions.sh" in imports or self.validator_is_reviewed()
 
     @staticmethod
     def literal(word: ShellWord) -> str | None:
@@ -606,18 +617,67 @@ class ShellProvenanceProof:
             index += 1
         return words[index:]
 
-    def validator_is_reviewed(self) -> bool:
-        definition = self.lexical.functions.get("cam_validate_runtime")
-        return bool(definition and re.search(r'''\[\s+["']?\$1["']?\s+=\s+["']?\$PIM_CAMERA_RUNTIME_JSON["']?\s+\]''', definition[0]))
-
-    @staticmethod
-    def proven_helpers(functions: dict[str, tuple[str, tuple[ShellCommand, ...]]]) -> dict[str, ShellOrigin]:
+    def proven_helpers(self, functions: dict[str, tuple[str, tuple[ShellCommand, ...]]]) -> dict[str, ShellOrigin]:
         proven: dict[str, ShellOrigin] = {}
         while True:
             before = len(proven)
             for name, (body, commands) in functions.items():
+                if name in proven:
+                    continue
+                cat = re.fullmatch(
+                    r'''\s*cat\s+["']?\$\(([A-Za-z_]\w*)\)["']?\s+2\s*>\s*/dev/null\s*;?\s*''',
+                    body,
+                    re.S,
+                )
+                if cat and proven.get(cat.group(1), UNKNOWN_ORIGIN).kind == "state-path":
+                    proven[name] = STATE_CONTENT
+                    continue
+                last = commands[-1] if commands else None
+                if last and body.rstrip().endswith(last.raw.rstrip()):
+                    jq_argv = self.jq_invocation(self.argv_static(last.words))
+                    if jq_argv is not None:
+                        inputs, _, null_input = self.jq_inputs(jq_argv, {})
+                        prefix = body[: body.rfind(last.raw)]
+                        setup = [line.strip() for line in prefix.splitlines() if line.strip()]
+                        safe_setup = all(
+                            re.fullmatch(r"local(?:\s+[A-Za-z_]\w*)+", line) is not None
+                            or re.fullmatch(
+                                r'''[A-Za-z_]\w*=\$\([^\n]+\)(?:\s*\|\|\s*return\s+[0-9]+)?''',
+                                line,
+                            )
+                            is not None
+                            for line in setup
+                        )
+                        if null_input and not inputs and safe_setup:
+                            proven[name] = STATE_CONTENT
+                            continue
+                lines = [line.strip() for line in body.splitlines() if line.strip()]
+                if len(lines) == 3:
+                    local = re.fullmatch(r"local\s+([A-Za-z_]\w*)", lines[0])
+                    relay = re.fullmatch(
+                        r'''([A-Za-z_]\w*)=\$\(cat\s+["']?\$\(([A-Za-z_]\w*)\)["']?\s+2\s*>\s*/dev/null\)'''
+                        r'''\s*&&\s*([A-Za-z_]\w*)\s*<<<\s*["']?\$\1["']?'''
+                        r'''\s*&&\s*\{\s*printf\s+["']%s\\n["']\s+["']?\$\1["']?;\s*return\s+0;\s*\}''',
+                        lines[1],
+                    )
+                    fallback = re.fullmatch(r"([A-Za-z_]\w*)", lines[2])
+                    if local and relay and fallback and local.group(1) == relay.group(1):
+                        path = proven.get(relay.group(2), UNKNOWN_ORIGIN)
+                        validator = functions.get(relay.group(3))
+                        quiet_validator = bool(
+                            validator
+                            and re.fullmatch(
+                                r'''\s*jq\s+-e\s+'[^']*'\s*>\s*/dev/null\s+2\s*>\s*&\s*1\s*''',
+                                validator[0],
+                                re.S,
+                            )
+                        )
+                        fallback_origin = proven.get(fallback.group(1), UNKNOWN_ORIGIN)
+                        if path.kind == "state-path" and quiet_validator and fallback_origin.kind == "state-content":
+                            proven[name] = STATE_CONTENT
+                            continue
                 printf = [command for command in commands if (argv := ShellProvenanceProof.argv_static(command.words)) and ShellProvenanceProof.literal(argv[0]) == "printf"]
-                if name in proven or len(printf) != 1 or "jq" in body:
+                if len(printf) != 1 or "jq" in body:
                     continue
                 argv = ShellProvenanceProof.argv_static(printf[0].words)
                 format_index = 2 if len(argv) > 1 and ShellProvenanceProof.literal(argv[1]) == "--" else 1
@@ -625,7 +685,11 @@ class ShellProvenanceProof:
                 approved_roots = {"PIM_CAMERA_RUN_DIR", "PIM_CAMERA_STATE_DIR", "PIM_CAMERA_CONTROL_WORK_DIR"}
                 rooted = any(
                     (kind == "variable" and value in approved_roots)
-                    or (kind == "command" and value.strip() in proven)
+                    or (
+                        kind == "command"
+                        and proven.get(value.strip(), UNKNOWN_ORIGIN).kind
+                        in {"state-path", "source-path"}
+                    )
                     for word in argv[format_index + 1 :]
                     for kind, value in word.parts
                 )
@@ -664,7 +728,39 @@ class ShellProvenanceProof:
         body = body.strip()
         if re.fullmatch(r"[A-Za-z_]\w*", body):
             return self.helpers.get(body, UNKNOWN_ORIGIN)
+        cat = re.fullmatch(
+            r'''cat\s+["']?\$\(([A-Za-z_]\w*)(?:\s+.*?)?\)["']?\s+2\s*>\s*/dev/null''',
+            body,
+            re.S,
+        )
+        if cat:
+            path = self.helpers.get(cat.group(1), UNKNOWN_ORIGIN)
+            if path.kind == "runtime-path":
+                return RUNTIME_CONTENT
+            if path.kind == "state-path":
+                return STATE_CONTENT
+            if path.kind in {"alternate-path", "source-path"}:
+                return ALTERNATE_CONTENT
         if not body.startswith("<"):
+            lexical = lex_shell(body)
+            if lexical.malformed or len(lexical.top) != 1:
+                return UNKNOWN_ORIGIN
+            argv = self.argv(lexical.top[0].words)
+            jq_argv = self.jq_invocation(argv)
+            if jq_argv is None:
+                return UNKNOWN_ORIGIN
+            inputs, _, null_input = self.jq_inputs(jq_argv, values)
+            if null_input and not inputs:
+                return STATE_CONTENT
+            if "<<<" not in body or not inputs:
+                return UNKNOWN_ORIGIN
+            kinds = {origin.kind for origin in inputs}
+            if kinds <= {"runtime-content"}:
+                return RUNTIME_CONTENT
+            if kinds <= {"state-content"}:
+                return STATE_CONTENT
+            if kinds & {"alternate-content", "alternate-path", "source-path"}:
+                return ALTERNATE_CONTENT
             return UNKNOWN_ORIGIN
         operand = body[1:].strip()
         if len(operand) >= 2 and operand[0] == operand[-1] and operand[0] in "'\"":
@@ -709,12 +805,6 @@ class ShellProvenanceProof:
             return UNKNOWN_ORIGIN
         return self.classify("".join(origin.value or "" for origin in origins))
 
-    def exact_variable(self, word: ShellWord) -> str | None:
-        if word.malformed or len(word.parts) != 1:
-            return None
-        kind, value = word.parts[0]
-        return value if kind == "variable" or (kind == "parameter" and SHELL_VARIABLE_NAME.fullmatch(value)) else None
-
     def reader_violation(self, origin: ShellOrigin) -> str | None:
         if origin.kind in {"runtime-path", "runtime-content", "state-path", "state-content"} or (self.allow_source and origin.kind == "source-path"):
             return None
@@ -722,21 +812,56 @@ class ShellProvenanceProof:
             return f"alternate config read: {origin.value}"
         return "unproven config reader operand"
 
-    def inspect_jq(self, argv: tuple[ShellWord, ...], values: dict[str, ShellOrigin], malformed: bool) -> None:
+    def jq_invocation(self, argv: tuple[ShellWord, ...]) -> tuple[ShellWord, ...] | None:
+        if not argv:
+            return None
+        index = 0
+        executable = self.literal(argv[index])
+        if executable == "command":
+            index += 1
+            if index < len(argv) and self.literal(argv[index]) == "--":
+                index += 1
+            executable = self.literal(argv[index]) if index < len(argv) else None
+        if executable == "jq" or (
+            executable is not None
+            and executable.startswith("/")
+            and executable.rsplit("/", 1)[-1] == "jq"
+        ):
+            return argv[index:]
+        return None
+
+    def jq_inputs(
+        self,
+        argv: tuple[ShellWord, ...],
+        values: dict[str, ShellOrigin],
+    ) -> tuple[list[ShellOrigin], bool, bool]:
         inputs: list[ShellOrigin] = []
-        here: ShellOrigin | None = None
+        explicit_stdin = False
+        null_input = False
         filter_seen = False
         index = 1
         while index < len(argv):
             literal = self.literal(argv[index])
-            if literal == "<<<":
-                here = self.value(argv[index + 1], values) if index + 1 < len(argv) else UNKNOWN_ORIGIN
+            if literal in {"<", "<<<"}:
+                explicit_stdin = True
+                origin = (
+                    self.value(argv[index + 1], values)
+                    if index + 1 < len(argv)
+                    else UNKNOWN_ORIGIN
+                )
+                if literal == "<<<" and origin.kind == "literal":
+                    origin = STATE_CONTENT
+                inputs.append(origin)
                 index += 2
             elif literal and literal.isdigit() and index + 1 < len(argv) and self.literal(argv[index + 1]) in {">", ">>"}:
                 index += 3
-            elif literal in {">", ">>", "<", "<<"}:
+            elif literal in {">", ">>", "<<"}:
                 index += 2
             elif not filter_seen and literal and literal.startswith("-"):
+                if literal == "--null-input" or (
+                    not literal.startswith("--") and "n" in literal[1:]
+                ):
+                    null_input = True
                 if literal in {"--arg", "--argjson"}:
                     index += 3
                 elif literal in {"--slurpfile", "--rawfile", "--argfile"}:
@@ -750,13 +875,22 @@ class ShellProvenanceProof:
             else:
                 inputs.append(self.value(argv[index], values))
                 index += 1
+        return inputs, explicit_stdin, null_input
+
+    def inspect_jq(
+        self,
+        argv: tuple[ShellWord, ...],
+        values: dict[str, ShellOrigin],
+        malformed: bool,
+        piped_input: bool,
+    ) -> None:
+        inputs, explicit_stdin, null_input = self.jq_inputs(argv, values)
         for origin in inputs:
             if violation := self.reader_violation(origin):
                 self.violations.append(violation)
-        if here and here.kind in {"runtime-content", "state-content", "alternate-content"}:
-            if violation := self.reader_violation(here):
-                self.violations.append(violation)
-        if malformed and (inputs or here):
+        if not inputs and not explicit_stdin and not null_input and piped_input:
+            self.violations.append("unproven config reader operand")
+        if malformed and (inputs or explicit_stdin):
             self.violations.append("unproven config reader operand")
 
     def inspect(self, commands: tuple[ShellCommand, ...], values: dict[str, ShellOrigin], calls: list[tuple[str, tuple[ShellOrigin, ...]]]) -> None:
@@ -772,11 +906,8 @@ class ShellProvenanceProof:
             if not argv:
                 continue
             executable = self.literal(argv[0])
-            if executable == "cam_validate_runtime" and self.validator_available and len(argv) > 1:
-                if variable := self.exact_variable(argv[1]):
-                    values[variable] = ShellOrigin("runtime-path", RUNTIME_PATH)
-            if executable == "jq":
-                self.inspect_jq(argv, values, command.malformed)
+            if jq_argv := self.jq_invocation(argv):
+                self.inspect_jq(jq_argv, values, command.malformed, command.piped_input)
             if executable in self.lexical.functions:
                 calls.append((executable, tuple(self.value(word, values) for word in argv[1:])))
 
@@ -1607,6 +1738,30 @@ jq -r . <<<"$runtime_json"
             False,
         ),
         (
+            "approved runtime path remains approved through jq input redirect",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+jq -r . < "$PIM_CAMERA_RUNTIME_JSON"
+''',
+            False,
+        ),
+        (
+            "jq short null-input mode requires no file or stdin authority",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+jq -n -r .
+''',
+            False,
+        ),
+        (
+            "jq long null-input mode requires no file or stdin authority",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+jq --null-input -r .
+''',
+            False,
+        ),
+        (
             "proven source alias remains narrowly approved for a source owner",
             f'''\
 PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
@@ -1701,6 +1856,104 @@ SOURCE_INPUT="$UNRESOLVED_SOURCE_JSON"
 jq -r . "$SOURCE_INPUT"
 ''',
             True,
+            ["unproven config reader operand"],
+        ),
+        (
+            "unknown jq here-string input fails closed",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+jq -r . <<<"$UNRESOLVED_JSON"
+''',
+            False,
+            ["unproven config reader operand"],
+        ),
+        (
+            "literal alternate jq input redirect is rejected precisely",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+jq -r . < "/etc/pim/redirect.json"
+''',
+            False,
+            ["alternate config read: /etc/pim/redirect.json"],
+        ),
+        (
+            "unknown jq input redirect fails closed",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+jq -r . < "$UNRESOLVED_JSON"
+''',
+            False,
+            ["unproven config reader operand"],
+        ),
+        (
+            "source authority cannot approve an unknown jq here-string",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+jq -r . <<<"$UNRESOLVED_JSON"
+''',
+            True,
+            ["unproven config reader operand"],
+        ),
+        (
+            "command-prefixed jq cannot hide an alternate reader",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+command jq -r . "/etc/pim/command-prefix.json"
+''',
+            False,
+            ["alternate config read: /etc/pim/command-prefix.json"],
+        ),
+        (
+            "command double-dash jq cannot hide an alternate reader",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+command -- jq -r . "/etc/pim/command-double-dash.json"
+''',
+            False,
+            ["alternate config read: /etc/pim/command-double-dash.json"],
+        ),
+        (
+            "absolute jq executable cannot hide an alternate reader",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+/usr/bin/jq -r . "/etc/pim/absolute-jq.json"
+''',
+            False,
+            ["alternate config read: /etc/pim/absolute-jq.json"],
+        ),
+        (
+            "ignored validator failure cannot upgrade alternate provenance",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+PIM_LIB=/opt/pim/lib
+. "$PIM_LIB/cam_recovery_actions.sh"
+EVIL="/etc/pim/validator.json"
+cam_validate_runtime "$EVIL" || true
+jq -r . "$EVIL"
+''',
+            False,
+            ["alternate config read: /etc/pim/validator.json"],
+        ),
+        (
+            "bare validator call cannot upgrade unresolved provenance",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+PIM_LIB=/opt/pim/lib
+. "$PIM_LIB/cam_recovery_actions.sh"
+EVIL="$UNRESOLVED_JSON"
+cam_validate_runtime "$EVIL"
+jq -r . "$EVIL"
+''',
+            False,
+            ["unproven config reader operand"],
+        ),
+        (
+            "jq pipe without proven input origin fails closed",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+printf '%s\\n' '{{}}' | jq -r .
+''',
+            False,
             ["unproven config reader operand"],
         ),
     )
