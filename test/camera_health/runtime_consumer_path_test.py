@@ -186,6 +186,7 @@ class ShellWord:
     raw: str
     parts: tuple[tuple[str, str], ...]
     malformed: bool = False
+    io_number: bool = False
 
 
 @dataclass(frozen=True)
@@ -413,6 +414,7 @@ def lex_shell(text: str) -> ShellLexicalResult:
     def tokenize(command: str, piped_input: bool = False) -> ShellCommand:
         masked: list[str] = []
         substitutions: dict[str, str] = {}
+        io_numbers: dict[str, str] = {}
         quote = ""
         index = 0
         while index < len(command):
@@ -434,6 +436,21 @@ def lex_shell(text: str) -> ShellLexicalResult:
                 masked.extend(key)
                 index = end + 1
                 continue
+            elif not quote and char in "0123456789":
+                end = index + 1
+                while end < len(command) and command[end] in "0123456789":
+                    end += 1
+                preceding = command[index - 1] if index else ""
+                at_word_start = not preceding or preceding.isspace() or preceding in ";|&()<>"
+                if at_word_start and end < len(command) and command[end] in "<>":
+                    key = f"__PIM_IO_NUMBER_{len(io_numbers)}__"
+                    while key in command:
+                        key = "_" + key
+                    value = command[index:end]
+                    io_numbers[key] = value
+                    masked.extend((value, key))
+                    index = end
+                    continue
             elif quote:
                 quote = "" if char == quote else quote
             elif char in "'\"":
@@ -449,13 +466,19 @@ def lex_shell(text: str) -> ShellLexicalResult:
             return ShellCommand(command, (ShellWord(command, (), True),), True, piped_input)
         words: list[ShellWord] = []
         for raw in raw_words:
+            io_number = False
+            for key, value in io_numbers.items():
+                if raw == value + key:
+                    raw = value
+                    io_number = True
+                    break
             raw = re.sub(
                 r"__PIM_SUB_[0-9]+__",
                 lambda match: substitutions[match.group(0)],
                 raw,
             )
             parts, bad = word_parts(raw)
-            words.append(ShellWord(raw, parts, bad))
+            words.append(ShellWord(raw, parts, bad, io_number))
         return ShellCommand(
             command,
             tuple(words),
@@ -646,7 +669,7 @@ class ShellProvenanceProof:
             operator_index = index
             if (
                 literal is not None
-                and literal.isdigit()
+                and words[index].io_number
                 and index + 1 < len(words)
                 and self.literal(words[index + 1]) in {"<", "<<<", "<<", "<&", "<>", ">", ">>", ">&"}
             ):
@@ -2384,6 +2407,104 @@ PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
     for label, fixture, expected in fd_normalization_audit_cases:
         check(shell_reader_violations(fixture) == expected, label, failures)
 
+    io_number_adjacency_audit_cases = (
+        (
+            "spaced ASCII numeric direct-jq data is not an IO number",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+jq -n --arg value 00 >&3 .
+''',
+            [],
+        ),
+        (
+            "spaced Unicode numeric command-jq data neither crashes nor becomes an IO number",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+command jq -n --arg value ² >&3 .
+''',
+            [],
+        ),
+        (
+            "quoted adjacent numeric command-double-dash data is not an IO number",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+command -- jq -n --arg value "00">&3 .
+''',
+            [],
+        ),
+        (
+            "escaped adjacent numeric absolute-jq data is not an IO number",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+/usr/bin/jq -n --arg value \\00>&3 .
+''',
+            [],
+        ),
+        (
+            "mixed quoted numeric-looking absolute-jq data is not an IO number",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+/usr/bin/jq -n --arg value 0"0">&3 .
+''',
+            [],
+        ),
+        (
+            "adjacent unquoted fd0 retains direct-jq stdin semantics",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+exec 3<"/etc/pim/io-adjacent-zero.json"
+0>&3 jq -r .
+''',
+            ["unproven config reader operand"],
+        ),
+        (
+            "adjacent unquoted double-zero retains command-jq stdin semantics",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+00<&3 command jq -r .
+''',
+            ["unproven config reader operand"],
+        ),
+        (
+            "adjacent unquoted triple-zero retains absolute-jq stdin semantics",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+000<>"/etc/pim/io-adjacent-triple-zero.json" /usr/bin/jq -r .
+''',
+            ["alternate config read: /etc/pim/io-adjacent-triple-zero.json"],
+        ),
+        (
+            "adjacent unquoted fd01 remains a nonzero direct-jq destination",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+01>&3 jq -n .
+''',
+            [],
+        ),
+        (
+            "adjacent unquoted fd02 remains a nonzero command-jq destination",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+02<&3 command -- jq -n .
+''',
+            [],
+        ),
+        (
+            "adjacent unquoted fd03 remains a nonzero absolute-jq destination",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+03<"/etc/pim/io-adjacent-fd3.json" /usr/bin/jq -n .
+''',
+            [],
+        ),
+    )
+    for label, fixture, expected in io_number_adjacency_audit_cases:
+        try:
+            actual = shell_reader_violations(fixture)
+        except ValueError as error:
+            actual = [f"raised {type(error).__name__}"]
+        check(actual == expected, label, failures)
+
     reviewer_shell_oracles = (
         (
             "Bash preserves reviewer nested single-quoted reader bytes",
@@ -2505,6 +2626,77 @@ exec 3<<<fd-input
 000</dev/fd/3 jq -r .
 ''',
             b"fd-input\n",
+            b"",
+        ),
+        (
+            "Bash keeps spaced ASCII numeric data in argv",
+            '''\
+exec 3>&1
+command printf '<%s>\\n' 00 >&3 .
+''',
+            b"<00>\n<.>\n",
+            b"",
+        ),
+        (
+            "Bash keeps spaced Unicode numeric data in argv",
+            '''\
+exec 3>&1
+command printf '<%s>\\n' ² >&3 .
+''',
+            "<²>\n<.>\n".encode(),
+            b"",
+        ),
+        (
+            "Bash keeps quoted adjacent numeric data in argv",
+            '''\
+exec 3>&1
+command printf '<%s>\\n' "00">&3 .
+''',
+            b"<00>\n<.>\n",
+            b"",
+        ),
+        (
+            "Bash keeps escaped adjacent numeric data in argv",
+            '''\
+exec 3>&1
+command printf '<%s>\\n' \\00>&3 .
+''',
+            b"<00>\n<.>\n",
+            b"",
+        ),
+        (
+            "Bash keeps mixed quoted numeric-looking data in argv",
+            '''\
+exec 3>&1
+command printf '<%s>\\n' 0"0">&3 .
+''',
+            b"<00>\n<.>\n",
+            b"",
+        ),
+        (
+            "Bash treats adjacent unquoted fd01 as descriptor 1",
+            '''\
+exec 3>&1
+01>&3 command printf '%s\\n' fd01
+''',
+            b"fd01\n",
+            b"",
+        ),
+        (
+            "Bash treats adjacent unquoted fd02 as descriptor 2",
+            '''\
+exec 3</dev/null
+02<&3 command printf '%s\\n' fd02
+''',
+            b"fd02\n",
+            b"",
+        ),
+        (
+            "Bash treats adjacent unquoted fd03 as descriptor 3",
+            '''\
+03</dev/null command printf '%s\\n' fd03
+''',
+            b"fd03\n",
             b"",
         ),
     )
