@@ -648,18 +648,22 @@ class ShellProvenanceProof:
                 literal is not None
                 and literal.isdigit()
                 and index + 1 < len(words)
-                and self.literal(words[index + 1]) in {"<", "<<<", "<<", "<&", ">", ">>", ">&"}
+                and self.literal(words[index + 1]) in {"<", "<<<", "<<", "<&", "<>", ">", ">>", ">&"}
             ):
                 descriptor = literal
                 operator_index += 1
             operator = self.literal(words[operator_index])
-            if operator in {"<", "<<<", "<<", "<&", ">", ">>", ">&"}:
+            if operator in {"<", "<<<", "<<", "<&", "<>", ">", ">>", ">&"}:
                 operand_index = operator_index + 1
-                if operator in {"<", "<<<", "<&"} and descriptor in {None, "0"}:
+                default_descriptor = (
+                    "0" if operator in {"<", "<<<", "<<", "<&", "<>"} else "1"
+                )
+                destination = descriptor or default_descriptor
+                if destination == "0" and operator in {"<", "<<<", "<&", "<>", ">&"}:
                     explicit_stdin = True
                     origin = (
                         UNKNOWN_ORIGIN
-                        if operator == "<&"
+                        if operator in {"<&", ">&"}
                         else self.value(words[operand_index], values)
                         if operand_index < len(words)
                         else UNKNOWN_ORIGIN
@@ -2224,6 +2228,100 @@ PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
             failures,
         )
 
+    fd_destination_audit_cases = (
+        (
+            "fd0 output-family duplication remains an unproven stdin source",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+exec 3<"/etc/pim/fd-alternate.json"
+0>&3 jq -r .
+''',
+            ["unproven config reader operand"],
+        ),
+        (
+            "fd0 input-family duplication remains an unproven stdin source",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+0<&3 jq -r .
+''',
+            ["unproven config reader operand"],
+        ),
+        (
+            "default input-family duplication targets stdin",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+<&3 jq -r .
+''',
+            ["unproven config reader operand"],
+        ),
+        (
+            "default input redirect rejects its alternate path",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+<"/etc/pim/fd-default.json" jq -r .
+''',
+            ["alternate config read: /etc/pim/fd-default.json"],
+        ),
+        (
+            "explicit fd0 input redirect rejects its alternate path",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+0<"/etc/pim/fd-zero.json" jq -r .
+''',
+            ["alternate config read: /etc/pim/fd-zero.json"],
+        ),
+        (
+            "explicit fd0 read-write redirect rejects its alternate path",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+0<>"/etc/pim/fd-readwrite.json" jq -r .
+''',
+            ["alternate config read: /etc/pim/fd-readwrite.json"],
+        ),
+        (
+            "fd1 duplication is not a jq stdin source",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+1>&3 jq -n .
+''',
+            [],
+        ),
+        (
+            "fd2 duplication is not a jq stdin source",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+2>&3 jq -n .
+''',
+            [],
+        ),
+        (
+            "fd3 duplication is not a jq stdin source",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+3>&1 jq -n .
+''',
+            [],
+        ),
+        (
+            "default output-family duplication targets stdout",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+>&2 jq -n .
+''',
+            [],
+        ),
+        (
+            "alternate path opened only on fd3 is not jq stdin",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+3<"/etc/pim/fd3-only.json" jq -n .
+''',
+            [],
+        ),
+    )
+    for label, fixture, expected in fd_destination_audit_cases:
+        check(shell_reader_violations(fixture) == expected, label, failures)
+
     reviewer_shell_oracles = (
         (
             "Bash preserves reviewer nested single-quoted reader bytes",
@@ -2293,6 +2391,16 @@ jq() { printf '%s\\n' fd-output; }
 jq() { IFS= read -r value; printf '%s\\n' "$value"; }
 exec 3<<<fd-input
 0<&3 jq -r .
+''',
+            b"fd-input\n",
+            b"",
+        ),
+        (
+            "Bash uses destination fd0 for output-family duplication",
+            '''\
+jq() { IFS= read -r value; printf '%s\\n' "$value"; }
+exec 3<<<fd-input
+0>&3 jq -r .
 ''',
             b"fd-input\n",
             b"",
