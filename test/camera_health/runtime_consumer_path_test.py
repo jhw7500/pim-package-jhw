@@ -441,7 +441,7 @@ def lex_shell(text: str) -> ShellLexicalResult:
             masked.append(char)
             index += 1
         try:
-            lexer = shlex.shlex("".join(masked), posix=False, punctuation_chars="<>")
+            lexer = shlex.shlex("".join(masked), posix=False, punctuation_chars="<>&")
             lexer.whitespace_split = True
             lexer.commenters = ""
             raw_words = list(lexer)
@@ -516,6 +516,9 @@ def lex_shell(text: str) -> ShellLexicalResult:
                 while index < len(scope) and scope[index] != "\n":
                     index += 1
                 continue
+            elif char in "<>" and following == "&":
+                current.extend((char, following))
+                index += 1
             elif char in "\n;{}|&":
                 is_pipe = char == "|" and following != "|"
                 finish()
@@ -587,6 +590,7 @@ class ShellProvenanceProof:
         if self.imports_recovery:
             imported = lex_shell(executable_text(Path("dist/pim/opt/pim/lib/cam_recovery.sh")))
             helper_bodies = {**imported.functions, **helper_bodies}
+        self.helpers: dict[str, ShellOrigin] = {}
         self.helpers = self.proven_helpers(helper_bodies)
 
     @staticmethod
@@ -644,16 +648,22 @@ class ShellProvenanceProof:
                 literal is not None
                 and literal.isdigit()
                 and index + 1 < len(words)
-                and self.literal(words[index + 1]) in {"<", "<<<", "<<", ">", ">>"}
+                and self.literal(words[index + 1]) in {"<", "<<<", "<<", "<&", ">", ">>", ">&"}
             ):
                 descriptor = literal
                 operator_index += 1
             operator = self.literal(words[operator_index])
-            if operator in {"<", "<<<", "<<", ">", ">>"}:
+            if operator in {"<", "<<<", "<<", "<&", ">", ">>", ">&"}:
                 operand_index = operator_index + 1
-                if operator in {"<", "<<<"} and descriptor in {None, "0"}:
+                if operator in {"<", "<<<", "<&"} and descriptor in {None, "0"}:
                     explicit_stdin = True
-                    origin = self.value(words[operand_index], values) if operand_index < len(words) else UNKNOWN_ORIGIN
+                    origin = (
+                        UNKNOWN_ORIGIN
+                        if operator == "<&"
+                        else self.value(words[operand_index], values)
+                        if operand_index < len(words)
+                        else UNKNOWN_ORIGIN
+                    )
                     if operator == "<<<" and origin.kind == "literal":
                         origin = STATE_CONTENT
                     inputs.append(origin)
@@ -1850,6 +1860,39 @@ PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
             False,
         ),
         (
+            "stderr fd duplication preserves an approved runtime reader",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+2>&1 jq -r . "$PIM_CAMERA_RUNTIME_JSON"
+''',
+            False,
+        ),
+        (
+            "stderr fd duplication preserves null-input jq",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+2>&1 jq -n .
+''',
+            False,
+        ),
+        (
+            "default output fd duplication remains output-only",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+>&2 jq -n .
+''',
+            False,
+        ),
+        (
+            "background and and-if separators do not create pipe input",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+true & jq -n .
+true && jq -n .
+''',
+            False,
+        ),
+        (
             "jq short null-input mode requires no file or stdin authority",
             f'''\
 PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
@@ -2155,6 +2198,24 @@ PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
             False,
             ["alternate config read: /etc/pim/after-output-prefix.json"],
         ),
+        (
+            "input fd duplication remains an unproven reader input",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+<&3 jq -r .
+''',
+            False,
+            ["unproven config reader operand"],
+        ),
+        (
+            "explicit stdin fd duplication remains unproven before command jq",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+0<&3 command -- jq -r .
+''',
+            False,
+            ["unproven config reader operand"],
+        ),
     )
     for label, fixture, allow_source, expected in provenance_reject_cases:
         check(
@@ -2193,6 +2254,62 @@ PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
             oracle.returncode == 0
             and oracle.stdout == expected_stdout
             and oracle.stderr == b"",
+            label,
+            failures,
+        )
+
+    fd_redirection_shell_oracles = (
+        (
+            "Bash accepts approved-runtime jq after stderr fd duplication",
+            f'''\
+jq() {{ printf '%s\\n' "$3"; }}
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+2>&1 jq -r . "$PIM_CAMERA_RUNTIME_JSON"
+''',
+            f"{RUNTIME_PATH}\n".encode(),
+            b"",
+        ),
+        (
+            "Bash accepts null-input jq after stderr fd duplication",
+            '''\
+jq() { printf '%s\\n' "$*"; }
+2>&1 jq -n .
+''',
+            b"-n .\n",
+            b"",
+        ),
+        (
+            "Bash treats default fd duplication as output-only",
+            '''\
+jq() { printf '%s\\n' fd-output; }
+>&2 jq -n .
+''',
+            b"",
+            b"fd-output\n",
+        ),
+        (
+            "Bash treats explicit stdin fd duplication as input",
+            '''\
+jq() { IFS= read -r value; printf '%s\\n' "$value"; }
+exec 3<<<fd-input
+0<&3 jq -r .
+''',
+            b"fd-input\n",
+            b"",
+        ),
+    )
+    for label, script, expected_stdout, expected_stderr in fd_redirection_shell_oracles:
+        oracle = subprocess.run(
+            ["/bin/bash", "--noprofile", "--norc", "-c", script],
+            capture_output=True,
+            timeout=5,
+            env={"BASH_ENV": "/dev/null", "PATH": "/usr/bin:/bin"},
+            check=False,
+        )
+        check(
+            oracle.returncode == 0
+            and oracle.stdout == expected_stdout
+            and oracle.stderr == expected_stderr,
             label,
             failures,
         )
