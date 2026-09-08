@@ -478,8 +478,8 @@ def lex_shell(text: str) -> ShellLexicalResult:
             pending_nested.clear()
             if command:
                 parsed.append(tokenize(command, piped_input))
+                piped_input = False
             current.clear()
-            piped_input = False
 
         while index < len(scope):
             char = scope[index]
@@ -616,6 +616,54 @@ class ShellProvenanceProof:
         while index < len(words) and self.assignment(words[index]):
             index += 1
         return words[index:]
+
+    def simple_command(
+        self,
+        words: tuple[ShellWord, ...],
+        values: dict[str, ShellOrigin],
+    ) -> tuple[tuple[ShellWord, ...], tuple[ShellOrigin, ...], bool]:
+        """Separate redirections before determining the bounded executable."""
+
+        controls = {"if", "then", "elif", "while", "until", "do", "!", "time"}
+        index = 0
+        while index < len(words) and self.literal(words[index]) in controls:
+            index += 1
+        argv: list[ShellWord] = []
+        inputs: list[ShellOrigin] = []
+        explicit_stdin = False
+        executable_seen = False
+        while index < len(words):
+            literal = self.literal(words[index])
+            if not executable_seen and self.assignment(words[index]):
+                index += 1
+                continue
+
+            descriptor = None
+            operator_index = index
+            if (
+                literal is not None
+                and literal.isdigit()
+                and index + 1 < len(words)
+                and self.literal(words[index + 1]) in {"<", "<<<", "<<", ">", ">>"}
+            ):
+                descriptor = literal
+                operator_index += 1
+            operator = self.literal(words[operator_index])
+            if operator in {"<", "<<<", "<<", ">", ">>"}:
+                operand_index = operator_index + 1
+                if operator in {"<", "<<<"} and descriptor in {None, "0"}:
+                    explicit_stdin = True
+                    origin = self.value(words[operand_index], values) if operand_index < len(words) else UNKNOWN_ORIGIN
+                    if operator == "<<<" and origin.kind == "literal":
+                        origin = STATE_CONTENT
+                    inputs.append(origin)
+                index = operand_index + 1
+                continue
+
+            argv.append(words[index])
+            executable_seen = True
+            index += 1
+        return tuple(argv), tuple(inputs), explicit_stdin
 
     def proven_helpers(self, functions: dict[str, tuple[str, tuple[ShellCommand, ...]]]) -> dict[str, ShellOrigin]:
         proven: dict[str, ShellOrigin] = {}
@@ -883,8 +931,12 @@ class ShellProvenanceProof:
         values: dict[str, ShellOrigin],
         malformed: bool,
         piped_input: bool,
+        redirected_inputs: tuple[ShellOrigin, ...] = (),
+        redirected_stdin: bool = False,
     ) -> None:
         inputs, explicit_stdin, null_input = self.jq_inputs(argv, values)
+        inputs[:0] = redirected_inputs
+        explicit_stdin = explicit_stdin or redirected_stdin
         for origin in inputs:
             if violation := self.reader_violation(origin):
                 self.violations.append(violation)
@@ -906,8 +958,26 @@ class ShellProvenanceProof:
             if not argv:
                 continue
             executable = self.literal(argv[0])
-            if jq_argv := self.jq_invocation(argv):
-                self.inspect_jq(jq_argv, values, command.malformed, command.piped_input)
+            simple_argv, redirected_inputs, redirected_stdin = self.simple_command(command.words, values)
+            if jq_argv := self.jq_invocation(simple_argv):
+                self.inspect_jq(
+                    jq_argv,
+                    values,
+                    command.malformed,
+                    command.piped_input,
+                    redirected_inputs,
+                    redirected_stdin,
+                )
+            elif not (
+                len(simple_argv) > 1
+                and self.literal(simple_argv[0]) == "command"
+                and self.literal(simple_argv[1]) in {"-v", "-V"}
+            ) and any(
+                (literal := self.literal(word)) == "jq"
+                or (literal is not None and literal.startswith("/") and literal.rsplit("/", 1)[-1] == "jq")
+                for word in simple_argv
+            ):
+                self.violations.append("unproven config reader operand")
             if executable in self.lexical.functions:
                 calls.append((executable, tuple(self.value(word, values) for word in argv[1:])))
 
@@ -1746,6 +1816,40 @@ jq -r . < "$PIM_CAMERA_RUNTIME_JSON"
             False,
         ),
         (
+            "leading approved runtime input remains approved before jq",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+< "$PIM_CAMERA_RUNTIME_JSON" jq -r .
+''',
+            False,
+        ),
+        (
+            "leading approved runtime content remains approved before jq",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+runtime_json=$(<"$PIM_CAMERA_RUNTIME_JSON") || exit 64
+<<<"$runtime_json" jq -r .
+''',
+            False,
+        ),
+        (
+            "and-or control operators do not create pipe provenance",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+false || jq -r .
+true && jq -r .
+''',
+            False,
+        ),
+        (
+            "leading output redirects do not become jq input sources",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+>"/tmp/jq.out" 2>"/tmp/jq.err" jq -n -r .
+''',
+            False,
+        ),
+        (
             "jq short null-input mode requires no file or stdin authority",
             f'''\
 PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
@@ -1955,6 +2059,101 @@ printf '%s\\n' '{{}}' | jq -r .
 ''',
             False,
             ["unproven config reader operand"],
+        ),
+        (
+            "multiline pipe cannot lose jq input provenance",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+cat "/etc/pim/multiline-pipe.json" |
+  jq -r .
+''',
+            False,
+            ["unproven config reader operand"],
+        ),
+        (
+            "multiline stderr pipe cannot lose jq input provenance",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+cat "/etc/pim/multiline-pipe-stderr.json" |&
+  jq -r .
+''',
+            False,
+            ["unproven config reader operand"],
+        ),
+        (
+            "blank and comment lines cannot clear pending pipe provenance",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+cat "/etc/pim/commented-pipe.json" |
+
+  # the right-hand command is intentionally separated
+  jq -r .
+''',
+            False,
+            ["unproven config reader operand"],
+        ),
+        (
+            "leading alternate input before direct jq is rejected precisely",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+< "/etc/pim/prefix-direct.json" jq -r .
+''',
+            False,
+            ["alternate config read: /etc/pim/prefix-direct.json"],
+        ),
+        (
+            "leading unknown content before direct jq fails closed",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+<<<"$UNKNOWN_JSON" jq -r .
+''',
+            False,
+            ["unproven config reader operand"],
+        ),
+        (
+            "leading alternate input composes with command jq",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+< "/etc/pim/prefix-command.json" command -- jq -r .
+''',
+            False,
+            ["alternate config read: /etc/pim/prefix-command.json"],
+        ),
+        (
+            "leading unknown content composes with command jq",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+<<<"$UNKNOWN_JSON" command -- jq -r .
+''',
+            False,
+            ["unproven config reader operand"],
+        ),
+        (
+            "leading alternate input composes with absolute jq",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+< "/etc/pim/prefix-absolute.json" /usr/bin/jq -r .
+''',
+            False,
+            ["alternate config read: /etc/pim/prefix-absolute.json"],
+        ),
+        (
+            "leading unknown content composes with absolute jq",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+<<<"$UNKNOWN_JSON" /usr/bin/jq -r .
+''',
+            False,
+            ["unproven config reader operand"],
+        ),
+        (
+            "leading output redirects stay separate from jq file inputs",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+>"/tmp/jq.out" jq -r . "/etc/pim/after-output-prefix.json"
+''',
+            False,
+            ["alternate config read: /etc/pim/after-output-prefix.json"],
         ),
     )
     for label, fixture, allow_source, expected in provenance_reject_cases:
