@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import ast
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -195,6 +196,53 @@ def strip_inline_comment(line: str) -> str:
     return line
 
 
+def remove_unquoted_shell_continuations(text: str) -> str:
+    """Apply shell's unquoted backslash-newline removal to finite input."""
+    normalized: list[str] = []
+    quote = ""
+    comment = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if comment:
+            normalized.append(char)
+            if char == "\n":
+                comment = False
+            index += 1
+            continue
+        if quote == "'":
+            normalized.append(char)
+            if char == "'":
+                quote = ""
+            index += 1
+            continue
+        if char == "\\":
+            next_char = text[index + 1] if index + 1 < len(text) else ""
+            if not quote and next_char == "\n":
+                index += 2
+                continue
+            normalized.append(char)
+            if next_char:
+                normalized.append(next_char)
+                index += 2
+            else:
+                index += 1
+            continue
+        if quote:
+            normalized.append(char)
+            if char == quote:
+                quote = ""
+            index += 1
+            continue
+        if char in "'\"":
+            quote = char
+        elif char == "#":
+            comment = True
+        normalized.append(char)
+        index += 1
+    return "".join(normalized)
+
+
 def expand_constants(line: str, constants: dict[str, str]) -> str:
     """Resolve reviewed simple assignments; leave dynamic expressions untouched."""
     previous = ""
@@ -214,6 +262,7 @@ def expand_constants(line: str, constants: dict[str, str]) -> str:
 
 def normalized_contract_lines(text: str) -> list[str]:
     """Expose static shell/Python string composition without executing source."""
+    text = remove_unquoted_shell_continuations(text)
     constants: dict[str, str] = {}
     normalized: list[str] = []
     pending_assignment: tuple[str, list[str]] | None = None
@@ -454,6 +503,7 @@ def python_config_read_paths(text: str) -> list[str]:
 
 def logical_config_read_lines(text: str, lines: list[str]) -> list[str]:
     """Join shell continuations and quoted spans within the finite input."""
+    text = remove_unquoted_shell_continuations(text)
     logical: list[str] = []
     command_parts: list[str] = []
     quote = ""
@@ -690,6 +740,24 @@ def main() -> int:
     )
 
     print("=== audit mutation regressions ===")
+    continued_assignment = """\
+ACTUAL_CONFIG=$(
+  command printf -- %s \\
+  /etc/pim/camera.json
+)
+"""
+    continued_reader_fixture = f'''\
+PIM_CAMERA_RUNTIME_JSON="${{PIM_CAMERA_RUNTIME_JSON:-{RUNTIME_PATH}}}"
+{continued_assignment}jq -r '.VHL_CAM.app' "$ACTUAL_CONFIG"
+'''
+    renamed_continued_fixture = f'''\
+PIM_CAMERA_RUNTIME_JSON="${{PIM_CAMERA_RUNTIME_JSON:-{RUNTIME_PATH}}}"
+    REVIEWED_INPUT=$(
+        printf %s \\
+          /var/lib/pim/reviewed-camera.json
+    )
+jq -r '.VHL_CAM.app' "$REVIEWED_INPUT"
+'''
     mutation_fixtures = (
         (
             "decoy runtime marker cannot hide an alternate JSON read",
@@ -799,6 +867,16 @@ jq -r '.VHL_CAM.app' "$ACTUAL_CONFIG"
             "alternate config read:",
         ),
         (
+            "continued multiline command substitution cannot hide an alternate JSON read",
+            continued_reader_fixture,
+            "alternate config read:",
+        ),
+        (
+            "renamed indented continued substitution cannot hide an alternate JSON read",
+            renamed_continued_fixture,
+            "alternate config read:",
+        ),
+        (
             "composed source-root/newest-edgeconf discovery is rejected",
             f'''\
 PIM_CAMERA_RUNTIME_JSON="${{PIM_CAMERA_RUNTIME_JSON:-{RUNTIME_PATH}}}"
@@ -837,6 +915,49 @@ jq -r '.VHL_CAM.app' "$PIM_CAMERA_RUNTIME_JSON"
             label,
             failures,
         )
+
+    bash_result = subprocess.run(
+        [
+            "/bin/bash",
+            "--noprofile",
+            "--norc",
+            "-c",
+            continued_assignment + 'printf "%s\\n" "$ACTUAL_CONFIG"\n',
+        ],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        env={"BASH_ENV": "/dev/null", "PATH": "/usr/bin:/bin"},
+        check=False,
+    )
+    check(
+        bash_result.returncode == 0
+        and bash_result.stdout == "/etc/pim/camera.json\n"
+        and bash_result.stderr == "",
+        "Bash evaluates the continued substitution to the alternate path",
+        failures,
+    )
+
+    quoted_data_fixture = f'''\
+PIM_CAMERA_RUNTIME_JSON="${{PIM_CAMERA_RUNTIME_JSON:-{RUNTIME_PATH}}}"
+QUOTED_DATA=$(
+  command printf -- %s '\\
+/etc/pim/camera.json'
+)
+jq -r '.VHL_CAM.app' "$QUOTED_DATA"
+'''
+    check(
+        not any(
+            item.startswith("alternate config read:")
+            for item in runtime_boundary_violations(
+                quoted_data_fixture,
+                "PIM_CAMERA_RUNTIME_JSON",
+                RUNTIME_PATH,
+            )
+        ),
+        "single-quoted backslash-newline remains data, not continuation",
+        failures,
+    )
 
     print()
     print(f"camera runtime consumer boundary: {len(failures)} failure(s)")
