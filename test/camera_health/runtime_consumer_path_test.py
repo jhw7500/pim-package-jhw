@@ -8,6 +8,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -195,6 +196,7 @@ class ShellCommand:
     words: tuple[ShellWord, ...]
     malformed: bool = False
     piped_input: bool = False
+    may_skip: bool = False
 
 
 @dataclass(frozen=True)
@@ -204,6 +206,14 @@ class ShellLexicalResult:
     top: tuple[ShellCommand, ...]
     functions: dict[str, tuple[str, tuple[ShellCommand, ...]]]
     malformed: bool
+
+
+@dataclass
+class ShellStateFrame:
+    kind: str
+    incoming: dict[str, ShellOrigin]
+    exits: list[dict[str, ShellOrigin]]
+    exhaustive: bool = False
 
 
 def lex_shell(text: str) -> ShellLexicalResult:
@@ -411,7 +421,11 @@ def lex_shell(text: str) -> ShellLexicalResult:
         flush()
         return tuple(parts), bad or bool(quote)
 
-    def tokenize(command: str, piped_input: bool = False) -> ShellCommand:
+    def tokenize(
+        command: str,
+        piped_input: bool = False,
+        may_skip: bool = False,
+    ) -> ShellCommand:
         masked: list[str] = []
         substitutions: dict[str, str] = {}
         io_numbers: dict[str, str] = {}
@@ -438,7 +452,13 @@ def lex_shell(text: str) -> ShellLexicalResult:
             elif char == "$" and following == "(":
                 end = substitution_end(command, index)
                 if end is None:
-                    return ShellCommand(command, (ShellWord(command, (), True),), True, piped_input)
+                    return ShellCommand(
+                        command,
+                        (ShellWord(command, (), True),),
+                        True,
+                        piped_input,
+                        may_skip,
+                    )
                 key = f"__PIM_SUB_{len(substitutions)}__"
                 substitutions[key] = command[index : end + 1]
                 masked.extend(key)
@@ -462,7 +482,15 @@ def lex_shell(text: str) -> ShellLexicalResult:
                     continue
                 word_open = True
             elif quote:
-                quote = "" if char == quote else quote
+                if char == quote:
+                    quote = ""
+                elif char.isspace():
+                    key = f"__PIM_SUB_{len(substitutions)}__"
+                    substitutions[key] = char
+                    masked.extend(key)
+                    word_open = True
+                    index += 1
+                    continue
                 word_open = True
             elif char in "'\"":
                 quote = char
@@ -477,7 +505,13 @@ def lex_shell(text: str) -> ShellLexicalResult:
             lexer.commenters = ""
             raw_words = list(lexer)
         except ValueError:
-            return ShellCommand(command, (ShellWord(command, (), True),), True, piped_input)
+            return ShellCommand(
+                command,
+                (ShellWord(command, (), True),),
+                True,
+                piped_input,
+                may_skip,
+            )
         words: list[ShellWord] = []
         for raw in raw_words:
             io_number = False
@@ -498,6 +532,7 @@ def lex_shell(text: str) -> ShellLexicalResult:
             tuple(words),
             bool(quote) or any(word.malformed for word in words),
             piped_input,
+            may_skip,
         )
 
     def commands(scope: str) -> tuple[ShellCommand, ...]:
@@ -507,15 +542,28 @@ def lex_shell(text: str) -> ShellLexicalResult:
         quote = ""
         index = 0
         piped_input = False
+        pending_may_skip = False
 
         def finish() -> None:
-            nonlocal piped_input
+            nonlocal pending_may_skip, piped_input
             command = "".join(current).strip()
-            parsed.extend(pending_nested)
+            inherited_may_skip = pending_may_skip
+            parsed.extend(
+                ShellCommand(
+                    nested.raw,
+                    nested.words,
+                    nested.malformed,
+                    nested.piped_input,
+                    nested.may_skip or inherited_may_skip,
+                )
+                for nested in pending_nested
+            )
             pending_nested.clear()
             if command:
-                parsed.append(tokenize(command, piped_input))
+                tokenized = tokenize(command, piped_input, inherited_may_skip)
+                parsed.append(tokenized)
                 piped_input = False
+                pending_may_skip = False
             current.clear()
 
         while index < len(scope):
@@ -558,9 +606,12 @@ def lex_shell(text: str) -> ShellLexicalResult:
                 index += 1
             elif char in "\n;{}|&":
                 is_pipe = char == "|" and following != "|"
+                is_and_or = char in "|&" and following == char
                 finish()
                 if is_pipe:
                     piped_input = True
+                elif is_and_or:
+                    pending_may_skip = True
                 if (following == char and char in "|&") or (char == "|" and following == "&"):
                     index += 1
             else:
@@ -650,13 +701,82 @@ class ShellProvenanceProof:
         return name, ShellWord(value, tuple(parts), word.malformed)
 
     def argv(self, words: tuple[ShellWord, ...]) -> tuple[ShellWord, ...]:
-        controls = {"if", "then", "elif", "while", "until", "do", "!", "time"}
+        controls = {
+            "if",
+            "then",
+            "elif",
+            "else",
+            "while",
+            "until",
+            "do",
+            "!",
+            "time",
+        }
         index = 0
         while index < len(words) and self.literal(words[index]) in controls:
             index += 1
         while index < len(words) and self.assignment(words[index]):
             index += 1
         return words[index:]
+
+    def state_assignments(
+        self, words: tuple[ShellWord, ...]
+    ) -> tuple[tuple[str, ShellWord], ...]:
+        """Return shell assignment positions, never assignment-looking argv."""
+
+        controls = {
+            "if",
+            "then",
+            "elif",
+            "else",
+            "while",
+            "until",
+            "do",
+            "!",
+            "time",
+        }
+        index = 0
+        while index < len(words) and self.literal(words[index]) in controls:
+            index += 1
+        declaration = (
+            self.literal(words[index]) if index < len(words) else None
+        )
+        if declaration in {"declare", "export", "local", "readonly", "typeset"}:
+            index += 1
+            assignments: list[tuple[str, ShellWord]] = []
+            while index < len(words):
+                literal = self.literal(words[index])
+                if literal == "--" or (literal and literal.startswith("-")):
+                    index += 1
+                    continue
+                if assignment := self.assignment(words[index]):
+                    assignments.append(assignment)
+                index += 1
+            return tuple(assignments)
+
+        assignments = []
+        while index < len(words):
+            assignment = self.assignment(words[index])
+            if assignment is None:
+                break
+            assignments.append(assignment)
+            index += 1
+        return tuple(assignments)
+
+    @staticmethod
+    def join_states(
+        states: tuple[dict[str, ShellOrigin], ...]
+    ) -> dict[str, ShellOrigin]:
+        joined: dict[str, ShellOrigin] = {}
+        for name in set().union(*(state.keys() for state in states)):
+            origins = tuple(state.get(name, UNKNOWN_ORIGIN) for state in states)
+            joined[name] = (
+                origins[0]
+                if origins[0].kind != "unknown"
+                and all(origin == origins[0] for origin in origins[1:])
+                else UNKNOWN_ORIGIN
+            )
+        return joined
 
     def simple_command(
         self,
@@ -665,7 +785,17 @@ class ShellProvenanceProof:
     ) -> tuple[tuple[ShellWord, ...], tuple[ShellOrigin, ...], bool]:
         """Separate redirections before determining the bounded executable."""
 
-        controls = {"if", "then", "elif", "while", "until", "do", "!", "time"}
+        controls = {
+            "if",
+            "then",
+            "elif",
+            "else",
+            "while",
+            "until",
+            "do",
+            "!",
+            "time",
+        }
         index = 0
         while index < len(words) and self.literal(words[index]) in controls:
             index += 1
@@ -911,6 +1041,88 @@ class ShellProvenanceProof:
             return f"alternate config read: {origin.value}"
         return "unproven config reader operand"
 
+    def option_value_reader_origins(
+        self,
+        word: ShellWord,
+        values: dict[str, ShellOrigin],
+    ) -> list[ShellOrigin]:
+        """Return only bounded file-reader origins embedded in jq option data."""
+
+        if word.malformed:
+            return [UNKNOWN_ORIGIN] if "$(" in word.raw else []
+        origins: list[ShellOrigin] = []
+        for kind, body in word.parts:
+            if kind != "command":
+                continue
+            lexical = lex_shell(body)
+            if lexical.malformed:
+                origins.append(UNKNOWN_ORIGIN)
+                continue
+            recognized = False
+            for command in lexical.top:
+                argv, redirected, redirected_stdin = self.simple_command(
+                    command.words, values
+                )
+                if redirected_stdin:
+                    origins.extend(redirected or (UNKNOWN_ORIGIN,))
+                    recognized = True
+                if not argv:
+                    continue
+
+                index = 0
+                executable = self.literal(argv[index])
+                if executable == "command":
+                    index += 1
+                    if index < len(argv) and self.literal(argv[index]) == "--":
+                        index += 1
+                    executable = (
+                        self.literal(argv[index]) if index < len(argv) else None
+                    )
+                basename = (
+                    executable.rsplit("/", 1)[-1]
+                    if executable is not None
+                    else None
+                )
+                if basename == "cat":
+                    recognized = True
+                    operands = argv[index + 1 :]
+                    option_mode = True
+                    file_seen = False
+                    for operand in operands:
+                        literal = self.literal(operand)
+                        if option_mode and literal == "--":
+                            option_mode = False
+                            continue
+                        if option_mode and literal and literal.startswith("-"):
+                            if literal == "-":
+                                origins.append(UNKNOWN_ORIGIN)
+                                file_seen = True
+                            continue
+                        origins.append(self.value(operand, values))
+                        file_seen = True
+                    if not file_seen and not redirected_stdin:
+                        origins.append(UNKNOWN_ORIGIN)
+                    continue
+
+                jq_argv = self.jq_invocation(argv)
+                if jq_argv is None:
+                    continue
+                recognized = True
+                nested, explicit_stdin, null_input = self.jq_inputs(
+                    jq_argv, values
+                )
+                origins.extend(nested)
+                if (
+                    not redirected
+                    and not nested
+                    and not (redirected_stdin or explicit_stdin)
+                    and not null_input
+                ):
+                    origins.append(UNKNOWN_ORIGIN)
+                elif command.piped_input and not null_input:
+                    origins.append(UNKNOWN_ORIGIN)
+        return origins
+
     def jq_invocation(self, argv: tuple[ShellWord, ...]) -> tuple[ShellWord, ...] | None:
         if not argv:
             return None
@@ -962,6 +1174,14 @@ class ShellProvenanceProof:
                 ):
                     null_input = True
                 if literal in {"--arg", "--argjson"}:
+                    if index + 2 < len(argv):
+                        inputs.extend(
+                            self.option_value_reader_origins(
+                                argv[index + 2], values
+                            )
+                        )
+                    else:
+                        inputs.append(UNKNOWN_ORIGIN)
                     index += 3
                 elif literal in {"--slurpfile", "--rawfile", "--argfile"}:
                     inputs.append(self.value(argv[index + 2], values) if index + 2 < len(argv) else UNKNOWN_ORIGIN)
@@ -996,20 +1216,88 @@ class ShellProvenanceProof:
         if malformed and (inputs or explicit_stdin):
             self.violations.append("unproven config reader operand")
 
-    def inspect(self, commands: tuple[ShellCommand, ...], values: dict[str, ShellOrigin], calls: list[tuple[str, tuple[ShellOrigin, ...]]]) -> None:
+    def inspect(
+        self,
+        commands: tuple[ShellCommand, ...],
+        values: dict[str, ShellOrigin],
+        calls: list[
+            tuple[str, tuple[ShellOrigin, ...], dict[str, ShellOrigin]]
+        ],
+    ) -> None:
+        frames: list[ShellStateFrame] = []
         for command in commands:
-            for word in command.words:
-                if assignment := self.assignment(word):
-                    origin = self.value(assignment[1], values)
-                    values[assignment[0]] = origin
-                    if assignment[0] == self.marker and origin.kind == "runtime-path":
+            keyword = (
+                self.literal(command.words[0]) if command.words else None
+            )
+            if keyword == "if":
+                frames.append(ShellStateFrame("if", dict(values), []))
+            elif keyword in {"while", "until", "for", "select"}:
+                frames.append(ShellStateFrame("loop", dict(values), []))
+            elif keyword in {"elif", "else"} and frames and frames[-1].kind == "if":
+                frame = frames[-1]
+                frame.exits.append(dict(values))
+                values.clear()
+                values.update(frame.incoming)
+                if keyword == "else":
+                    frame.exhaustive = True
+            elif keyword == "fi" and frames and frames[-1].kind == "if":
+                frame = frames.pop()
+                frame.exits.append(dict(values))
+                if not frame.exhaustive:
+                    frame.exits.append(frame.incoming)
+                values.clear()
+                values.update(self.join_states(tuple(frame.exits)))
+                continue
+            elif keyword == "done" and frames and frames[-1].kind == "loop":
+                frame = frames.pop()
+                body_exit = dict(values)
+                values.clear()
+                values.update(
+                    self.join_states((frame.incoming, body_exit))
+                )
+                continue
+            for name, word in self.state_assignments(command.words):
+                origin = self.value(word, values)
+                if (
+                    name == self.marker
+                    and self.default == RUNTIME_PATH
+                    and len(word.parts) == 1
+                    and word.parts[0][0] == "parameter"
+                    and re.fullmatch(
+                        rf"{re.escape(name)}:?[?].*",
+                        word.parts[0][1],
+                        re.S,
+                    )
+                ):
+                    origin = ShellOrigin("runtime-path", RUNTIME_PATH)
+                previous = values.get(name, UNKNOWN_ORIGIN)
+                effective = (
+                    origin
+                    if not command.may_skip
+                    or (origin.kind != "unknown" and origin == previous)
+                    else UNKNOWN_ORIGIN
+                )
+                values[name] = effective
+                if name == self.marker and effective.kind == "runtime-path":
                         self.marker_seeded = True
-                        self.default_seeded = self.default is None or origin.value == self.default
+                        self.default_seeded = (
+                            self.default is None or effective.value == self.default
+                        )
             argv = self.argv(command.words)
             if not argv:
                 continue
             executable = self.literal(argv[0])
             simple_argv, redirected_inputs, redirected_stdin = self.simple_command(command.words, values)
+            if executable == "unset":
+                option_mode = True
+                for word in argv[1:]:
+                    name = self.literal(word)
+                    if name == "--":
+                        option_mode = False
+                    elif option_mode and name and name.startswith("-"):
+                        continue
+                    elif name and SHELL_ASSIGNMENT_NAME.fullmatch(name):
+                        values[name] = UNKNOWN_ORIGIN
             if jq_argv := self.jq_invocation(simple_argv):
                 self.inspect_jq(
                     jq_argv,
@@ -1030,14 +1318,22 @@ class ShellProvenanceProof:
             ):
                 self.violations.append("unproven config reader operand")
             if executable in self.lexical.functions:
-                calls.append((executable, tuple(self.value(word, values) for word in argv[1:])))
+                calls.append(
+                    (
+                        executable,
+                        tuple(self.value(word, values) for word in argv[1:]),
+                        dict(values),
+                    )
+                )
 
     def run(self) -> tuple[str, ...]:
         values: dict[str, ShellOrigin] = {}
         if self.imports_recovery:
             values.update(PIM_CAMERA_RUN_DIR=ShellOrigin("state-root", "/run/pim-camera"), PIM_CAMERA_STATE_DIR=ShellOrigin("state-root", "/var/lib/pim-camera"), **{self.marker: ShellOrigin("runtime-path", RUNTIME_PATH)})
             self.marker_seeded = True
-        calls: list[tuple[str, tuple[ShellOrigin, ...]]] = []
+        calls: list[
+            tuple[str, tuple[ShellOrigin, ...], dict[str, ShellOrigin]]
+        ] = []
         self.inspect(self.lexical.top, values, calls)
         snapshot = re.search(rf'''cat\s+--\s+["']?\$(?:\{{)?{re.escape(self.marker)}(?:\}})?["']?\s*>\s*["']?\$([A-Za-z_]\w*)["']?.*?exec\s+\{{([A-Za-z_]\w*)\}}\s*<\s*["']?\$\1["']?.*?([A-Za-z_]\w*)\s*=\s*["']/proc/\$\$/fd/\$(?:\{{)?\2(?:\}})?["']''', self.lexical.normalized, re.S)
         if snapshot:
@@ -1045,14 +1341,21 @@ class ShellProvenanceProof:
         for name, (body, _) in self.lexical.functions.items():
             if self.marker in body or "cam_validate_runtime" in body:
                 count = max((int(item) for item in re.findall(r"\$(?:\{)?([1-9])", body)), default=0)
-                calls.append((name, (UNKNOWN_ORIGIN,) * count))
-        seen: set[tuple[str, tuple[ShellOrigin, ...]]] = set()
+                calls.append((name, (UNKNOWN_ORIGIN,) * count, dict(values)))
+        seen: set[
+            tuple[
+                str,
+                tuple[ShellOrigin, ...],
+                tuple[tuple[str, ShellOrigin], ...],
+            ]
+        ] = set()
         while calls:
-            name, arguments = calls.pop(0)
-            if (name, arguments) in seen:
+            name, arguments, call_values = calls.pop(0)
+            key = (name, arguments, tuple(sorted(call_values.items())))
+            if key in seen:
                 continue
-            seen.add((name, arguments))
-            local = dict(values)
+            seen.add(key)
+            local = dict(call_values)
             local.update({str(index): origin for index, origin in enumerate(arguments, 1)})
             self.inspect(self.lexical.functions[name][1], local, calls)
         if self.lexical.malformed and "jq" in self.lexical.normalized:
@@ -1403,6 +1706,7 @@ def main() -> int:
         violations = runtime_boundary_violations(
             text,
             marker,
+            DIRECT_RUNTIME_DEFAULTS.get(relative),
             allow_source=relative in DAEMON_SOURCE_OWNER_FILES,
         )
         check(
@@ -1792,6 +2096,9 @@ jq -r '.VHL_CAM.app' "$PIM_CAMERA_RUNTIME_JSON"
             or item.startswith("alternate config read:")
         ]
 
+    def reviewed_shell(body: str) -> str:
+        return f'PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"\n{body.rstrip()}\n'
+
     reviewer_direct_assignment = """\
 REVIEWED_INPUT="$(command printf -- %s '\\
 /etc/pim/direct-data.json')"
@@ -1822,6 +2129,224 @@ PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
         "nested static substitution is rejected as unproven instead of recursively authorized",
         failures,
     )
+
+    jq_option_reader_cases = (
+        (
+            "jq --argjson direct cat cannot hide an alternate reader",
+            '''jq -n --argjson cfg "$(cat /etc/pim/jq-argjson.json)" '$cfg' ''',
+            ["alternate config read: /etc/pim/jq-argjson.json"],
+        ),
+        (
+            "jq --arg shell input substitution cannot hide an alternate reader",
+            '''jq -n --arg cfg "$(</etc/pim/jq-arg.json)" '$cfg|fromjson' ''',
+            ["alternate config read: /etc/pim/jq-arg.json"],
+        ),
+        (
+            "jq data option recognizes command-prefixed cat readers",
+            '''jq -n --arg cfg "$(command cat /etc/pim/jq-command-cat.json)" '$cfg' ''',
+            ["alternate config read: /etc/pim/jq-command-cat.json"],
+        ),
+        (
+            "jq data option recognizes command-double-dash cat readers",
+            '''jq -n --arg cfg "$(command -- cat /etc/pim/jq-command-dash-cat.json)" '$cfg' ''',
+            ["alternate config read: /etc/pim/jq-command-dash-cat.json"],
+        ),
+        (
+            "jq data option recognizes absolute cat readers",
+            '''jq -n --arg cfg "$(/bin/cat /etc/pim/jq-absolute-cat.json)" '$cfg' ''',
+            ["alternate config read: /etc/pim/jq-absolute-cat.json"],
+        ),
+        (
+            "jq data option recognizes nested jq readers",
+            '''jq -n --argjson cfg "$(jq -c . /etc/pim/jq-nested.json)" '$cfg' ''',
+            ["alternate config read: /etc/pim/jq-nested.json"],
+        ),
+        (
+            "jq data option recognizes explicit cat input redirects",
+            '''jq -n --arg cfg "$(cat < /etc/pim/jq-redirect-cat.json)" '$cfg' ''',
+            ["alternate config read: /etc/pim/jq-redirect-cat.json"],
+        ),
+        (
+            "jq data option rejects mixed runtime and alternate cat inputs",
+            '''jq -n --arg cfg "$(cat "$PIM_CAMERA_RUNTIME_JSON" /etc/pim/jq-mixed-cat.json)" '$cfg' ''',
+            ["alternate config read: /etc/pim/jq-mixed-cat.json"],
+        ),
+        (
+            "jq data option fails closed for an unknown cat operand",
+            '''jq -n --arg cfg "$(cat "$UNRESOLVED_JSON")" '$cfg' ''',
+            ["unproven config reader operand"],
+        ),
+        (
+            "jq data option fails closed for a malformed cat substitution",
+            '''jq -n --arg cfg "$(cat "$UNTERMINATED_JSON)" '$cfg' ''',
+            ["unproven config reader operand"],
+        ),
+    )
+    for label, body, expected in jq_option_reader_cases:
+        check(
+            shell_reader_violations(reviewed_shell(body)) == expected,
+            label,
+            failures,
+        )
+
+    jq_option_reader_allow_cases = (
+        (
+            "jq data option accepts direct runtime cat content",
+            '''jq -n --argjson cfg "$(cat "$PIM_CAMERA_RUNTIME_JSON")" '$cfg' ''',
+        ),
+        (
+            "jq data option accepts runtime shell input substitution",
+            '''jq -n --arg cfg "$(<"$PIM_CAMERA_RUNTIME_JSON")" '$cfg|fromjson' ''',
+        ),
+        (
+            "jq data option accepts a reviewed state reader",
+            '''\
+STATE_JSON=/run/pim-camera/owner.json
+jq -n --argjson state "$(command -- cat "$STATE_JSON")" '$state' ''',
+        ),
+        (
+            "jq data option accepts a nested runtime jq reader",
+            '''jq -n --argjson cfg "$(jq -c . "$PIM_CAMERA_RUNTIME_JSON")" '$cfg' ''',
+        ),
+        (
+            "jq data option literal JSON remains ordinary data",
+            '''jq -n --argjson cfg '{"mode":"literal"}' '$cfg' ''',
+        ),
+        (
+            "jq data option alternate-looking variable remains ordinary data",
+            '''\
+ORDINARY_VALUE=/etc/pim/not-read-by-jq-option.json
+jq -n --arg cfg "$ORDINARY_VALUE" '$cfg' ''',
+        ),
+        (
+            "jq data option printf substitution remains ordinary data",
+            '''jq -n --arg cfg "$(printf %s /etc/pim/not-read-by-printf.json)" '$cfg' ''',
+        ),
+        (
+            "jq data option state helper substitution remains ordinary data",
+            '''jq -n --arg now "$(_cr_now)" '$now' ''',
+        ),
+    )
+    for label, body in jq_option_reader_allow_cases:
+        check(shell_reader_violations(reviewed_shell(body)) == [], label, failures)
+
+    conditional_provenance_cases = (
+        (
+            "false-and skipped trusted assignment preserves possible alternate provenance",
+            '''\
+ACTUAL_CONFIG=/etc/pim/conditional-false-and.json
+false && ACTUAL_CONFIG=$PIM_CAMERA_RUNTIME_JSON
+jq -r . "$ACTUAL_CONFIG" ''',
+            ["unproven config reader operand"],
+        ),
+        (
+            "true-or skipped trusted assignment preserves possible alternate provenance",
+            '''\
+ACTUAL_CONFIG=/etc/pim/conditional-true-or.json
+true || ACTUAL_CONFIG=$PIM_CAMERA_RUNTIME_JSON
+jq -r . "$ACTUAL_CONFIG" ''',
+            ["unproven config reader operand"],
+        ),
+        (
+            "and-if may-skip state survives a newline",
+            '''\
+ACTUAL_CONFIG=/etc/pim/conditional-newline.json
+false &&
+  ACTUAL_CONFIG=$PIM_CAMERA_RUNTIME_JSON
+jq -r . "$ACTUAL_CONFIG" ''',
+            ["unproven config reader operand"],
+        ),
+        (
+            "or-if may-skip state survives comments and blank lines",
+            '''\
+ACTUAL_CONFIG=/etc/pim/conditional-comment.json
+true ||
+  # the skipped command begins after this comment
+
+  ACTUAL_CONFIG=$PIM_CAMERA_RUNTIME_JSON
+jq -r . "$ACTUAL_CONFIG" ''',
+            ["unproven config reader operand"],
+        ),
+        (
+            "if branch assignment remains may-skip",
+            '''\
+ACTUAL_CONFIG=/etc/pim/conditional-if.json
+if false; then
+  ACTUAL_CONFIG=$PIM_CAMERA_RUNTIME_JSON
+fi
+jq -r . "$ACTUAL_CONFIG" ''',
+            ["unproven config reader operand"],
+        ),
+        (
+            "else branch assignment remains may-skip",
+            '''\
+ACTUAL_CONFIG=/etc/pim/conditional-else.json
+if true; then
+  :
+else
+  ACTUAL_CONFIG=$PIM_CAMERA_RUNTIME_JSON
+fi
+jq -r . "$ACTUAL_CONFIG" ''',
+            ["unproven config reader operand"],
+        ),
+        (
+            "loop body assignment remains may-skip",
+            '''\
+ACTUAL_CONFIG=/etc/pim/conditional-loop.json
+while false; do
+  ACTUAL_CONFIG=$PIM_CAMERA_RUNTIME_JSON
+done
+jq -r . "$ACTUAL_CONFIG" ''',
+            ["unproven config reader operand"],
+        ),
+        (
+            "identical conditional runtime origins remain proven",
+            '''\
+ACTUAL_CONFIG=$PIM_CAMERA_RUNTIME_JSON
+false && ACTUAL_CONFIG=$PIM_CAMERA_RUNTIME_JSON
+jq -r . "$ACTUAL_CONFIG" ''',
+            [],
+        ),
+        (
+            "later unconditional runtime assignment replaces unknown provenance",
+            '''\
+ACTUAL_CONFIG=/etc/pim/conditional-replaced.json
+false && ACTUAL_CONFIG=$PIM_CAMERA_RUNTIME_JSON
+ACTUAL_CONFIG=$PIM_CAMERA_RUNTIME_JSON
+jq -r . "$ACTUAL_CONFIG" ''',
+            [],
+        ),
+        (
+            "direct unset invalidates trusted provenance before fallback",
+            '''\
+ACTUAL_CONFIG=$PIM_CAMERA_RUNTIME_JSON
+unset ACTUAL_CONFIG
+jq -r . "${ACTUAL_CONFIG:-/etc/pim/unset-direct.json}" ''',
+            ["alternate config read: /etc/pim/unset-direct.json"],
+        ),
+        (
+            "unset option spelling invalidates trusted provenance before fallback",
+            '''\
+ACTUAL_CONFIG=$PIM_CAMERA_RUNTIME_JSON
+unset -v -- ACTUAL_CONFIG
+jq -r . "${ACTUAL_CONFIG:-/etc/pim/unset-option.json}" ''',
+            ["alternate config read: /etc/pim/unset-option.json"],
+        ),
+        (
+            "assignment-looking command argv cannot mutate shell provenance",
+            '''\
+ACTUAL_CONFIG=/etc/pim/assignment-argv.json
+printf '%s\n' ACTUAL_CONFIG=$PIM_CAMERA_RUNTIME_JSON >/dev/null
+jq -r . "$ACTUAL_CONFIG" ''',
+            ["alternate config read: /etc/pim/assignment-argv.json"],
+        ),
+    )
+    for label, body, expected in conditional_provenance_cases:
+        check(
+            shell_reader_violations(reviewed_shell(body)) == expected,
+            label,
+            failures,
+        )
 
     provenance_allow_cases = (
         (
@@ -2630,6 +3155,102 @@ PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
             label,
             failures,
         )
+
+    with tempfile.TemporaryDirectory(prefix="pim-jq-option-oracle-") as directory:
+        option_json = Path(directory) / "alternate.json"
+        option_json.write_text('{"value":7}\n', encoding="utf-8")
+        jq_option_oracle = subprocess.run(
+            [
+                "/bin/bash",
+                "--noprofile",
+                "--norc",
+                "-c",
+                '''\
+jq -n --argjson cfg "$(cat "$1")" '$cfg.value'
+jq -n --arg cfg "$(<"$1")" '$cfg|fromjson|.value'
+''',
+                "pim-jq-option-oracle",
+                str(option_json),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            env={"BASH_ENV": "/dev/null", "PATH": "/usr/bin:/bin"},
+            check=False,
+        )
+        check(
+            jq_option_oracle.returncode == 0
+            and jq_option_oracle.stdout == "7\n7\n"
+            and jq_option_oracle.stderr == "",
+            "Bash and jq consume both reviewer data-option nested readers",
+            failures,
+        )
+
+    conditional_oracle = subprocess.run(
+        [
+            "/bin/bash",
+            "--noprofile",
+            "--norc",
+            "-c",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
+A=/etc/pim/oracle-false-and.json
+false && A=$PIM_CAMERA_RUNTIME_JSON
+printf '%s\n' "$A"
+B=/etc/pim/oracle-true-or.json
+true || B=$PIM_CAMERA_RUNTIME_JSON
+printf '%s\n' "$B"
+C=/etc/pim/oracle-newline.json
+false &&
+  C=$PIM_CAMERA_RUNTIME_JSON
+printf '%s\n' "$C"
+D=/etc/pim/oracle-comment.json
+true ||
+  # the skipped command begins after this comment
+
+  D=$PIM_CAMERA_RUNTIME_JSON
+printf '%s\n' "$D"
+E=/etc/pim/oracle-if.json
+if false; then E=$PIM_CAMERA_RUNTIME_JSON; fi
+printf '%s\n' "$E"
+F=/etc/pim/oracle-else.json
+if true; then :; else F=$PIM_CAMERA_RUNTIME_JSON; fi
+printf '%s\n' "$F"
+G=/etc/pim/oracle-loop.json
+while false; do G=$PIM_CAMERA_RUNTIME_JSON; done
+printf '%s\n' "$G"
+H=$PIM_CAMERA_RUNTIME_JSON
+unset -v -- H
+printf '%s\n' "${{H:-/etc/pim/oracle-unset.json}}"
+I=/etc/pim/oracle-argv.json
+printf '%s\n' I=$PIM_CAMERA_RUNTIME_JSON >/dev/null
+printf '%s\n' "$I"
+''',
+        ],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        env={"BASH_ENV": "/dev/null", "PATH": "/usr/bin:/bin"},
+        check=False,
+    )
+    check(
+        conditional_oracle.returncode == 0
+        and conditional_oracle.stdout
+        == """\
+/etc/pim/oracle-false-and.json
+/etc/pim/oracle-true-or.json
+/etc/pim/oracle-newline.json
+/etc/pim/oracle-comment.json
+/etc/pim/oracle-if.json
+/etc/pim/oracle-else.json
+/etc/pim/oracle-loop.json
+/etc/pim/oracle-unset.json
+/etc/pim/oracle-argv.json
+"""
+        and conditional_oracle.stderr == "",
+        "Bash preserves skipped, unset, and argv assignment semantics",
+        failures,
+    )
 
     fd_redirection_shell_oracles = (
         (
