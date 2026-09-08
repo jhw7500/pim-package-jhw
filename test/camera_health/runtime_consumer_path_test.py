@@ -196,8 +196,8 @@ def strip_inline_comment(line: str) -> str:
     return line
 
 
-def remove_unquoted_shell_continuations(text: str) -> str:
-    """Apply shell's unquoted backslash-newline removal to finite input."""
+def remove_shell_continuations(text: str) -> str:
+    """Remove Bash continuations outside single-quoted data in finite input."""
     normalized: list[str] = []
     quote = ""
     comment = False
@@ -218,7 +218,7 @@ def remove_unquoted_shell_continuations(text: str) -> str:
             continue
         if char == "\\":
             next_char = text[index + 1] if index + 1 < len(text) else ""
-            if not quote and next_char == "\n":
+            if next_char == "\n":
                 index += 2
                 continue
             normalized.append(char)
@@ -262,7 +262,7 @@ def expand_constants(line: str, constants: dict[str, str]) -> str:
 
 def normalized_contract_lines(text: str) -> list[str]:
     """Expose static shell/Python string composition without executing source."""
-    text = remove_unquoted_shell_continuations(text)
+    text = remove_shell_continuations(text)
     constants: dict[str, str] = {}
     normalized: list[str] = []
     pending_assignment: tuple[str, list[str]] | None = None
@@ -374,8 +374,16 @@ def python_config_read_paths(text: str) -> list[str]:
             for element in target.elts:
                 bind(element, set(), env)
 
-    def open_mode(call: ast.Call, env: dict[str, set[str]]) -> str | None:
-        mode_node = call.args[1] if len(call.args) > 1 else None
+    def open_mode(
+        call: ast.Call,
+        env: dict[str, set[str]],
+        positional_index: int,
+    ) -> str | None:
+        mode_node = (
+            call.args[positional_index]
+            if len(call.args) > positional_index
+            else None
+        )
         for keyword in call.keywords:
             if keyword.arg == "mode":
                 mode_node = keyword.value
@@ -392,21 +400,32 @@ def python_config_read_paths(text: str) -> list[str]:
             return
         active_functions.add(identity)
         local_env = dict(outer_env)
-        parameters = list(function.args.posonlyargs) + list(function.args.args)
-        defaults = [None] * (len(parameters) - len(function.args.defaults)) + list(
+        positional_parameters = list(function.args.posonlyargs) + list(
+            function.args.args
+        )
+        positional_defaults = [None] * (
+            len(positional_parameters) - len(function.args.defaults)
+        ) + list(
             function.args.defaults
         )
-        for parameter, default in zip(parameters, defaults, strict=True):
+        keyword_parameters = list(function.args.kwonlyargs)
+        for parameter, default in zip(
+            positional_parameters, positional_defaults, strict=True
+        ):
+            local_env[parameter.arg] = resolve(default, outer_env)
+        for parameter, default in zip(
+            keyword_parameters, function.args.kw_defaults, strict=True
+        ):
             local_env[parameter.arg] = resolve(default, outer_env)
         if call is not None:
-            for parameter, argument in zip(parameters, call.args):
+            for parameter, argument in zip(positional_parameters, call.args):
                 local_env[parameter.arg] = resolve(argument, outer_env)
             keyword_values = {
                 keyword.arg: resolve(keyword.value, outer_env)
                 for keyword in call.keywords
                 if keyword.arg is not None
             }
-            for parameter in parameters:
+            for parameter in list(function.args.args) + keyword_parameters:
                 if parameter.arg in keyword_values:
                     local_env[parameter.arg] = keyword_values[parameter.arg]
         analyze_statements(function.body, local_env)
@@ -418,8 +437,10 @@ def python_config_read_paths(text: str) -> list[str]:
         if isinstance(node, ast.Call):
             name = call_name(node.func)
             operand: ast.AST | None = None
+            mode_position: int | None = None
             if name == "open":
                 operand = node.args[0] if node.args else None
+                mode_position = 1
                 if operand is None:
                     operand = next(
                         (
@@ -429,14 +450,21 @@ def python_config_read_paths(text: str) -> list[str]:
                         ),
                         None,
                     )
-            elif isinstance(node.func, ast.Attribute) and node.func.attr in {
-                "open",
-                "read_text",
-            }:
+            elif isinstance(node.func, ast.Attribute) and node.func.attr == "open":
+                operand = node.func.value
+                mode_position = 0
+            elif (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr == "read_text"
+            ):
                 operand = node.func.value
             if operand is not None:
-                mode = open_mode(node, env)
-                if mode is None or not mode.startswith(("w", "a", "x")):
+                mode = (
+                    open_mode(node, env, mode_position)
+                    if mode_position is not None
+                    else "r"
+                )
+                if mode is None or "+" in mode or not mode.startswith(("w", "a", "x")):
                     paths = resolve(operand, env)
                     reads.extend(paths)
                     for argument in node.args:
@@ -503,7 +531,7 @@ def python_config_read_paths(text: str) -> list[str]:
 
 def logical_config_read_lines(text: str, lines: list[str]) -> list[str]:
     """Join shell continuations and quoted spans within the finite input."""
-    text = remove_unquoted_shell_continuations(text)
+    text = remove_shell_continuations(text)
     logical: list[str] = []
     command_parts: list[str] = []
     quote = ""
@@ -565,16 +593,19 @@ def runtime_boundary_violations(
     if not allow_source and "/root/shared_v" in normalized_text:
         violations.append("source-root read")
 
-    for line in logical_config_read_lines(text, lines):
-        if CONFIG_READ_CALL.search(line) is None:
-            continue
-        for match in ABSOLUTE_JSON_INPUT.finditer(line):
-            path = match.group(1)
-            if path == RUNTIME_PATH:
+    try:
+        ast.parse(text)
+    except SyntaxError:
+        for line in logical_config_read_lines(text, lines):
+            if CONFIG_READ_CALL.search(line) is None:
                 continue
-            if allow_source and path.startswith("/root/shared_v/"):
-                continue
-            violations.append(f"alternate config read: {path}")
+            for match in ABSOLUTE_JSON_INPUT.finditer(line):
+                path = match.group(1)
+                if path == RUNTIME_PATH:
+                    continue
+                if allow_source and path.startswith("/root/shared_v/"):
+                    continue
+                violations.append(f"alternate config read: {path}")
 
     for path in python_config_read_paths(text):
         if not path.startswith("/") or not path.endswith(".json"):
@@ -758,6 +789,14 @@ PIM_CAMERA_RUNTIME_JSON="${{PIM_CAMERA_RUNTIME_JSON:-{RUNTIME_PATH}}}"
     )
 jq -r '.VHL_CAM.app' "$REVIEWED_INPUT"
 '''
+    double_quoted_continued_assignment = """\
+ACTUAL_CONFIG="$(command printf -- %s \\
+/etc/pim/camera.json)"
+"""
+    double_quoted_direct_assignment = """\
+ACTUAL_CONFIG="/etc/pim/\\
+camera.json"
+"""
     mutation_fixtures = (
         (
             "decoy runtime marker cannot hide an alternate JSON read",
@@ -877,6 +916,46 @@ jq -r '.VHL_CAM.app' "$ACTUAL_CONFIG"
             "alternate config read:",
         ),
         (
+            "double-quoted continued substitution cannot hide an alternate JSON read",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="${{PIM_CAMERA_RUNTIME_JSON:-{RUNTIME_PATH}}}"
+{double_quoted_continued_assignment}jq -r '.VHL_CAM.app' "$ACTUAL_CONFIG"
+''',
+            "alternate config read:",
+        ),
+        (
+            "double-quoted direct continuation cannot hide an alternate JSON read",
+            f'''\
+PIM_CAMERA_RUNTIME_JSON="${{PIM_CAMERA_RUNTIME_JSON:-{RUNTIME_PATH}}}"
+{double_quoted_direct_assignment}jq -r '.VHL_CAM.app' "$ACTUAL_CONFIG"
+''',
+            "alternate config read:",
+        ),
+        (
+            "keyword-only helper argument cannot hide an alternate JSON read",
+            f'''\
+import json
+PIM_CAMERA_RUNTIME_JSON = "{RUNTIME_PATH}"
+def load(*, path):
+    with open(path, encoding="utf-8") as stream:
+        return json.load(stream)
+load(path="/etc/pim/keyword-camera.json")
+''',
+            "alternate config read:",
+        ),
+        (
+            "keyword-only helper default cannot hide an alternate JSON read",
+            f'''\
+import json
+PIM_CAMERA_RUNTIME_JSON = "{RUNTIME_PATH}"
+def load(*, path="/etc/pim/default-camera.json"):
+    with open(path, encoding="utf-8") as stream:
+        return json.load(stream)
+load()
+''',
+            "alternate config read:",
+        ),
+        (
             "composed source-root/newest-edgeconf discovery is rejected",
             f'''\
 PIM_CAMERA_RUNTIME_JSON="${{PIM_CAMERA_RUNTIME_JSON:-{RUNTIME_PATH}}}"
@@ -935,6 +1014,85 @@ jq -r '.VHL_CAM.app' "$PIM_CAMERA_RUNTIME_JSON"
         and bash_result.stdout == "/etc/pim/camera.json\n"
         and bash_result.stderr == "",
         "Bash evaluates the continued substitution to the alternate path",
+        failures,
+    )
+
+    double_quoted_bash_result = subprocess.run(
+        [
+            "/bin/bash",
+            "--noprofile",
+            "--norc",
+            "-c",
+            double_quoted_continued_assignment
+            + 'printf "%s\\n" "$ACTUAL_CONFIG"\n'
+            + double_quoted_direct_assignment
+            + 'printf "%s\\n" "$ACTUAL_CONFIG"\n',
+        ],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        env={"BASH_ENV": "/dev/null", "PATH": "/usr/bin:/bin"},
+        check=False,
+    )
+    check(
+        double_quoted_bash_result.returncode == 0
+        and double_quoted_bash_result.stdout
+        == "/etc/pim/camera.json\n/etc/pim/camera.json\n"
+        and double_quoted_bash_result.stderr == "",
+        "Bash evaluates both double-quoted continuations to alternate paths",
+        failures,
+    )
+
+    path_open_write_fixture = f'''\
+from pathlib import Path
+PIM_CAMERA_RUNTIME_JSON = "{RUNTIME_PATH}"
+Path("/etc/pim/camera.json").open("w").close()
+'''
+    check(
+        not any(
+            item.startswith("alternate config read:")
+            for item in runtime_boundary_violations(
+                path_open_write_fixture,
+                "PIM_CAMERA_RUNTIME_JSON",
+                RUNTIME_PATH,
+            )
+        ),
+        "Path.open positional write mode is not classified as a read",
+        failures,
+    )
+
+    builtin_open_write_fixture = f'''\
+PIM_CAMERA_RUNTIME_JSON = "{RUNTIME_PATH}"
+open("/etc/pim/camera.json", "w").close()
+'''
+    check(
+        not any(
+            item.startswith("alternate config read:")
+            for item in runtime_boundary_violations(
+                builtin_open_write_fixture,
+                "PIM_CAMERA_RUNTIME_JSON",
+                RUNTIME_PATH,
+            )
+        ),
+        "built-in open positional write mode remains write-only",
+        failures,
+    )
+
+    path_read_text_fixture = f'''\
+from pathlib import Path
+PIM_CAMERA_RUNTIME_JSON = "{RUNTIME_PATH}"
+Path("/etc/pim/camera.json").read_text(encoding="utf-8")
+'''
+    check(
+        any(
+            item.startswith("alternate config read:")
+            for item in runtime_boundary_violations(
+                path_read_text_fixture,
+                "PIM_CAMERA_RUNTIME_JSON",
+                RUNTIME_PATH,
+            )
+        ),
+        "Path.read_text remains a read regardless of encoding",
         failures,
     )
 

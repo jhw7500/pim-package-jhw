@@ -26,10 +26,39 @@ if runtime_json=$(<"$PIM_CAMERA_RUNTIME_JSON") && command -v jq >/dev/null 2>&1;
 fi
 
 daemon_name=cam-operate
+
+camera_writers_absent()
+{
+    local writer writer_rc
+    for writer in gstApp PIMCAM; do
+        pgrep -x "$writer" >/dev/null 2>&1
+        writer_rc=$?
+        if [[ "$writer_rc" -eq 0 ]]; then
+            return 1
+        fi
+        if [[ "$writer_rc" -ne 1 ]]; then
+            return 2
+        fi
+    done
+    return 0
+}
+
 status=$(systemctl is-active "$daemon_name" 2>/dev/null)
+status_rc=$?
+stop_required=1
+if [[ "$status" == "inactive" ]] &&
+   { [[ "$status_rc" -eq 0 ]] || [[ "$status_rc" -eq 3 ]]; }; then
+    camera_writers_absent
+    writers_rc=$?
+    if [[ "$writers_rc" -eq 0 ]]; then
+        stop_required=0
+    fi
+fi
+
 # The live daemon may retain an older SD-backed destination after an operator
-# edits the runtime.  Unit state, not mutable config, owns this stop boundary.
-if [[ "$status" == "active" ]]; then
+# edits the runtime.  Skip the service stop only after proving both unit and
+# exact writer-process quiescence; every ambiguous state stops conservatively.
+if [[ "$stop_required" -eq 1 ]]; then
     logger -p local0.notice "[$KEY][$TAG:$LINENO] systemctl stop cam-operate"
     systemctl stop "$daemon_name"
     stop_rc=$?
@@ -38,6 +67,20 @@ if [[ "$status" == "active" ]]; then
         exit "$stop_rc"
     fi
     sleep 1
+
+    status=$(systemctl is-active "$daemon_name" 2>/dev/null)
+    status_rc=$?
+    if [[ "$status" != "inactive" ]] ||
+       { [[ "$status_rc" -ne 0 ]] && [[ "$status_rc" -ne 3 ]]; }; then
+        logger -p local0.err "[$KEY][$TAG:$LINENO] cam-operate is not proven inactive after stop: state=$status rc=$status_rc"
+        exit 1
+    fi
+    camera_writers_absent
+    writers_rc=$?
+    if [[ "$writers_rc" -ne 0 ]]; then
+        logger -p local0.err "[$KEY][$TAG:$LINENO] camera writer absence is not proven after stop: rc=$writers_rc"
+        exit 1
+    fi
 fi
 
 logger -p local0.notice "[$KEY][$TAG:$LINENO] umount $DEVICE"

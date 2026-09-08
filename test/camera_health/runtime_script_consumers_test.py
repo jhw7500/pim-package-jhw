@@ -88,18 +88,37 @@ case "$cmd" in
     systemctl)
         case "${1:-}" in
             is-active)
-                if [ "${PIM_TEST_TRACK_CAM_STATE:-0}" = 1 ]; then
-                    cat "$PIM_TEST_CAM_STATE_FILE"
-                else
-                    printf '%s\n' "${PIM_TEST_CAM_ACTIVE:-active}"
+                active_count=0
+                if [ -n "${PIM_TEST_IS_ACTIVE_COUNT_FILE:-}" ] && [ -f "$PIM_TEST_IS_ACTIVE_COUNT_FILE" ]; then
+                    read -r active_count < "$PIM_TEST_IS_ACTIVE_COUNT_FILE"
                 fi
+                active_count=$((active_count + 1))
+                if [ -n "${PIM_TEST_IS_ACTIVE_COUNT_FILE:-}" ]; then
+                    printf '%s\n' "$active_count" > "$PIM_TEST_IS_ACTIVE_COUNT_FILE"
+                fi
+                if [ "${PIM_TEST_IS_ACTIVE_FAIL_AT:-0}" -eq "$active_count" ]; then
+                    exit "${PIM_TEST_IS_ACTIVE_FAIL_RC:-4}"
+                fi
+                if [ "${PIM_TEST_TRACK_CAM_STATE:-0}" = 1 ]; then
+                    active_state=$(cat "$PIM_TEST_CAM_STATE_FILE")
+                else
+                    active_state=${PIM_TEST_CAM_ACTIVE-active}
+                fi
+                printf '%s\n' "$active_state"
+                if [ -n "${PIM_TEST_IS_ACTIVE_RC:-}" ]; then
+                    exit "$PIM_TEST_IS_ACTIVE_RC"
+                fi
+                if [ "$active_state" = inactive ]; then exit 3; fi
                 exit 0
                 ;;
             is-enabled) printf '%s\n' "${PIM_TEST_CAM_ENABLED:-enabled}"; exit 0 ;;
             stop)
                 stop_rc=${PIM_TEST_STOP_RC:-0}
                 if [ "$stop_rc" -eq 0 ] && [ "${PIM_TEST_TRACK_CAM_STATE:-0}" = 1 ] && [ "${2:-}" = cam-operate ]; then
-                    printf 'inactive\n' > "$PIM_TEST_CAM_STATE_FILE"
+                    printf '%s\n' "${PIM_TEST_STOP_STATE:-inactive}" > "$PIM_TEST_CAM_STATE_FILE"
+                fi
+                if [ "$stop_rc" -eq 0 ] && [ "${PIM_TEST_TRACK_WRITERS:-0}" = 1 ] && [ "${2:-}" = cam-operate ] && [ "${PIM_TEST_PRESERVE_WRITERS_AFTER_STOP:-0}" != 1 ]; then
+                    : > "$PIM_TEST_WRITER_STATE_FILE"
                 fi
                 exit "$stop_rc"
                 ;;
@@ -108,6 +127,22 @@ case "$cmd" in
         exit 0
         ;;
     umount)
+        if [ "${PIM_TEST_ASSERT_QUIESCENT_AT_UMOUNT:-0}" = 1 ]; then
+            boundary_state=$(cat "$PIM_TEST_CAM_STATE_FILE")
+            if [ "$boundary_state" != inactive ]; then
+                printf 'unit-not-inactive-at-unmount <%s>\n' "$boundary_state" >> "$PIM_TEST_EVENT_LOG"
+                exit 91
+            fi
+            while IFS= read -r writer; do
+                case "$writer" in
+                    gstApp|PIMCAM)
+                        printf 'writer-live-at-unmount <%s>\n' "$writer" >> "$PIM_TEST_EVENT_LOG"
+                        exit 92
+                        ;;
+                esac
+            done < "$PIM_TEST_WRITER_STATE_FILE"
+            printf 'quiescent-at-unmount <inactive> <no-gstApp> <no-PIMCAM>\n' >> "$PIM_TEST_EVENT_LOG"
+        fi
         if [ "${PIM_TEST_TRACK_CAM_STATE:-0}" = 1 ] && [ "$(cat "$PIM_TEST_CAM_STATE_FILE")" = active ]; then
             printf 'writer-active-at-unmount\n' >> "$PIM_TEST_EVENT_LOG"
         fi
@@ -144,6 +179,29 @@ case "$cmd" in
         exit 0
         ;;
     pgrep)
+        if [ "${1:-}" = -x ] && [ -n "${2:-}" ] && [ -f "${PIM_TEST_WRITER_STATE_FILE:-}" ]; then
+            pgrep_count=0
+            if [ -n "${PIM_TEST_PGREP_COUNT_FILE:-}" ] && [ -f "$PIM_TEST_PGREP_COUNT_FILE" ]; then
+                read -r pgrep_count < "$PIM_TEST_PGREP_COUNT_FILE"
+            fi
+            pgrep_count=$((pgrep_count + 1))
+            if [ -n "${PIM_TEST_PGREP_COUNT_FILE:-}" ]; then
+                printf '%s\n' "$pgrep_count" > "$PIM_TEST_PGREP_COUNT_FILE"
+            fi
+            if [ "${PIM_TEST_PGREP_ALWAYS_FAIL:-0}" = 1 ]; then
+                exit "${PIM_TEST_PGREP_FAIL_RC:-2}"
+            fi
+            if [ "${PIM_TEST_PGREP_FAIL_AT:-0}" -eq "$pgrep_count" ]; then
+                exit "${PIM_TEST_PGREP_FAIL_RC:-2}"
+            fi
+            while IFS= read -r writer; do
+                if [ "$writer" = "$2" ]; then
+                    printf '4242\n'
+                    exit 0
+                fi
+            done < "$PIM_TEST_WRITER_STATE_FILE"
+            exit 1
+        fi
         if [ -n "${PIM_TEST_PID:-}" ]; then printf '%s\n' "$PIM_TEST_PID"; exit 0; fi
         exit 1
         ;;
@@ -214,6 +272,12 @@ exit 97
         sys_ro.write_text("0\n", encoding="utf-8")
         cam_state = root / "cam-operate.state"
         cam_state.write_text("active\n", encoding="utf-8")
+        writer_state = root / "camera-writers.state"
+        writer_state.write_text("", encoding="utf-8")
+        is_active_count = root / "is-active.count"
+        is_active_count.write_text("0\n", encoding="utf-8")
+        pgrep_count = root / "pgrep.count"
+        pgrep_count.write_text("0\n", encoding="utf-8")
         fake_bin = self.fake_bin(root)
         return {
             **os.environ,
@@ -239,6 +303,9 @@ exit 97
             "PIM_TEST_CAM_ACTIVE": "active",
             "PIM_TEST_CAM_ENABLED": "enabled",
             "PIM_TEST_CAM_STATE_FILE": str(cam_state),
+            "PIM_TEST_WRITER_STATE_FILE": str(writer_state),
+            "PIM_TEST_IS_ACTIVE_COUNT_FILE": str(is_active_count),
+            "PIM_TEST_PGREP_COUNT_FILE": str(pgrep_count),
         }
 
     def swap_env(
@@ -313,8 +380,39 @@ exit 97
             env = self.base_env(root)
             source = root / "source/edgeconf_new.json"
             self.write_json(source, runtime_document(tmp_path="/dev/shm"))
-            Path(env["PIM_SD_MOUNT_FLAG"]).write_text("1\n", encoding="utf-8")
-            result = self.run_script(BIN / "sd_mount_stop.sh", root, env)
+            cam_state = Path(env["PIM_TEST_CAM_STATE_FILE"])
+            writer_state = Path(env["PIM_TEST_WRITER_STATE_FILE"])
+            active_count = Path(env["PIM_TEST_IS_ACTIVE_COUNT_FILE"])
+            pgrep_count = Path(env["PIM_TEST_PGREP_COUNT_FILE"])
+
+            def quiescence_env(
+                state: str,
+                writers: Sequence[str] = (),
+                **overrides: str,
+            ) -> dict[str, str]:
+                self.clear_events(env)
+                cam_state.write_text(
+                    f"{state}\n" if state else "", encoding="utf-8"
+                )
+                writer_state.write_text(
+                    "".join(f"{writer}\n" for writer in writers),
+                    encoding="utf-8",
+                )
+                active_count.write_text("0\n", encoding="utf-8")
+                pgrep_count.write_text("0\n", encoding="utf-8")
+                Path(env["PIM_SD_MOUNT_FLAG"]).write_text(
+                    "1\n", encoding="utf-8"
+                )
+                return {
+                    **env,
+                    "PIM_TEST_TRACK_CAM_STATE": "1",
+                    "PIM_TEST_TRACK_WRITERS": "1",
+                    "PIM_TEST_ASSERT_QUIESCENT_AT_UMOUNT": "1",
+                    **overrides,
+                }
+
+            missing_env = quiescence_env("active")
+            result = self.run_script(BIN / "sd_mount_stop.sh", root, missing_env)
             stop_at = self.event_index(env, "systemctl <stop> <cam-operate>")
             unmount_at = self.event_index(env, f"umount <{env['PIM_SD_DEVICE']}>")
             self.check(
@@ -324,10 +422,9 @@ exit 97
                 "missing runtime conservatively stops active cam-operate before unmount",
             )
 
-            self.clear_events(env)
             Path(env["PIM_CAMERA_RUNTIME_JSON"]).write_text("{broken", encoding="utf-8")
-            Path(env["PIM_SD_MOUNT_FLAG"]).write_text("1\n", encoding="utf-8")
-            result = self.run_script(BIN / "sd_mount_stop.sh", root, env)
+            invalid_env = quiescence_env("active")
+            result = self.run_script(BIN / "sd_mount_stop.sh", root, invalid_env)
             stop_at = self.event_index(env, "systemctl <stop> <cam-operate>")
             unmount_at = self.event_index(env, f"umount <{env['PIM_SD_DEVICE']}>")
             self.check(
@@ -360,27 +457,182 @@ exit 97
                 "active cached writer stops before unmount despite current non-SD runtime",
             )
 
-            self.clear_events(env)
-            Path(env["PIM_SD_MOUNT_FLAG"]).write_text("1\n", encoding="utf-8")
-            inactive_env = {**env, "PIM_TEST_CAM_ACTIVE": "inactive"}
+            inactive_env = quiescence_env("inactive")
             result = self.run_script(
                 BIN / "sd_mount_stop.sh", root, inactive_env
             )
+            inactive_events = self.events(env)
+            unmount_at = self.event_index(env, f"umount <{env['PIM_SD_DEVICE']}>")
+            boundary_at = self.event_index(
+                env,
+                "quiescent-at-unmount <inactive> <no-gstApp> <no-PIMCAM>",
+            )
             self.check(
                 result.returncode == 0
-                and "systemctl <stop> <cam-operate>" not in self.events(env)
+                and "systemctl <stop> <cam-operate>" not in inactive_events
+                and self.command_lines(env, "pgrep")
+                == ["pgrep <-x> <gstApp>", "pgrep <-x> <PIMCAM>"]
                 and self.command_lines(env, "umount")
                 == [f"umount <{env['PIM_SD_DEVICE']}>"]
+                and boundary_at == unmount_at + 1
                 and not Path(env["PIM_SD_MOUNT_FLAG"]).exists(),
-                "inactive cam-operate does not receive a redundant stop",
+                "standard inactive rc=3 and writer-free state skips stop at an exact quiescent unmount boundary",
             )
 
-            self.clear_events(env)
+            for state in (
+                "activating",
+                "reloading",
+                "deactivating",
+                "failed",
+                "unknown",
+                "",
+            ):
+                case_env = quiescence_env(state)
+                result = self.run_script(BIN / "sd_mount_stop.sh", root, case_env)
+                stop_at = self.event_index(env, "systemctl <stop> <cam-operate>")
+                unmount_at = self.event_index(
+                    env, f"umount <{env['PIM_SD_DEVICE']}>"
+                )
+                self.check(
+                    result.returncode == 0
+                    and stop_at >= 0
+                    and unmount_at > stop_at
+                    and "quiescent-at-unmount <inactive> <no-gstApp> <no-PIMCAM>"
+                    in self.events(env),
+                    f"{state or 'empty'} unit state stops conservatively before unmount",
+                )
+
+            query_failure_env = quiescence_env(
+                "active",
+                PIM_TEST_IS_ACTIVE_FAIL_AT="1",
+                PIM_TEST_IS_ACTIVE_FAIL_RC="4",
+            )
+            result = self.run_script(
+                BIN / "sd_mount_stop.sh", root, query_failure_env
+            )
+            stop_at = self.event_index(env, "systemctl <stop> <cam-operate>")
+            unmount_at = self.event_index(env, f"umount <{env['PIM_SD_DEVICE']}>")
+            self.check(
+                result.returncode == 0
+                and stop_at >= 0
+                and unmount_at > stop_at
+                and "quiescent-at-unmount <inactive> <no-gstApp> <no-PIMCAM>"
+                in self.events(env),
+                "is-active query failure stops conservatively before unmount",
+            )
+
+            writer_query_failure_env = quiescence_env(
+                "inactive",
+                PIM_TEST_PGREP_ALWAYS_FAIL="1",
+                PIM_TEST_PGREP_FAIL_RC="2",
+            )
+            result = self.run_script(
+                BIN / "sd_mount_stop.sh", root, writer_query_failure_env
+            )
+            stop_at = self.event_index(env, "systemctl <stop> <cam-operate>")
+            unmount_at = self.event_index(env, f"umount <{env['PIM_SD_DEVICE']}>")
+            self.check(
+                result.returncode != 0
+                and stop_at >= 0
+                and unmount_at == -1
+                and Path(env["PIM_SD_MOUNT_FLAG"]).exists(),
+                "persistent exact-writer query failure stops then blocks unproven unmount",
+            )
+
+            ambiguous_stop_failure_env = quiescence_env(
+                "activating", PIM_TEST_STOP_RC="42"
+            )
+            result = self.run_script(
+                BIN / "sd_mount_stop.sh", root, ambiguous_stop_failure_env
+            )
+            self.check(
+                result.returncode == 42
+                and self.command_lines(env, "systemctl")
+                == [
+                    "systemctl <is-active> <cam-operate>",
+                    "systemctl <stop> <cam-operate>",
+                ]
+                and not self.command_lines(env, "umount")
+                and Path(env["PIM_SD_MOUNT_FLAG"]).exists(),
+                "ambiguous-state stop failure propagates exactly and blocks unmount",
+            )
+
+            for writer in ("gstApp", "PIMCAM"):
+                orphan_env = quiescence_env("inactive", (writer,))
+                result = self.run_script(BIN / "sd_mount_stop.sh", root, orphan_env)
+                stop_at = self.event_index(env, "systemctl <stop> <cam-operate>")
+                unmount_at = self.event_index(
+                    env, f"umount <{env['PIM_SD_DEVICE']}>"
+                )
+                self.check(
+                    result.returncode == 0
+                    and stop_at >= 0
+                    and unmount_at > stop_at
+                    and "quiescent-at-unmount <inactive> <no-gstApp> <no-PIMCAM>"
+                    in self.events(env),
+                    f"inactive unit with orphan {writer} stops before unmount",
+                )
+
+            post_state_env = quiescence_env(
+                "active", PIM_TEST_STOP_STATE="deactivating"
+            )
+            result = self.run_script(BIN / "sd_mount_stop.sh", root, post_state_env)
+            self.check(
+                result.returncode != 0
+                and not self.command_lines(env, "umount")
+                and Path(env["PIM_SD_MOUNT_FLAG"]).exists(),
+                "post-stop non-inactive unit state blocks unmount",
+            )
+
+            post_query_failure_env = quiescence_env(
+                "active",
+                PIM_TEST_IS_ACTIVE_FAIL_AT="2",
+                PIM_TEST_IS_ACTIVE_FAIL_RC="4",
+            )
+            result = self.run_script(
+                BIN / "sd_mount_stop.sh", root, post_query_failure_env
+            )
+            self.check(
+                result.returncode != 0
+                and not self.command_lines(env, "umount")
+                and Path(env["PIM_SD_MOUNT_FLAG"]).exists(),
+                "post-stop is-active query failure blocks unmount",
+            )
+
+            post_writer_query_failure_env = quiescence_env(
+                "active",
+                PIM_TEST_PGREP_FAIL_AT="1",
+                PIM_TEST_PGREP_FAIL_RC="2",
+            )
+            result = self.run_script(
+                BIN / "sd_mount_stop.sh", root, post_writer_query_failure_env
+            )
+            self.check(
+                result.returncode != 0
+                and not self.command_lines(env, "umount")
+                and Path(env["PIM_SD_MOUNT_FLAG"]).exists(),
+                "post-stop exact-writer query failure blocks unmount",
+            )
+
+            live_writer_env = quiescence_env(
+                "active",
+                ("gstApp",),
+                PIM_TEST_PRESERVE_WRITERS_AFTER_STOP="1",
+            )
+            result = self.run_script(BIN / "sd_mount_stop.sh", root, live_writer_env)
+            self.check(
+                result.returncode != 0
+                and not self.command_lines(env, "umount")
+                and Path(env["PIM_SD_MOUNT_FLAG"]).exists(),
+                "post-stop live exact writer blocks unmount",
+            )
+
             self.write_json(
                 Path(env["PIM_CAMERA_RUNTIME_JSON"]),
                 runtime_document(tmp_path=env["PIM_SD_MOUNT_DIR"]),
             )
-            result = self.run_script(BIN / "sd_mount_stop.sh", root, env)
+            direct_env = quiescence_env("active")
+            result = self.run_script(BIN / "sd_mount_stop.sh", root, direct_env)
             stop_at = self.event_index(env, "systemctl <stop> <cam-operate>")
             unmount_at = self.event_index(env, f"umount <{env['PIM_SD_DEVICE']}>")
             self.check(
@@ -413,9 +665,7 @@ exit 97
                 "cached-writer stop failure propagates exactly and blocks unmount",
             )
 
-            self.clear_events(env)
-            Path(env["PIM_SD_MOUNT_FLAG"]).write_text("1\n", encoding="utf-8")
-            mounted_env = {**env, "PIM_TEST_DF_MOUNTED": "1"}
+            mounted_env = quiescence_env("active", PIM_TEST_DF_MOUNTED="1")
             result = self.run_script(BIN / "sd_mount_stop.sh", root, mounted_env)
             self.check(
                 result.returncode == 1
