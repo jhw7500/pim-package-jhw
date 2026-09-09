@@ -13,6 +13,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -139,6 +140,31 @@ class RuntimeConfigTests(unittest.TestCase):
         candidate_path = self.root / "candidate.json"
         result_path = self.root / "stage-result.json"
         self.assertEqual(0, runtime.main(["stage", "--source-root", str(self.source), "--candidate", str(candidate_path), "--result", str(result_path)]))
+        self.assertEqual(
+            {"path": str(selected), "mtime_ns": 100},
+            json.loads(result_path.read_text(encoding="utf-8")),
+        )
+
+    def test_stage_result_does_not_require_mapping_union(self) -> None:
+        class Python38Dict(dict):
+            def __or__(self, other: object) -> object:
+                raise TypeError("unsupported operand type(s) for |: 'dict' and 'dict'")
+
+        selected = self.write_edge("edgeconf_current.json", mtime_ns=100)
+        candidate_path = self.root / "candidate.json"
+        result_path = self.root / "stage-result.json"
+        arguments = [
+            "stage", "--source-root", str(self.source),
+            "--candidate", str(candidate_path), "--result", str(result_path),
+        ]
+        with mock.patch.object(
+            runtime, "asdict", return_value=Python38Dict(mtime_ns=100)
+        ):
+            try:
+                status = runtime.main(arguments)
+            except TypeError as error:
+                self.fail(f"stage required Python 3.9 mapping union: {error}")
+        self.assertEqual(0, status)
         self.assertEqual(
             {"path": str(selected), "mtime_ns": 100},
             json.loads(result_path.read_text(encoding="utf-8")),

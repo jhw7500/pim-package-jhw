@@ -299,7 +299,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 (candidate.source.path, candidate.ord_path),
             )
             _write_output(arguments.candidate, candidate.document)
-            _write_output(arguments.result, asdict(candidate.source) | {"path": str(candidate.source.path)})
+            stage_result = asdict(candidate.source)
+            stage_result["path"] = str(candidate.source.path)
+            _write_output(arguments.result, stage_result)
         elif arguments.command == "validate":
             _read_runtime(arguments.file)
         elif arguments.command == "plan":
