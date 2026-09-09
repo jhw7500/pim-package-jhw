@@ -1161,7 +1161,6 @@ void CTCPServer::init_json_config()
 	strncpy(vhlConf.mount_path, PATH_MOUNT, sizeof(vhlConf.mount_path)-1);
 	strncpy(vhlConf.event_path, PATH_EVENT, sizeof(vhlConf.event_path)-1);
 	strncpy(vhlConf.recycle_path, PATH_RECYCLE, sizeof(vhlConf.recycle_path)-1);
-	strncpy(vhlConf.json_path, PATH_JSON, sizeof(vhlConf.json_path)-1);
 	strncpy(vhlConf.muxer, "mp4", sizeof(vhlConf.muxer)-1);
 
     for(i=0; i<4; i++)
@@ -1191,31 +1190,41 @@ void CTCPServer::init_json_config()
 
 int CTCPServer::get_json_config()
 {
-	int ret = 0;
 	json_object * pJsonObject = NULL;
     json_object *hobj = NULL, *sobj = NULL, *vobj = NULL;
-	char* json_file;
 	char str[8];
 	uint8_t i;
 	int max_bps = 0;
 	const char* tmp_str = NULL;
 
-	json_file = search_json_file(vhlConf.json_path, (char*)JSON_NAME_PREFIX, (char*)JSON_NAME_SUFFIX);
-    __LOG(LOG_INFO, "[CFG][%s:%d] json file name : %s", _FILE_, __LINE__, json_file);
+	pJsonObject = json_object_from_file(PIM_RUNTIME_JSON_FILE);
+	if (!pJsonObject) {
+		__LOG(LOG_CRIT, "[CFG][%s:%d] Failed to load runtime JSON from %s", _FILE_, __LINE__, PIM_RUNTIME_JSON_FILE);
+		return -1;
+	}
+	if (!json_object_is_type(pJsonObject, json_type_object)) {
+		__LOG(LOG_CRIT, "[CFG][%s:%d] Runtime JSON root must be an object: %s", _FILE_, __LINE__, PIM_RUNTIME_JSON_FILE);
+		json_object_put(pJsonObject);
+		return -1;
+	}
+	json_object *vhlObject = json_object_object_get(pJsonObject, JSON_HEADER_VHL);
+	json_object *ordObject = json_object_object_get(pJsonObject, JSON_HEADER_ORD);
+	json_object *vcmObject = json_object_object_get(pJsonObject, JSON_HEADER_VCM);
+	if (!vhlObject || !json_object_is_type(vhlObject, json_type_object) ||
+		!ordObject || !json_object_is_type(ordObject, json_type_object) ||
+		!vcmObject || !json_object_is_type(vcmObject, json_type_object)) {
+		__LOG(LOG_CRIT, "[CFG][%s:%d] Runtime JSON requires VHL_CAM, ORD and VCM objects: %s", _FILE_, __LINE__, PIM_RUNTIME_JSON_FILE);
+		json_object_put(pJsonObject);
+		return -1;
+	}
 
-    if(strstr(json_file, JSON_NAME_PREFIX) == NULL || strstr(json_file, JSON_NAME_SUFFIX) == NULL) {
-        __LOG(LOG_CRIT, "[CFG][%s:%d] json file name not match %s %s", _FILE_, __LINE__, JSON_NAME_PREFIX, JSON_NAME_SUFFIX);
-        return -1;
-    }
-
-	pJsonObject = json_object_from_file(json_file);
-	hobj = json_object_object_get(pJsonObject, JSON_HEADER_VHL);
-	if (json_object_get_value(hobj, "vhl_name", &tmp_str) == 0) strncpy(vhlConf.vhl_name, tmp_str, sizeof(vhlConf.vhl_name)-1);
+	hobj = vhlObject;
+	if (json_object_get_value(hobj, "vhl_name", &tmp_str) == 0) snprintf(vhlConf.vhl_name, sizeof(vhlConf.vhl_name), "%s", tmp_str);
 	json_object_get_value(hobj, "recording_time", &vhlConf.recMinute);
 	json_object_get_value(hobj, "event_storage_size", &vhlConf.event_storage_size);
 	json_object_get_value(hobj, "event_auto_remove", &vhlConf.event_auto_remove);
-	if (json_object_get_value(hobj, "tmp_path", &tmp_str) == 0) strncpy(vhlConf.tmp_path, tmp_str, sizeof(vhlConf.tmp_path)-1);
-	if (json_object_get_value(hobj, "muxer", &tmp_str) == 0) strncpy(vhlConf.muxer, tmp_str, sizeof(vhlConf.muxer)-1);
+	if (json_object_get_value(hobj, "tmp_path", &tmp_str) == 0) snprintf(vhlConf.tmp_path, sizeof(vhlConf.tmp_path), "%s", tmp_str);
+	if (json_object_get_value(hobj, "muxer", &tmp_str) == 0) snprintf(vhlConf.muxer, sizeof(vhlConf.muxer), "%s", tmp_str);
 
     for(i=0; i<4; i++)
     {
@@ -1230,31 +1239,16 @@ int CTCPServer::get_json_config()
 
 		if(vhlConf.camConfig[i].bps[0] > max_bps) max_bps = vhlConf.camConfig[i].bps[0];
 	}
-	json_object_put(pJsonObject); // Free first file
 
-	char ord_json_file[256];
-	if (access(ORD_VCM_JSON_FILE, R_OK) == 0) {
-		strncpy(ord_json_file, ORD_VCM_JSON_FILE, sizeof(ord_json_file)-1);
-	} else {
-		snprintf(ord_json_file, sizeof(ord_json_file), "%s/ord_vcm_conf.json", PATH_JSON_LOCAL);
-		__LOG(LOG_WARNING, "[CFG][%s:%d] %s not found, trying fallback: %s", _FILE_, __LINE__, ORD_VCM_JSON_FILE, ord_json_file);
-	}
-
-	pJsonObject = json_object_from_file(ord_json_file);
-	if (!pJsonObject) {
-		__LOG(LOG_CRIT, "[CFG][%s:%d] Failed to load JSON config from %s", _FILE_, __LINE__, ord_json_file);
-		return -1;
-	}
-
-	hobj = json_object_object_get(pJsonObject, JSON_HEADER_VCM);
+	hobj = vcmObject;
 	json_object_get_value(hobj, "srt_enable", &_TOrdConf.srt_enable);
 	json_object_get_value(hobj, "ops_enable", &_TOrdConf.ops_enable);
 
-	hobj = json_object_object_get(pJsonObject, JSON_HEADER_ORD);
+	hobj = ordObject;
 	json_object_get_value(hobj, "port_num", &_TOrdConf.portNum);
 	json_object_get_value(hobj, "vhl_max", &_TOrdConf.vhl_max);
 	json_object_get_value(hobj, "copy_margin_sec", &_TOrdConf.margin_sec);
-	if (json_object_get_value(hobj, "ip_static", &tmp_str) == 0) strncpy(_TOrdConf.ip_addr, tmp_str, sizeof(_TOrdConf.ip_addr)-1);
+	if (json_object_get_value(hobj, "ip_static", &tmp_str) == 0) snprintf(_TOrdConf.ip_addr, sizeof(_TOrdConf.ip_addr), "%s", tmp_str);
 	json_object_get_value(hobj, "disk_manage", &_TOrdConf.disk_manage);
 	json_object_get_value(hobj, "target_copy", &_TOrdConf.target_copy);
 	json_object_get_value(hobj, "disk_limit_file", &_TOrdConf.disk_limit_file);
@@ -1279,7 +1273,7 @@ int CTCPServer::get_json_config()
         _TOrdConf.evt_copy_delay += ((max_bps/1024)*vhlConf.recMinute);
     }
 
-	json_object_put(pJsonObject); // Free second file
+	json_object_put(pJsonObject);
 	return 0;
 }
 

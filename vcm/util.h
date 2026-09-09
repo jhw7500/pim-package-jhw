@@ -45,20 +45,15 @@
 #define PATH_MOUNT	"/mnt/sd_cam"
 #define PATH_EVENT	"/mnt/sd_cam/event"
 #define PATH_RECYCLE	"/mnt/sd_cam/recycle"
-#define PATH_JSON   "/root/shared_v"
-#define PATH_JSON_LOCAL "/tmp/shared_v"
+#define PIM_RUNTIME_JSON_FILE "/run/pim-camera/config/pim_runtime.json"
 #define PATH_TMP    "/tmp"
 #define FALLBACKDIR     "/dev/shm"
 #define EVENT_FILE_NAME_PREFIX	"evt"
-#define EDGE_JSON_FILE   "/root/shared_v/edgeconf_pim.json"
-#define ORD_VCM_JSON_FILE   "/root/shared_v/ord_vcm_conf.json"
 #define JSON_HEADER_VHL "VHL_CAM"
 #define JSON_HEADER_ORD "ORD"
 #define JSON_HEADER_VCM "VCM"
 #define JSON_HEADER_NET "NETWORK"
 #define JSON_TITLE_ETH0 "ETH0"
-#define JSON_NAME_PREFIX  "edgeconf_"
-#define JSON_NAME_SUFFIX  ".json"
 
 #define RDS_VIB_HEADER      "VIB"
 #define RDS_OPS_HEADER      "OPS"
@@ -132,7 +127,6 @@ uint64_t get_disk_size(const char *path);
 uint64_t get_disk_use_size(const char *path);
 uint64_t get_dir_use_size(const char *path);
 uint16_t get_file_cnt(const char *path, uint8_t depth);
-char* search_json_file(char* path, char* prefix, char* suffix);
 void Eliminate(char *str, char ch);
 int json_object_get_value(json_object *hobj, const char *name, void* data);
 json_object *json_find_obj (json_object * jobj, const char *find_key);

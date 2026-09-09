@@ -830,10 +830,7 @@ int CTCPServer::init()
 #endif
 	init_json_config();
 	__LOG(LOG_INFO, "[TCP][%s:%d] init_json_config done", _FILE_, __LINE__);
-	//get_vcm_config(ORD_VCM_JSON_FILE);
-	//get_vhl_config(search_json_file((char*)PATH_JSON, (char*)JSON_NAME_PREFIX, (char*)JSON_NAME_SUFFIX));
 	get_json_config();
-	//get_vcm_config(ORD_VCM_JSON_FILE);
 	//unsigned short serverPort = TCP_TEST_PORT ;
 	sockaddr_in serverAddr ;
 
@@ -1152,7 +1149,6 @@ void CTCPServer::init_json_config()
 	strncpy(_TVhlConf.mount_path, PATH_MOUNT, sizeof(_TVhlConf.mount_path)-1);
 	strncpy(_TVhlConf.event_path, PATH_EVENT, sizeof(_TVhlConf.event_path)-1);
 	strncpy(_TVhlConf.recycle_path, PATH_RECYCLE, sizeof(_TVhlConf.recycle_path)-1);
-	strncpy(_TVhlConf.json_path, PATH_JSON, sizeof(_TVhlConf.json_path)-1);
 
     for(i=0; i<4; i++)
     {
@@ -1182,35 +1178,42 @@ void CTCPServer::init_json_config()
 
 int CTCPServer::get_json_config()
 {
-	int ret = 0;
-
 	json_object * pJsonObject = NULL;
     json_object *hobj = NULL, *sobj = NULL, *vobj = NULL;
-    //json_object *dval;
-	//const char* ipTitle;
 	uint8_t i;
 	char str[8];
-	char* json_file;
 
-	json_file = search_json_file(_TVhlConf.json_path, (char*)JSON_NAME_PREFIX, (char*)JSON_NAME_SUFFIX);
-    __LOG(LOG_INFO, "[CFG][%s:%d] json file name : %s", _FILE_, __LINE__, json_file);
+	pJsonObject = json_object_from_file(PIM_RUNTIME_JSON_FILE);
+	if (!pJsonObject) {
+		__LOG(LOG_CRIT, "[CFG][%s:%d] Failed to load runtime JSON from %s", _FILE_, __LINE__, PIM_RUNTIME_JSON_FILE);
+		return -1;
+	}
+	if (!json_object_is_type(pJsonObject, json_type_object)) {
+		__LOG(LOG_CRIT, "[CFG][%s:%d] Runtime JSON root must be an object: %s", _FILE_, __LINE__, PIM_RUNTIME_JSON_FILE);
+		json_object_put(pJsonObject);
+		return -1;
+	}
+	json_object *vhlObject = json_object_object_get(pJsonObject, JSON_HEADER_VHL);
+	json_object *ordObject = json_object_object_get(pJsonObject, JSON_HEADER_ORD);
+	json_object *vcmObject = json_object_object_get(pJsonObject, JSON_HEADER_VCM);
+	if (!vhlObject || !json_object_is_type(vhlObject, json_type_object) ||
+		!ordObject || !json_object_is_type(ordObject, json_type_object) ||
+		!vcmObject || !json_object_is_type(vcmObject, json_type_object)) {
+		__LOG(LOG_CRIT, "[CFG][%s:%d] Runtime JSON requires VHL_CAM, ORD and VCM objects: %s", _FILE_, __LINE__, PIM_RUNTIME_JSON_FILE);
+		json_object_put(pJsonObject);
+		return -1;
+	}
 
-    if(strstr(json_file, JSON_NAME_PREFIX) == NULL && strstr(json_file, JSON_NAME_SUFFIX) == NULL) {
-        __LOG(LOG_CRIT, "[CFG][%s:%d] json file name not match %s %s", _FILE_, __LINE__, JSON_NAME_PREFIX, JSON_NAME_SUFFIX);
-        return -1;
-    }
-
-	pJsonObject = json_object_from_file(json_file);
-	hobj = json_object_object_get(pJsonObject, JSON_HEADER_VHL);
+	hobj = vhlObject;
 
 	const char* tmp_str = NULL;
-	if (json_object_get_value(hobj, "vhl_name", &tmp_str) == 0) strncpy(_TVhlConf.vhl_name, tmp_str, sizeof(_TVhlConf.vhl_name)-1);
+	if (json_object_get_value(hobj, "vhl_name", &tmp_str) == 0) snprintf(_TVhlConf.vhl_name, sizeof(_TVhlConf.vhl_name), "%s", tmp_str);
 	json_object_get_value(hobj, "recording_time", &_TVhlConf.recording_time);
-	if (json_object_get_value(hobj, "line", &tmp_str) == 0) strncpy(_TVhlConf.line, tmp_str, sizeof(_TVhlConf.line)-1);
-	if (json_object_get_value(hobj, "floor", &tmp_str) == 0) strncpy(_TVhlConf.floor, tmp_str, sizeof(_TVhlConf.floor)-1);
+	if (json_object_get_value(hobj, "line", &tmp_str) == 0) snprintf(_TVhlConf.line, sizeof(_TVhlConf.line), "%s", tmp_str);
+	if (json_object_get_value(hobj, "floor", &tmp_str) == 0) snprintf(_TVhlConf.floor, sizeof(_TVhlConf.floor), "%s", tmp_str);
 	json_object_get_value(hobj, "event_storage_size", &_TVhlConf.event_storage_size);
 	json_object_get_value(hobj, "event_auto_remove", &_TVhlConf.event_auto_remove);
-	if (json_object_get_value(hobj, "tmp_path", &tmp_str) == 0) strncpy(_TVhlConf.tmp_path, tmp_str, sizeof(_TVhlConf.tmp_path)-1);
+	if (json_object_get_value(hobj, "tmp_path", &tmp_str) == 0) snprintf(_TVhlConf.tmp_path, sizeof(_TVhlConf.tmp_path), "%s", tmp_str);
 	//if (json_object_get_value(hobj, "log_path", &tmp_str) == 0) strncpy(_TVhlConf.log_path, tmp_str, sizeof(_TVhlConf.log_path)-1);
 	//if (json_object_get_value(hobj, "mount_path", &tmp_str) == 0) strncpy(_TVhlConf.mount_path, tmp_str, sizeof(_TVhlConf.mount_path)-1);
 	//if (json_object_get_value(hobj, "event_path", &tmp_str) == 0) strncpy(_TVhlConf.event_path, tmp_str, sizeof(_TVhlConf.event_path)-1);
@@ -1240,24 +1243,11 @@ int CTCPServer::get_json_config()
     }
 #endif
 
-	char ord_json_file[256];
-	if (access(ORD_VCM_JSON_FILE, R_OK) == 0) {
-		strncpy(ord_json_file, ORD_VCM_JSON_FILE, sizeof(ord_json_file)-1);
-	} else {
-		snprintf(ord_json_file, sizeof(ord_json_file), "%s/ord_vcm_conf.json", PATH_JSON_LOCAL);
-		__LOG(LOG_WARNING, "[CFG][%s:%d] %s not found, trying fallback: %s", _FILE_, __LINE__, ORD_VCM_JSON_FILE, ord_json_file);
-	}
-
-	pJsonObject = json_object_from_file(ord_json_file);
-	if (!pJsonObject) {
-		__LOG(LOG_CRIT, "[CFG][%s:%d] Failed to load JSON config from %s", _FILE_, __LINE__, ord_json_file);
-		return -1;
-	}
-	hobj = json_object_object_get(pJsonObject, JSON_HEADER_ORD);
+	hobj = ordObject;
 	json_object_get_value(hobj, "target_copy", &_TVcmConf.target_copy);
 	json_object_get_value(hobj, "vib_enable", &_TVcmConf.vib_enable);
 
-	hobj = json_object_object_get(pJsonObject, JSON_HEADER_VCM);
+	hobj = vcmObject;
 	json_object_get_value(hobj, "port_num", &_TVcmConf.portNum);
 	json_object_get_value(hobj, "srt_enable", &_TVcmConf.srt_enable);
 	json_object_get_value(hobj, "srt_auto_sync", &_TVcmConf.srt_auto_sync);
@@ -1268,7 +1258,7 @@ int CTCPServer::get_json_config()
 	json_object_get_value(hobj, "srt_delay", &_TVcmConf.srt_delay);
 	json_object_get_value(hobj, "debug_level", &_TVcmConf.debug_level);
 	json_object_get_value(hobj, "log_level", &_TVcmConf.log_level);
-	json_object_get_value(hobj, "ip_static", &_TVcmConf.ip_addr);
+	if (json_object_get_value(hobj, "ip_static", &tmp_str) == 0) snprintf(_TVcmConf.ip_addr, sizeof(_TVcmConf.ip_addr), "%s", tmp_str);
 	json_object_get_value(hobj, "file_time_check", &_TVcmConf.file_time_check);
 	json_object_get_value(hobj, "ops_enable", &_TVcmConf.ops_enable);
 	json_object_get_value(hobj, "ops_period", &_TVcmConf.ops_period);
@@ -1305,10 +1295,6 @@ int CTCPServer::get_json_config()
 	dbg_level = _TVcmConf.debug_level;
 	log_level = _TVcmConf.log_level;
 
-	ret = json_object_put(pJsonObject);
-	if(ret < 0)
-		__LOG(LOG_ERR, "[CFG][%s:%d] ret:%d", _FILE_, __LINE__, ret);
-
     __LOG(LOG_INFO, "[CFG][%s:%d] ip:%s, portNum:%d, vhl_name:%s, line:%s, floor:%s, rec_time:%d, evt_size:%d, evt_auto_remove:%d, file_path:%s", \
         _FILE_, __LINE__, _TVcmConf.ip_addr, _TVcmConf.portNum, _TVhlConf.vhl_name, _TVhlConf.line, _TVhlConf.floor, \
 		_TVhlConf.recording_time, _TVhlConf.event_storage_size, _TVhlConf.event_auto_remove, _TVhlConf.tmp_path);
@@ -1326,7 +1312,8 @@ int CTCPServer::get_json_config()
 	__LOG(LOG_INFO, "[CFG][%s:%d] ops_en:%d, ops_period:%d, ops_buffering:%d, ops_delay:%d, vib_en:%d, vib_test:%d", \
 		_FILE_, __LINE__, _TVcmConf.ops_enable, _TVcmConf.ops_period, _TVcmConf.ops_buffering, _TVcmConf.ops_delay, _TVcmConf.vib_enable, _TVcmConf.vib_test);
 
-	return ret;
+	json_object_put(pJsonObject);
+	return 0;
 }
 
 int CTCPServer::parseTcpRecvData(int fd, char* data, int len)
@@ -1391,13 +1378,6 @@ int CTCPServer::parseTcpRecvData(int fd, char* data, int len)
 			else if(strcmp(cmd, "GET_CONFIG") == 0) {
 				//json_parse(json_object_from_file(JSON_FILE), (char*)"VHL_CAM");
 				//jsonConf.vhl_name = get_str_from_json(JSON_FILE, JSON_HEADER_VHL, "vhl_name");
-				/*
-				ret = get_vhl_config(EDGE_JSON_FILE);
-				if(ret < 0) {
-					__LOG(LOG_CRIT,"[SRT][%s:%d] ret:%d", _FILE_, __LINE__, ret);
-					break;
-				}
-				*/
 				//sprintf(str, " ");
 #if 1
 snprintf(str, sizeof(str), "{\n\
