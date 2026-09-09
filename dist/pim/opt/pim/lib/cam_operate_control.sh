@@ -211,14 +211,15 @@ cam_daemon_startup() {
             ;;
         *) rc=70 ;;
     esac
-    unset PIM_CAMERA_STARTUP_EXECUTOR
     if [ "$rc" -ne 0 ]; then
+        unset PIM_CAMERA_STARTUP_EXECUTOR
         [ "$countered" = true ] && return "$rc"
         _coc_startup_fail "$rc" startup_action_failed true
         return $?
     fi
     if [ "$countered" = true ]; then cam_request_transition VERIFYING || return $?; fi
-    _coc_verify_all || { rc=$?; if [ "$countered" = true ]; then _coc_fail_active "$rc" startup_verify_failed camera_health true; else _coc_startup_fail "$rc" startup_verify_failed true; fi; return $?; }
+    _coc_verify_all || { rc=$?; unset PIM_CAMERA_STARTUP_EXECUTOR; if [ "$countered" = true ]; then _coc_fail_active "$rc" startup_verify_failed camera_health true; else _coc_startup_fail "$rc" startup_verify_failed true; fi; return $?; }
+    unset PIM_CAMERA_STARTUP_EXECUTOR
     projection=$(_coc_projection "$PIM_CAMERA_RUNTIME_JSON") || { rc=$?; if [ "$countered" = true ]; then _coc_fail_active "$rc" projection_failed camera_health true; else _coc_startup_fail "$rc" projection_failed true; fi; return $?; }
     _coc_persist_success "$projection" || { rc=$?; if [ "$countered" = true ]; then _coc_fail_active "$rc" state_write_failed state true; else _coc_startup_fail "$rc" state_write_failed true; fi; return $?; }
     if [ "$countered" = true ]; then cam_request_finish SUCCEEDED 0 || return $?; fi
