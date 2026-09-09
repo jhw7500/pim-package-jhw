@@ -69,6 +69,36 @@ def guards(text):
     return result
 
 
+def top_level_statements(text):
+    """Split this contract's simple statements and opaque braced controls.
+
+    This is a lexical boundary check, not a general C++ parser/preprocessor.
+    Balanced parentheses/brackets are consumed whole (including for-header
+    semicolons). An unbraced if/while/for stays attached to its governed
+    statement regardless of whitespace. Strings/comments cannot add boundaries.
+    """
+    masked = mask_strings(text)
+    result = []
+    start = pos = 0
+    while pos < len(text):
+        char = masked[pos]
+        if char in "([":
+            pos = closing(text, pos, char, {"(": ")", "[": "]"}[char]) + 1
+            continue
+        if char == "{":
+            pos = closing(text, pos) + 1
+        elif char == ";":
+            pos += 1
+        else:
+            pos += 1
+            continue
+        result.append(compact(text[start:pos]))
+        start = pos
+    if masked[start:].strip():
+        raise AssertionError("incomplete statement in native source contract")
+    return result
+
+
 class NativeRuntimeContract:
     def setUp(self):
         self.header = source((ROOT / self.tree / "util.h").read_text())
@@ -117,6 +147,15 @@ class NativeRuntimeContract:
         self.assertEqual(len(checks), 3, "null root, root type, required-member guards")
         self.assertEqual(checks[0][0], "!" + root)
         self.assertEqual(checks[1][0], f"!json_object_is_type({root},json_type_object)")
+        opened = re.search(rf"\b{root}\s*=\s*json_object_from_file\s*\(\s*PIM_RUNTIME_JSON_FILE\s*\)\s*;", prefix)
+        self.assertIsNotNone(opened, "runtime open must precede field selection")
+        self.assertLess(opened.end(), checks[0][2], "runtime open must execute before the null guard")
+        self.assertLess(checks[0][3], checks[1][2], "null guard must precede root-type validation")
+        statements = top_level_statements(prefix)
+        self.assertIn(compact(opened[0]), statements, "runtime open must be an unconditional statement")
+        for _, _, start, end in checks:
+            self.assertIn(compact(prefix[start:end + 1]), statements,
+                          "validation guards must execute at function top level")
         first_lookup = prefix.find("json_object_object_get(")
         self.assertGreater(first_lookup, checks[1][3], "root validation must precede member lookup")
 
@@ -128,10 +167,12 @@ class NativeRuntimeContract:
         for macro, name in (("JSON_HEADER_VHL", "VHL_CAM"), ("JSON_HEADER_ORD", "ORD"), ("JSON_HEADER_VCM", "VCM")):
             with self.subTest(member=name):
                 self.assertRegex(self.header, rf'#define\s+{macro}\s+"{name}"')
-                lookups = list(re.finditer(rf"\b(\w+)\s*=\s*json_object_object_get\s*\(\s*{root}\s*,\s*{macro}\s*\)\s*;", prefix))
+                lookups = list(re.finditer(rf"\b(?:json_object\s*\*\s*)?(\w+)\s*=\s*json_object_object_get\s*\(\s*{root}\s*,\s*{macro}\s*\)\s*;", prefix))
                 self.assertEqual(len(lookups), 1, f"{name} must be borrowed from the one root")
                 self.assertGreater(lookups[0].start(), checks[1][3])
                 self.assertLess(lookups[0].end(), checks[2][2])
+                self.assertIn(compact(lookups[0][0]), top_level_statements(prefix),
+                              f"{name} lookup must execute before its guard")
                 child = lookups[0][1]
                 expected_terms.extend(("!" + child, f"!json_object_is_type({child},json_type_object)"))
         # Exact OR terms catch a dropped object/null check, wrong type, AND,
@@ -157,11 +198,9 @@ class NativeRuntimeContract:
         remainder = self.body
         for _, _, start, end in reversed(checks):
             remainder = remainder[:start] + remainder[end + 1:]
-        put = re.search(r"\bjson_object_put\s*\(", remainder)
-        self.assertIsNotNone(put)
-        before = mask_strings(remainder[:put.start()])
-        self.assertEqual(before.count("{"), before.count("}"), "success cleanup must be unconditional")
-        self.assertRegex(remainder, rf"json_object_put\s*\(\s*{root}\s*\)\s*;\s*return\s+0\s*;\s*$")
+        self.assertEqual(top_level_statements(remainder)[-2:],
+                         [f"json_object_put({root});", "return0;"],
+                         "success cleanup and return must be unconditional top-level statements")
         self.assertNotRegex(remainder, r"\b(?:goto|throw)\b", "no unchecked exit bypasses root release")
 
 
@@ -174,6 +213,67 @@ class VcmRuntimeContract(NativeRuntimeContract, unittest.TestCase):
 
     def test_ip_string_is_copied_before_root_release(self):
         self.assertRegex(self.body, r'if\s*\(json_object_get_value\(hobj,\s*"ip_static",\s*&tmp_str\)\s*==\s*0\)\s*snprintf\(_TVcmConf.ip_addr,\s*sizeof\(_TVcmConf.ip_addr\),\s*"%s",\s*tmp_str\);', "ip_static must populate owned, terminated storage, not store a borrowed pointer in the char array")
+
+
+class ControlFlowMutationRegressions(unittest.TestCase):
+    """Exercise the real checker with broken bodies, never edit C++ fixtures."""
+
+    def replace_once(self, body, pattern, replacement):
+        mutated, count = re.subn(pattern, lambda match: replacement(match), body)
+        self.assertEqual(count, 1, "the intended source mutation must apply exactly once")
+        self.assertNotEqual(mutated, body, "the mutation must change the fixture")
+        return mutated
+
+    def rejected_by(self, contract, body):
+        rejected = []
+        for method in unittest.defaultTestLoader.getTestCaseNames(contract):
+            case = contract(method)
+            case.setUp()
+            case.body = source(body)
+            try:
+                getattr(case, method)()
+            except AssertionError:
+                rejected.append(method)
+        return rejected
+
+    def test_success_cleanup_cannot_be_governed_by_unbraced_control(self):
+        for contract in (OrdRuntimeContract, VcmRuntimeContract):
+            case = contract()
+            case.setUp()
+            for control in ("if (false)", "while (false)", "for (; false;)"):
+                for separator in (" ", "\n\t"):
+                    with self.subTest(tree=case.tree, control=control, separator=repr(separator)):
+                        body = self.replace_once(
+                            case.body, r"json_object_put\(pJsonObject\);(?=\s*return 0;\s*$)",
+                            lambda match: control + separator + match[0],
+                        )
+                        self.assertTrue(self.rejected_by(contract, body),
+                                        f"{case.tree}: {control!r} success cleanup leaks the root but escaped every check")
+
+    def test_runtime_open_cannot_follow_root_validation(self):
+        for contract in (OrdRuntimeContract, VcmRuntimeContract):
+            with self.subTest(tree=contract.tree):
+                case = contract()
+                case.setUp()
+                assignment = "pJsonObject = json_object_from_file(PIM_RUNTIME_JSON_FILE);"
+                body = self.replace_once(case.body, re.escape(assignment), lambda match: "")
+                body = self.replace_once(body, r"\bjson_object\s*\*vhlObject\b",
+                                         lambda match: assignment + "\n\t" + match[0])
+                self.assertTrue(self.rejected_by(contract, body),
+                                f"{case.tree}: open after root guards rejects every startup but escaped every check")
+
+    def test_unconditional_cleanup_allows_comment_and_string_decoys(self):
+        for contract in (OrdRuntimeContract, VcmRuntimeContract):
+            with self.subTest(tree=contract.tree):
+                case = contract()
+                case.setUp()
+                body = self.replace_once(
+                    case.body, r"json_object_put\(pJsonObject\);(?=\s*return 0;\s*$)",
+                    lambda match: 'const char* decoy = "if (false) { ; } while (false)";\n'
+                    '/* for (; false;) */\n' + match[0],
+                )
+                self.assertEqual(self.rejected_by(contract, body), [],
+                                 "comment/string control tokens must not govern a real unconditional release")
 
 
 class SuiteWiring(unittest.TestCase):
