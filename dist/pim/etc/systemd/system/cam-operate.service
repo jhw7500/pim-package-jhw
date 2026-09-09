@@ -14,6 +14,7 @@ RuntimeDirectoryMode=0750
 StateDirectory=pim-camera
 StateDirectoryMode=0750
 KillMode=control-group
+SuccessExitStatus=75 143
 TimeoutStartSec=90s
 TimeoutStopSec=90s
 Restart=on-failure

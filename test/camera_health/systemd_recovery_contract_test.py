@@ -144,6 +144,7 @@ def cam_operate_errors(text: str) -> List[str]:
         "TimeoutStopSec": "90s",
         "Restart": "on-failure",
         "RestartSec": "10s",
+        "SuccessExitStatus": "75 143",
     }
     for key, value in expected.items():
         require_single(errors, sections, "Service", key, value)
@@ -1142,6 +1143,7 @@ KillMode=control-group
 TimeoutStopSec=90s
 Restart=on-failure
 RestartSec=10s
+SuccessExitStatus=75 143
 """
         errors = cam_operate_errors(fixture)
         self.assertTrue(any("RuntimeDirectory=" in error for error in errors), errors)
@@ -1241,6 +1243,7 @@ TimeoutStartSec=90s
 TimeoutStopSec=90s
 Restart=on-failure
 RestartSec=10s
+SuccessExitStatus=75 143
 """
         self.assertEqual([], cam_operate_errors(fixture))
         mutations = {
@@ -1256,6 +1259,30 @@ RestartSec=10s
         for label, mutation in mutations.items():
             with self.subTest(mutation=label):
                 self.assertTrue(cam_operate_errors(mutation), label)
+
+    def test_coordinated_stop_exit_status_is_exact(self) -> None:
+        unit = read(Path("etc/systemd/system/cam-operate.service"))
+        unit = re.sub(r"^SuccessExitStatus=.*\n", "", unit, flags=re.MULTILINE)
+        fixture = unit.replace(
+            "[Service]\n", "[Service]\nSuccessExitStatus=75 143\n", 1
+        )
+        self.assertEqual([], cam_operate_errors(fixture))
+        directive = "SuccessExitStatus=75 143\n"
+        mutations = {
+            "removed": fixture.replace(directive, "", 1),
+            "missing 75": fixture.replace(directive, "SuccessExitStatus=143\n", 1),
+            "missing 143": fixture.replace(directive, "SuccessExitStatus=75\n", 1),
+            "wrong section": fixture.replace(directive, "", 1).replace(
+                "[Unit]\n", "[Unit]\n" + directive, 1
+            ),
+        }
+        for label, mutation in mutations.items():
+            with self.subTest(mutation=label):
+                errors = cam_operate_errors(mutation)
+                self.assertTrue(
+                    any("[Service] SuccessExitStatus=" in error for error in errors),
+                    (label, errors),
+                )
 
     def test_maintainer_command_reordering_is_rejected(self) -> None:
         fixture = postinst_fixture(
@@ -1536,6 +1563,10 @@ never_called ()
 
     def test_non_simple_cam_service_types_are_rejected(self) -> None:
         unit = read(Path("etc/systemd/system/cam-operate.service"))
+        unit = re.sub(r"^SuccessExitStatus=.*\n", "", unit, flags=re.MULTILINE)
+        unit = unit.replace(
+            "[Service]\n", "[Service]\nSuccessExitStatus=75 143\n", 1
+        )
         mutations = {
             service_type: unit.replace(
                 "[Service]\n", f"[Service]\nType={service_type}\n", 1
