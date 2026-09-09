@@ -6,6 +6,7 @@ from __future__ import annotations
 import re
 import shlex
 import unittest
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Dict, Iterable, List, Sequence, Tuple
 
@@ -383,9 +384,16 @@ def unconditional_shell_commands(
                 "split function declaration is not followed by '{'"
             )
             pending_function_line = 0
-        if function_re.match(stripped):
-            if "}" not in stripped.split("{", 1)[1]:
-                stack.append("function")
+        function_match = function_re.match(stripped)
+        if function_match:
+            stack.append("function")
+            remainder = stripped[function_match.end() :].strip()
+            if remainder == 'logger -s -p local0.notice "[$KEY][$tag:$LINENO] $*"; }':
+                stack.pop()
+            elif remainder:
+                errors.append(
+                    f"{context} line {number}: function opening '{{' must be final"
+                )
             continue
         if split_function_re.match(stripped):
             pending_function_line = number
@@ -456,8 +464,24 @@ def unconditional_shell_commands(
     return commands, errors
 
 
+def _simple_case_match(pattern: str, value: str) -> bool | None:
+    if not pattern or re.search(r"[\\'\"$()\s]", pattern):
+        return None
+    index = 0
+    while index < len(pattern):
+        if pattern[index] == "[":
+            close = pattern.find("]", index + 1)
+            if close < index + 2 or "[" in pattern[index + 1 : close]:
+                return None
+            index = close
+        elif pattern[index] == "]":
+            return None
+        index += 1
+    return fnmatchcase(value, pattern)
+
+
 def maintainer_path_commands(
-    text: str, selected_arms: Sequence[str], script_name: str
+    text: str, selected_arg: str, script_name: str
 ) -> Tuple[List[List[str]], List[str]]:
     """Extract the unconditional Debian `$1` path without running the script."""
     lines, errors = logical_shell_lines(text)
@@ -481,11 +505,10 @@ def maintainer_path_commands(
     )
     errors.extend(before_errors)
 
-    wanted = set(selected_arms)
     selected_lines: List[LogicalLine] = []
     depth = 1
     active = False
-    selected_arm_count = 0
+    selected = False
     found_esac = False
     for number, code in lines[case_index + 1 :]:
         stripped = code.strip()
@@ -508,25 +531,23 @@ def maintainer_path_commands(
                 break
             continue
         if depth == 1:
-            arm_match = (
-                re.fullmatch(r"([^=$()\s]+(?:\|[^=$()\s]+)*)\)\s*", stripped)
-                if code == code.lstrip()
-                else None
-            )
+            arm_match = None
+            if code == code.lstrip() and not re.match(
+                r"^(?:[A-Za-z_]\w*=|(?:function\s+)?[A-Za-z_]\w*"
+                r"\s*(?:\(\s*\))?\s*\{)", stripped
+            ):
+                arm_match = re.fullmatch(r"(.+)\)\s*(.*)", stripped)
             if arm_match:
-                arm_names = {
-                    item.strip().strip("'\"")
-                    for item in arm_match.group(1).split("|")
-                }
-                matches_selected = bool(wanted & arm_names)
-                if matches_selected:
-                    selected_arm_count += 1
-                    if selected_arm_count > 1:
-                        errors.append(
-                            f"{script_name} line {number}: duplicate or overlapping "
-                            "selected case arm"
-                        )
-                active = matches_selected and selected_arm_count == 1
+                matches = [
+                    _simple_case_match(pattern, selected_arg)
+                    for pattern in arm_match.group(1).split("|")
+                ]
+                if None in matches:
+                    errors.append(f"{script_name} line {number}: unsupported case pattern")
+                active = None not in matches and any(matches) and not selected
+                selected = selected or (None not in matches and any(matches))
+                if active and arm_match.group(2):
+                    selected_lines.append((number, arm_match.group(2)))
                 continue
             if stripped in {";;", ";&", ";;&"}:
                 active = False
@@ -536,10 +557,8 @@ def maintainer_path_commands(
 
     if not found_esac:
         errors.append(f"{script_name}: unterminated top-level case $1")
-    if not selected_arm_count:
-        errors.append(
-            f"{script_name}: missing selected case arm(s): {sorted(wanted)!r}"
-        )
+    if not selected:
+        errors.append(f"{script_name}: missing case path for {selected_arg!r}")
     arm_commands, arm_errors = unconditional_shell_commands(
         selected_lines, f"{script_name} selected path"
     )
@@ -566,81 +585,29 @@ def _customctl_errors(text: str) -> List[str]:
         errors.append("customctl definition is unterminated")
         return errors
 
-    compact = {re.sub(r"\s+", "", line) for line in body}
-    if "target=$1" not in compact:
-        errors.append("customctl must map its first argument to target")
-    if "daemon_name=$2" not in compact:
-        errors.append("customctl must map its second argument to daemon_name")
-
-    branch_re = re.compile(
-        r"^(?:if|elif)\s+\[\[\s+\$\{?target\}?\s*=\s*"
-        r"(enable|disable|mask)\*\s+\]\];?\s*then$"
+    mapping = ["target=$1", "daemon_name=$2"]
+    chain = [
+        "if [[ $target = enable* ]]; then",
+        "systemctl enable $daemon_name",
+        "elif [[ $target = disable* ]]; then",
+        "systemctl disable --now $daemon_name",
+        "elif [[ $target = mask* ]]; then",
+        "systemctl disable --now $daemon_name",
+        "systemctl mask $daemon_name",
+    ]
+    simple = mapping + chain + ["fi"]
+    status = "status=$(systemctl is-enabled $daemon_name 2>/dev/null)"
+    packaged = (
+        mapping
+        + [status, "if [[ $status != ${target}* ]]; then"]
+        + chain
+        + ['else', 'echo "$target is wrong status"', "return 1", "fi", "fi"]
+        + [status, 'echo "$daemon_name is $status"']
     )
-    branches: Dict[str, List[List[str]]] = {}
-    branch_order: List[str] = []
-    current = ""
-    for line in body:
-        match = branch_re.match(line)
-        if match:
-            current = match.group(1)
-            branch_order.append(current)
-            if current in branches:
-                errors.append(
-                    f"customctl {current} branch must occur exactly once"
-                )
-                current = ""
-            else:
-                branches[current] = []
-            continue
-        if re.match(r"^(?:elif|else|fi)\b", line):
-            current = ""
-            continue
-        if current:
-            if re.match(r"^(?:if|case|for|while|until|select)\b", line):
-                errors.append(
-                    f"customctl {current} branch has unsupported nested control flow"
-                )
-                continue
-            try:
-                segments = _command_segments(shell_tokens(line))
-            except ValueError as error:
-                errors.append(f"customctl {current} branch: {error}")
-            else:
-                if len(segments) == 1:
-                    branches[current].extend(segments)
-
-    if branch_order != ["enable", "disable", "mask"]:
+    if body not in (simple, packaged):
         errors.append(
-            "customctl semantic branches must occur once in enable/disable/mask order; "
-            f"found {branch_order!r}"
+            "customctl enable/disable branch helper must match an approved complete shape"
         )
-
-    daemon_args = {"$daemon_name", "${daemon_name}"}
-
-    def has_command(branch: str, arguments: Sequence[str]) -> bool:
-        return any(
-            len(command) == len(arguments) + 2
-            and Path(command[0]).name == "systemctl"
-            and command[1 : 1 + len(arguments)] == list(arguments)
-            and command[-1] in daemon_args
-            for command in branches.get(branch, [])
-        )
-
-    if not has_command("enable", ("enable",)):
-        errors.append("customctl enable branch must execute systemctl enable")
-    if not has_command("disable", ("disable", "--now")):
-        errors.append("customctl disable branch must execute systemctl disable --now")
-    if any(
-        len(command) >= 2
-        and Path(command[0]).name == "systemctl"
-        and command[1] == "mask"
-        for command in branches.get("disable", [])
-    ):
-        errors.append("customctl disable branch must never resolve to mask")
-    if not has_command("mask", ("disable", "--now")) or not has_command(
-        "mask", ("mask",)
-    ):
-        errors.append("customctl mask branch must remain a distinct disable+mask path")
     return errors
 
 
@@ -661,7 +628,7 @@ def require_command(
 
 
 def postinst_errors(text: str) -> List[str]:
-    commands, errors = maintainer_path_commands(text, ("configure",), "postinst")
+    commands, errors = maintainer_path_commands(text, "configure", "postinst")
     require_command(
         errors,
         commands,
@@ -703,17 +670,20 @@ def postinst_errors(text: str) -> List[str]:
 
 
 def preinst_errors(text: str) -> List[str]:
-    commands, errors = maintainer_path_commands(
-        text, ("install", "upgrade"), "preinst"
-    )
-    cam = require_command(
-        errors, commands, ("systemctl", "stop", "cam-operate.service")
-    )
-    sd_mount = require_command(
-        errors, commands, ("systemctl", "stop", "sd-mount.service")
-    )
-    if cam >= 0 and sd_mount >= 0 and cam >= sd_mount:
-        errors.append("cam-operate.service must stop before sd-mount.service")
+    errors: List[str] = []
+    for argument in ("install", "upgrade"):
+        commands, path_errors = maintainer_path_commands(text, argument, "preinst")
+        errors.extend(path_errors)
+        cam = require_command(
+            errors, commands, ("systemctl", "stop", "cam-operate.service")
+        )
+        sd_mount = require_command(
+            errors, commands, ("systemctl", "stop", "sd-mount.service")
+        )
+        if cam >= 0 and sd_mount >= 0 and cam >= sd_mount:
+            errors.append(
+                f"{argument}: cam-operate.service must stop before sd-mount.service"
+            )
     return errors
 
 
@@ -723,6 +693,29 @@ VARIABLE = re.compile(
 )
 ASSIGNMENT = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", re.DOTALL)
 DIRECT_DESTRUCTIVE = {"rm", "rmdir", "unlink", "shred"}
+LITERAL_EXPANSIONS = {"$": "\ue000", "`": "\ue001"}
+
+
+def _mask_literal_expansions(text: str) -> str:
+    """Keep single-quoted and escaped expansion markers literal through shlex."""
+    result: List[str] = []
+    quote = ""
+    index = 0
+    while index < len(text):
+        character = text[index]
+        if character == "'" and quote != '"':
+            quote = "" if quote == "'" else "'"
+        if character == "\\" and quote != "'" and index + 1 < len(text):
+            escaped = text[index + 1]
+            if escaped in LITERAL_EXPANSIONS:
+                result.append(LITERAL_EXPANSIONS[escaped])
+            else:
+                result.extend((character, escaped))
+            index += 2
+            continue
+        result.append(LITERAL_EXPANSIONS.get(character, character) if quote == "'" else character)
+        index += 1
+    return "".join(result)
 
 
 def _resolve_shell_value(
@@ -745,10 +738,12 @@ def _resolve_shell_value(
 
 
 def _is_protected_state(value: str) -> bool:
-    normalized = value.rstrip("/")
+    normalized = re.sub(r"/+", "/", value).rstrip("/")
+    root = "/var/lib/pim-camera"
     return (
-        normalized == "/var/lib/pim-camera"
-        or normalized.startswith("/var/lib/pim-camera/")
+        normalized == root
+        or normalized.startswith(root + "/")
+        or any(normalized.startswith(root + marker) for marker in "*?[")
         or "service-state.json" in normalized
         or "recovery/history" in normalized
     )
@@ -848,14 +843,27 @@ def _destructive_argv(
                 break
             roots.append(argument)
         root_unsafe = any(_target_is_unsafe(root, constants) for root in roots)
+        path_unsafe = any(
+            index + 1 >= len(arguments)
+            or _target_is_unsafe(arguments[index + 1], constants)
+            for index, argument in enumerate(arguments)
+            if argument in {"-path", "-ipath", "-wholename", "-iwholename"}
+        )
+        input_unsafe = protected_pipeline or root_unsafe or path_unsafe
         if "-delete" in arguments:
-            return ambiguous_root or not roots or root_unsafe
+            return ambiguous_root or not roots or input_unsafe
         for marker in ("-exec", "-execdir", "-ok", "-okdir"):
             if marker not in arguments:
                 continue
             start = arguments.index(marker) + 1
             nested = arguments[start:]
-            if _destructive_argv(nested, constants, protected_pipeline=root_unsafe):
+            command = _strip_command_prefix(nested)
+            supported = DIRECT_DESTRUCTIVE | {"truncate", "dd"}
+            if input_unsafe and (
+                not command or Path(command[0]).name not in supported
+            ):
+                return True
+            if _destructive_argv(nested, constants, protected_pipeline=input_unsafe):
                 return True
         return False
 
@@ -875,6 +883,7 @@ def _destructive_argv(
                 constants,
                 protected_pipeline=protected_pipeline,
             )
+        return protected_pipeline
     return False
 
 
@@ -884,11 +893,12 @@ def persistent_delete_lines(text: str) -> List[str]:
     bad: List[str] = [f"parse error: {error}" for error in parse_errors]
     constants: Dict[str, str] = {}
     for _, code in logical:
-        tokens = shell_tokens(code)
+        tokens = shell_tokens(_mask_literal_expansions(code))
         segments = _command_segments(tokens)
+        resolved_tokens = [_resolve_shell_value(token, constants) for token in tokens]
         protected_pipeline = any(
-            _is_protected_state(_resolve_shell_value(token, constants)[0])
-            for token in tokens
+            unresolved or _is_protected_state(resolved)
+            for resolved, unresolved in resolved_tokens
         )
         unsafe = False
         for segment in segments:
@@ -1545,6 +1555,113 @@ never_called ()
                 )
             ),
         )
+
+
+class RoundThreeReviewerCounterexamples(unittest.TestCase):
+    def test_outer_case_uses_first_matching_pattern_per_argument(self) -> None:
+        template = f"""\
+#!/bin/bash
+{GOOD_CUSTOMCTL}case "$1" in
+BLOCKER)
+  :
+  ;;
+configure)
+  ln -sf /opt/pim/bin/cam-recoveryctl /usr/local/bin/cam-recoveryctl
+  ln -sf /opt/pim/bin/kill_test.sh /usr/local/bin/killcam
+{GOOD_LIFECYCLE_COMMANDS}  ;;
+esac
+"""
+        bad = {
+            pattern: postinst_errors(template.replace("BLOCKER", pattern, 1))
+            for pattern in ("*", "config*", "configur?", r"config\ ure")
+        }
+        bad["preinst wildcard"] = preinst_errors("""\
+#!/bin/bash
+case "$1" in
+*) : ;;
+install|upgrade)
+  systemctl stop cam-operate.service
+  systemctl stop sd-mount.service
+  ;;
+esac
+""")
+        disjoint = (
+            '#!/bin/bash\ncase "$1" in\ninstall)\n'
+            "  systemctl stop cam-operate.service\n  systemctl stop sd-mount.service\n  ;;\n"
+            "upgrade)\n  systemctl stop cam-operate.service\n"
+            "  systemctl stop sd-mount.service\n  ;;\nesac\n"
+        )
+        observed = [label for label, errors in bad.items() if not errors]
+        self.assertEqual(([], []), (observed, preinst_errors(disjoint)))
+
+    def test_customctl_rejects_dominating_or_dead_shape(self) -> None:
+        prefix = "  target=$1\n  daemon_name=$2\n"
+        enable = "  if [[ $target = enable* ]]; then"
+        mutants = {
+            "leading catch-all": GOOD_CUSTOMCTL.replace(
+                enable,
+                "  if [[ -n $target ]]; then\n    systemctl mask $daemon_name\n"
+                "  elif [[ $target = enable* ]]; then",
+            ),
+            "target reassignment": GOOD_CUSTOMCTL.replace(
+                prefix, prefix + "  target=never\n"
+            ),
+            "dead mappings": GOOD_CUSTOMCTL.replace(
+                prefix, "  if false; then\n    target=$1\n    daemon_name=$2\n  fi\n"
+            ),
+            "bracket override": GOOD_CUSTOMCTL.replace(
+                "  elif [[ $target = disable* ]]; then",
+                "  elif [[ $target = disabl[e]* ]]; then\n"
+                "    systemctl mask $daemon_name\n"
+                "  elif [[ $target = disable* ]]; then",
+            ),
+        }
+        survivors = [label for label, helper in mutants.items() if not postinst_errors(
+            postinst_fixture(GOOD_LIFECYCLE_COMMANDS, helper))]
+        self.assertEqual([], survivors, f"customctl shape bypasses: {survivors}")
+
+    def test_inline_function_body_cannot_expose_dead_commands(self) -> None:
+        lifecycle = postinst_fixture("""\
+  never_called() { echo '}'
+    customctl enable pim-config-guard
+    customctl enable pim-camera-config
+    customctl disable ord-operate
+    customctl enable cam-operate
+    :; }
+""")
+        runner = """\
+#!/bin/bash
+never_called() { echo '}'
+  python3 systemd_recovery_contract_test.py
+  :; }
+"""
+        cases = (("lifecycle", postinst_errors(lifecycle)),
+                 ("runner", runner_contract_errors(runner)))
+        survivors = [label for label, errors in cases if not errors]
+        self.assertEqual([], survivors, f"inline function bypasses: {survivors}")
+
+    def test_bounded_persistent_deletion_bypasses_are_rejected(self) -> None:
+        cases = {
+            "unresolved xargs": "printf '%s\\0' \"$unknown_state\" | xargs -0 rm -rf\n",
+            "find path": "find /var/lib -path '/var/lib/pim-camera/*' -delete\n",
+            "find shell": "find /var/lib/pim-camera -exec sh -c 'rm -rf \"$1\"' sh {} \\;\n",
+            "xargs shell": "find /var/lib/pim-camera -print0 | xargs -0 sh -c 'rm -rf \"$1\"' sh\n",
+            "glob": "rm -rf /var/lib/pim-camera*\n",
+            "double slash": "rm -rf //var/lib/pim-camera\n",
+        }
+        survivors = [label for label, fixture in cases.items()
+                     if not persistent_delete_lines(fixture)]
+        self.assertEqual([], survivors, f"persistent deletion bypasses: {survivors}")
+
+    def test_quoted_or_escaped_dollars_are_safe_literals(self) -> None:
+        cases = {
+            "single dollar": "rm -rf '$unknown_state'\n",
+            "escaped dollar": r"rm -rf \$unknown_state" + "\n",
+            "single substitution": "rm -rf '$(printf /var/lib/pim-camera)'\n",
+        }
+        false_positives = [label for label, fixture in cases.items()
+                           if persistent_delete_lines(fixture)]
+        self.assertEqual([], false_positives, f"safe literals rejected: {false_positives}")
 
 
 if __name__ == "__main__":
