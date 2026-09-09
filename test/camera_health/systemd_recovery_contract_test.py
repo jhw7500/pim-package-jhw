@@ -488,7 +488,7 @@ def maintainer_path_commands(
     case_indices: List[int] = []
     for index, (_, code) in enumerate(lines):
         try:
-            tokens = shell_tokens(code)
+            tokens = [_plain_quotes(token) for token in provenance_tokens(code)]
         except ValueError:
             continue
         if len(tokens) >= 3 and tokens[:3] == ["case", "$1", "in"]:
@@ -514,16 +514,17 @@ def maintainer_path_commands(
     for number, code in lines[case_index + 1 :]:
         stripped = code.strip()
         try:
-            tokens = shell_tokens(stripped)
+            tokens = provenance_tokens(stripped)
         except ValueError as error:
             errors.append(f"{script_name} line {number}: {error}")
             continue
-        if tokens and tokens[0] == "case":
+        plain_tokens = [_plain_quotes(token) for token in tokens]
+        if plain_tokens and plain_tokens[0] == "case":
             if active:
                 selected_lines.append((number, code))
             depth += 1
             continue
-        if tokens and tokens[0].rstrip(";") == "esac":
+        if plain_tokens and plain_tokens[0].rstrip(";") == "esac":
             if depth > 1 and active:
                 selected_lines.append((number, code))
             depth -= 1
@@ -545,8 +546,7 @@ def maintainer_path_commands(
                     errors.append(f"{script_name} line {number}: unsupported case pattern")
                 active = None not in matches and any(matches) and not selected
                 selected = selected or (None not in matches and any(matches))
-                terminator = next((item for item in (";;&", ";&", ";;")
-                                   if item in tokens), "")
+                terminator = tokens[-1] if tokens[-1] in {";;", ";&", ";;&"} else ""
                 if terminator and terminator != ";;":
                     errors.append(f"{script_name} line {number}: unsupported fall-through")
                 if active and arm_match.group(2):
@@ -554,11 +554,14 @@ def maintainer_path_commands(
                 expecting_arm = bool(terminator)
                 active = active and not expecting_arm
                 continue
-            if stripped in {";;", ";&", ";;&"}:
-                if stripped != ";;":
+            terminator = tokens[-1] if tokens[-1] in {";;", ";&", ";;&"} else ""
+            if active:
+                selected_lines.append((number, code))
+            if terminator:
+                if terminator != ";;":
                     errors.append(f"{script_name} line {number}: unsupported fall-through")
                 active, expecting_arm = False, True
-                continue
+            continue
         if active:
             selected_lines.append((number, code))
 
@@ -700,11 +703,13 @@ VARIABLE = re.compile(
 )
 ASSIGNMENT = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", re.DOTALL)
 DIRECT_DESTRUCTIVE = {"rm", "rmdir", "unlink", "shred"}
-LITERAL_EXPANSIONS = dict(zip("$`*?[]", "\ue000\ue001\ue002\ue003\ue004\ue005"))
+SHELL_LITERAL = dict(zip("$`*?[];&|(){}<>", map(chr, range(0xE000, 0xE00F))))
+SHELL_UNMASK = str.maketrans({marker: value for value, marker in SHELL_LITERAL.items()})
+DOUBLE_QUOTE = "\ue020"
 
 
-def _mask_literal_expansions(text: str) -> str:
-    """Keep quoted/escaped expansion and glob markers literal through shlex."""
+def _mask_shell_provenance(text: str) -> str:
+    """Keep bounded quoted/escaped shell syntax distinguishable after shlex."""
     result: List[str] = []
     quote = ""
     index = 0
@@ -712,21 +717,41 @@ def _mask_literal_expansions(text: str) -> str:
         character = text[index]
         if character == "'" and quote != '"':
             quote = "" if quote == "'" else "'"
+        elif character == '"' and quote != "'":
+            if quote == '"':
+                result.append(character)
+                result.append(DOUBLE_QUOTE)
+                quote = ""
+            else:
+                result.append(DOUBLE_QUOTE)
+                result.append(character)
+                quote = '"'
+            index += 1
+            continue
         if character == "\\" and quote != "'" and index + 1 < len(text):
             escaped = text[index + 1]
-            if escaped in LITERAL_EXPANSIONS:
-                result.append(LITERAL_EXPANSIONS[escaped])
+            if escaped in SHELL_LITERAL:
+                result.append(SHELL_LITERAL[escaped])
             else:
                 result.extend((character, escaped))
             index += 2
             continue
-        result.append(LITERAL_EXPANSIONS.get(character, character) if quote == "'" else character)
+        literal = quote == "'" or (quote == '"' and character in "*?[]")
+        result.append(SHELL_LITERAL.get(character, character) if literal else character)
         index += 1
     return "".join(result)
 
 
+def provenance_tokens(command: str) -> List[str]:
+    return shell_tokens(_mask_shell_provenance(command))
+
+
+def _plain_quotes(value: str) -> str:
+    return value.replace(DOUBLE_QUOTE, "")
+
+
 def _resolve_shell_value(
-    value: str, constants: Dict[str, str]
+    value: str, constants: Dict[str, str], assignment: bool = False
 ) -> Tuple[str, bool]:
     unresolved = bool("$(" in value or "`" in value)
 
@@ -736,9 +761,12 @@ def _resolve_shell_value(
         if name not in constants:
             unresolved = True
             return match.group(0)
-        return constants[name]
+        quoted = value[: match.start()].count(DOUBLE_QUOTE) % 2 == 1
+        literal = "$`;&|(){}<>" + ("*?[]" if assignment or quoted else "")
+        return "".join(SHELL_LITERAL.get(char, char) if char in literal else char
+                       for char in constants[name])
 
-    resolved = VARIABLE.sub(replace, value)
+    resolved = _plain_quotes(VARIABLE.sub(replace, value))
     if "$" in resolved or "`" in resolved:
         unresolved = True
     return resolved, unresolved
@@ -904,7 +932,7 @@ def persistent_delete_lines(text: str) -> List[str]:
     bad: List[str] = [f"parse error: {error}" for error in parse_errors]
     constants: Dict[str, str] = {}
     for _, code in logical:
-        tokens = shell_tokens(_mask_literal_expansions(code))
+        tokens = provenance_tokens(code)
         pipelines: List[List[str]] = [[]]
         for token in tokens:
             if token in {";", "&&", "||", "&", "(", ")", "{", "}", ";&", ";;&"}:
@@ -922,9 +950,11 @@ def persistent_delete_lines(text: str) -> List[str]:
                     if not assignment:
                         break
                     name, value = assignment.groups()
-                    resolved, unresolved = _resolve_shell_value(value, constants)
+                    resolved, unresolved = _resolve_shell_value(
+                        value, constants, assignment=True
+                    )
                     if not unresolved:
-                        constants[name] = resolved
+                        constants[name] = resolved.translate(SHELL_UNMASK)
                     else:
                         constants.pop(name, None)
                     segment = segment[1:]
@@ -1722,6 +1752,75 @@ esac
                  'logger "$unknown_state" && rm -rf /tmp/cache\n',
                  'logger "$unknown_state" || rm -rf /tmp/cache\n')
         self.assertEqual([], [case for case in cases if persistent_delete_lines(case)])
+
+
+class RoundFiveReviewerCounterexamples(unittest.TestCase):
+    def test_inline_case_terminators_preserve_syntax_provenance(self) -> None:
+        configured = f"""\
+#!/bin/bash
+{GOOD_CUSTOMCTL}case "$1" in
+configure)
+  ln -sf /opt/pim/bin/cam-recoveryctl /usr/local/bin/cam-recoveryctl
+  ln -sf /opt/pim/bin/kill_test.sh /usr/local/bin/killcam
+"""
+        decoy = configured + f"""\
+  : ;;
+*)
+{GOOD_LIFECYCLE_COMMANDS}  ;;
+esac
+"""
+        bad = {"inline normal": postinst_errors(decoy)}
+        for terminator in (";&", ";;&"):
+            fixture = configured + GOOD_LIFECYCLE_COMMANDS.rstrip("\n")
+            fixture += f" {terminator}\n*)\n  :\n  ;;\nesac\n"
+            bad[terminator] = postinst_errors(fixture)
+        safe_data = (
+            postinst_fixture(
+                "  printf '%s\\n' ';; ;& ;;&'\n" + GOOD_LIFECYCLE_COMMANDS
+            ),
+            postinst_fixture(
+                "  printf '%s\\n' \\;\\; \\;\\& \\;\\;\\&\n"
+                + GOOD_LIFECYCLE_COMMANDS
+            ),
+        )
+        survivors = [label for label, errors in bad.items() if not errors]
+        false_positives = [fixture for fixture in safe_data if postinst_errors(fixture)]
+        self.assertEqual(([], []), (survivors, false_positives))
+
+    def test_assignment_globs_follow_destructive_use_quote_context(self) -> None:
+        dangerous = (
+            "state='/var/lib/pim-camer[a]'\nrm -rf $state\n",
+            "state=/var/lib/pim-camer\\[a]\nrm -rf $state\n",
+        )
+        safe = (
+            'state=/var/lib/pim-camera*\nrm -rf "$state"\n',
+            'rm -rf "/var/lib/pim-camera*"\n',
+        )
+        survivors = [fixture for fixture in dangerous
+                     if not persistent_delete_lines(fixture)]
+        false_positives = [fixture for fixture in safe
+                           if persistent_delete_lines(fixture)]
+        self.assertEqual(([], []), (survivors, false_positives))
+
+    def test_connector_data_preserves_pipeline_provenance(self) -> None:
+        dangerous = (
+            "printf '%s\\0' \"$unknown_state\" ';' | xargs -0 rm -rf\n",
+            "printf '%s\\0' \"$unknown_state\" \\; | xargs -0 rm -rf\n",
+        )
+        data_tokens = (
+            "';'", "'&&'", "'||'", "'|'", "'&'", "'('", "')'", "'{'", "'}'",
+            "'>'", "'>|'", "'<'", r"\;", r"\&\&", r"\|\|", r"\|", r"\&",
+            r"\(", r"\)", r"\{", r"\}", r"\>", r"\>\|", r"\<",
+            '";"', '"&&"', '"||"', '"|"', '"&"', '"("', '")"', '"{"', '"}"',
+            '">"', '">|"', '"<"',
+        )
+        safe = tuple(f'logger "$unknown_state" {token} rm -rf /tmp/cache\n'
+                     for token in data_tokens)
+        survivors = [fixture for fixture in dangerous
+                     if not persistent_delete_lines(fixture)]
+        false_positives = [fixture for fixture in safe
+                           if persistent_delete_lines(fixture)]
+        self.assertEqual(([], []), (survivors, false_positives))
 
 
 if __name__ == "__main__":
