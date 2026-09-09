@@ -147,6 +147,11 @@ printf 'vcm-pre-exec\n' >> "$PIM_CAMERA_CALL_LOG"
 : > "$WORK/vcm-hook-ready"
 while [ ! -e "$WORK/vcm-hook-release" ]; do /bin/sleep 0.01; done
 SH
+cat > "$WORK/stub/vcm-slow-pre-exec" <<'SH'
+#!/bin/sh
+printf 'vcm-slow-pre-exec\n' >> "$PIM_CAMERA_CALL_LOG"
+/bin/sleep 2
+SH
 cat > "$WORK/stub/logger" <<'SH'
 #!/bin/sh
 exit 0
@@ -266,6 +271,27 @@ start_line=$(grep -n '^start:vcm$' "$PIM_CAMERA_CALL_LOG" | cut -d: -f1)
 stop_line=$(grep -n '^stopping-durable$' "$PIM_CAMERA_CALL_LOG" | cut -d: -f1)
 [ -n "$start_line" ] && [ "$start_line" -lt "$stop_line" ] || fail 'STOPPING became durable before VCM crossed exec'
 unset PIM_CAMERA_TEST_VCM_PRE_EXEC_HOOK
+
+echo '=== guarded VCM startup tolerates target latency by default ==='
+reset_case; owner_at ACTIVE; printf 'gstApp\n' > "$WORK/procs"
+slow_vcm_rc=0
+(
+    unset PIM_CAMERA_LIVENESS_START_WAIT_SEC
+    # shellcheck source=/dev/null
+    source "$LIVENESS"
+    export PIM_CAMERA_TEST_VCM_PRE_EXEC_HOOK="$WORK/stub/vcm-slow-pre-exec"
+    sleep() { /bin/sleep "$@"; }
+    tick_rc=0
+    cam_liveness_tick || tick_rc=$?
+    wait || :
+    exit "$tick_rc"
+) || slow_vcm_rc=$?
+slow_vcm_lifecycle=$(jq -r .lifecycle "$PIM_CAMERA_RUN_DIR/owner.json")
+if [ "$slow_vcm_rc" -ne 0 ] || [ "$slow_vcm_lifecycle" != ACTIVE ]; then
+    printf 'VCM_START_WAIT_RED: rc=%s lifecycle=%s\n' "$slow_vcm_rc" "$slow_vcm_lifecycle" >&2
+    fail 'guarded VCM startup exceeded the default liveness wait'
+fi
+grep -q '^start:vcm$' "$PIM_CAMERA_CALL_LOG" || fail 'guarded VCM did not become visible within the default wait'
 
 echo '=== ORD and VCM start failure degrade only their target ==='
 reset_case; owner_at ACTIVE; printf 'vcm\ngstApp\n' > "$WORK/procs"; export ORD_STATE=inactive ORD_RESTART_RC=23
