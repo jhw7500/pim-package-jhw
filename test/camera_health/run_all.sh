@@ -20,6 +20,7 @@ bash cam_stop_order_test.sh
 python3 capture_probe_test.py
 python3 max9296_producer_test.py
 bash cam_fps_stack_cli_test.sh
+python3 systemd_recovery_contract_test.py
 python3 package_executable_test.py
 python3 aggregator_test.py
 python3 shadow_compare_test.py

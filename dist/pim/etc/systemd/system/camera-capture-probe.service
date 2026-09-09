@@ -1,7 +1,7 @@
 [Unit]
 Description=PIM Camera CSI2/ISI Read-only Probe
-After=pim-camera-config.service
-ConditionPathExists=/tmp/config/READY
+After=cam-operate.service
+ConditionPathExists=/run/pim-camera/config/pim_runtime.json
 StartLimitIntervalSec=60s
 StartLimitBurst=5
 

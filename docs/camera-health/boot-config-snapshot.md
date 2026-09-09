@@ -1,53 +1,59 @@
-# Boot camera configuration snapshot
+# Camera runtime configuration ownership
 
-## 목적
+## 역할 분리
 
-`pim-camera-config.service`는 `pim-config-guard.service`가 검증·복구한 다음
-canonical 설정 두 개를 boot당 한 번 `/tmp/config`에 publish한다.
+`pim-camera-config.service`는 `pim-config-guard.service` 뒤에서 실행되는 prerequisite
+guard다. 다음 조건만 확인한다.
 
-- source: `/root/shared_v/edgeconf_pim.json`
-- source: `/root/shared_v/ord_vcm_conf.json`
-- destination: `/tmp/config/`
-- commit marker: `/tmp/config/READY`
-- diagnostic import record: `/tmp/config/boot_manifest.json`
+- `/root/shared_v` source directory가 읽기 가능하다.
+- 고정 source `ord_vcm_conf.json`이 읽기 가능한 regular file이다.
+- `python3`, `jq`, `flock`, `logger`, boot ID가 사용 가능하다.
 
-Phase 0.5에서는 producer만 additive하게 배포한다. 기존 runtime consumer는 아직 shared
-경로를 사용할 수 있으며, 각 consumer를 `/tmp/config`로 바꾸는 PR에서
-`Requires/After=pim-camera-config.service`를 함께 추가한다.
+이 unit은 camera runtime directory를 만들거나 설정을 선택·병합하지 않는다.
+`cam-operate.service`가 이 guard를 `Requires`하고 그 뒤에 시작한다.
 
-비활성 shadow unit인 `camera-capture-probe.service`만 이 snapshot으로부터
-`/run/pim-camera/config-expectation.json`을 먼저 생성한다. 이 경로는 IRQ 관측 범위를
-정할 뿐 기존 camera start/stop/recovery에는 연결되지 않는다.
+## 단일 runtime
 
-## transaction
+cam-operate는 시작할 때 `/root/shared_v`의 최신 regular `edgeconf_*.json`과 고정
+`ord_vcm_conf.json`을 다시 읽는다. ord document 전체를 유지하면서 `VHL_CAM`은 선택한
+edgeconf 값으로 교체하고, `VHL_CAM`, `ORD`, `VCM` object를 검증한다. 검증된 결과는
+다음 한 파일로 원자 교체한다.
 
-1. boot ID와 canonical 두 JSON을 검증한다.
-2. `/tmp/config/.staging-$boot_id.*`에 두 파일을 복사하고 다시 parse한다.
-3. SHA-256 manifest와 READY 후보를 staging에 작성한다.
-4. 이전 boot의 READY를 제거한다.
-5. 두 JSON과 manifest를 rename한다.
-6. READY를 마지막에 rename한다.
+```text
+/run/pim-camera/config/pim_runtime.json
+```
 
-READY가 없거나 boot ID가 다르면 consumer는 snapshot을 사용하면 안 된다. 두 파일 publish
-사이에 crash하면 READY가 없으므로 다음 bootstrap 실행이 전체 generation을 다시
-publish한다.
+`edgeconf_pim.json`과 `ord_vcm_conf.json`은 모두 이 파일을 가리키는 상대 symlink다.
+`cam-operate.service`의 `RuntimeDirectory=pim-camera`가 invocation의 runtime lifetime을
+소유하며 restart 사이 보존에 의존하지 않는다.
 
-## 같은 boot에서의 runtime override
+## 생성과 재적용 경계
 
-현재 boot ID의 READY가 있으면 shared를 다시 읽지 않는다. `/tmp/config` JSON 자체가
-유효하면 READY에 기록된 import hash와 현재 hash가 달라도 성공/no-op한다. 따라서
-엔지니어의 atomic runtime 수정은 개별 app restart에서 사용할 수 있다.
+source 검색과 runtime 생성은 다음 두 경로에서만 일어난다.
 
-현재 boot의 runtime JSON이 손상되면 shared에서 몰래 복구하지 않고 service가 실패한다.
-전체 설정을 다시 일치시키려면 파일을 정상화한 뒤 명시적으로 cam-operate를 restart한다.
-다음 boot에서는 config guard 이후 shared canonical 파일을 새로 import한다.
+1. 새 cam-operate invocation의 startup 또는 service restart
+2. 현재 invocation의 `cam-recoveryctl apply-config`
 
-## 권한과 실패 처리
+자동 health recovery, dead-process restart, legacy wrapper는 현재 runtime만 사용하며
+source를 다시 검색하지 않는다. service restart는 source로 runtime을 다시 만들고 consumer를
+모두 다시 시작하며 최소 module reload를 수행한다. hardware projection 변경 또는 dirty
+상태에서는 hard reset을 수행한다.
 
-- directory mode: `0750`
-- JSON/READY/manifest mode: `0640`
-- target에서는 root service가 실행하므로 owner는 root다.
-- `jq`, `sha256sum`, `flock`, boot ID 또는 canonical JSON이 없으면 non-zero 종료한다.
-- service는 `Type=oneshot`, `RemainAfterExit=yes`다.
-- Phase 0.5에서는 bootstrap 실패가 기존 shared reader를 차단하지 않는다. consumer 전환
-  단계부터 해당 unit에 `Requires/After`를 추가하여 fail-closed로 바꾼다.
+## 실패와 수동 시험
+
+최신 edgeconf나 고정 ord source가 없거나 invalid이면 과거 파일 또는 기존 runtime으로
+후퇴하지 않는다. startup은 consumer 시작 전 실패한다. `apply-config` validation 실패는
+현재 runtime과 process를 유지한다.
+
+수동 시험은 같은 directory의 candidate를 검증한 뒤
+`pim_runtime.json`으로 atomic rename하고 선택한 app만 재시작하는 방식으로 허용한다.
+다른 process가 이전 값을 memory에 유지하는 일시적 혼합 상태를 감수해야 한다. 다음 성공한
+`apply-config` 또는 cam-operate restart가 source 값으로 다시 덮어쓴다. 상세 절차와
+exit-code 계약은 [`cam-recovery-operations.md`](./cam-recovery-operations.md)를 따른다.
+
+## 권한
+
+- `/run/pim-camera`와 config directory: mode `0750`
+- runtime JSON: mode `0640`
+- `/var/lib/pim-camera`: 재시작과 package lifecycle을 넘어 유지되는 state/history
+- service owner: target의 root cam-operate invocation

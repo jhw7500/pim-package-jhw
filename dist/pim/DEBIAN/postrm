@@ -16,6 +16,9 @@ IIM_KERNEL_RELEASE=5.10.35-lts-5.10.y+g2fce14defc04
 IIM_MODULE_ROOT=${IIM_MODULE_ROOT:-/lib/modules}
 IIM_DEPMOD=${IIM_DEPMOD:-depmod}
 
+# The systemd StateDirectory is operational history, not package-owned cache.
+# Keep /var/lib/pim-camera across upgrade, remove, and purge.
+
 refresh_iim42652_depmod() {
   if [ -d "$IIM_MODULE_ROOT/$IIM_KERNEL_RELEASE" ]; then
     if ! "$IIM_DEPMOD" -a "$IIM_KERNEL_RELEASE"; then

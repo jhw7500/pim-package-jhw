@@ -21,6 +21,10 @@ ENTRYPOINTS = (
     Path("opt/pim/bin/camera_health_shadow_compare.py"),
     Path("opt/pim/bin/camera_healthd.py"),
     Path("opt/pim/bin/cam-recoveryctl"),
+    Path("opt/pim/bin/kill_test.sh"),
+    Path("opt/pim/bin/init_cam.sh"),
+    Path("opt/pim/bin/cam_hard_reset.sh"),
+    Path("opt/pim/bin/restart_app.sh"),
 )
 
 

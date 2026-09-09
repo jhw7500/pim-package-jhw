@@ -1,18 +1,19 @@
 [Unit]
 Description=PIM CAM Operation Service
-#After=syslog.service
-#After=rc-local.service
-After=sd-mount.service
-DefaultDependencies=no
-#Before=sysinit.target
+Requires=pim-camera-config.service
+After=pim-camera-config.service sd-mount.service
 
 [Service]
 User=root
 WorkingDirectory=/root
 ExecStart=/opt/pim/bin/chk_cam_operate.sh
-#ExecStartPost=/bin/sh -c 'sleep 3 && systemctl restart ord-operate.service'
-#ExecStartPost=systemctl start ord-operate.service
 ExecStop=/opt/pim/bin/cam_operate_stop.sh
+RuntimeDirectory=pim-camera
+RuntimeDirectoryMode=0750
+StateDirectory=pim-camera
+StateDirectoryMode=0750
+KillMode=control-group
+TimeoutStopSec=90s
 Restart=on-failure
 RestartSec=10s
 

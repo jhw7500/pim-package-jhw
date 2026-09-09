@@ -1,5 +1,25 @@
 # PIM Package Changelog
 
+## 최신 변경사항 (2026-09-09) — camera7 / cam-operate 직렬 recovery lifecycle
+
+- 전달 패키지를 `pim-mp 0.6.3+jhw.camera7`로 올리고 runtime/recovery engine을
+  systemd와 Debian lifecycle에 연결했다.
+- `cam-operate.service`가 `/run/pim-camera`와 `/var/lib/pim-camera`를 소유하고,
+  control-group stop과 90초 stop timeout 아래에서 recovery child를 함께 정리한다.
+- `pim-camera-config.service`는 source prerequisite guard로 한정했다. capture/shadow
+  unit은 cam-operate 뒤에서 단일 merged runtime을 조건으로 시작한다.
+- `ord-operate.service`의 autonomous restart와 install target을 제거하고 cam-operate의
+  manual executor boundary로 묶었다. package upgrade는 cam-operate를 sd-mount보다 먼저
+  중지하며, 설치 시 stale ORD enablement를 disable하되 unit을 mask하지 않는다.
+- `cam-recoveryctl` command link와 한 release wrapper 실행 권한을 package contract에
+  추가하고 dependency를 `python3`, `python3-yaml`, `jq`, `util-linux`, `procps`로
+  명시했다.
+- persistent counter/history가 있는 `/var/lib/pim-camera`는 upgrade, remove, purge에서
+  삭제하지 않는다.
+- 운영 문서를 startup/apply-config/manual runtime test, BUSY/exit/sentinel,
+  `ACTIVE`/`DEGRADED`, source/runtime consumer 경계 중심으로 교체했다. 외부
+  `pim-check` 연동과 target acceptance는 별도 경계다.
+
 ## 최신 변경사항 (2026-09-01) — camera6 / gstApp 설정 파서 안전성 통합
 
 - 전달 패키지를 `pim-mp 0.6.3+jhw.camera6`로 올리고, GitHub `master`

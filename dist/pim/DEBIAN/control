@@ -1,11 +1,11 @@
 Package: pim-mp
-Version: 0.6.3+jhw.camera6
+Version: 0.6.3+jhw.camera7
 Replaces: cis
 Breaks: cis
 Section: test
 Priority: optional
 Architecture: arm64 
-Depends: python3, python3-yaml
+Depends: python3, python3-yaml, jq, util-linux, procps
 Recommends: 
 Maintainer: jhw <hwjo@cantops.biz> 
 Homepage: 
