@@ -813,11 +813,22 @@ class ShellProvenanceProof:
             for command in commands:
                 if command.subshell_isolated:
                     continue
-                keyword = self.literal(command.words[0]) if command.words else None
-                if keyword in {"if", "while", "until", "for", "select"}:
-                    control_depth += 1
-                elif keyword in {"fi", "done"}:
-                    control_depth = max(0, control_depth - 1)
+                # Only leading grammar words carry control nesting. Conditions
+                # can start another construct; for/select instead take a name.
+                for word in command.words:
+                    keyword = self.literal(word)
+                    if keyword != word.raw:
+                        break
+                    if keyword in {"if", "while", "until"}:
+                        control_depth += 1
+                    elif keyword in {"for", "select"}:
+                        control_depth += 1
+                        break
+                    elif keyword in {"fi", "done"}:
+                        control_depth = max(0, control_depth - 1)
+                        break
+                    elif keyword not in {"then", "elif", "else", "do", "!", "time"}:
+                        break
                 argv = self.argv(command.words)
                 executable = self.literal(argv[0]) if argv else None
                 literals = tuple(self.literal(word) for word in argv[1:])
@@ -2822,6 +2833,183 @@ jq -r 'keys|length' "$ACTUAL"
 ''',
             ["unproven config reader operand"],
             "3\n",
+        ),
+        (
+            "then if must not make an outer skipped local definite",
+            '''\
+replace_actual() { if false; then if true; then :; fi; local ACTUAL; fi; ACTUAL=/absolute/edgeconf_pim_base.json; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "$ACTUAL"
+''',
+            ["unproven config reader operand"],
+            "3\n",
+        ),
+        (
+            "then while must not make an outer skipped local definite",
+            '''\
+replace_actual() { if false; then while false; do :; done; local ACTUAL; fi; ACTUAL=/absolute/edgeconf_pim_base.json; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "$ACTUAL"
+''',
+            ["unproven config reader operand"],
+            "3\n",
+        ),
+        (
+            "then until must not make an outer skipped local definite",
+            '''\
+replace_actual() { if false; then until true; do :; done; local ACTUAL; fi; ACTUAL=/absolute/edgeconf_pim_base.json; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "$ACTUAL"
+''',
+            ["unproven config reader operand"],
+            "3\n",
+        ),
+        (
+            "then for must not make an outer skipped local definite",
+            '''\
+replace_actual() { if false; then for ITEM in one; do :; done; local ACTUAL; fi; ACTUAL=/absolute/edgeconf_pim_base.json; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "$ACTUAL"
+''',
+            ["unproven config reader operand"],
+            "3\n",
+        ),
+        (
+            "then select must not make an outer skipped local definite",
+            '''\
+replace_actual() { if false; then select ITEM in one; do :; done; local ACTUAL; fi; ACTUAL=/absolute/edgeconf_pim_base.json; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "$ACTUAL"
+''',
+            ["unproven config reader operand"],
+            "3\n",
+        ),
+        (
+            "multiple leading then time and bang prefixes must retain a nested opener",
+            '''\
+replace_actual() { if false; then time ! if true; then :; fi; local ACTUAL; fi; ACTUAL=/absolute/edgeconf_pim_base.json; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "$ACTUAL"
+''',
+            ["unproven config reader operand"],
+            "3\n",
+        ),
+        (
+            "do if must not make a skipped loop local definite",
+            '''\
+replace_actual() { while false; do if true; then :; fi; local ACTUAL; done; ACTUAL=/absolute/edgeconf_pim_base.json; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "$ACTUAL"
+''',
+            ["unproven config reader operand"],
+            "3\n",
+        ),
+        (
+            "else if must not make a skipped branch local definite",
+            '''\
+replace_actual() { if true; then :; else if true; then :; fi; local ACTUAL; fi; ACTUAL=/absolute/edgeconf_pim_base.json; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "$ACTUAL"
+''',
+            ["unproven config reader operand"],
+            "3\n",
+        ),
+        (
+            "elif if must not make a skipped branch local definite",
+            '''\
+replace_actual() { if true; then :; elif if true; then :; fi; then local ACTUAL; fi; ACTUAL=/absolute/edgeconf_pim_base.json; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "$ACTUAL"
+''',
+            ["unproven config reader operand"],
+            "3\n",
+        ),
+        (
+            "opener-looking literal argv must not keep a later local conditional",
+            '''\
+replace_actual() { : if while until "for" 'select'; local ACTUAL; ACTUAL=/absolute/edgeconf_pim_base.json; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "$ACTUAL"
+''',
+            [],
+            "1\n",
+        ),
+        (
+            "opener-looking argv after then must not keep a later local conditional",
+            '''\
+replace_actual() { if true; then : if while until; fi; local ACTUAL; ACTUAL=/absolute/edgeconf_pim_base.json; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "$ACTUAL"
+''',
+            [],
+            "1\n",
+        ),
+        (
+            "balanced nested if closes must restore definite local visibility",
+            '''\
+replace_actual() { if false; then if true; then :; fi; local ACTUAL; fi; local ACTUAL; ACTUAL=/absolute/edgeconf_pim_base.json; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "$ACTUAL"
+''',
+            [],
+            "1\n",
+        ),
+        (
+            "balanced nested loop closes must restore definite local visibility",
+            '''\
+replace_actual() { if false; then while false; do :; done; fi; local ACTUAL; ACTUAL=/absolute/edgeconf_pim_base.json; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "$ACTUAL"
+''',
+            [],
+            "1\n",
+        ),
+        (
+            "an if command condition must balance both nested if openers",
+            '''\
+replace_actual() { if if false; then :; fi; then :; fi; local ACTUAL; ACTUAL=/absolute/edgeconf_pim_base.json; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "$ACTUAL"
+''',
+            [],
+            "1\n",
+        ),
+        (
+            "a for loop variable named if must not count as another opener",
+            '''\
+replace_actual() { for if in one; do :; done; local ACTUAL; ACTUAL=/absolute/edgeconf_pim_base.json; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "$ACTUAL"
+''',
+            [],
+            "1\n",
+        ),
+        (
+            "a quoted opener command after then must not change control depth",
+            '''\
+function if { :; }
+replace_actual() { if true; then "if"; fi; local ACTUAL; ACTUAL=/absolute/edgeconf_pim_base.json; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "$ACTUAL"
+''',
+            [],
+            "1\n",
         ),
     )
     with tempfile.TemporaryDirectory(prefix="pim-ordered-local-oracle-") as directory:
