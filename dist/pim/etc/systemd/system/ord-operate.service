@@ -1,7 +1,6 @@
 [Unit]
 Description=Ord Operate Daemon
 After=cam-operate.service
-PartOf=cam-operate.service
 
 [Service]
 Type=simple

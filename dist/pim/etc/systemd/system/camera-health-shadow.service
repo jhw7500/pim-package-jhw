@@ -1,5 +1,6 @@
 [Unit]
 Description=PIM Camera Health Shadow Aggregator
+Requires=cam-operate.service
 After=cam-operate.service
 ConditionPathExists=/run/pim-camera/config/pim_runtime.json
 StartLimitIntervalSec=60s

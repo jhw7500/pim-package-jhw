@@ -10,9 +10,10 @@
   control-group shutdown, and waits up to 90 seconds for its ordered stop path.
 - The camera config unit is a prerequisite guard only. Camera probe/shadow units
   wait for cam-operate and the merged runtime file.
-- ORD is a non-enabled manual executor tied to cam-operate with `After`/`PartOf`;
-  it no longer has an autonomous restart policy. Installation disables stale
-  enablement without masking manual `systemctl start/restart` use.
+- ORD is a non-enabled manual executor ordered after cam-operate; cam-operate's
+  ordered `ExecStop` remains the sole owner of ORD shutdown. ORD no longer has
+  an autonomous restart policy. Installation disables stale enablement without
+  masking manual `systemctl start/restart` use.
 - Upgrade stops cam-operate before sd-mount, installs the `cam-recoveryctl`
   compatibility link, retains the one-release wrapper surface, and preserves
   persistent recovery counters/history across every package removal mode.
