@@ -509,6 +509,7 @@ def maintainer_path_commands(
     depth = 1
     active = False
     selected = False
+    expecting_arm = True
     found_esac = False
     for number, code in lines[case_index + 1 :]:
         stripped = code.strip()
@@ -531,13 +532,11 @@ def maintainer_path_commands(
                 break
             continue
         if depth == 1:
-            arm_match = None
-            if code == code.lstrip() and not re.match(
-                r"^(?:[A-Za-z_]\w*=|(?:function\s+)?[A-Za-z_]\w*"
-                r"\s*(?:\(\s*\))?\s*\{)", stripped
-            ):
+            if expecting_arm:
                 arm_match = re.fullmatch(r"(.+)\)\s*(.*)", stripped)
-            if arm_match:
+                if not arm_match:
+                    errors.append(f"{script_name} line {number}: expected case arm")
+                    continue
                 matches = [
                     _simple_case_match(pattern, selected_arg)
                     for pattern in arm_match.group(1).split("|")
@@ -546,11 +545,19 @@ def maintainer_path_commands(
                     errors.append(f"{script_name} line {number}: unsupported case pattern")
                 active = None not in matches and any(matches) and not selected
                 selected = selected or (None not in matches and any(matches))
+                terminator = next((item for item in (";;&", ";&", ";;")
+                                   if item in tokens), "")
+                if terminator and terminator != ";;":
+                    errors.append(f"{script_name} line {number}: unsupported fall-through")
                 if active and arm_match.group(2):
                     selected_lines.append((number, arm_match.group(2)))
+                expecting_arm = bool(terminator)
+                active = active and not expecting_arm
                 continue
             if stripped in {";;", ";&", ";;&"}:
-                active = False
+                if stripped != ";;":
+                    errors.append(f"{script_name} line {number}: unsupported fall-through")
+                active, expecting_arm = False, True
                 continue
         if active:
             selected_lines.append((number, code))
@@ -693,11 +700,11 @@ VARIABLE = re.compile(
 )
 ASSIGNMENT = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", re.DOTALL)
 DIRECT_DESTRUCTIVE = {"rm", "rmdir", "unlink", "shred"}
-LITERAL_EXPANSIONS = {"$": "\ue000", "`": "\ue001"}
+LITERAL_EXPANSIONS = dict(zip("$`*?[]", "\ue000\ue001\ue002\ue003\ue004\ue005"))
 
 
 def _mask_literal_expansions(text: str) -> str:
-    """Keep single-quoted and escaped expansion markers literal through shlex."""
+    """Keep quoted/escaped expansion and glob markers literal through shlex."""
     result: List[str] = []
     quote = ""
     index = 0
@@ -740,10 +747,14 @@ def _resolve_shell_value(
 def _is_protected_state(value: str) -> bool:
     normalized = re.sub(r"/+", "/", value).rstrip("/")
     root = "/var/lib/pim-camera"
+    parts = normalized.strip("/").split("/")
+    root_match = len(parts) >= 3 and _simple_case_match(
+        "/".join(parts[:3]), root[1:]
+    )
     return (
-        normalized == root
-        or normalized.startswith(root + "/")
-        or any(normalized.startswith(root + marker) for marker in "*?[")
+        root_match is True
+        or (root_match is None and normalized.startswith("/var/lib/")
+            and any(marker in normalized for marker in "*?["))
         or "service-state.json" in normalized
         or "recovery/history" in normalized
     )
@@ -894,34 +905,38 @@ def persistent_delete_lines(text: str) -> List[str]:
     constants: Dict[str, str] = {}
     for _, code in logical:
         tokens = shell_tokens(_mask_literal_expansions(code))
-        segments = _command_segments(tokens)
-        resolved_tokens = [_resolve_shell_value(token, constants) for token in tokens]
-        protected_pipeline = any(
-            unresolved or _is_protected_state(resolved)
-            for resolved, unresolved in resolved_tokens
-        )
+        pipelines: List[List[str]] = [[]]
+        for token in tokens:
+            if token in {";", "&&", "||", "&", "(", ")", "{", "}", ";&", ";;&"}:
+                pipelines.append([])
+            else:
+                pipelines[-1].append(token)
         unsafe = False
-        for segment in segments:
-            while segment:
-                assignment = ASSIGNMENT.match(segment[0])
-                if not assignment:
-                    break
-                name, value = assignment.groups()
-                resolved, unresolved = _resolve_shell_value(value, constants)
-                if not unresolved:
-                    constants[name] = resolved
-                else:
-                    constants.pop(name, None)
-                segment = segment[1:]
-            for index, token in enumerate(segment[:-1]):
-                if token in {">", ">|"} and _target_is_unsafe(
-                    segment[index + 1], constants
+        for pipeline in pipelines:
+            protected_pipeline = any(
+                _target_is_unsafe(token, constants) for token in pipeline
+            )
+            for segment in _command_segments(pipeline):
+                while segment:
+                    assignment = ASSIGNMENT.match(segment[0])
+                    if not assignment:
+                        break
+                    name, value = assignment.groups()
+                    resolved, unresolved = _resolve_shell_value(value, constants)
+                    if not unresolved:
+                        constants[name] = resolved
+                    else:
+                        constants.pop(name, None)
+                    segment = segment[1:]
+                for index, token in enumerate(segment[:-1]):
+                    if token in {">", ">|"} and _target_is_unsafe(
+                        segment[index + 1], constants
+                    ):
+                        unsafe = True
+                if _destructive_argv(
+                    segment, constants, protected_pipeline=protected_pipeline
                 ):
                     unsafe = True
-            if _destructive_argv(
-                segment, constants, protected_pipeline=protected_pipeline
-            ):
-                unsafe = True
         if unsafe and code.strip() not in bad:
             bad.append(code.strip())
     return bad
@@ -1662,6 +1677,51 @@ never_called() { echo '}'
         false_positives = [label for label, fixture in cases.items()
                            if persistent_delete_lines(fixture)]
         self.assertEqual([], false_positives, f"safe literals rejected: {false_positives}")
+
+
+class RoundFourReviewerCounterexamples(unittest.TestCase):
+    def test_indented_arms_and_fallthrough_are_bounded(self) -> None:
+        configured = f"""\
+#!/bin/bash
+{GOOD_CUSTOMCTL}case "$1" in
+configure)
+  ln -sf /opt/pim/bin/cam-recoveryctl /usr/local/bin/cam-recoveryctl
+  ln -sf /opt/pim/bin/kill_test.sh /usr/local/bin/killcam
+{GOOD_LIFECYCLE_COMMANDS}"""
+        blocker = configured.replace(
+            "configure)", "  *)\n    :\n    ;;\nconfigure)", 1
+        ) + "  ;;\nesac\n"
+        fallthrough = configured + """  FALLTHROUGH
+*)
+  customctl mask ord-operate
+  ;;
+esac
+"""
+        bad = {"indented wildcard": postinst_errors(blocker)}
+        for terminator in (";&", ";;&"):
+            bad[terminator] = postinst_errors(
+                fallthrough.replace("FALLTHROUGH", terminator)
+            )
+        control = postinst_fixture(GOOD_LIFECYCLE_COMMANDS).replace(
+            "\nconfigure)", "\n  configure)", 1
+        )
+        survivors = [name for name, errors in bad.items() if not errors]
+        self.assertEqual(([], []), (survivors, postinst_errors(control)))
+
+    def test_active_and_literal_protected_globs_are_distinguished(self) -> None:
+        dangerous = ("rm -rf /var/lib/pim-camer[a]\n",
+                     "rm -rf /var/lib/pim-camer?\n")
+        safe = ("rm -rf '/var/lib/pim-camera*'\n",
+                r"rm -rf /var/lib/pim-camera\*" + "\n")
+        survivors = [case for case in dangerous if not persistent_delete_lines(case)]
+        false_positives = [case for case in safe if persistent_delete_lines(case)]
+        self.assertEqual(([], []), (survivors, false_positives))
+
+    def test_unresolved_provenance_stays_within_its_pipeline(self) -> None:
+        cases = ('logger "$unknown_state"; rm -rf /tmp/cache\n',
+                 'logger "$unknown_state" && rm -rf /tmp/cache\n',
+                 'logger "$unknown_state" || rm -rf /tmp/cache\n')
+        self.assertEqual([], [case for case in cases if persistent_delete_lines(case)])
 
 
 if __name__ == "__main__":
