@@ -73,6 +73,7 @@ reset_case() {
     fake_stat
     unset FAIL_ACTION FAIL_VERIFY FAIL_PUBLISH
     unset VERIFY_STARTUP_EXECUTOR VERIFY_REQUEST_EXECUTOR VERIFY_OWNER_LIFECYCLE
+    unset PROCESS_VERIFY_STARTUP_EXECUTOR PROCESS_VERIFY_REQUEST_EXECUTOR PROCESS_VERIFY_OWNER_LIFECYCLE
 }
 service_state() {
     mkdir -p "$PIM_CAMERA_STATE_DIR"
@@ -147,6 +148,10 @@ cam_restart_ord() { printf 'start:ord\n' >> "$PIM_CAMERA_CALL_LOG"; [ "${FAIL_AC
 cam_restart_vcm() { printf 'start:vcm\n' >> "$PIM_CAMERA_CALL_LOG"; [ "${FAIL_ACTION:-}" != vcm_restart ]; }
 cam_start_gstapp() { printf 'start:gstapp\n' >> "$PIM_CAMERA_CALL_LOG"; }
 cam_wait_process_ready() {
+    PROCESS_VERIFY_STARTUP_EXECUTOR=${PIM_CAMERA_STARTUP_EXECUTOR:-}
+    PROCESS_VERIFY_REQUEST_EXECUTOR=${PIM_CAMERA_EXECUTOR:-}
+    PROCESS_VERIFY_OWNER_LIFECYCLE=$(jq -r .lifecycle "$PIM_CAMERA_RUN_DIR/owner.json") || return 69
+    cam_executor_assert_context || return $?
     printf 'verify:processes:%s\n' "${2:-0}" >> "$PIM_CAMERA_CALL_LOG"
     [ "${FAIL_VERIFY:-}" != process ]
 }
@@ -167,6 +172,9 @@ expect_rc 0 cam_daemon_startup "$DAEMON_PID"
 [ "$VERIFY_STARTUP_EXECUTOR" = 1 ] || fail "new boot verification lacked startup executor authority"
 [ "$VERIFY_OWNER_LIFECYCLE" = STARTING ] || fail "new boot verification did not retain STARTING owner"
 [ -z "$VERIFY_REQUEST_EXECUTOR" ] || fail "new boot verification used request executor authority"
+[ "$PROCESS_VERIFY_STARTUP_EXECUTOR" = 1 ] || fail "new boot process verification lacked startup executor authority"
+[ "$PROCESS_VERIFY_OWNER_LIFECYCLE" = STARTING ] || fail "new boot process verification did not retain STARTING owner"
+[ -z "$PROCESS_VERIFY_REQUEST_EXECUTOR" ] || fail "new boot process verification used request executor authority"
 [ -z "${PIM_CAMERA_STARTUP_EXECUTOR+x}" ] || fail "new boot retained startup executor after successful verification"
 [ "$(grep -c '^stage$' "$PIM_CAMERA_HELPER_LOG")" -eq 1 ] || fail "new boot did not stage exactly once"
 [ "$(count_log action:initial_module_load)" -eq 1 ] || fail "new boot did not initialize modules exactly once"
@@ -211,11 +219,14 @@ expect_rc 75 cam_daemon_startup "$DAEMON_PID"
 echo "=== new-boot verification failure clears startup authority ==="
 reset_case boot-failed-verify
 write_source failed-verify 640
-FAIL_VERIFY=camera
+FAIL_VERIFY=process
 expect_rc 1 cam_daemon_startup "$DAEMON_PID"
 [ "$VERIFY_STARTUP_EXECUTOR" = 1 ] || fail "failed new-boot verification lacked startup executor authority"
 [ "$VERIFY_OWNER_LIFECYCLE" = STARTING ] || fail "failed new-boot verification did not retain STARTING owner"
 [ -z "$VERIFY_REQUEST_EXECUTOR" ] || fail "failed new-boot verification used request executor authority"
+[ "$PROCESS_VERIFY_STARTUP_EXECUTOR" = 1 ] || fail "failed new-boot process verification lacked startup executor authority"
+[ "$PROCESS_VERIFY_OWNER_LIFECYCLE" = STARTING ] || fail "failed new-boot process verification did not retain STARTING owner"
+[ -z "$PROCESS_VERIFY_REQUEST_EXECUTOR" ] || fail "failed new-boot process verification used request executor authority"
 [ -z "${PIM_CAMERA_STARTUP_EXECUTOR+x}" ] || fail "new boot retained startup executor after failed verification"
 jq -e '.lifecycle == "DEGRADED"' "$PIM_CAMERA_RUN_DIR/owner.json" >/dev/null || fail "failed verification lifecycle"
 jq -e '.dirty == true and .degraded_reason == "startup_verify_failed"' "$PIM_CAMERA_STATE_DIR/service-state.json" >/dev/null || fail "failed verification state"
@@ -253,6 +264,9 @@ unset REAL_COUNTER_STUB
 [ -z "$VERIFY_STARTUP_EXECUTOR" ] || fail "same-boot verification retained startup executor authority"
 [ "$VERIFY_REQUEST_EXECUTOR" = 1 ] || fail "same-boot verification lacked request executor authority"
 [ "$VERIFY_OWNER_LIFECYCLE" = RECOVERING ] || fail "same-boot verification did not retain RECOVERING owner"
+[ -z "$PROCESS_VERIFY_STARTUP_EXECUTOR" ] || fail "same-boot process verification retained startup executor authority"
+[ "$PROCESS_VERIFY_REQUEST_EXECUTOR" = 1 ] || fail "same-boot process verification lacked request executor authority"
+[ "$PROCESS_VERIFY_OWNER_LIFECYCLE" = RECOVERING ] || fail "same-boot process verification did not retain RECOVERING owner"
 [ -z "${PIM_CAMERA_STARTUP_EXECUTOR+x}" ] || fail "same-boot restart leaked startup executor authority"
 [ "$STARTUP_PROBE_OWNER" = "$(jq -c '{boot_id,invocation_id,pid,proc_start_time,token,created_at}' "$PIM_CAMERA_RUN_DIR/owner.json")" ] || fail "startup reservation changed daemon identity"
 [ "$STARTUP_PROBE_LIFECYCLE" = RECOVERING ] || fail "startup reservation did not publish private RECOVERING after active"
