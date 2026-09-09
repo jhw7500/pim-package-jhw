@@ -164,7 +164,6 @@ jq -e '[.actions[].action] == ["module_reload","camera_hard_reset","reboot_fallb
 owner_active
 : > "$PIM_CAMERA_CALL_LOG"
 touch "$PIM_CAMERA_SYSFS_ROOT/bus/platform/drivers/isi-capture/32e00000.isi:cap_device"
-touch "$PIM_CAMERA_SYSFS_ROOT/bus/platform/drivers/isi-capture/32e02000.isi:cap_device"
 touch "$PIM_CAMERA_SYSFS_ROOT/bus/platform/drivers/isi-m2m/32e00000.isi:m2m_device"
 expect cam_execute_recovery_request "$PIM_CAMERA_RUNTIME_JSON" camera_hard_reset test hard
 unbind=$(grep '^sysfs unbind ' "$PIM_CAMERA_CALL_LOG" | tr '\n' ',')
@@ -179,7 +178,7 @@ hard_reset_settle=$(awk '
     hardware && /^(rmmod|modprobe|sleep|sysfs (unbind|bind)) / { print }
     hardware && /^(start ord|start vcm|start_cam)$/ { exit }
 ' "$PIM_CAMERA_CALL_LOG" | sed "s#$PIM_CAMERA_SYSFS_ROOT/bus/platform/drivers/##")
-expected_hard_reset_settle=$'rmmod imx8-media-dev\nsleep 1\nrmmod max9296\nsleep 1\nsysfs unbind 32e00000.isi:cap_device isi-capture/unbind\nsysfs unbind 32e02000.isi:cap_device isi-capture/unbind\nsleep 1\nsysfs unbind 32e00000.isi:m2m_device isi-m2m/unbind\nsleep 1\nsysfs unbind 32e00000.isi mxc-isi/unbind\nsysfs unbind 32e02000.isi mxc-isi/unbind\nsleep 1\nsysfs unbind 32e40000.csi mxc-mipi-csi2-sam/unbind\nsysfs unbind 32e50000.csi mxc-mipi-csi2-sam/unbind\nsleep 2\nsysfs bind 32e40000.csi mxc-mipi-csi2-sam/bind\nsysfs bind 32e50000.csi mxc-mipi-csi2-sam/bind\nsleep 1\nsysfs bind 32e00000.isi mxc-isi/bind\nsysfs bind 32e02000.isi mxc-isi/bind\nsleep 2\nsleep 1\nmodprobe max9296\nsleep 3\nmodprobe imx8-media-dev\nsleep 5'
+expected_hard_reset_settle=$'rmmod imx8-media-dev\nsleep 1\nrmmod max9296\nsleep 1\nsysfs unbind 32e00000.isi:cap_device isi-capture/unbind\nsysfs unbind 32e02000.isi:cap_device isi-capture/unbind\nsleep 1\nsysfs unbind 32e00000.isi:m2m_device isi-m2m/unbind\nsleep 1\nsysfs unbind 32e00000.isi mxc-isi/unbind\nsysfs unbind 32e02000.isi mxc-isi/unbind\nsleep 1\nsysfs unbind 32e40000.csi mxc-mipi-csi2-sam/unbind\nsysfs unbind 32e50000.csi mxc-mipi-csi2-sam/unbind\nsleep 2\nsysfs bind 32e40000.csi mxc-mipi-csi2-sam/bind\nsysfs bind 32e50000.csi mxc-mipi-csi2-sam/bind\nsleep 1\nsysfs bind 32e00000.isi mxc-isi/bind\nsysfs bind 32e02000.isi mxc-isi/bind\nsleep 2\nsysfs bind 32e02000.isi:cap_device isi-capture/bind\nsleep 1\nmodprobe max9296\nsleep 3\nmodprobe imx8-media-dev\nsleep 5'
 if [ "$hard_reset_settle" != "$expected_hard_reset_settle" ]; then
     printf 'hard-reset settle expected:\n%s\nhard-reset settle actual:\n%s\n' "$expected_hard_reset_settle" "$hard_reset_settle" >&2
     settle_fail=1
