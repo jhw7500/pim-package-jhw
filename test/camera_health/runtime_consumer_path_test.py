@@ -802,42 +802,46 @@ class ShellProvenanceProof:
         """Summarize only caller-visible names touched by known functions."""
 
         functions = self.lexical.functions
-        local_names: dict[str, set[str]] = {}
         direct: dict[str, set[str]] = {}
-        callees: dict[str, set[str]] = {}
+        callees: dict[str, list[tuple[str, frozenset[str]]]] = {}
 
         for function_name, (_, commands) in functions.items():
             locals_for_function: set[str] = set()
-            for command in commands:
-                if command.subshell_isolated:
-                    continue
-                argv = self.argv(command.words)
-                executable = self.literal(argv[0]) if argv else None
-                if executable not in {"local", "declare", "typeset"}:
-                    continue
-                literals = tuple(self.literal(word) for word in argv[1:])
-                if executable in {"declare", "typeset"} and any(
-                    literal == "-g" for literal in literals
-                ):
-                    continue
-                for word in argv[1:]:
-                    literal = self.literal(word)
-                    if literal == "--" or (literal and literal.startswith("-")):
-                        continue
-                    assignment = self.assignment(word)
-                    name = assignment[0] if assignment else literal
-                    if name and SHELL_ASSIGNMENT_NAME.fullmatch(name):
-                        locals_for_function.add(name)
-            local_names[function_name] = locals_for_function
-
-        for function_name, (_, commands) in functions.items():
             touched: set[str] = set()
-            called: set[str] = set()
+            called: list[tuple[str, frozenset[str]]] = []
+            control_depth = 0
             for command in commands:
                 if command.subshell_isolated:
                     continue
+                keyword = self.literal(command.words[0]) if command.words else None
+                if keyword in {"if", "while", "until", "for", "select"}:
+                    control_depth += 1
+                elif keyword in {"fi", "done"}:
+                    control_depth = max(0, control_depth - 1)
                 argv = self.argv(command.words)
                 executable = self.literal(argv[0]) if argv else None
+                literals = tuple(self.literal(word) for word in argv[1:])
+                global_declaration = executable in {"declare", "typeset"} and any(
+                    literal == "-g" for literal in literals
+                )
+                local_declaration = (
+                    executable in {"local", "declare", "typeset"}
+                    and not global_declaration
+                )
+                if local_declaration:
+                    # Initializers belong to this declaration's local binding.
+                    # A skipped declaration cannot shield subsequent effects.
+                    if command.may_skip or control_depth:
+                        continue
+                    for word in argv[1:]:
+                        literal = self.literal(word)
+                        if literal == "--" or (literal and literal.startswith("-")):
+                            continue
+                        assignment = self.assignment(word)
+                        name = assignment[0] if assignment else literal
+                        if name and SHELL_ASSIGNMENT_NAME.fullmatch(name):
+                            locals_for_function.add(name)
+                    continue
                 declaration = executable in {
                     "export",
                     "readonly",
@@ -847,6 +851,7 @@ class ShellProvenanceProof:
                 if not argv or declaration:
                     touched.update(
                         name for name, _ in self.state_assignments(command.words)
+                        if global_declaration or name not in locals_for_function
                     )
                 if executable == "unset":
                     option_mode = True
@@ -856,11 +861,14 @@ class ShellProvenanceProof:
                             option_mode = False
                         elif option_mode and name and name.startswith("-"):
                             continue
-                        elif name and SHELL_ASSIGNMENT_NAME.fullmatch(name):
+                        elif (
+                            name and SHELL_ASSIGNMENT_NAME.fullmatch(name)
+                            and name not in locals_for_function
+                        ):
                             touched.add(name)
                 if executable in functions:
-                    called.add(executable)
-            direct[function_name] = touched - local_names[function_name]
+                    called.append((executable, frozenset(locals_for_function)))
+            direct[function_name] = touched
             callees[function_name] = called
 
         effects = {name: set(names) for name, names in direct.items()}
@@ -868,9 +876,8 @@ class ShellProvenanceProof:
             changed = False
             for function_name in functions:
                 reachable = set(direct[function_name])
-                for callee in callees[function_name]:
-                    reachable.update(effects[callee])
-                reachable.difference_update(local_names[function_name])
+                for callee, local_at_call in callees[function_name]:
+                    reachable.update(effects[callee] - local_at_call)
                 if reachable != effects[function_name]:
                     effects[function_name] = reachable
                     changed = True
@@ -2572,6 +2579,283 @@ jq -r . "$ACTUAL" ''',
             label,
             failures,
         )
+
+    ordered_local_effect_cases = (
+        (
+            "assignment before local must remain caller-visible",
+            '''\
+replace_actual() {
+  ACTUAL=/absolute/edgeconf_pim_base.json
+  local ACTUAL
+}
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "$ACTUAL"
+''',
+            ["unproven config reader operand"],
+            "3\n",
+        ),
+        (
+            "unset before local must expose caller fallback",
+            '''\
+replace_actual() { unset ACTUAL; local ACTUAL; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "${ACTUAL:-/absolute/edgeconf_pim_base.json}"
+''',
+            ["alternate config read: /absolute/edgeconf_pim_base.json"],
+            "3\n",
+        ),
+        (
+            "known callee before local must retain caller assignment",
+            '''\
+assign_inner() { ACTUAL=/absolute/edgeconf_pim_base.json; }
+replace_actual() { assign_inner; local ACTUAL; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "$ACTUAL"
+''',
+            ["unproven config reader operand"],
+            "3\n",
+        ),
+        (
+            "transitive callee before local must retain caller unset",
+            '''\
+clear_inner() { unset ACTUAL; }
+clear_middle() { clear_inner; }
+replace_actual() { clear_middle; local ACTUAL; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "${ACTUAL:-/absolute/edgeconf_pim_base.json}"
+''',
+            ["alternate config read: /absolute/edgeconf_pim_base.json"],
+            "3\n",
+        ),
+        (
+            "assignment after definite local must not taint caller",
+            '''\
+replace_actual() { local ACTUAL; ACTUAL=/absolute/edgeconf_pim_base.json; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "$ACTUAL"
+''',
+            [],
+            "1\n",
+        ),
+        (
+            "unset after definite local must not taint caller",
+            '''\
+replace_actual() { local ACTUAL; unset ACTUAL; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "${ACTUAL:-/absolute/edgeconf_pim_base.json}"
+''',
+            [],
+            "1\n",
+        ),
+        (
+            "known callee after definite local must not taint caller",
+            '''\
+assign_inner() { ACTUAL=/absolute/edgeconf_pim_base.json; }
+replace_actual() { local ACTUAL; assign_inner; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "$ACTUAL"
+''',
+            [],
+            "1\n",
+        ),
+        (
+            "transitive callee after definite local must not taint caller",
+            '''\
+clear_inner() { unset ACTUAL; }
+clear_middle() { clear_inner; }
+replace_actual() { local ACTUAL; clear_middle; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "${ACTUAL:-/absolute/edgeconf_pim_base.json}"
+''',
+            [],
+            "1\n",
+        ),
+        (
+            "local initializer must not taint caller",
+            '''\
+replace_actual() { local ACTUAL=/absolute/edgeconf_pim_base.json; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "$ACTUAL"
+''',
+            [],
+            "1\n",
+        ),
+        (
+            "function declare initializer must not taint caller",
+            '''\
+replace_actual() { declare ACTUAL=/absolute/edgeconf_pim_base.json; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "$ACTUAL"
+''',
+            [],
+            "1\n",
+        ),
+        (
+            "function typeset initializer must not taint caller",
+            '''\
+replace_actual() { typeset ACTUAL=/absolute/edgeconf_pim_base.json; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "$ACTUAL"
+''',
+            [],
+            "1\n",
+        ),
+        (
+            "assignment before declare must remain caller-visible",
+            '''\
+replace_actual() { ACTUAL=/absolute/edgeconf_pim_base.json; declare ACTUAL; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "$ACTUAL"
+''',
+            ["unproven config reader operand"],
+            "3\n",
+        ),
+        (
+            "unset before typeset must remain caller-visible",
+            '''\
+replace_actual() { unset ACTUAL; typeset ACTUAL; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "${ACTUAL:-/absolute/edgeconf_pim_base.json}"
+''',
+            ["alternate config read: /absolute/edgeconf_pim_base.json"],
+            "3\n",
+        ),
+        (
+            "explicit declare global after local must remain caller-visible",
+            '''\
+replace_actual() { local ACTUAL; declare -g ACTUAL=/absolute/edgeconf_pim_base.json; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "$ACTUAL"
+''',
+            ["unproven config reader operand"],
+            "3\n",
+        ),
+        (
+            "explicit typeset global after local must remain caller-visible",
+            '''\
+replace_actual() { local ACTUAL; typeset -g ACTUAL=/absolute/edgeconf_pim_base.json; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "$ACTUAL"
+''',
+            ["unproven config reader operand"],
+            "3\n",
+        ),
+        (
+            "skipped and-list local must not sanitize later assignment",
+            '''\
+replace_actual() { false && local ACTUAL; ACTUAL=/absolute/edgeconf_pim_base.json; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "$ACTUAL"
+''',
+            ["unproven config reader operand"],
+            "3\n",
+        ),
+        (
+            "skipped or-list declare must not sanitize later callee",
+            '''\
+assign_inner() { ACTUAL=/absolute/edgeconf_pim_base.json; }
+replace_actual() { true || declare ACTUAL; assign_inner; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "$ACTUAL"
+''',
+            ["unproven config reader operand"],
+            "3\n",
+        ),
+        (
+            "skipped if local must not sanitize later unset",
+            '''\
+replace_actual() { if false; then local ACTUAL; fi; unset ACTUAL; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "${ACTUAL:-/absolute/edgeconf_pim_base.json}"
+''',
+            ["alternate config read: /absolute/edgeconf_pim_base.json"],
+            "3\n",
+        ),
+        (
+            "skipped loop local must not sanitize later assignment",
+            '''\
+replace_actual() { while false; do local ACTUAL; done; ACTUAL=/absolute/edgeconf_pim_base.json; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "$ACTUAL"
+''',
+            ["unproven config reader operand"],
+            "3\n",
+        ),
+        (
+            "skipped brace local must not sanitize later assignment",
+            '''\
+replace_actual() { false && { :; local ACTUAL; }; ACTUAL=/absolute/edgeconf_pim_base.json; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "$ACTUAL"
+''',
+            ["unproven config reader operand"],
+            "3\n",
+        ),
+        (
+            "recursive summaries must retain effects before local",
+            '''\
+assign_inner() { false && replace_actual; ACTUAL=/absolute/edgeconf_pim_base.json; }
+replace_actual() { assign_inner; local ACTUAL; }
+ACTUAL=$PIM_CAMERA_RUNTIME_JSON
+replace_actual
+jq -r 'keys|length' "$ACTUAL"
+''',
+            ["unproven config reader operand"],
+            "3\n",
+        ),
+    )
+    with tempfile.TemporaryDirectory(prefix="pim-ordered-local-oracle-") as directory:
+        alternate_json = Path(directory) / "alternate.json"
+        alternate_json.write_text('{"one":1,"two":2,"three":3}\n', encoding="utf-8")
+        approved_json = Path(directory) / "runtime.json"
+        approved_json.write_text('{"one":1}\n', encoding="utf-8")
+        for label, body, expected, bash_output in ordered_local_effect_cases:
+            fixture = "PIM_CAMERA_RUNTIME_JSON=/run/pim-camera/config/pim_runtime.json\n" + body
+            check(shell_reader_violations(fixture) == expected, label, failures)
+            # Real Bash and jq independently establish the observable binding.
+            # Only file locations are replaced; expectations above are literal.
+            oracle = subprocess.run(
+                [
+                    "/bin/bash", "--noprofile", "--norc", "-c",
+                    fixture.replace(
+                        "/absolute/edgeconf_pim_base.json", str(alternate_json)
+                    ).replace(
+                        "/run/pim-camera/config/pim_runtime.json", str(approved_json)
+                    ),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                env={"BASH_ENV": "/dev/null", "PATH": "/usr/bin:/bin"},
+                check=False,
+            )
+            check(
+                oracle.returncode == 0
+                and oracle.stdout == bash_output
+                and oracle.stderr == "",
+                "Bash and jq: " + label,
+                failures,
+            )
 
     provenance_allow_cases = (
         (
