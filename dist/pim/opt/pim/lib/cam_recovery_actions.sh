@@ -336,7 +336,9 @@ cam_module_reload() {
     local runtime=$1
     cam_unload_module "$runtime" imx8-media-dev || return $?
     cam_unload_module "$runtime" max9296 || return $?
+    sleep 0.2 || return $?
     cam_effect "$runtime" modprobe max9296 || return $?
+    sleep 0.1 || return $?
     cam_effect "$runtime" modprobe imx8-media-dev
 }
 
@@ -365,17 +367,28 @@ cam_action_camera_hard_reset() {
     cap="$root/bus/platform/drivers/isi-capture"; m2m="$root/bus/platform/drivers/isi-m2m"
     cam_consumers_prequiesced || cam_quiesce_consumers "$runtime" || return $?
     cam_unload_module "$runtime" imx8-media-dev || return $?
+    sleep 1 || return $?
     cam_unload_module "$runtime" max9296 || return $?
+    sleep 1 || return $?
     for d in 32e00000.isi:cap_device 32e02000.isi:cap_device; do cam_sysfs_write "$runtime" unbind "$cap/unbind" "$d" || return $?; done
+    sleep 1 || return $?
     for d in 32e00000.isi:m2m_device; do cam_sysfs_write "$runtime" unbind "$m2m/unbind" "$d" || return $?; done
+    sleep 1 || return $?
     for d in 32e00000.isi 32e02000.isi; do cam_sysfs_write "$runtime" unbind "$isi/unbind" "$d" || return $?; done
+    sleep 1 || return $?
     for d in 32e40000.csi 32e50000.csi; do cam_sysfs_write "$runtime" unbind "$csi/unbind" "$d" || return $?; done
+    sleep 2 || return $?
     for d in 32e40000.csi 32e50000.csi; do cam_sysfs_write "$runtime" bind "$csi/bind" "$d" || return $?; done
+    sleep 1 || return $?
     for d in 32e00000.isi 32e02000.isi; do cam_sysfs_write "$runtime" bind "$isi/bind" "$d" || return $?; done
+    sleep 2 || return $?
     for d in 32e00000.isi:cap_device 32e02000.isi:cap_device; do [ -e "$cap/$d" ] || cam_sysfs_write "$runtime" bind "$cap/bind" "$d" || return $?; done
     for d in 32e00000.isi:m2m_device; do [ -e "$m2m/$d" ] || cam_sysfs_write "$runtime" bind "$m2m/bind" "$d" || return $?; done
+    sleep 1 || return $?
     cam_effect "$runtime" modprobe max9296 || return $?
+    sleep 3 || return $?
     cam_effect "$runtime" modprobe imx8-media-dev || return $?
+    sleep 5 || return $?
     cam_verify_camera_ready "$runtime" || return $?
     cam_restart_ord "$runtime" || return $?
     cam_restart_vcm "$runtime" || return $?

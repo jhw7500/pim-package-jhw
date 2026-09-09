@@ -135,6 +135,18 @@ jq -e --arg id "$failed_apply_id" '.id==$id and .status=="FAILED" and .rc>0' "$P
 # remaining stub-only order cases do not need to re-run its expensive tuple reads.
 cam_executor_assert_context() { return 0; }
 
+echo "=== hardware recovery preserves target settle windows ==="
+settle_fail=0
+owner_active
+: > "$PIM_CAMERA_CALL_LOG"
+expect cam_module_reload "$PIM_CAMERA_RUNTIME_JSON"
+module_settle=$(grep -E '^(rmmod|modprobe|sleep) ' "$PIM_CAMERA_CALL_LOG")
+expected_module_settle=$'rmmod imx8-media-dev\nrmmod max9296\nsleep 0.2\nmodprobe max9296\nsleep 0.1\nmodprobe imx8-media-dev'
+if [ "$module_settle" != "$expected_module_settle" ]; then
+    printf 'module settle expected:\n%s\nmodule settle actual:\n%s\n' "$expected_module_settle" "$module_settle" >&2
+    settle_fail=1
+fi
+
 owner_active
 printf '{bad json}\n' > "$PIM_CAMERA_RUNTIME_JSON"
 : > "$PIM_CAMERA_CALL_LOG"
@@ -162,6 +174,17 @@ case "$bind" in *mxc-mipi-csi2-sam*mxc-isi*) ;; *) fail "parent-first bind order
 ! grep -q 'systemctl .*cam-operate' "$PIM_CAMERA_CALL_LOG" || fail "hard reset controlled cam-operate service"
 ! grep -q '^sysfs bind 32e00000.isi:cap_device ' "$PIM_CAMERA_CALL_LOG" || fail "auto-bound capture child was bound twice"
 ! grep -q '^sysfs bind 32e00000.isi:m2m_device ' "$PIM_CAMERA_CALL_LOG" || fail "auto-bound m2m child was bound twice"
+hard_reset_settle=$(awk '
+    $0 == "rmmod imx8-media-dev" { hardware = 1 }
+    hardware && /^(rmmod|modprobe|sleep|sysfs (unbind|bind)) / { print }
+    hardware && /^(start ord|start vcm|start_cam)$/ { exit }
+' "$PIM_CAMERA_CALL_LOG" | sed "s#$PIM_CAMERA_SYSFS_ROOT/bus/platform/drivers/##")
+expected_hard_reset_settle=$'rmmod imx8-media-dev\nsleep 1\nrmmod max9296\nsleep 1\nsysfs unbind 32e00000.isi:cap_device isi-capture/unbind\nsysfs unbind 32e02000.isi:cap_device isi-capture/unbind\nsleep 1\nsysfs unbind 32e00000.isi:m2m_device isi-m2m/unbind\nsleep 1\nsysfs unbind 32e00000.isi mxc-isi/unbind\nsysfs unbind 32e02000.isi mxc-isi/unbind\nsleep 1\nsysfs unbind 32e40000.csi mxc-mipi-csi2-sam/unbind\nsysfs unbind 32e50000.csi mxc-mipi-csi2-sam/unbind\nsleep 2\nsysfs bind 32e40000.csi mxc-mipi-csi2-sam/bind\nsysfs bind 32e50000.csi mxc-mipi-csi2-sam/bind\nsleep 1\nsysfs bind 32e00000.isi mxc-isi/bind\nsysfs bind 32e02000.isi mxc-isi/bind\nsleep 2\nsleep 1\nmodprobe max9296\nsleep 3\nmodprobe imx8-media-dev\nsleep 5'
+if [ "$hard_reset_settle" != "$expected_hard_reset_settle" ]; then
+    printf 'hard-reset settle expected:\n%s\nhard-reset settle actual:\n%s\n' "$expected_hard_reset_settle" "$hard_reset_settle" >&2
+    settle_fail=1
+fi
+[ "$settle_fail" -eq 0 ] || fail "hardware settle windows/order changed"
 
 # Review regressions: cleanup must be session-scoped and never delete unrelated
 # markers; BG identity must use full-command matching; child auto-bind is skipped.
