@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import re
 import shlex
+import subprocess
 import unittest
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -17,6 +18,13 @@ UNIT_ROOT = PACKAGE_ROOT / "etc/systemd/system"
 DEBIAN_ROOT = PACKAGE_ROOT / "DEBIAN"
 RUNTIME_JSON = "/run/pim-camera/config/pim_runtime.json"
 RUNTIME_VALIDATOR = "/opt/pim/bin/camera_runtime_config.py"
+STOP_TERM_DEADLINE_SECONDS = 75
+STOP_KILL_GRACE_SECONDS = 5
+STOP_EXEC = (
+    "/usr/bin/timeout --signal=TERM "
+    f"--kill-after={STOP_KILL_GRACE_SECONDS}s {STOP_TERM_DEADLINE_SECONDS}s "
+    "/opt/pim/bin/cam_operate_stop.sh --systemd"
+)
 RUNTIME_BARRIER = (
     "/bin/sh -c 'until test -f "
     + RUNTIME_JSON
@@ -100,6 +108,40 @@ def require_single(
         )
 
 
+def duration_seconds(value: str) -> int | None:
+    match = re.fullmatch(r"([0-9]+)s", value)
+    return int(match.group(1)) if match else None
+
+
+def stop_budget_errors(sections: Sections) -> List[str]:
+    errors: List[str] = []
+    actual = values(sections, "Service", "ExecStop")
+    if len(actual) != 1:
+        return errors
+    try:
+        tokens = shlex.split(actual[0])
+    except ValueError:
+        return ["[Service] ExecStop= stop budget command is malformed"]
+    if len(tokens) != 6 or tokens[0] != "/usr/bin/timeout":
+        return ["[Service] ExecStop= must use one bounded timeout supervisor"]
+    if tokens[1] != "--signal=TERM" or not tokens[2].startswith("--kill-after="):
+        return ["[Service] ExecStop= timeout signal/kill grace is not exact"]
+    grace = duration_seconds(tokens[2].split("=", 1)[1])
+    deadline = duration_seconds(tokens[3])
+    service_timeout = duration_seconds(
+        effective_scalar(sections, "Service", "TimeoutStopSec") or ""
+    )
+    if grace is None or deadline is None or service_timeout is None:
+        errors.append("[Service] ExecStop= stop budget durations must be seconds")
+    elif deadline + grace >= service_timeout:
+        errors.append(
+            "[Service] ExecStop= stop budget must finish before TimeoutStopSec"
+        )
+    if tokens[4:] != ["/opt/pim/bin/cam_operate_stop.sh", "--systemd"]:
+        errors.append("[Service] ExecStop= timeout must supervise the systemd stop route")
+    return errors
+
+
 def pim_camera_config_errors(text: str) -> List[str]:
     sections = parse_unit(text)
     errors: List[str] = []
@@ -153,8 +195,9 @@ def cam_operate_errors(text: str) -> List[str]:
         sections,
         "Service",
         "ExecStop",
-        "/opt/pim/bin/cam_operate_stop.sh --systemd",
+        STOP_EXEC,
     )
+    errors.extend(stop_budget_errors(sections))
     require_single(errors, sections, "Service", "ExecStartPost", RUNTIME_BARRIER)
     service_type = effective_scalar(sections, "Service", "Type")
     if service_type is not None and service_type != "simple":
@@ -1232,7 +1275,7 @@ ExecStart=/bin/true
 Requires=pim-camera-config.service
 After=pim-camera-config.service sd-mount.service
 [Service]
-ExecStop=/opt/pim/bin/cam_operate_stop.sh --systemd
+ExecStop={STOP_EXEC}
 ExecStartPost={RUNTIME_BARRIER}
 RuntimeDirectory=pim-camera
 RuntimeDirectoryMode=0750
@@ -1267,7 +1310,7 @@ SuccessExitStatus=143
         fixture = unit.replace(
             "[Service]\n",
             "[Service]\n"
-            "ExecStop=/opt/pim/bin/cam_operate_stop.sh --systemd\n"
+            f"ExecStop={STOP_EXEC}\n"
             "SuccessExitStatus=143\n",
             1,
         )
@@ -1291,10 +1334,25 @@ SuccessExitStatus=143
                     (label, errors),
                 )
 
-        exec_stop = "ExecStop=/opt/pim/bin/cam_operate_stop.sh --systemd\n"
+        exec_stop = f"ExecStop={STOP_EXEC}\n"
         exec_mutations = {
+            "removes timeout supervisor": fixture.replace(
+                exec_stop,
+                "ExecStop=/opt/pim/bin/cam_operate_stop.sh --systemd\n",
+                1,
+            ),
             "loses systemd": fixture.replace(
                 exec_stop, "ExecStop=/opt/pim/bin/cam_operate_stop.sh\n", 1
+            ),
+            "wrong timeout path": fixture.replace(
+                "/usr/bin/timeout", "/bin/true", 1
+            ),
+            "missing kill grace": fixture.replace("--kill-after=5s ", "", 1),
+            "timeout after command": fixture.replace(
+                STOP_EXEC,
+                "/opt/pim/bin/cam_operate_stop.sh --systemd "
+                "/usr/bin/timeout --signal=TERM --kill-after=5s 75s",
+                1,
             ),
             "duplicate": fixture.replace(exec_stop, exec_stop + exec_stop, 1),
             "reset": fixture.replace(exec_stop, exec_stop + "ExecStop=\n", 1),
@@ -1309,6 +1367,58 @@ SuccessExitStatus=143
                     any("[Service] ExecStop=" in error for error in errors),
                     (label, errors),
                 )
+
+        budget_mutations = {
+            "deadline plus grace equals service timeout": fixture.replace(
+                " 75s /opt/pim/bin/cam_operate_stop.sh",
+                " 85s /opt/pim/bin/cam_operate_stop.sh",
+                1,
+            ),
+            "kill grace reaches service timeout": fixture.replace(
+                "--kill-after=5s", "--kill-after=15s", 1
+            ),
+            "service timeout equals stop budget": fixture.replace(
+                "TimeoutStopSec=90s", "TimeoutStopSec=80s", 1
+            ),
+        }
+        for label, mutation in budget_mutations.items():
+            with self.subTest(mutation=label):
+                errors = cam_operate_errors(mutation)
+                self.assertTrue(
+                    any("stop budget must finish" in error for error in errors),
+                    (label, errors),
+                )
+
+    def test_timeout_supervisor_preserves_status_and_expires(self) -> None:
+        for status in (0, 69, 70, 75, 143):
+            with self.subTest(status=status):
+                completed = subprocess.run(
+                    [
+                        "/usr/bin/timeout",
+                        "--signal=TERM",
+                        "--kill-after=1s",
+                        "2s",
+                        "/bin/sh",
+                        "-c",
+                        f"exit {status}",
+                    ],
+                    check=False,
+                )
+                self.assertEqual(status, completed.returncode)
+        expired = subprocess.run(
+            [
+                "/usr/bin/timeout",
+                "--signal=TERM",
+                "--kill-after=0.2s",
+                "0.1s",
+                "/bin/sh",
+                "-c",
+                "sleep 5",
+            ],
+            check=False,
+            timeout=2,
+        )
+        self.assertEqual(124, expired.returncode)
 
     def test_maintainer_command_reordering_is_rejected(self) -> None:
         fixture = postinst_fixture(
@@ -1594,7 +1704,7 @@ never_called ()
         unit = unit.replace(
             "[Service]\n",
             "[Service]\n"
-            "ExecStop=/opt/pim/bin/cam_operate_stop.sh --systemd\n"
+            f"ExecStop={STOP_EXEC}\n"
             "SuccessExitStatus=143\n",
             1,
         )

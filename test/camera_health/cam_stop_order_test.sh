@@ -380,6 +380,18 @@ rm -f "$WORK/fair-retry-count"
 : > "$WORK/fair-flock-calls"; : > "$WORK/stop-stub-sleeps"
 (
     _cl_ordered_stop_locked() {
+        local probe_fd contender_rc
+        exec {probe_fd}>"$PIM_CAMERA_RUN_DIR/recovery.lock"
+        if "$PIM_CAMERA_REAL_FLOCK" -n "$probe_fd"; then
+            contender_rc=0
+            "$PIM_CAMERA_REAL_FLOCK" -u "$probe_fd"
+        else
+            contender_rc=$?
+        fi
+        exec {probe_fd}>&-
+        printf 'contender:%s\n' "$contender_rc" >> "$WORK/fair-flock-calls"
+        [ "$contender_rc" -eq 1 ] || return 70
+
         count=0
         [ ! -e "$WORK/fair-retry-count" ] || count=$(cat "$WORK/fair-retry-count")
         count=$((count + 1))
@@ -387,13 +399,23 @@ rm -f "$WORK/fair-retry-count"
         [ "$count" -ge 3 ] && return 0
         return 75
     }
-    export PIM_CAMERA_TEST_FLOCK_MODE=starve PIM_CAMERA_TEST_FLOCK_LOG="$WORK/fair-flock-calls"
+    export PIM_CAMERA_TEST_FLOCK_MODE=observe PIM_CAMERA_TEST_FLOCK_LOG="$WORK/fair-flock-calls"
     export PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=7 STOP_STUB_SLEEP_LOG="$WORK/stop-stub-sleeps"
     expect_rc 0 cam_liveness_ordered_stop_systemd
 )
+exec {post_stop_fd}>"$PIM_CAMERA_RUN_DIR/recovery.lock"
+if "$PIM_CAMERA_REAL_FLOCK" -n "$post_stop_fd"; then
+    post_stop_rc=0
+    "$PIM_CAMERA_REAL_FLOCK" -u "$post_stop_fd"
+else
+    post_stop_rc=$?
+fi
+exec {post_stop_fd}>&-
+[ "$post_stop_rc" -eq 0 ] || fail 'systemd BUSY retry retained its lock after returning'
 [ "$(cat "$WORK/fair-retry-count")" -eq 3 ] || fail 'systemd stop did not resume BUSY while holding its lock'
 [ "$(grep -c '^wait:' "$WORK/fair-flock-calls")" -eq 1 ] || fail 'systemd BUSY retry reacquired the queued lock'
 [ "$(grep -c '^unlock:' "$WORK/fair-flock-calls")" -eq 1 ] || fail 'systemd BUSY retry did not release its single lock'
+[ "$(grep -c '^contender:1$' "$WORK/fair-flock-calls")" -eq 3 ] || fail 'systemd BUSY callback ran without exclusive lock ownership'
 ! grep -q '^nonblock:' "$WORK/fair-flock-calls" || fail 'systemd BUSY retry fell back to nonblocking acquisition'
 [ "$(grep -c '^sleep:1$' "$WORK/stop-stub-sleeps")" -eq 2 ] || fail 'systemd in-lock BUSY cadence is not exact'
 
