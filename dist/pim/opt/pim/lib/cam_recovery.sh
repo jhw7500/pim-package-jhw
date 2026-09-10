@@ -56,6 +56,22 @@ _cr_lock_call() {
     flock -n "$fd" || { exec {fd}>&-; return 75; }
     "$@"; rc=$?; flock -u "$fd"; exec {fd}>&-; return "$rc"
 }
+_cr_lock_call_wait() {
+    local wait=$1 fd rc
+    shift
+    mkdir -p "$PIM_CAMERA_RUN_DIR" || return 70
+    exec {fd}>"$PIM_CAMERA_RUN_DIR/recovery.lock" || return 70
+    if flock -E 75 -w "$wait" "$fd"; then
+        "$@"; rc=$?
+        flock -u "$fd"
+        exec {fd}>&-
+        return "$rc"
+    else
+        rc=$?
+        exec {fd}>&-
+        return "$rc"
+    fi
+}
 _cr_public_action() { case "$1" in gstapp_restart|module_reload|camera_hard_reset|reboot_fallback) return 0;; esac; return 1; }
 _cr_request_type() { _cr_public_action "$1" || [ "$1" = apply_config ]; }
 _cr_owner_json() { cat "$(_cr_owner_file)" 2>/dev/null; }

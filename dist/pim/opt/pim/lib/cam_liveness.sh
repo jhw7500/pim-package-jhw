@@ -461,6 +461,27 @@ cam_liveness_ordered_stop() {
     _cr_lock_call _cl_ordered_stop_locked "$external"
 }
 
+_cl_ordered_stop_systemd_locked() {
+    local attempts=${PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS:-30} attempt=1 rc
+    case "$attempts" in
+        [7-9]|1[0-9]|2[0-9]|30) ;;
+        *) attempts=30 ;;
+    esac
+    while [ "$attempt" -le "$attempts" ]; do
+        _cl_ordered_stop_locked 1
+        rc=$?
+        [ "$rc" -eq 75 ] || return "$rc"
+        [ "$attempt" -lt "$attempts" ] || return 75
+        sleep 1
+        attempt=$((attempt + 1))
+    done
+    return 75
+}
+
+cam_liveness_ordered_stop_systemd() {
+    _cr_lock_call_wait 30 _cl_ordered_stop_systemd_locked
+}
+
 _cl_trap_signal() {
     local rc=$1
     trap - TERM INT EXIT

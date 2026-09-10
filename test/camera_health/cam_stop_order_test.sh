@@ -60,6 +60,8 @@ reset_case() {
     export PIM_CAMERA_LIVENESS_QUIESCED
 }
 
+export PIM_CAMERA_REAL_FLOCK
+PIM_CAMERA_REAL_FLOCK=$(command -v flock)
 mkdir -p "$WORK/stub"
 cat > "$WORK/stub/systemctl" <<'SH'
 #!/bin/sh
@@ -109,6 +111,29 @@ if [ -n "${PIM_CAMERA_TEST_RETRY_GATE:-}" ] && [ ! -e "$PIM_CAMERA_TEST_RETRY_GA
 fi
 [ -z "${STOP_STUB_SLEEP_LOG:-}" ] || printf 'sleep:%s\n' "$1" >> "$STOP_STUB_SLEEP_LOG"
 exit 0
+SH
+cat > "$WORK/stub/flock" <<'SH'
+#!/bin/sh
+if [ -z "${PIM_CAMERA_TEST_FLOCK_LOG:-}" ]; then exec "$PIM_CAMERA_REAL_FLOCK" "$@"; fi
+case "$1" in
+    -n)
+        printf 'nonblock:%s\n' "$2" >> "$PIM_CAMERA_TEST_FLOCK_LOG"
+        [ "${PIM_CAMERA_TEST_FLOCK_MODE:-}" != starve ] || exit 1
+        exec "$PIM_CAMERA_REAL_FLOCK" "$@"
+        ;;
+    -E)
+        [ "$#" -eq 5 ] && [ "$2" = 75 ] && [ "$3" = -w ] && [ "$4" = 30 ] || exit 70
+        printf 'wait:%s\n' "$5" >> "$PIM_CAMERA_TEST_FLOCK_LOG"
+        [ "${PIM_CAMERA_TEST_FLOCK_MODE:-}" != starve ] || exit "${PIM_CAMERA_TEST_FLOCK_RC:-0}"
+        exec "$PIM_CAMERA_REAL_FLOCK" "$@"
+        ;;
+    -u)
+        printf 'unlock:%s\n' "$2" >> "$PIM_CAMERA_TEST_FLOCK_LOG"
+        [ "${PIM_CAMERA_TEST_FLOCK_MODE:-}" != starve ] || exit "${PIM_CAMERA_TEST_FLOCK_UNLOCK_RC:-0}"
+        exec "$PIM_CAMERA_REAL_FLOCK" "$@"
+        ;;
+esac
+exit 70
 SH
 chmod +x "$WORK/stub"/*
 export PATH="$WORK/stub:$PATH"
@@ -312,12 +337,71 @@ cam_liveness_ordered_stop --external
 PIM_LIB="$PIM_LIB" PIM_BIN="$PIM_BIN" bash "$PIM_BIN/cam_operate_stop.sh"
 [ ! -s "$PIM_CAMERA_CALL_LOG" ] || { cat "$PIM_CAMERA_CALL_LOG" >&2; fail 'completed external stop invoked a legacy/managed action'; }
 
+echo '=== systemd stop uses one bounded queued lock acquisition ==='
+reset_case
+rm -f "$PIM_CAMERA_RUN_DIR/owner.json"
+: > "$WORK/fair-flock-calls"
+set +e
+PIM_CAMERA_TEST_FLOCK_MODE=starve PIM_CAMERA_TEST_FLOCK_LOG="$WORK/fair-flock-calls" \
+PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=7 bash "$PIM_BIN/cam_operate_stop.sh" --systemd
+fair_stop_rc=$?
+set -e
+[ "$fair_stop_rc" -eq 0 ] || fail "fair queued systemd stop returned rc=$fair_stop_rc"
+[ "$(grep -c '^wait:' "$WORK/fair-flock-calls")" -eq 1 ] || fail 'systemd stop did not acquire through one bounded waiter'
+[ "$(grep -c '^unlock:' "$WORK/fair-flock-calls")" -eq 1 ] || fail 'systemd stop did not unlock its queued acquisition'
+! grep -q '^nonblock:' "$WORK/fair-flock-calls" || fail 'systemd stop leaked nonblocking polling'
+
+echo '=== queued lock preserves acquisition and callback status ==='
+fair_lock_callback() { : > "$WORK/fair-lock-callback"; return "${FAIR_LOCK_CALLBACK_RC:-0}"; }
+rm -f "$WORK/fair-lock-callback"
+: > "$WORK/fair-flock-calls"
+(
+    export PIM_CAMERA_TEST_FLOCK_MODE=starve PIM_CAMERA_TEST_FLOCK_LOG="$WORK/fair-flock-calls"
+    export PIM_CAMERA_TEST_FLOCK_RC=75
+    expect_rc 75 _cr_lock_call_wait 30 fair_lock_callback
+)
+[ ! -e "$WORK/fair-lock-callback" ] || fail 'timed-out queued lock invoked its callback'
+[ "$(grep -c '^wait:' "$WORK/fair-flock-calls")" -eq 1 ] || fail 'queued lock timeout changed the acquisition boundary'
+! grep -q '^unlock:' "$WORK/fair-flock-calls" || fail 'timed-out queued lock unlocked an unowned lock'
+
+rm -f "$WORK/fair-lock-callback"
+: > "$WORK/fair-flock-calls"
+(
+    export PIM_CAMERA_TEST_FLOCK_MODE=starve PIM_CAMERA_TEST_FLOCK_LOG="$WORK/fair-flock-calls"
+    export FAIR_LOCK_CALLBACK_RC=69
+    expect_rc 69 _cr_lock_call_wait 30 fair_lock_callback
+)
+[ -e "$WORK/fair-lock-callback" ] || fail 'queued lock skipped its acquired callback'
+[ "$(grep -c '^wait:' "$WORK/fair-flock-calls")" -eq 1 ] || fail 'queued lock repeated acquisition before callback'
+[ "$(grep -c '^unlock:' "$WORK/fair-flock-calls")" -eq 1 ] || fail 'queued lock did not unlock after callback failure'
+
+echo '=== systemd BUSY retries retain one queued lock ==='
+rm -f "$WORK/fair-retry-count"
+: > "$WORK/fair-flock-calls"; : > "$WORK/stop-stub-sleeps"
+(
+    _cl_ordered_stop_locked() {
+        count=0
+        [ ! -e "$WORK/fair-retry-count" ] || count=$(cat "$WORK/fair-retry-count")
+        count=$((count + 1))
+        printf '%s\n' "$count" > "$WORK/fair-retry-count"
+        [ "$count" -ge 3 ] && return 0
+        return 75
+    }
+    export PIM_CAMERA_TEST_FLOCK_MODE=starve PIM_CAMERA_TEST_FLOCK_LOG="$WORK/fair-flock-calls"
+    export PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=7 STOP_STUB_SLEEP_LOG="$WORK/stop-stub-sleeps"
+    expect_rc 0 cam_liveness_ordered_stop_systemd
+)
+[ "$(cat "$WORK/fair-retry-count")" -eq 3 ] || fail 'systemd stop did not resume BUSY while holding its lock'
+[ "$(grep -c '^wait:' "$WORK/fair-flock-calls")" -eq 1 ] || fail 'systemd BUSY retry reacquired the queued lock'
+[ "$(grep -c '^unlock:' "$WORK/fair-flock-calls")" -eq 1 ] || fail 'systemd BUSY retry did not release its single lock'
+! grep -q '^nonblock:' "$WORK/fair-flock-calls" || fail 'systemd BUSY retry fell back to nonblocking acquisition'
+[ "$(grep -c '^sleep:1$' "$WORK/stop-stub-sleeps")" -eq 2 ] || fail 'systemd in-lock BUSY cadence is not exact'
+
 echo '=== systemd stop waits for an ordinary recovery lock then owns cleanup ==='
 reset_case
 pending_id=$(cam_request_submit gstapp_restart stop-lock 'systemd lock retry')
 printf 'gstApp\nPIMCAM\nvcm\n' > "$WORK/stop-procs"
 rm -f "$WORK/lock-holder-ready" "$WORK/lock-holder-release"
-rm -f "$WORK/systemd-retry-seen" "$WORK/systemd-retry-release"
 (
     exec 9> "$PIM_CAMERA_RUN_DIR/recovery.lock"
     flock 9
@@ -333,29 +417,24 @@ done
     wait "$lock_holder_pid" 2>/dev/null || :
     fail 'ordinary recovery lock holder did not become ready'
 }
-PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=7 \
-PIM_CAMERA_TEST_RETRY_SEEN="$WORK/systemd-retry-seen" \
-PIM_CAMERA_TEST_RETRY_GATE="$WORK/systemd-retry-release" \
-PIM_CAMERA_STOP_OBSERVE_OWNER=1 \
+PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=7 PIM_CAMERA_STOP_OBSERVE_OWNER=1 \
     bash "$PIM_BIN/cam_operate_stop.sh" --systemd & systemd_stop_pid=$!
-for _ in $(seq 1 500); do
-    [ -e "$WORK/systemd-retry-seen" ] && break
+for _ in $(seq 1 50); do
     kill -0 "$systemd_stop_pid" 2>/dev/null || break
     /bin/sleep 0.01
 done
-if [ ! -e "$WORK/systemd-retry-seen" ]; then
+if ! kill -0 "$systemd_stop_pid" 2>/dev/null; then
     : > "$WORK/lock-holder-release"
     wait "$lock_holder_pid"
     set +e
     wait "$systemd_stop_pid"; early_stop_rc=$?
     set -e
-    fail "systemd stop exited rc=$early_stop_rc without retrying ordinary lock contention"
+    fail "systemd stop exited rc=$early_stop_rc instead of waiting behind ordinary lock contention"
 fi
-[ "$(jq -r .lifecycle "$PIM_CAMERA_RUN_DIR/owner.json")" = ACTIVE ] || fail 'lock retry mutated owner before acquisition'
-[ -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] || fail 'lock retry lost pending request before acquisition'
+[ "$(jq -r .lifecycle "$PIM_CAMERA_RUN_DIR/owner.json")" = ACTIVE ] || fail 'queued lock wait mutated owner before acquisition'
+[ -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] || fail 'queued lock wait lost pending request before acquisition'
 : > "$WORK/lock-holder-release"
 wait "$lock_holder_pid"
-: > "$WORK/systemd-retry-release"
 wait "$systemd_stop_pid"
 [ ! -e "$PIM_CAMERA_RUN_DIR/owner.json" ] || fail 'systemd stop retained owner after lock release'
 [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] && [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/active.json" ] || fail 'systemd stop retained a recovery lease'
@@ -387,17 +466,12 @@ cam_liveness_ordered_stop --external & first_stop_pid=$!
 for _ in $(seq 1 1000); do [ ! -e "$WORK/concurrent-ready" ] || break; /bin/sleep 0.01; done
 [ -e "$WORK/concurrent-ready" ] || { : > "$WORK/concurrent-release"; wait "$first_stop_pid" 2>/dev/null || :; fail 'first concurrent stop did not reach managed cleanup'; }
 expect_rc 75 cam_liveness_ordered_stop --external
-rm -f "$WORK/concurrent-retry-seen" "$WORK/concurrent-retry-release"
-PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=7 \
-PIM_CAMERA_TEST_RETRY_SEEN="$WORK/concurrent-retry-seen" \
-PIM_CAMERA_TEST_RETRY_GATE="$WORK/concurrent-retry-release" \
-    bash "$PIM_BIN/cam_operate_stop.sh" --systemd & waiting_stop_pid=$!
-for _ in $(seq 1 500); do
-    [ -e "$WORK/concurrent-retry-seen" ] && break
+PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=7 bash "$PIM_BIN/cam_operate_stop.sh" --systemd & waiting_stop_pid=$!
+for _ in $(seq 1 50); do
     kill -0 "$waiting_stop_pid" 2>/dev/null || break
     /bin/sleep 0.01
 done
-[ -e "$WORK/concurrent-retry-seen" ] || {
+kill -0 "$waiting_stop_pid" 2>/dev/null || {
     : > "$WORK/concurrent-release"
     wait "$first_stop_pid" 2>/dev/null || :
     set +e
@@ -407,7 +481,6 @@ done
 }
 : > "$WORK/concurrent-release"
 wait "$first_stop_pid"
-: > "$WORK/concurrent-retry-release"
 wait "$waiting_stop_pid"
 [ ! -e "$PIM_CAMERA_RUN_DIR/owner.json" ] || fail 'concurrent stop winner stranded owner'
 [ "$(grep -c '^concurrent:owner_removed$' "$PIM_CAMERA_CALL_LOG")" -eq 1 ] || fail 'concurrent stops removed owner more than once'
@@ -418,12 +491,14 @@ jq -e '.request.status=="FAILED" and .request.rc==70 and .request.interrupted==t
 mkdir -p "$WORK/exit-lib"
 for library in cam_recovery.sh cam_recovery_actions.sh cam_operate_control.sh; do : > "$WORK/exit-lib/$library"; done
 cat > "$WORK/exit-lib/cam_liveness.sh" <<'SH'
-cam_liveness_ordered_stop() {
+stop_stub_call() {
+    route=$1
+    shift
     count=0
     [ ! -e "$STOP_STUB_COUNT_FILE" ] || count=$(cat "$STOP_STUB_COUNT_FILE")
     count=$((count + 1))
     printf '%s\n' "$count" > "$STOP_STUB_COUNT_FILE"
-    printf 'call:%s\n' "$*" >> "$STOP_STUB_CALL_LOG"
+    printf 'call:%s:%s\n' "$route" "$*" >> "$STOP_STUB_CALL_LOG"
     rc=${STOP_STUB_RC:-70}
     if [ -n "${STOP_STUB_SEQUENCE_FILE:-}" ]; then
         sequence_rc=$(sed -n "${count}p" "$STOP_STUB_SEQUENCE_FILE")
@@ -431,6 +506,8 @@ cam_liveness_ordered_stop() {
     fi
     return "$rc"
 }
+cam_liveness_ordered_stop() { stop_stub_call external "$@"; }
+cam_liveness_ordered_stop_systemd() { stop_stub_call systemd "$@"; }
 SH
 for route in no-arg external; do
     for stop_rc in 0 69 70 75; do
@@ -450,30 +527,59 @@ for route in no-arg external; do
         set -e
         [ "$script_rc" -eq "$stop_rc" ] || fail "$route stop hid rc=$stop_rc as rc=$script_rc"
         [ "$(cat "$WORK/stop-stub-count")" -eq 1 ] || fail "$route stop retried rc=$stop_rc"
-        [ "$(cat "$WORK/stop-stub-calls")" = 'call:--external' ] || fail "$route stop changed the external library boundary"
+        [ "$(cat "$WORK/stop-stub-calls")" = 'call:external:--external' ] || fail "$route stop changed the external library boundary"
     done
 done
+
+for stop_rc in 0 69 70 75; do
+    rm -f "$WORK/stop-stub-count"
+    : > "$WORK/stop-stub-calls"
+    PIM_LIB="$WORK/exit-lib" PIM_BIN="$PIM_BIN" STOP_STUB_RC="$stop_rc" \
+        STOP_STUB_COUNT_FILE="$WORK/stop-stub-count" STOP_STUB_CALL_LOG="$WORK/stop-stub-calls" \
+        expect_rc "$stop_rc" bash "$PIM_BIN/cam_operate_stop.sh" --systemd
+    [ "$(cat "$WORK/stop-stub-count")" -eq 1 ] || fail "systemd wrapper repeated entrypoint rc=$stop_rc"
+    [ "$(cat "$WORK/stop-stub-calls")" = 'call:systemd:' ] || fail 'systemd wrapper bypassed its liveness entrypoint'
+done
+
+ordered_stop_retry_stub() {
+    count=0
+    [ ! -e "$STOP_STUB_COUNT_FILE" ] || count=$(cat "$STOP_STUB_COUNT_FILE")
+    count=$((count + 1))
+    printf '%s\n' "$count" > "$STOP_STUB_COUNT_FILE"
+    printf 'call:%s\n' "$*" >> "$STOP_STUB_CALL_LOG"
+    rc=${STOP_STUB_RC:-70}
+    if [ -n "${STOP_STUB_SEQUENCE_FILE:-}" ]; then
+        sequence_rc=$(sed -n "${count}p" "$STOP_STUB_SEQUENCE_FILE")
+        [ -z "$sequence_rc" ] || rc=$sequence_rc
+    fi
+    return "$rc"
+}
 
 echo '=== only systemd retries exact BUSY with a fixed bound ==='
 printf '75\n75\n0\n' > "$WORK/stop-stub-sequence"
 rm -f "$WORK/stop-stub-count"
 : > "$WORK/stop-stub-calls"; : > "$WORK/stop-stub-sleeps"
-PIM_LIB="$WORK/exit-lib" PIM_BIN="$PIM_BIN" PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=7 \
-    STOP_STUB_RC=70 STOP_STUB_SEQUENCE_FILE="$WORK/stop-stub-sequence" \
-    STOP_STUB_COUNT_FILE="$WORK/stop-stub-count" STOP_STUB_CALL_LOG="$WORK/stop-stub-calls" \
-    STOP_STUB_SLEEP_LOG="$WORK/stop-stub-sleeps" \
-    expect_rc 0 bash "$PIM_BIN/cam_operate_stop.sh" --systemd
+(
+    _cl_ordered_stop_locked() { ordered_stop_retry_stub "$@"; }
+    PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=7 STOP_STUB_RC=70 \
+        STOP_STUB_SEQUENCE_FILE="$WORK/stop-stub-sequence" STOP_STUB_COUNT_FILE="$WORK/stop-stub-count" \
+        STOP_STUB_CALL_LOG="$WORK/stop-stub-calls" STOP_STUB_SLEEP_LOG="$WORK/stop-stub-sleeps" \
+        expect_rc 0 _cl_ordered_stop_systemd_locked
+)
 [ "$(cat "$WORK/stop-stub-count")" -eq 3 ] || fail 'systemd stop did not retry BUSY to success'
-[ "$(grep -c '^call:--external$' "$WORK/stop-stub-calls")" -eq 3 ] || fail 'systemd retry bypassed the external library boundary'
+[ "$(grep -c '^call:1$' "$WORK/stop-stub-calls")" -eq 3 ] || fail 'systemd retry changed the external stop argument'
 [ "$(grep -c '^sleep:1$' "$WORK/stop-stub-sleeps")" -eq 2 ] || fail 'systemd BUSY retry sleep is not exact'
 
 for stop_rc in 0 69 70; do
     rm -f "$WORK/stop-stub-count"
     : > "$WORK/stop-stub-calls"; : > "$WORK/stop-stub-sleeps"
-    PIM_LIB="$WORK/exit-lib" PIM_BIN="$PIM_BIN" PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=7 \
-        STOP_STUB_RC="$stop_rc" STOP_STUB_COUNT_FILE="$WORK/stop-stub-count" \
-        STOP_STUB_CALL_LOG="$WORK/stop-stub-calls" STOP_STUB_SLEEP_LOG="$WORK/stop-stub-sleeps" \
-        expect_rc "$stop_rc" bash "$PIM_BIN/cam_operate_stop.sh" --systemd
+    (
+        _cl_ordered_stop_locked() { ordered_stop_retry_stub "$@"; }
+        PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=7 STOP_STUB_RC="$stop_rc" \
+            STOP_STUB_COUNT_FILE="$WORK/stop-stub-count" STOP_STUB_CALL_LOG="$WORK/stop-stub-calls" \
+            STOP_STUB_SLEEP_LOG="$WORK/stop-stub-sleeps" \
+            expect_rc "$stop_rc" _cl_ordered_stop_systemd_locked
+    )
     [ "$(cat "$WORK/stop-stub-count")" -eq 1 ] || fail "systemd stop retried rc=$stop_rc"
     [ ! -s "$WORK/stop-stub-sleeps" ] || fail "systemd stop slept after rc=$stop_rc"
 done
@@ -481,11 +587,13 @@ done
 printf '75\n75\n75\n75\n75\n75\n75\n69\n' > "$WORK/stop-stub-sequence"
 rm -f "$WORK/stop-stub-count"
 : > "$WORK/stop-stub-calls"; : > "$WORK/stop-stub-sleeps"
-PIM_LIB="$WORK/exit-lib" PIM_BIN="$PIM_BIN" PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=7 \
-    STOP_STUB_RC=69 STOP_STUB_SEQUENCE_FILE="$WORK/stop-stub-sequence" \
-    STOP_STUB_COUNT_FILE="$WORK/stop-stub-count" STOP_STUB_CALL_LOG="$WORK/stop-stub-calls" \
-    STOP_STUB_SLEEP_LOG="$WORK/stop-stub-sleeps" \
-    expect_rc 75 bash "$PIM_BIN/cam_operate_stop.sh" --systemd
+(
+    _cl_ordered_stop_locked() { ordered_stop_retry_stub "$@"; }
+    PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=7 STOP_STUB_RC=69 \
+        STOP_STUB_SEQUENCE_FILE="$WORK/stop-stub-sequence" STOP_STUB_COUNT_FILE="$WORK/stop-stub-count" \
+        STOP_STUB_CALL_LOG="$WORK/stop-stub-calls" STOP_STUB_SLEEP_LOG="$WORK/stop-stub-sleeps" \
+        expect_rc 75 _cl_ordered_stop_systemd_locked
+)
 [ "$(cat "$WORK/stop-stub-count")" -eq 7 ] || fail 'systemd retry bound was removed or disabled'
 [ "$(grep -c '^sleep:1$' "$WORK/stop-stub-sleeps")" -eq 6 ] || fail 'systemd retry exhaustion slept outside the bound'
 
@@ -509,13 +617,18 @@ for override_case in absent malformed low-one low-six high-31 high-100 zero nega
     esac
     rm -f "$WORK/stop-stub-count"
     : > "$WORK/stop-stub-calls"; : > "$WORK/stop-stub-sleeps"
-    set +e
-    PIM_LIB="$WORK/exit-lib" PIM_BIN="$PIM_BIN" STOP_STUB_RC=69 \
-        STOP_STUB_SEQUENCE_FILE="$WORK/stop-stub-sequence" STOP_STUB_COUNT_FILE="$WORK/stop-stub-count" \
-        STOP_STUB_CALL_LOG="$WORK/stop-stub-calls" STOP_STUB_SLEEP_LOG="$WORK/stop-stub-sleeps" \
-        bash "$PIM_BIN/cam_operate_stop.sh" --systemd
-    override_rc=$?
-    set -e
+    rm -f "$WORK/stop-stub-rc"
+    (
+        _cl_ordered_stop_locked() { ordered_stop_retry_stub "$@"; }
+        set +e
+        STOP_STUB_RC=69 STOP_STUB_SEQUENCE_FILE="$WORK/stop-stub-sequence" \
+            STOP_STUB_COUNT_FILE="$WORK/stop-stub-count" STOP_STUB_CALL_LOG="$WORK/stop-stub-calls" \
+            STOP_STUB_SLEEP_LOG="$WORK/stop-stub-sleeps" _cl_ordered_stop_systemd_locked
+        override_rc=$?
+        set -e
+        printf '%s\n' "$override_rc" > "$WORK/stop-stub-rc"
+    )
+    override_rc=$(cat "$WORK/stop-stub-rc")
     override_calls=$(cat "$WORK/stop-stub-count" 2>/dev/null || printf 0)
     override_sleeps=$(wc -l < "$WORK/stop-stub-sleeps")
     if [ "$override_rc" -ne 75 ] || [ "$override_calls" -ne 30 ] || [ "$override_sleeps" -ne 29 ]; then
@@ -528,10 +641,13 @@ unset PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS
 printf '75\n75\n75\n75\n75\n75\n0\n' > "$WORK/stop-stub-sequence"
 rm -f "$WORK/stop-stub-count"
 : > "$WORK/stop-stub-calls"; : > "$WORK/stop-stub-sleeps"
-PIM_LIB="$WORK/exit-lib" PIM_BIN="$PIM_BIN" STOP_STUB_RC=70 \
-    STOP_STUB_SEQUENCE_FILE="$WORK/stop-stub-sequence" STOP_STUB_COUNT_FILE="$WORK/stop-stub-count" \
-    STOP_STUB_CALL_LOG="$WORK/stop-stub-calls" STOP_STUB_SLEEP_LOG="$WORK/stop-stub-sleeps" \
-    expect_rc 0 bash "$PIM_BIN/cam_operate_stop.sh" --systemd
+(
+    _cl_ordered_stop_locked() { ordered_stop_retry_stub "$@"; }
+    STOP_STUB_RC=70 STOP_STUB_SEQUENCE_FILE="$WORK/stop-stub-sequence" \
+        STOP_STUB_COUNT_FILE="$WORK/stop-stub-count" STOP_STUB_CALL_LOG="$WORK/stop-stub-calls" \
+        STOP_STUB_SLEEP_LOG="$WORK/stop-stub-sleeps" \
+        expect_rc 0 _cl_ordered_stop_systemd_locked
+)
 [ "$(cat "$WORK/stop-stub-count")" -eq 7 ] || fail 'default systemd retry budget does not exceed the five-second stop wait'
 [ "$(grep -c '^sleep:1$' "$WORK/stop-stub-sleeps")" -eq 6 ] || fail 'default systemd retry cadence is not fixed'
 
