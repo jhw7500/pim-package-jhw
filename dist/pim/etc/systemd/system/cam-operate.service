@@ -8,6 +8,7 @@ User=root
 WorkingDirectory=/root
 ExecStart=/opt/pim/bin/chk_cam_operate.sh
 ExecStartPost=/bin/sh -c 'until test -f /run/pim-camera/config/pim_runtime.json && /opt/pim/bin/camera_runtime_config.py validate --file /run/pim-camera/config/pim_runtime.json; do sleep 1; done'
+ExecStop=-/bin/kill -TERM $MAINPID
 ExecStop=/usr/bin/timeout --signal=TERM --kill-after=5s 120s /opt/pim/bin/cam_operate_stop.sh --systemd
 RuntimeDirectory=pim-camera
 RuntimeDirectoryMode=0750

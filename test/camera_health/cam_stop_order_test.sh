@@ -234,6 +234,68 @@ fake_stat
 expect_rc 0 cam_owner_create "$DAEMON_PID"
 [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/active.json" ] && [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] || fail 'next daemon owner inherited an orphan lease'
 
+echo '=== only systemd adopts a current-boot dead ACTIVE owner ==='
+reset_case
+dead_external_owner_before=$(fingerprint "$PIM_CAMERA_RUN_DIR/owner.json")
+unset PIM_CAMERA_OWNER_BOOT_ID PIM_CAMERA_OWNER_INVOCATION PIM_CAMERA_OWNER_PID
+unset PIM_CAMERA_OWNER_PROC_START_TIME PIM_CAMERA_OWNER_TOKEN PIM_CAMERA_OWNER_CREATED_AT
+rm -f "$PIM_CAMERA_PROC_ROOT/$DAEMON_PID/stat"
+expect_rc 69 cam_liveness_ordered_stop --external
+[ "$dead_external_owner_before" = "$(fingerprint "$PIM_CAMERA_RUN_DIR/owner.json")" ] || fail 'external dead ACTIVE stop mutated owner'
+[ ! -s "$PIM_CAMERA_CALL_LOG" ] || fail 'external dead ACTIVE stop produced cleanup effects'
+
+reset_case
+dead_systemd_id=$(cam_request_submit gstapp_restart systemd-stop 'dead ACTIVE handoff')
+printf 'gstApp\nPIMCAM\nvcm\n' > "$WORK/stop-procs"
+unset PIM_CAMERA_OWNER_BOOT_ID PIM_CAMERA_OWNER_INVOCATION PIM_CAMERA_OWNER_PID
+unset PIM_CAMERA_OWNER_PROC_START_TIME PIM_CAMERA_OWNER_TOKEN PIM_CAMERA_OWNER_CREATED_AT
+rm -f "$PIM_CAMERA_PROC_ROOT/$DAEMON_PID/stat"
+set +e
+cam_liveness_ordered_stop_systemd
+dead_systemd_rc=$?
+set -e
+if [ "$dead_systemd_rc" -ne 0 ]; then
+    review_failures="$review_failures systemd-dead-active-rc:$dead_systemd_rc"
+else
+    [ ! -e "$PIM_CAMERA_RUN_DIR/owner.json" ] || review_failures="$review_failures systemd-dead-active-owner"
+    [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] && [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/active.json" ] || review_failures="$review_failures systemd-dead-active-lease"
+    [ ! -s "$WORK/stop-procs" ] || review_failures="$review_failures systemd-dead-active-children"
+    jq -e '.status=="FAILED" and .rc==70 and (has("interrupted")|not) and (has("interrupted_reason")|not)' "$PIM_CAMERA_RUN_DIR/recovery/results/$dead_systemd_id.json" >/dev/null || review_failures="$review_failures systemd-dead-active-result"
+    jq -e '.request.status=="FAILED" and .request.rc==70 and .request.interrupted==true and .request.interrupted_reason=="owner_stale"' "$PIM_CAMERA_STATE_DIR/recovery/history/$dead_systemd_id.json" >/dev/null || review_failures="$review_failures systemd-dead-active-history"
+fi
+
+echo '=== systemd treats a reused owner PID as quiesced without signaling it ==='
+reset_case
+printf 'gstApp\nPIMCAM\nvcm\n' > "$WORK/stop-procs"
+unset PIM_CAMERA_OWNER_BOOT_ID PIM_CAMERA_OWNER_INVOCATION PIM_CAMERA_OWNER_PID
+unset PIM_CAMERA_OWNER_PROC_START_TIME PIM_CAMERA_OWNER_TOKEN PIM_CAMERA_OWNER_CREATED_AT
+fake_stat 222
+set +e
+cam_liveness_ordered_stop_systemd
+reused_systemd_rc=$?
+set -e
+if [ "$reused_systemd_rc" -ne 0 ]; then
+    review_failures="$review_failures systemd-reused-active-rc:$reused_systemd_rc"
+else
+    ! grep -q '^daemon-signal:' "$PIM_CAMERA_CALL_LOG" || review_failures="$review_failures systemd-reused-active-signaled"
+    [ ! -e "$PIM_CAMERA_RUN_DIR/owner.json" ] || review_failures="$review_failures systemd-reused-active-owner"
+    [ ! -s "$WORK/stop-procs" ] || review_failures="$review_failures systemd-reused-active-children"
+fi
+
+echo '=== systemd stale-owner handoff rejects a different boot ==='
+reset_case
+wrong_boot_owner_before=$(fingerprint "$PIM_CAMERA_RUN_DIR/owner.json")
+printf 'gstApp\nPIMCAM\nvcm\n' > "$WORK/stop-procs"
+wrong_boot_process_before=$(fingerprint "$WORK/stop-procs")
+unset PIM_CAMERA_OWNER_BOOT_ID PIM_CAMERA_OWNER_INVOCATION PIM_CAMERA_OWNER_PID
+unset PIM_CAMERA_OWNER_PROC_START_TIME PIM_CAMERA_OWNER_TOKEN PIM_CAMERA_OWNER_CREATED_AT
+rm -f "$PIM_CAMERA_PROC_ROOT/$DAEMON_PID/stat"
+printf 'boot-b\n' > "$PIM_CAMERA_BOOT_ID_FILE"
+expect_rc 69 cam_liveness_ordered_stop_systemd
+[ "$wrong_boot_owner_before" = "$(fingerprint "$PIM_CAMERA_RUN_DIR/owner.json")" ] || fail 'wrong-boot systemd handoff mutated owner'
+[ "$wrong_boot_process_before" = "$(fingerprint "$WORK/stop-procs")" ] || fail 'wrong-boot systemd handoff stopped managed children'
+[ ! -s "$PIM_CAMERA_CALL_LOG" ] || fail 'wrong-boot systemd handoff produced cleanup effects'
+
 echo '=== shutdown order and intake closure are exact ==='
 reset_case
 STOP_REQUEST_RC=
@@ -590,7 +652,7 @@ rm -f "$WORK/stop-stub-count"
         expect_rc 0 _cl_ordered_stop_systemd_locked
 )
 [ "$(cat "$WORK/stop-stub-count")" -eq 3 ] || fail 'systemd stop did not retry BUSY to success'
-[ "$(grep -c '^call:1$' "$WORK/stop-stub-calls")" -eq 3 ] || fail 'systemd retry changed the external stop argument'
+[ "$(grep -c '^call:1 1$' "$WORK/stop-stub-calls")" -eq 3 ] || review_failures="$review_failures systemd-retry-context-argument"
 [ "$(grep -c '^sleep:1$' "$WORK/stop-stub-sleeps")" -eq 2 ] || fail 'systemd BUSY retry sleep is not exact'
 
 for stop_rc in 0 69 70; do

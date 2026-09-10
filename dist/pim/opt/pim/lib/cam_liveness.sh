@@ -296,8 +296,26 @@ _cl_owner_matches_context() {
     done
 }
 
+_cl_current_boot_owner_process_state() {
+    local owner=$1 boot owner_boot pid expected actual stat_path
+    _cr_owner_schema <<<"$owner" || return 69
+    boot=$(cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null) || return 69
+    owner_boot=$(jq -r .boot_id <<<"$owner") || return 69
+    [ "$boot" = "$owner_boot" ] || return 69
+    pid=$(jq -r .pid <<<"$owner") || return 69
+    expected=$(jq -r .proc_start_time <<<"$owner") || return 69
+    stat_path="$PIM_CAMERA_PROC_ROOT/$pid/stat"
+    [ -e "$stat_path" ] || { printf 'absent\n'; return 0; }
+    actual=$(_cr_proc_start "$pid" 2>/dev/null) || return 69
+    if [ "$actual" = "$expected" ]; then
+        printf 'live\n'
+    else
+        printf 'reused\n'
+    fi
+}
+
 _cl_capture_owner_context() {
-    local allow_adopt=${1:-0} owner lifecycle
+    local allow_adopt=${1:-0} systemd_handoff=${2:-0} owner lifecycle
     [ -e "$(_cr_owner_file)" ] || return 0
     owner=$(_cr_owner_json) || return 69
     _cr_owner_schema <<<"$owner" || return 69
@@ -315,18 +333,38 @@ _cl_capture_owner_context() {
         export PIM_CAMERA_OWNER_BOOT_ID PIM_CAMERA_OWNER_INVOCATION PIM_CAMERA_OWNER_PID
         export PIM_CAMERA_OWNER_PROC_START_TIME PIM_CAMERA_OWNER_TOKEN PIM_CAMERA_OWNER_CREATED_AT
     fi
-    [ "$lifecycle" = STOPPING ] || _cr_owner_snapshot_live "$owner" || return 69
+    if [ "$systemd_handoff" = 1 ]; then
+        _cl_current_boot_owner_process_state "$owner" >/dev/null || return $?
+    else
+        [ "$lifecycle" = STOPPING ] || _cr_owner_snapshot_live "$owner" || return 69
+    fi
 }
 
 _cl_stop_begin_locked() {
-    local owner lifecycle
+    local systemd_handoff=${1:-0} owner lifecycle updated current current_lifecycle
     [ -e "$(_cr_owner_file)" ] || { printf 'done\n'; return 0; }
     owner=$(_cr_owner_json) || return 69
     _cl_owner_matches_context "$owner" || return 69
     lifecycle=$(jq -r .lifecycle <<<"$owner") || return 69
-    if [ "$lifecycle" = STOPPING ]; then printf 'coordinator\n'; return 0; fi
-    _cr_owner_snapshot_live "$owner" || return 69
-    _cr_owner_set_lifecycle_locked STOPPING || return $?
+    if [ "$lifecycle" = STOPPING ]; then
+        [ "$systemd_handoff" != 1 ] || _cl_current_boot_owner_process_state "$owner" >/dev/null || return $?
+        printf 'coordinator\n'
+        return 0
+    fi
+    if [ "$systemd_handoff" = 1 ]; then
+        _cl_current_boot_owner_process_state "$owner" >/dev/null || return $?
+        _cr_lifecycle_allowed "$lifecycle" STOPPING || return 64
+        updated=$(jq -c '.lifecycle="STOPPING" | .updated_at=(now|floor)' <<<"$owner") || return 70
+        current=$(_cr_owner_json) || return 69
+        _cl_owner_matches_context "$current" || return 69
+        current_lifecycle=$(jq -r .lifecycle <<<"$current") || return 69
+        [ "$current_lifecycle" = "$lifecycle" ] || return 69
+        _cl_current_boot_owner_process_state "$current" >/dev/null || return $?
+        _cr_atomic_write "$(_cr_owner_file)" "$updated" || return 70
+    else
+        _cr_owner_snapshot_live "$owner" || return 69
+        _cr_owner_set_lifecycle_locked STOPPING || return $?
+    fi
     printf 'coordinator\n'
 }
 
@@ -363,8 +401,19 @@ _cl_stopping_guard() {
 }
 
 _cl_signal_daemon_locked() {
-    local stat_path actual
+    local systemd_handoff=${1:-0} owner process_state stat_path actual
     _cl_stopping_guard || return $?
+    if [ "$systemd_handoff" = 1 ]; then
+        owner=$(_cr_owner_json) || return 69
+        _cl_owner_matches_context "$owner" || return 69
+        process_state=$(_cl_current_boot_owner_process_state "$owner") || return $?
+        case "$process_state" in
+            absent|reused) return 0 ;;
+            live) "$PIM_CAMERA_KILL" -TERM "$PIM_CAMERA_OWNER_PID" ;;
+            *) return 70 ;;
+        esac
+        return $?
+    fi
     stat_path="$PIM_CAMERA_PROC_ROOT/$PIM_CAMERA_OWNER_PID/stat"
     [ -e "$stat_path" ] || return 0
     actual=$(_cr_proc_start "$PIM_CAMERA_OWNER_PID" 2>/dev/null) || return 69
@@ -374,8 +423,23 @@ _cl_signal_daemon_locked() {
 cam_liveness_signal_daemon() { _cr_lock_call _cl_signal_daemon_locked; }
 
 cam_liveness_wait_daemon_quiesced() {
-    local timeout=$PIM_CAMERA_STOP_WAIT_SEC elapsed=0 actual stat_path
+    local systemd_handoff=${1:-0} timeout=$PIM_CAMERA_STOP_WAIT_SEC elapsed=0 owner process_state actual stat_path
     [[ $timeout =~ ^[0-9]+$ ]] || timeout=5
+    if [ "$systemd_handoff" = 1 ]; then
+        while :; do
+            owner=$(_cr_owner_json) || return 69
+            _cl_owner_matches_context "$owner" || return 69
+            process_state=$(_cl_current_boot_owner_process_state "$owner") || return $?
+            case "$process_state" in
+                absent|reused) return 0 ;;
+                live) ;;
+                *) return 70 ;;
+            esac
+            [ "$elapsed" -lt "$timeout" ] || return 75
+            sleep 1
+            elapsed=$((elapsed + 1))
+        done
+    fi
     stat_path="$PIM_CAMERA_PROC_ROOT/$PIM_CAMERA_OWNER_PID/stat"
     while :; do
         [ -e "$stat_path" ] || return 0
@@ -388,10 +452,19 @@ cam_liveness_wait_daemon_quiesced() {
 }
 
 _cl_reconcile_stop_lease_locked() {
-    local owner stat_path actual
+    local systemd_handoff=${1:-0} owner process_state stat_path actual
     owner=$(_cr_owner_json) || return 69
     _cl_owner_matches_context "$owner" || return 69
     _cr_owner_snapshot_lifecycle_in "$owner" STOPPING || return 69
+    if [ "$systemd_handoff" = 1 ]; then
+        process_state=$(_cl_current_boot_owner_process_state "$owner") || return $?
+        case "$process_state" in
+            absent|reused) _cr_reconcile_abandoned_lease_locked "$owner" ;;
+            live) return 75 ;;
+            *) return 70 ;;
+        esac
+        return $?
+    fi
     stat_path="$PIM_CAMERA_PROC_ROOT/$PIM_CAMERA_OWNER_PID/stat"
     if [ -e "$stat_path" ]; then
         actual=$(_cr_proc_start "$PIM_CAMERA_OWNER_PID" 2>/dev/null) || return 69
@@ -428,9 +501,9 @@ _cl_finish_stop_locked() {
 }
 
 _cl_ordered_stop_locked() {
-    local external=$1 mode
-    _cl_capture_owner_context "$external" || return $?
-    mode=$(_cl_stop_begin_locked) || return $?
+    local external=$1 systemd_handoff=${2:-0} mode
+    _cl_capture_owner_context "$external" "$systemd_handoff" || return $?
+    mode=$(_cl_stop_begin_locked "$systemd_handoff") || return $?
     case "$mode" in
         done) return 0 ;;
         coordinator) ;;
@@ -441,10 +514,10 @@ _cl_ordered_stop_locked() {
     cam_liveness_quiesce || return $?
     if [ "$external" -eq 1 ]; then
         _cl_stop_event daemon_quiesce_signaled
-        _cl_signal_daemon_locked || return $?
-        cam_liveness_wait_daemon_quiesced || return $?
+        _cl_signal_daemon_locked "$systemd_handoff" || return $?
+        cam_liveness_wait_daemon_quiesced "$systemd_handoff" || return $?
         _cl_stop_event daemon_quiesced
-        _cl_reconcile_stop_lease_locked || return $?
+        _cl_reconcile_stop_lease_locked "$systemd_handoff" || return $?
     fi
     cam_liveness_wait_for_work || return $?
     _cl_stop_event action_child_quiesced
@@ -468,7 +541,7 @@ _cl_ordered_stop_systemd_locked() {
         *) attempts=30 ;;
     esac
     while [ "$attempt" -le "$attempts" ]; do
-        _cl_ordered_stop_locked 1
+        _cl_ordered_stop_locked 1 1
         rc=$?
         [ "$rc" -eq 75 ] || return "$rc"
         [ "$attempt" -lt "$attempts" ] || return 75

@@ -28,6 +28,8 @@ STOP_EXEC = (
     f"--kill-after={STOP_KILL_GRACE_SECONDS}s {STOP_TERM_DEADLINE_SECONDS}s "
     "/opt/pim/bin/cam_operate_stop.sh --systemd"
 )
+STOP_SIGNAL_EXEC = "-/bin/kill -TERM $MAINPID"
+STOP_EXECS = [STOP_SIGNAL_EXEC, STOP_EXEC]
 RUNTIME_BARRIER = (
     "/bin/sh -c 'until test -f "
     + RUNTIME_JSON
@@ -119,10 +121,10 @@ def duration_seconds(value: str) -> int | None:
 def stop_budget_errors(sections: Sections) -> List[str]:
     errors: List[str] = []
     actual = values(sections, "Service", "ExecStop")
-    if len(actual) != 1:
+    if len(actual) != 2:
         return errors
     try:
-        tokens = shlex.split(actual[0])
+        tokens = shlex.split(actual[1])
     except ValueError:
         return ["[Service] ExecStop= stop budget command is malformed"]
     if len(tokens) != 6 or tokens[0] != "/usr/bin/timeout":
@@ -197,13 +199,12 @@ def cam_operate_errors(text: str) -> List[str]:
     }
     for key, value in expected.items():
         require_single(errors, sections, "Service", key, value)
-    require_single(
-        errors,
-        sections,
-        "Service",
-        "ExecStop",
-        STOP_EXEC,
-    )
+    actual_stops = values(sections, "Service", "ExecStop")
+    if actual_stops != STOP_EXECS:
+        errors.append(
+            "[Service] ExecStop= must be the exact pre-signal/coordinator "
+            f"sequence; found {actual_stops!r}"
+        )
     errors.extend(stop_budget_errors(sections))
     require_single(errors, sections, "Service", "ExecStartPost", RUNTIME_BARRIER)
     service_type = effective_scalar(sections, "Service", "Type")
@@ -1282,6 +1283,7 @@ ExecStart=/bin/true
 Requires=pim-camera-config.service
 After=pim-camera-config.service sd-mount.service
 [Service]
+ExecStop={STOP_SIGNAL_EXEC}
 ExecStop={STOP_EXEC}
 ExecStartPost={RUNTIME_BARRIER}
 RuntimeDirectory=pim-camera
@@ -1317,6 +1319,7 @@ SuccessExitStatus=143
         fixture = unit.replace(
             "[Service]\n",
             "[Service]\n"
+            f"ExecStop={STOP_SIGNAL_EXEC}\n"
             f"ExecStop={STOP_EXEC}\n"
             "SuccessExitStatus=143\n",
             1,
@@ -1341,8 +1344,22 @@ SuccessExitStatus=143
                     (label, errors),
                 )
 
+        signal_stop = f"ExecStop={STOP_SIGNAL_EXEC}\n"
         exec_stop = f"ExecStop={STOP_EXEC}\n"
         exec_mutations = {
+            "removes pre-signal": fixture.replace(signal_stop, "", 1),
+            "reorders pre-signal": fixture.replace(
+                signal_stop + exec_stop, exec_stop + signal_stop, 1
+            ),
+            "does not ignore pre-signal failure": fixture.replace(
+                STOP_SIGNAL_EXEC, "/bin/kill -TERM $MAINPID", 1
+            ),
+            "uses destructive pre-signal": fixture.replace(
+                STOP_SIGNAL_EXEC, "-/bin/kill -KILL $MAINPID", 1
+            ),
+            "signals owner text instead of MAINPID": fixture.replace(
+                STOP_SIGNAL_EXEC, "-/bin/kill -TERM 4242", 1
+            ),
             "removes timeout supervisor": fixture.replace(
                 exec_stop,
                 "ExecStop=/opt/pim/bin/cam_operate_stop.sh --systemd\n",
@@ -1731,6 +1748,7 @@ never_called ()
         unit = unit.replace(
             "[Service]\n",
             "[Service]\n"
+            f"ExecStop={STOP_SIGNAL_EXEC}\n"
             f"ExecStop={STOP_EXEC}\n"
             "SuccessExitStatus=143\n",
             1,
