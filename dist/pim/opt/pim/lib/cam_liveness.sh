@@ -479,7 +479,7 @@ _cl_ordered_stop_systemd_locked() {
 }
 
 cam_liveness_ordered_stop_systemd() {
-    _cr_lock_call_wait 30 _cl_ordered_stop_systemd_locked
+    _cr_lock_call_wait 75 _cl_ordered_stop_systemd_locked
 }
 
 _cl_trap_signal() {

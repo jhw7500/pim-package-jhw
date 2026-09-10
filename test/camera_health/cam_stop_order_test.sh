@@ -122,8 +122,9 @@ case "$1" in
         exec "$PIM_CAMERA_REAL_FLOCK" "$@"
         ;;
     -E)
-        [ "$#" -eq 5 ] && [ "$2" = 75 ] && [ "$3" = -w ] && [ "$4" = 30 ] || exit 70
-        printf 'wait:%s\n' "$5" >> "$PIM_CAMERA_TEST_FLOCK_LOG"
+        [ "$#" -eq 5 ] && [ "$2" = 75 ] && [ "$3" = -w ] || exit 70
+        case "$4" in 30|75) ;; *) exit 70;; esac
+        printf 'wait:%s:%s\n' "$4" "$5" >> "$PIM_CAMERA_TEST_FLOCK_LOG"
         [ "${PIM_CAMERA_TEST_FLOCK_MODE:-}" != starve ] || exit "${PIM_CAMERA_TEST_FLOCK_RC:-0}"
         exec "$PIM_CAMERA_REAL_FLOCK" "$@"
         ;;
@@ -347,7 +348,7 @@ PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=7 bash "$PIM_BIN/cam_operate_stop.sh" --systemd
 fair_stop_rc=$?
 set -e
 [ "$fair_stop_rc" -eq 0 ] || fail "fair queued systemd stop returned rc=$fair_stop_rc"
-[ "$(grep -c '^wait:' "$WORK/fair-flock-calls")" -eq 1 ] || fail 'systemd stop did not acquire through one bounded waiter'
+[ "$(grep -c '^wait:75:' "$WORK/fair-flock-calls")" -eq 1 ] || fail 'systemd stop did not reserve the 75-second queued acquisition budget'
 [ "$(grep -c '^unlock:' "$WORK/fair-flock-calls")" -eq 1 ] || fail 'systemd stop did not unlock its queued acquisition'
 ! grep -q '^nonblock:' "$WORK/fair-flock-calls" || fail 'systemd stop leaked nonblocking polling'
 
@@ -361,7 +362,7 @@ rm -f "$WORK/fair-lock-callback"
     expect_rc 75 _cr_lock_call_wait 30 fair_lock_callback
 )
 [ ! -e "$WORK/fair-lock-callback" ] || fail 'timed-out queued lock invoked its callback'
-[ "$(grep -c '^wait:' "$WORK/fair-flock-calls")" -eq 1 ] || fail 'queued lock timeout changed the acquisition boundary'
+[ "$(grep -c '^wait:30:' "$WORK/fair-flock-calls")" -eq 1 ] || fail 'generic queued lock timeout changed the acquisition boundary'
 ! grep -q '^unlock:' "$WORK/fair-flock-calls" || fail 'timed-out queued lock unlocked an unowned lock'
 
 rm -f "$WORK/fair-lock-callback"
@@ -372,7 +373,7 @@ rm -f "$WORK/fair-lock-callback"
     expect_rc 69 _cr_lock_call_wait 30 fair_lock_callback
 )
 [ -e "$WORK/fair-lock-callback" ] || fail 'queued lock skipped its acquired callback'
-[ "$(grep -c '^wait:' "$WORK/fair-flock-calls")" -eq 1 ] || fail 'queued lock repeated acquisition before callback'
+[ "$(grep -c '^wait:30:' "$WORK/fair-flock-calls")" -eq 1 ] || fail 'generic queued lock repeated acquisition before callback'
 [ "$(grep -c '^unlock:' "$WORK/fair-flock-calls")" -eq 1 ] || fail 'queued lock did not unlock after callback failure'
 
 echo '=== systemd BUSY retries retain one queued lock ==='
@@ -413,7 +414,7 @@ fi
 exec {post_stop_fd}>&-
 [ "$post_stop_rc" -eq 0 ] || fail 'systemd BUSY retry retained its lock after returning'
 [ "$(cat "$WORK/fair-retry-count")" -eq 3 ] || fail 'systemd stop did not resume BUSY while holding its lock'
-[ "$(grep -c '^wait:' "$WORK/fair-flock-calls")" -eq 1 ] || fail 'systemd BUSY retry reacquired the queued lock'
+[ "$(grep -c '^wait:75:' "$WORK/fair-flock-calls")" -eq 1 ] || fail 'systemd BUSY retry changed or reacquired the queued lock budget'
 [ "$(grep -c '^unlock:' "$WORK/fair-flock-calls")" -eq 1 ] || fail 'systemd BUSY retry did not release its single lock'
 [ "$(grep -c '^contender:1$' "$WORK/fair-flock-calls")" -eq 3 ] || fail 'systemd BUSY callback ran without exclusive lock ownership'
 ! grep -q '^nonblock:' "$WORK/fair-flock-calls" || fail 'systemd BUSY retry fell back to nonblocking acquisition'

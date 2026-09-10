@@ -18,8 +18,11 @@ UNIT_ROOT = PACKAGE_ROOT / "etc/systemd/system"
 DEBIAN_ROOT = PACKAGE_ROOT / "DEBIAN"
 RUNTIME_JSON = "/run/pim-camera/config/pim_runtime.json"
 RUNTIME_VALIDATOR = "/opt/pim/bin/camera_runtime_config.py"
-STOP_TERM_DEADLINE_SECONDS = 75
+STOP_LOCK_WAIT_SECONDS = 75
+STOP_CLEANUP_RESERVE_SECONDS = 45
+STOP_TERM_DEADLINE_SECONDS = 120
 STOP_KILL_GRACE_SECONDS = 5
+STOP_SERVICE_TIMEOUT_SECONDS = 130
 STOP_EXEC = (
     "/usr/bin/timeout --signal=TERM "
     f"--kill-after={STOP_KILL_GRACE_SECONDS}s {STOP_TERM_DEADLINE_SECONDS}s "
@@ -137,6 +140,10 @@ def stop_budget_errors(sections: Sections) -> List[str]:
         errors.append(
             "[Service] ExecStop= stop budget must finish before TimeoutStopSec"
         )
+    if deadline is not None and deadline - STOP_LOCK_WAIT_SECONDS < STOP_CLEANUP_RESERVE_SECONDS:
+        errors.append(
+            "[Service] ExecStop= stop budget must reserve the cleanup window"
+        )
     if tokens[4:] != ["/opt/pim/bin/cam_operate_stop.sh", "--systemd"]:
         errors.append("[Service] ExecStop= timeout must supervise the systemd stop route")
     return errors
@@ -183,7 +190,7 @@ def cam_operate_errors(text: str) -> List[str]:
         "StateDirectoryMode": "0750",
         "KillMode": "control-group",
         "TimeoutStartSec": "90s",
-        "TimeoutStopSec": "90s",
+        "TimeoutStopSec": f"{STOP_SERVICE_TIMEOUT_SECONDS}s",
         "Restart": "on-failure",
         "RestartSec": "10s",
         "SuccessExitStatus": "143",
@@ -1183,7 +1190,7 @@ RuntimeDirectoryMode=0750
 StateDirectory=pim-camera
 StateDirectoryMode=0750
 KillMode=control-group
-TimeoutStopSec=90s
+TimeoutStopSec=130s
 Restart=on-failure
 RestartSec=10s
 SuccessExitStatus=143
@@ -1283,7 +1290,7 @@ StateDirectory=pim-camera
 StateDirectoryMode=0750
 KillMode=control-group
 TimeoutStartSec=90s
-TimeoutStopSec=90s
+TimeoutStopSec=130s
 Restart=on-failure
 RestartSec=10s
 SuccessExitStatus=143
@@ -1351,7 +1358,7 @@ SuccessExitStatus=143
             "timeout after command": fixture.replace(
                 STOP_EXEC,
                 "/opt/pim/bin/cam_operate_stop.sh --systemd "
-                "/usr/bin/timeout --signal=TERM --kill-after=5s 75s",
+                "/usr/bin/timeout --signal=TERM --kill-after=5s 120s",
                 1,
             ),
             "duplicate": fixture.replace(exec_stop, exec_stop + exec_stop, 1),
@@ -1370,15 +1377,15 @@ SuccessExitStatus=143
 
         budget_mutations = {
             "deadline plus grace equals service timeout": fixture.replace(
-                " 75s /opt/pim/bin/cam_operate_stop.sh",
-                " 85s /opt/pim/bin/cam_operate_stop.sh",
+                " 120s /opt/pim/bin/cam_operate_stop.sh",
+                " 125s /opt/pim/bin/cam_operate_stop.sh",
                 1,
             ),
             "kill grace reaches service timeout": fixture.replace(
-                "--kill-after=5s", "--kill-after=15s", 1
+                "--kill-after=5s", "--kill-after=10s", 1
             ),
             "service timeout equals stop budget": fixture.replace(
-                "TimeoutStopSec=90s", "TimeoutStopSec=80s", 1
+                "TimeoutStopSec=130s", "TimeoutStopSec=125s", 1
             ),
         }
         for label, mutation in budget_mutations.items():
@@ -1386,6 +1393,26 @@ SuccessExitStatus=143
                 errors = cam_operate_errors(mutation)
                 self.assertTrue(
                     any("stop budget must finish" in error for error in errors),
+                    (label, errors),
+                )
+
+        cleanup_mutations = {
+            "cleanup reserve is one second short": fixture.replace(
+                " 120s /opt/pim/bin/cam_operate_stop.sh",
+                " 119s /opt/pim/bin/cam_operate_stop.sh",
+                1,
+            ),
+            "R36 deadline leaves no cleanup reserve": fixture.replace(
+                " 120s /opt/pim/bin/cam_operate_stop.sh",
+                " 75s /opt/pim/bin/cam_operate_stop.sh",
+                1,
+            ),
+        }
+        for label, mutation in cleanup_mutations.items():
+            with self.subTest(mutation=label):
+                errors = cam_operate_errors(mutation)
+                self.assertTrue(
+                    any("reserve the cleanup window" in error for error in errors),
                     (label, errors),
                 )
 
