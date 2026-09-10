@@ -5,11 +5,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import stat
 import sys
 import tempfile
 from dataclasses import asdict, dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Mapping, Sequence
 
@@ -18,6 +20,37 @@ RUNTIME_NAME = "pim_runtime.json"
 ALIAS_NAMES = ("edgeconf_pim.json", "ord_vcm_conf.json")
 _REQUIRED_SECTIONS = ("VHL_CAM", "ORD", "VCM")
 _SECTION_ORDER = ("VHL_CAM", "ORD", "VCM", "ETC", "SCRIPT")
+_CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
+_EDGE_SCHEMA_PATH = _CONFIG_DIR / "edgeconf_pim_base.json"
+_ORD_SCHEMA_PATH = _CONFIG_DIR / "ord_vcm_conf.json"
+_INT32_MAX = (1 << 31) - 1
+_FIELD_RANGES = {
+    ("VHL_CAM", "cam_width"): (1, 16384),
+    ("VHL_CAM", "cam_height"): (1, 16384),
+    ("VHL_CAM", "fps"): (1, 1000),
+    ("VHL_CAM", "recording_time"): (1, 255),
+    ("VHL_CAM", "event_storage_size"): (0, 100),
+    ("VHL_CAM", "capture", "quality"): (0, 100),
+    ("ORD", "port_num"): (1, 65535),
+    ("ORD", "vhl_max"): (1, 4),
+    ("ORD", "disk_limit_per"): (0, 100),
+    ("VCM", "port_num"): (1, 65535),
+}
+_PATH_FIELDS = {
+    ("VHL_CAM", "tmp_path"),
+    ("VHL_CAM", "sd_tmp_path"),
+    ("VHL_CAM", "final_path"),
+    ("VHL_CAM", "capture", "path"),
+}
+_STRING_BYTE_LIMITS = {
+    ("VHL_CAM", "vhl_name"): 63,
+    ("VHL_CAM", "line"): 63,
+    ("VHL_CAM", "floor"): 63,
+    ("VHL_CAM", "tmp_path"): 255,
+    ("VHL_CAM", "muxer"): 31,
+    ("ORD", "ip_static"): 63,
+    ("VCM", "ip_static"): 63,
+}
 
 
 class ConfigError(ValueError):
@@ -52,14 +85,104 @@ def _is_regular_file(path: Path) -> bool:
         return False
 
 
+def _reject_json_constant(constant: str) -> object:
+    raise ConfigError(f"non-finite JSON number is not allowed: {constant}")
+
+
 def _load_object(path: Path) -> dict[str, object]:
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
+        document = json.loads(
+            path.read_text(encoding="utf-8"), parse_constant=_reject_json_constant
+        )
     except (OSError, json.JSONDecodeError) as error:
         raise ConfigError(f"invalid JSON: {path}") from error
     if not isinstance(document, dict):
         raise ConfigError(f"JSON document must be an object: {path}")
     return document
+
+
+def _validate_json_value(value: object, label: str) -> None:
+    if value is None or type(value) in (bool, int, str):
+        return
+    if type(value) is float:
+        if not math.isfinite(value):
+            raise ConfigError(f"{label} must be a finite JSON number")
+        return
+    if type(value) is list:
+        for index, item in enumerate(value):
+            _validate_json_value(item, f"{label}[{index}]")
+        return
+    if type(value) is dict:
+        for key, item in value.items():
+            if type(key) is not str:
+                raise ConfigError(f"{label} contains a non-string key")
+            _validate_json_value(item, f"{label}.{key}")
+        return
+    raise ConfigError(f"{label} contains a non-JSON value")
+
+
+@lru_cache(maxsize=1)
+def _consumed_schema() -> dict[str, object]:
+    edge_document = _load_object(_EDGE_SCHEMA_PATH)
+    ord_document = _load_object(_ORD_SCHEMA_PATH)
+    sections = {
+        "VHL_CAM": edge_document.get("VHL_CAM"),
+        "ORD": ord_document.get("ORD"),
+        "VCM": ord_document.get("VCM"),
+    }
+    for name, section in sections.items():
+        if type(section) is not dict:
+            raise ConfigError(f"packaged schema {name} must be an object")
+    return sections
+
+
+def _validate_integer(value: int, path: tuple[object, ...], label: str) -> None:
+    minimum, maximum = _FIELD_RANGES.get(path, (0, _INT32_MAX))
+    if len(path) >= 2 and path[-2] == "quant":
+        minimum = -1
+    if value < minimum or value > maximum:
+        raise ConfigError(f"{label} must be between {minimum} and {maximum}")
+
+
+def _validate_string(value: str, path: tuple[object, ...], label: str) -> None:
+    if "\x00" in value:
+        raise ConfigError(f"{label} must not contain NUL")
+    byte_limit = _STRING_BYTE_LIMITS.get(path, 4095)
+    if len(value.encode("utf-8")) > byte_limit:
+        raise ConfigError(f"{label} exceeds {byte_limit} UTF-8 bytes")
+    if path in _PATH_FIELDS and not value.startswith("/"):
+        raise ConfigError(f"{label} must be an absolute path")
+
+
+def _validate_consumed_value(
+    value: object, template: object, path: tuple[object, ...], label: str
+) -> None:
+    if type(template) is dict:
+        if type(value) is not dict:
+            raise ConfigError(f"{label} must be an object")
+        for key, child_template in template.items():
+            if key not in value:
+                raise ConfigError(f"{label}.{key} is required")
+            _validate_consumed_value(
+                value[key], child_template, path + (key,), f"{label}.{key}"
+            )
+        return
+    if type(template) is list:
+        if type(value) is not list:
+            raise ConfigError(f"{label} must be an array")
+        if len(value) != len(template):
+            raise ConfigError(f"{label} must contain exactly {len(template)} items")
+        for index, (item, child_template) in enumerate(zip(value, template)):
+            _validate_consumed_value(
+                item, child_template, path + (index,), f"{label}[{index}]"
+            )
+        return
+    if type(value) is not type(template):
+        raise ConfigError(f"{label} must be {type(template).__name__}")
+    if type(value) is int:
+        _validate_integer(value, path, label)
+    elif type(value) is str:
+        _validate_string(value, path, label)
 
 
 def select_latest_edgeconf(source_root: Path) -> SourceRecord:
@@ -77,9 +200,12 @@ def select_latest_edgeconf(source_root: Path) -> SourceRecord:
 def validate_runtime(document: object) -> dict[str, object]:
     if not isinstance(document, dict):
         raise ConfigError("runtime document must be an object")
+    _validate_json_value(document, "runtime")
     for name in _REQUIRED_SECTIONS:
         if not isinstance(document.get(name), dict):
             raise ConfigError(f"runtime {name} must be an object")
+    for name, template in _consumed_schema().items():
+        _validate_consumed_value(document[name], template, (name,), f"runtime.{name}")
     return document
 
 
@@ -197,7 +323,13 @@ def write_json_atomic(path: Path, document: object) -> Path:
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as output:
             os.fchmod(output.fileno(), 0o640)
-            json.dump(document, output, sort_keys=True, separators=(",", ":"))
+            json.dump(
+                document,
+                output,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
             output.write("\n")
             output.flush()
             os.fsync(output.fileno())

@@ -18,6 +18,8 @@ export PIM_CAMERA_RUNTIME_HELPER="$WORK/runtime-helper.py"
 export PIM_CAMERA_CONTROL_WORK_DIR="$PIM_CAMERA_RUN_DIR/control"
 export PIM_CAMERA_CALL_LOG="$WORK/calls"
 export PIM_CAMERA_HELPER_LOG="$WORK/helper-calls"
+EDGE_TEMPLATE="$ROOT/dist/pim/opt/pim/config/edgeconf_pim_base.json"
+ORD_TEMPLATE="$ROOT/dist/pim/opt/pim/config/ord_vcm_conf.json"
 DAEMON_PID=4242
 
 cat > "$PIM_CAMERA_RUNTIME_HELPER" <<'PY'
@@ -51,12 +53,19 @@ fake_stat() {
 write_source() {
     local marker=${1:-source} width=${2:-640} ord=${3:-one} vcm=${4:-one} policy=${5:-one}
     mkdir -p "$PIM_CAMERA_SOURCE_ROOT"
-    cat > "$PIM_CAMERA_SOURCE_ROOT/edgeconf_${marker}.json" <<JSON
-{"VHL_CAM":{"app":"gstApp","cam_width":$width,"cam_height":360,"fps":30,"capture":{"enable":false},"i2c2":{"ch0":{"enable":true},"ch1":{"enable":true}},"i2c1":{"ch2":{"enable":true},"ch3":{"enable":true}},"label":"$marker"}}
-JSON
-    cat > "$PIM_CAMERA_SOURCE_ROOT/ord_vcm_conf.json" <<JSON
-{"ORD":{"value":"$ord"},"VCM":{"value":"$vcm"},"ETC":{"policy":"$policy"},"EXTRA":{"kept":true}}
-JSON
+    jq --arg marker "$marker" --argjson width "$width" '
+        .VHL_CAM.cam_width=$width |
+        .VHL_CAM.cam_height=360 |
+        .VHL_CAM.fps=30 |
+        .VHL_CAM.label=$marker |
+        {VHL_CAM:.VHL_CAM}
+    ' "$EDGE_TEMPLATE" > "$PIM_CAMERA_SOURCE_ROOT/edgeconf_${marker}.json"
+    jq --arg ord "$ord" --arg vcm "$vcm" --arg policy "$policy" '
+        .ORD.value=$ord |
+        .VCM.value=$vcm |
+        .ETC.policy=$policy |
+        .EXTRA={kept:true}
+    ' "$ORD_TEMPLATE" > "$PIM_CAMERA_SOURCE_ROOT/ord_vcm_conf.json"
 }
 publish_source_for_setup() {
     local candidate="$WORK/setup-candidate.json" result="$WORK/setup-result.json"
@@ -518,6 +527,26 @@ write_source hardware-only 800 one one one
 submit_apply hardware-only
 [ "$(count_log action:camera_hard_reset)" -eq 1 ] || fail "hardware-only apply did not hard reset once"
 reject_log action:policy_reload
+
+echo "=== policy-only failure retries on identical apply ==="
+reset_case boot-a
+write_source policy-only 640 one one one
+cam_daemon_startup "$DAEMON_PID"
+write_source policy-only 640 one one two
+: > "$PIM_CAMERA_CALL_LOG"
+FAIL_ACTION=policy_reload expect_rc 1 submit_apply policy-only-failure
+jq -e '.lifecycle=="DEGRADED"' "$PIM_CAMERA_RUN_DIR/owner.json" >/dev/null || fail "policy-only failure owner lifecycle"
+jq -e '.dirty==false and .degraded_reason=="policy-only-failure" and .degraded_target=="policy"' "$PIM_CAMERA_STATE_DIR/service-state.json" >/dev/null || fail "policy-only failure degraded state"
+[ "$(count_log action:policy_reload)" -eq 1 ] || fail "policy-only failure action count"
+reject_log verify:camera
+
+: > "$PIM_CAMERA_CALL_LOG"
+unset FAIL_ACTION
+submit_apply policy-only-retry
+expected=$'action:policy_reload\nverify:camera\nverify:processes:1'
+[ "$(cat "$PIM_CAMERA_CALL_LOG")" = "$expected" ] || { cat "$PIM_CAMERA_CALL_LOG" >&2; fail "policy-only no-change retry"; }
+jq -e '.lifecycle=="ACTIVE"' "$PIM_CAMERA_RUN_DIR/owner.json" >/dev/null || fail "policy-only retry owner lifecycle"
+jq -e '.dirty==false and .degraded_reason==null and .degraded_target==null' "$PIM_CAMERA_STATE_DIR/service-state.json" >/dev/null || fail "policy-only retry did not clear degradation after success"
 
 reset_case boot-a
 write_source policy-fail-base 640 one one one

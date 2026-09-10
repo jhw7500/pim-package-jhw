@@ -22,13 +22,24 @@ export PIM_CAMERA_CALL_LOG="$WORK/calls"
 export PIM_CAMERA_START_CAM="$WORK/start-cam"
 export PIM_CAMERA_SHM_DIR="$WORK/shm"
 export PIM_CAMERA_PROCESS_ROOT="$WORK/processes"
+EDGE_TEMPLATE="$ROOT/dist/pim/opt/pim/config/edgeconf_pim_base.json"
+ORD_TEMPLATE="$ROOT/dist/pim/opt/pim/config/ord_vcm_conf.json"
 DAEMON_PID=4242
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 expect() { "$@" || fail "command failed: $*"; }
 expect_rc() { local wanted=$1; shift; set +e; "$@"; local got=$?; set -e; [ "$got" = "$wanted" ] || fail "expected rc=$wanted got=$got: $*"; }
 fake_stat() { mkdir -p "$PIM_CAMERA_PROC_ROOT/$DAEMON_PID"; { printf '%s' "$DAEMON_PID (cam-operate) S"; for _ in $(seq 1 18); do printf ' 0'; done; printf ' 111 0 0\n'; } > "$PIM_CAMERA_PROC_ROOT/$DAEMON_PID/stat"; }
-runtime() { mkdir -p "$(dirname "$PIM_CAMERA_RUNTIME_JSON")"; printf '%s\n' '{"VHL_CAM":{"app":"gstApp","capture":{"enable":false},"tmp_path":"'"$WORK"'/recordings","vhl_name":"VD3001"},"ORD":{},"VCM":{}}' > "$PIM_CAMERA_RUNTIME_JSON"; mkdir -p "$WORK/recordings"; printf '%s\n' '20260901 12:34:56' > "$WORK/start-time"; export PIM_CAMERA_SESSION_TIME_FILE="$WORK/start-time"; }
+runtime() {
+    mkdir -p "$(dirname "$PIM_CAMERA_RUNTIME_JSON")" "$WORK/recordings"
+    jq -s --arg tmp "$WORK/recordings" '
+        .[1] + {VHL_CAM:.[0].VHL_CAM} |
+        .VHL_CAM.tmp_path=$tmp |
+        .VHL_CAM.capture.enable=false
+    ' "$EDGE_TEMPLATE" "$ORD_TEMPLATE" > "$PIM_CAMERA_RUNTIME_JSON"
+    printf '%s\n' '20260901 12:34:56' > "$WORK/start-time"
+    export PIM_CAMERA_SESSION_TIME_FILE="$WORK/start-time"
+}
 owner_active() { rm -f "$PIM_CAMERA_RUN_DIR/owner.json"; cam_owner_create "$DAEMON_PID"; cam_owner_set_lifecycle ACTIVE; }
 prepare_sysfs() {
     local d
@@ -80,12 +91,12 @@ grep -q '^start_cam$' "$PIM_CAMERA_CALL_LOG" || fail "gstapp restart did not use
 
 echo "=== degraded camera-health apply uses one real full quiesce ==="
 mkdir -p "$PIM_CAMERA_SOURCE_ROOT"
-cat > "$PIM_CAMERA_SOURCE_ROOT/edgeconf_apply.json" <<JSON
-{"VHL_CAM":{"app":"gstApp","capture":{"enable":false},"tmp_path":"$WORK/recordings","vhl_name":"VD3001"}}
-JSON
-cat > "$PIM_CAMERA_SOURCE_ROOT/ord_vcm_conf.json" <<'JSON'
-{"ORD":{},"VCM":{},"ETC":{"policy":"same"}}
-JSON
+jq --arg tmp "$WORK/recordings" '
+    .VHL_CAM.tmp_path=$tmp |
+    .VHL_CAM.capture.enable=false |
+    {VHL_CAM:.VHL_CAM}
+' "$EDGE_TEMPLATE" > "$PIM_CAMERA_SOURCE_ROOT/edgeconf_apply.json"
+jq '.ETC.policy="same"' "$ORD_TEMPLATE" > "$PIM_CAMERA_SOURCE_ROOT/ord_vcm_conf.json"
 python3 "$PIM_CAMERA_RUNTIME_HELPER" stage --source-root "$PIM_CAMERA_SOURCE_ROOT" --candidate "$WORK/candidate.json" --result "$WORK/source.json" >/dev/null
 python3 "$PIM_CAMERA_RUNTIME_HELPER" publish --candidate "$WORK/candidate.json" --runtime-dir "$(dirname "$PIM_CAMERA_RUNTIME_JSON")" >/dev/null
 python3 "$PIM_CAMERA_RUNTIME_HELPER" projection --file "$PIM_CAMERA_RUNTIME_JSON" --output "$WORK/projection.json" >/dev/null
@@ -188,7 +199,12 @@ fi
 # Review regressions: cleanup must be session-scoped and never delete unrelated
 # markers; BG identity must use full-command matching; child auto-bind is skipped.
 mkdir -p "$WORK/recordings"
-printf '%s\n' '{"VHL_CAM":{"app":"gstApp","capture":{"enable":false},"tmp_path":"'"$WORK"'/recordings","vhl_name":"VD3001"},"ORD":{},"VCM":{}}' > "$PIM_CAMERA_RUNTIME_JSON"
+jq -s --arg tmp "$WORK/recordings" '
+    .[1] + {VHL_CAM:.[0].VHL_CAM} |
+    .VHL_CAM.tmp_path=$tmp |
+    .VHL_CAM.capture.enable=false |
+    .VHL_CAM.vhl_name="VD3001"
+' "$EDGE_TEMPLATE" "$ORD_TEMPLATE" > "$PIM_CAMERA_RUNTIME_JSON"
 printf '%s\n' '20260901 12:34:56' > "$WORK/start-time"
 touch "$WORK/recordings/VD3001_20260901_1234-ch0.mp4" "$WORK/recordings/VD3001_20260901_1235-ch0.mp4" "$WORK/recordings/other_20260901_1234.mp4"
 touch "$WORK/session_keep.video_done" "$WORK/session_keep.srt_done"
@@ -202,7 +218,11 @@ PIM_CAMERA_SESSION_TIME_FILE="$WORK/start-time" cam_cleanup_recording_orphans "$
 [ -e "$WORK/recordings/VD3001_20260901_1235-ch0.mp4" ] || fail "malformed marker deleted a recording"
 printf '%s\n' '20260901 12:34:56' > "$WORK/start-time"
 ln -s "$WORK/recordings" "$WORK/linked-recordings"
-printf '%s\n' '{"VHL_CAM":{"tmp_path":"'"$WORK"'/linked-recordings","vhl_name":"VD3001"},"ORD":{},"VCM":{}}' > "$PIM_CAMERA_RUNTIME_JSON"
+jq -s --arg tmp "$WORK/linked-recordings" '
+    .[1] + {VHL_CAM:.[0].VHL_CAM} |
+    .VHL_CAM.tmp_path=$tmp |
+    .VHL_CAM.vhl_name="VD3001"
+' "$EDGE_TEMPLATE" "$ORD_TEMPLATE" > "$PIM_CAMERA_RUNTIME_JSON"
 expect_rc 64 env PIM_CAMERA_SESSION_TIME_FILE="$WORK/start-time" bash -c 'source "$PIM_LIB/cam_recovery_actions.sh"; cam_cleanup_recording_orphans "$PIM_CAMERA_RUNTIME_JSON"'
 
 echo "recovery actions: PASS"

@@ -18,6 +18,8 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 MODULE_PATH = ROOT / "dist/pim/opt/pim/bin/camera_runtime_config.py"
+EDGE_TEMPLATE_PATH = ROOT / "dist/pim/opt/pim/config/edgeconf_pim_base.json"
+ORD_TEMPLATE_PATH = ROOT / "dist/pim/opt/pim/config/ord_vcm_conf.json"
 
 spec = importlib.util.spec_from_file_location("camera_runtime_config", MODULE_PATH)
 if spec is None or spec.loader is None:
@@ -28,26 +30,21 @@ spec.loader.exec_module(runtime)
 
 
 def edge(name: str, width: int = 1920) -> dict[str, object]:
-    return {
-        "VHL_CAM": {
-            "vhl_name": name,
-            "cam_width": width,
-            "cam_height": 1080,
-            "fps": 30,
-            "i2c2": {"ch0": {"enable": True}, "ch1": {"enable": True}},
-            "i2c1": {"ch2": {"enable": True}, "ch3": {"enable": True}},
-        }
-    }
+    document = json.loads(EDGE_TEMPLATE_PATH.read_text(encoding="utf-8"))
+    vhl = document["VHL_CAM"]
+    vhl["vhl_name"] = name
+    vhl["cam_width"] = width
+    vhl["cam_height"] = 1080
+    vhl["fps"] = 30
+    return {"VHL_CAM": vhl}
 
 
 def ord_document() -> dict[str, object]:
-    return {
-        "ORD": {"port_num": 10007},
-        "VCM": {"port_num": 10009, "srt_enable": True},
-        "ETC": {"camera_startup_grace_sec": 40},
-        "SITE_NOTE": {"keep": True},
-        "VHL_CAM": {"vhl_name": "must-be-overridden"},
-    }
+    document = json.loads(ORD_TEMPLATE_PATH.read_text(encoding="utf-8"))
+    document["ETC"]["camera_startup_grace_sec"] = 40
+    document["SITE_NOTE"] = {"keep": True}
+    document["VHL_CAM"] = {"vhl_name": "must-be-overridden"}
+    return document
 
 
 class RuntimeConfigTests(unittest.TestCase):
@@ -79,6 +76,18 @@ class RuntimeConfigTests(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit):
                 runtime.main(arguments)
+
+    def assert_publish_rejected_without_change(self, document: object) -> None:
+        active = self.candidate().document
+        candidate_path = self.root / "candidate.json"
+        runtime.write_json_atomic(candidate_path, active)
+        runtime_dir = self.root / "runtime"
+        published = runtime.atomic_publish(candidate_path, runtime_dir)
+        active_bytes = published.read_bytes()
+        self.write_json(candidate_path, document)
+        with self.assertRaises(runtime.ConfigError):
+            runtime.atomic_publish(candidate_path, runtime_dir)
+        self.assertEqual(active_bytes, published.read_bytes())
 
     def test_selects_newest_regular_file_by_nanosecond_mtime(self) -> None:
         older = self.write_edge("edgeconf_old.json", mtime_ns=100)
@@ -132,8 +141,56 @@ class RuntimeConfigTests(unittest.TestCase):
         candidate = runtime.merge_source_documents(self.source)
         self.assertEqual("edgeconf_current.json", candidate.document["VHL_CAM"]["vhl_name"])
         self.assertEqual({"keep": True}, candidate.document["SITE_NOTE"])
-        self.assertEqual({"port_num": 10007}, candidate.document["ORD"])
+        self.assertEqual(10007, candidate.document["ORD"]["port_num"])
+        self.assertFalse(candidate.document["ORD"]["vib_enable"])
         self.assertEqual(self.ord, candidate.ord_path)
+
+    def test_native_boolean_fields_reject_integers_without_replacing_runtime(self) -> None:
+        document = self.candidate().document
+        document["VHL_CAM"]["i2c2"]["ch0"]["enable"] = 1
+        self.assert_publish_rejected_without_change(document)
+
+    def test_native_arrays_reject_oversize_and_wrong_element_types(self) -> None:
+        oversized = self.candidate().document
+        oversized["VHL_CAM"]["i2c2"]["ch0"]["bps"] = [2048, 2048, 2048]
+        self.assert_publish_rejected_without_change(oversized)
+
+        wrong_element = self.candidate().document
+        wrong_element["VHL_CAM"]["i2c2"]["ch0"]["bps"] = [2048, True]
+        self.assert_publish_rejected_without_change(wrong_element)
+
+    def test_missing_native_nested_objects_and_fields_do_not_replace_runtime(self) -> None:
+        missing_i2c = self.candidate().document
+        del missing_i2c["VHL_CAM"]["i2c2"]
+        self.assert_publish_rejected_without_change(missing_i2c)
+
+        missing_channel = self.candidate().document
+        del missing_channel["VHL_CAM"]["i2c1"]["ch3"]
+        self.assert_publish_rejected_without_change(missing_channel)
+
+        missing_field = self.candidate().document
+        del missing_field["VHL_CAM"]["i2c2"]["ch0"]["hflip"]
+        self.assert_publish_rejected_without_change(missing_field)
+
+    def test_non_finite_numbers_do_not_replace_runtime(self) -> None:
+        for label, value in (("nan", float("nan")), ("infinity", float("inf")), ("negative infinity", -float("inf"))):
+            with self.subTest(label=label):
+                document = self.candidate().document
+                document["SITE_NOTE"]["number"] = value
+                self.assert_publish_rejected_without_change(document)
+
+    def test_invalid_ranges_and_paths_do_not_replace_runtime(self) -> None:
+        zero_width = self.candidate().document
+        zero_width["VHL_CAM"]["cam_width"] = 0
+        self.assert_publish_rejected_without_change(zero_width)
+
+        invalid_port = self.candidate().document
+        invalid_port["ORD"]["port_num"] = 65536
+        self.assert_publish_rejected_without_change(invalid_port)
+
+        relative_path = self.candidate().document
+        relative_path["VHL_CAM"]["tmp_path"] = "relative/path"
+        self.assert_publish_rejected_without_change(relative_path)
 
     def test_stage_result_contains_only_source_path_and_mtime(self) -> None:
         selected = self.write_edge("edgeconf_current.json", mtime_ns=100)
@@ -282,16 +339,6 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertFalse(plan.semantic_change)
         self.assertFalse(plan.hardware_change)
         self.assertEqual([], list(plan.steps))
-
-    def test_json_boolean_and_number_are_distinct_semantic_hardware_values(self) -> None:
-        current = self.candidate().document
-        changed = json.loads(json.dumps(current))
-        changed["VHL_CAM"]["i2c2"]["ch0"]["enable"] = 1
-        plan = runtime.classify_change(current, changed)
-        self.assertTrue(plan.semantic_change)
-        self.assertTrue(plan.hardware_change)
-        self.assertEqual(["VHL_CAM"], list(plan.changed_sections))
-        self.assertEqual(["camera_hard_reset"], list(plan.steps))
 
     def test_hardware_projection_contains_only_centralized_hardware_fields(self) -> None:
         document = self.candidate().document

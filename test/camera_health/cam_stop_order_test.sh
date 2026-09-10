@@ -19,6 +19,8 @@ export PIM_CAMERA_STOP_WAIT_SEC=0
 export PIM_CAMERA_QUIESCE_TIMEOUT_SEC=0
 export PIM_CAMERA_SYSTEMCTL=systemctl
 export PIM_CAMERA_KILL="$WORK/stub/daemon-kill"
+EDGE_TEMPLATE="$ROOT/dist/pim/opt/pim/config/edgeconf_pim_base.json"
+ORD_TEMPLATE="$ROOT/dist/pim/opt/pim/config/ord_vcm_conf.json"
 DAEMON_PID=4242
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -32,7 +34,10 @@ fake_stat() {
 }
 write_runtime() {
     mkdir -p "$(dirname "$PIM_CAMERA_RUNTIME_JSON")"
-    printf '%s\n' '{"VHL_CAM":{"app":"gstApp","capture":{"enable":false}},"ORD":{},"VCM":{}}' > "$PIM_CAMERA_RUNTIME_JSON"
+    jq -s '
+        .[1] + {VHL_CAM:.[0].VHL_CAM} |
+        .VHL_CAM.capture.enable=false
+    ' "$EDGE_TEMPLATE" "$ORD_TEMPLATE" > "$PIM_CAMERA_RUNTIME_JSON"
 }
 export_owner_context() {
     local owner

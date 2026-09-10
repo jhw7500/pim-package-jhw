@@ -293,6 +293,7 @@ _coc_effective_steps() {
         ord) printf 'ord_restart\n' ;;
         vcm) printf 'vcm_restart\n' ;;
         gstapp|gstApp|process) printf 'gstapp_restart\n' ;;
+        policy) printf 'policy_reload\n' ;;
         camera|camera_health|health) printf 'module_reload\n' ;;
     esac
 }
