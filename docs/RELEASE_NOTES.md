@@ -1,6 +1,15 @@
 # PIM Package Release Notes
 
-## Unreleased (2026-09-09)
+## Unreleased (2026-09-10)
+
+### #89 ORD single-owner startup contract
+
+- Every package-managed ORD start, restart, stop, and readiness decision now uses
+  `ord-operate.service`; the generic recovery launcher rejects direct ORD starts.
+- ORD initialization failures exit non-zero before teardown, so systemd and
+  recovery callers can observe failure instead of a successful exit.
+- TCP bind failures report the bind address, port, and preserved errno number and
+  description. Regression coverage includes a real loopback port collision.
 
 ### camera7 serialized recovery package integration
 

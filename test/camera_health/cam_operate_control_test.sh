@@ -153,6 +153,7 @@ cam_execute_action_step() {
 cam_quiesce_gstapp() { cam_executor_assert_context || return $?; printf 'quiesce:gstapp\n' >> "$PIM_CAMERA_CALL_LOG"; }
 cam_quiesce_consumers() { cam_executor_assert_context || return $?; printf 'quiesce:consumers\n' >> "$PIM_CAMERA_CALL_LOG"; }
 cam_stop_process() { cam_executor_assert_context || return $?; printf 'quiesce:%s\n' "$2" >> "$PIM_CAMERA_CALL_LOG"; }
+cam_stop_ord() { cam_executor_assert_context || return $?; printf 'quiesce:ord\n' >> "$PIM_CAMERA_CALL_LOG"; }
 cam_restart_ord() { printf 'start:ord\n' >> "$PIM_CAMERA_CALL_LOG"; [ "${FAIL_ACTION:-}" != ord_restart ]; }
 cam_restart_vcm() { printf 'start:vcm\n' >> "$PIM_CAMERA_CALL_LOG"; [ "${FAIL_ACTION:-}" != vcm_restart ]; }
 cam_start_gstapp() { printf 'start:gstapp\n' >> "$PIM_CAMERA_CALL_LOG"; }

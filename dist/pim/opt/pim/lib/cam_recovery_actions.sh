@@ -7,6 +7,7 @@ PIM_CAMERA_RUNTIME_VALIDATOR="${PIM_CAMERA_RUNTIME_VALIDATOR:-$PIM_BIN/camera_ru
 PIM_CAMERA_SYSFS_ROOT="${PIM_CAMERA_SYSFS_ROOT:-/sys}"
 PIM_CAMERA_DEVICE_ROOT="${PIM_CAMERA_DEVICE_ROOT:-/dev}"
 PIM_CAMERA_START_CAM="${PIM_CAMERA_START_CAM:-$PIM_BIN/start_cam.sh}"
+PIM_CAMERA_SYSTEMCTL="${PIM_CAMERA_SYSTEMCTL:-systemctl}"
 
 if ! declare -F cam_owner_assert >/dev/null 2>&1; then
     source "$PIM_LIB/cam_recovery.sh"
@@ -162,6 +163,15 @@ cam_process_present() {
         *) return 64 ;;
     esac
 }
+
+cam_ord_service_status() {
+    local status rc
+    if status=$("$PIM_CAMERA_SYSTEMCTL" is-active ord-operate.service 2>/dev/null); then rc=0; else rc=$?; fi
+    [ "$rc" -eq 0 ] && [ "$status" = active ] && return 0
+    case "$status" in inactive|failed) return 1;; esac
+    return 2
+}
+
 cam_signal_process() {
     local runtime=$1 signal=$2 kind=$3 app bg records=${4:-}
     case "$kind" in
@@ -230,7 +240,7 @@ cam_quiesce_gstapp() {
 cam_quiesce_consumers() {
     local runtime=$1 kind rc
     cam_quiesce_gstapp "$runtime" || return $?
-    cam_stop_process "$runtime" ord || return $?
+    cam_stop_ord "$runtime" || return $?
     cam_stop_process "$runtime" vcm || return $?
     for kind in app bg ord vcm; do
         rc=0; cam_process_present "$runtime" "$kind" || rc=$?
@@ -265,6 +275,7 @@ cam_start_gstapp() {
 
 cam_launch_consumer() {
     local runtime=$1 name=$2 path
+    [ "$name" = vcm ] || return 64
     path=$(command -v "$name") || return 127
     (
         _cr_test_owner_rollover "launch_$name" || exit $?
@@ -272,7 +283,21 @@ cam_launch_consumer() {
         exec "$path"
     ) &
 }
-cam_restart_ord() { cam_launch_consumer "$1" ord; }
+cam_restart_ord() {
+    local runtime=$1
+    _cr_test_owner_rollover launch_ord || return 69
+    cam_effect "$runtime" "$PIM_CAMERA_SYSTEMCTL" restart ord-operate.service
+}
+cam_stop_ord() {
+    local runtime=$1 rc=0
+    cam_effect "$runtime" "$PIM_CAMERA_SYSTEMCTL" stop ord-operate.service || return $?
+    cam_process_present "$runtime" ord || rc=$?
+    case "$rc" in
+        0) return 1 ;;
+        1) return 0 ;;
+        *) return "$rc" ;;
+    esac
+}
 cam_restart_vcm() { cam_launch_consumer "$1" vcm; }
 
 cam_verify_camera_ready() {
@@ -289,10 +314,10 @@ cam_verify_process_ready() {
         [ "$rc" -eq 0 ] || return "$rc"
     done
     [ "$consumers" = 0 ] && return 0
-    for kind in ord vcm; do
-        rc=0; cam_process_present "$runtime" "$kind" || rc=$?
-        [ "$rc" -eq 0 ] || return "$rc"
-    done
+    rc=0; cam_ord_service_status || rc=$?
+    [ "$rc" -eq 0 ] || return "$rc"
+    rc=0; cam_process_present "$runtime" vcm || rc=$?
+    [ "$rc" -eq 0 ] || return "$rc"
 }
 
 cam_wait_process_ready() {

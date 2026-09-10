@@ -1,5 +1,15 @@
 # PIM Package Changelog
 
+## 최신 변경사항 (2026-09-10) — #89 ORD 단일 systemd 소유권
+
+- recovery, apply-config, startup, liveness의 ORD 재시작 경로를 모두
+  `ord-operate.service`로 통일하고, 공용 consumer launcher의 직접 `ord` 실행을
+  거부하도록 했다. 중지와 readiness 판정도 systemd unit 상태를 기준으로 삼는다.
+- ORD 초기화 실패는 `main()`에서 즉시 non-zero로 반환한다. TCP bind 충돌 로그에는
+  bind 주소, 포트, 보존된 `errno` 번호와 설명을 함께 남긴다.
+- 직접 실행 차단, unit 기반 stop/restart/readiness, init 실패 종료 코드, 실제 loopback
+  포트 충돌 진단을 회귀 테스트로 고정했다.
+
 ## 최신 변경사항 (2026-09-09) — camera7 / cam-operate 직렬 recovery lifecycle
 
 - 전달 패키지를 `pim-mp 0.6.3+jhw.camera7`로 올리고 runtime/recovery engine을

@@ -1,5 +1,6 @@
 
 #include "tcpServer.h"
+#include "socket_diagnostics.h"
 
 static void ord_set_machine_id(const TVhlConf *conf, uint8_t out_machine_id[6])
 {
@@ -1282,6 +1283,7 @@ int CTCPServer::init()
 	int ret ;
 	int option = 1 ;
 	char str[STR_LEN];
+	char bind_error[STR_LEN];
 	FILE *fp;
 
 	m_flagDestroy = 0 ;
@@ -1358,9 +1360,9 @@ int CTCPServer::init()
 
 	setsockopt(m_serverSocket, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option)) ;
 
-	ret = bind(m_serverSocket, (struct sockaddr*)&serverAddr, sizeof(sockaddr_in));
+	ret = ord_bind_socket(m_serverSocket, &serverAddr, bind_error, sizeof(bind_error));
 	if(ret < 0 ) {
-		__LOG(LOG_CRIT, "[TCP][%s:%d] Server bind failed", _FILE_, __LINE__) ;
+		__LOG(LOG_CRIT, "[TCP][%s:%d] %s", _FILE_, __LINE__, bind_error) ;
 		//m_flagDestroy = 1;
 		return ret;
 	}

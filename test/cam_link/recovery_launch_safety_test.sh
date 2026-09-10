@@ -20,6 +20,7 @@ export PIM_CAMERA_CALL_LOG="$W/calls"
 export PIM_CAMERA_PROBE_LOG="$W/probes"
 export PIM_CAMERA_PRESENT_FILE="$W/present"
 export PIM_CAMERA_BG_CHECKER="$W/stub/BG_Check_for_pim.sh"
+export PIM_CAMERA_SYSTEMCTL=systemctl
 export PATH="$W/stub:$PATH"
 EDGE_TEMPLATE="$ROOT/dist/pim/opt/pim/config/edgeconf_pim_base.json"
 ORD_TEMPLATE="$ROOT/dist/pim/opt/pim/config/ord_vcm_conf.json"
@@ -115,6 +116,7 @@ printf '#!/bin/sh\nlast=\nfor arg; do last=$arg; done\nprintf "pgrep %%s\\n" "$l
 printf '#!/bin/sh\nprintf "rmmod %%s\\n" "$*" >> "$PIM_CAMERA_CALL_LOG"\n' > "$W/stub/rmmod"
 printf '#!/bin/sh\nprintf "modprobe %%s\\n" "$*" >> "$PIM_CAMERA_CALL_LOG"\n' > "$W/stub/modprobe"
 printf '#!/bin/sh\nprintf "%%s\\n" "${LSMOD_ROWS:-}"\nexit "${LSMOD_RC:-0}"\n' > "$W/stub/lsmod"
+printf '#!/bin/sh\nprintf "target systemctl %%s\\n" "$*" >> "$PIM_CAMERA_CALL_LOG"\ncase "$1" in is-active) printf "active\\n"; exit 0;; stop|restart) exit 0;; *) exit 64;; esac\n' > "$W/stub/systemctl"
 chmod +x "$W/stub"/*
 
 source "$PIM_LIB/cam_recovery.sh"
@@ -124,8 +126,9 @@ source "$PIM_LIB/cam_recovery_actions.sh"
 _cr_fsync_file() { :; }
 _cr_fsync_dir() { :; }
 
-# Missing consumer binaries are rejected before a background child exists.
-PATH="$W/no-binaries" expect_rc 127 cam_launch_consumer "$PIM_CAMERA_RUNTIME_JSON" ord
+# ORD is not a valid direct-launch target; missing VCM binaries are rejected
+# before a background child exists.
+expect_rc 64 cam_launch_consumer "$PIM_CAMERA_RUNTIME_JSON" ord
 PATH="$W/no-binaries" expect_rc 127 cam_launch_consumer "$PIM_CAMERA_RUNTIME_JSON" vcm
 
 # The actual internal launcher propagates app and BG inspection errors before
@@ -166,15 +169,13 @@ PIM_CAMERA_TEST_OWNER_ROLLOVER=launch_bg run_start_cam_and_wait
 assert_no_target_execs launch_bg
 expect_rc 69 cam_executor_assert_context
 
-for consumer in ord vcm; do
-    prepare_context
-    : > "$PIM_CAMERA_CALL_LOG"
-    PIM_CAMERA_TEST_OWNER_ROLLOVER="launch_$consumer" cam_launch_consumer "$PIM_CAMERA_RUNTIME_JSON" "$consumer"
-    child=$!
-    expect_rc 69 wait "$child"
-    assert_no_target_execs "launch_$consumer"
-    expect_rc 69 cam_executor_assert_context
-done
+prepare_context
+: > "$PIM_CAMERA_CALL_LOG"
+PIM_CAMERA_TEST_OWNER_ROLLOVER=launch_vcm cam_launch_consumer "$PIM_CAMERA_RUNTIME_JSON" vcm
+child=$!
+expect_rc 69 wait "$child"
+assert_no_target_execs launch_vcm
+expect_rc 69 cam_executor_assert_context
 unset PIM_CAMERA_TEST_OWNER_ROLLOVER
 
 # Keep the real authorization guard: the final launch rollover left a stale
@@ -193,8 +194,8 @@ PROBE_MODE=all
 PROBE_TARGET=
 PROBE_TARGET_COUNT=0
 SLEEP_COUNT=0
-cam_process_present() {
-    local kind=$2
+probe_status() {
+    local kind=$1
     printf '%s\n' "$kind" >> "$PIM_CAMERA_PROBE_LOG"
     case "$PROBE_MODE:$kind" in
         error:"$PROBE_TARGET") return 7 ;;
@@ -211,6 +212,8 @@ cam_process_present() {
     esac
     return 0
 }
+cam_process_present() { probe_status "$2"; }
+cam_ord_service_status() { probe_status ord; }
 sleep() { SLEEP_COUNT=$((SLEEP_COUNT + 1)); }
 
 for target in app bg ord vcm; do
@@ -314,6 +317,10 @@ source "$PIM_LIB/cam_recovery_actions.sh"
 STOPPED_ALL=0
 STOP_LOG="$W/stops"
 : > "$STOP_LOG"
+cam_stop_ord() {
+    printf 'ord\n' >> "$STOP_LOG"
+    return 0
+}
 cam_stop_process() {
     printf '%s\n' "$2" >> "$STOP_LOG"
     [ "$2" != vcm ] || STOPPED_ALL=1

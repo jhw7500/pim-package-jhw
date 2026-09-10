@@ -20,7 +20,8 @@ int main()
 	//__E(LOG_LEVEL_EMG, "Init Version : %s\n", SW_VERSION);
 	__LOG(LOG_NOTICE, "[CFG][%s:%d] version : %s", _FILE_, __LINE__, SW_VERSION);
 
-	if(server->init() < 0) server->m_flagDestroy = 1;
+	if(server->init() < 0)
+		return 1;
 
 	//setlogmask (LOG_UPTO (LOG_INFO));
 	//openlog("slog", LOG_PID|LOG_CONS, LOG_USER);
@@ -73,5 +74,4 @@ int main()
 
 	return 1 ;
 }
-
 

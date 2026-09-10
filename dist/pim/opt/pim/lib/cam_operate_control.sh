@@ -307,7 +307,7 @@ _coc_quiesce_steps() {
         cam_quiesce_consumers "$PIM_CAMERA_RUNTIME_JSON"; return $?
     fi
     if grep -qx gstapp_restart <<<"$steps"; then cam_quiesce_gstapp "$PIM_CAMERA_RUNTIME_JSON" || return $?; fi
-    if grep -qx ord_restart <<<"$steps"; then cam_stop_process "$PIM_CAMERA_RUNTIME_JSON" ord || return $?; fi
+    if grep -qx ord_restart <<<"$steps"; then cam_stop_ord "$PIM_CAMERA_RUNTIME_JSON" || return $?; fi
     if grep -qx vcm_restart <<<"$steps"; then cam_stop_process "$PIM_CAMERA_RUNTIME_JSON" vcm || return $?; fi
     return 0
 }
