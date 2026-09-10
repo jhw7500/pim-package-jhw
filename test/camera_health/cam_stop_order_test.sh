@@ -333,7 +333,7 @@ done
     wait "$lock_holder_pid" 2>/dev/null || :
     fail 'ordinary recovery lock holder did not become ready'
 }
-PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=3 \
+PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=7 \
 PIM_CAMERA_TEST_RETRY_SEEN="$WORK/systemd-retry-seen" \
 PIM_CAMERA_TEST_RETRY_GATE="$WORK/systemd-retry-release" \
 PIM_CAMERA_STOP_OBSERVE_OWNER=1 \
@@ -366,7 +366,7 @@ history_path="$PIM_CAMERA_STATE_DIR/recovery/history/$pending_id.json"
 jq -e '.request.status=="FAILED" and .request.rc==70 and .request.interrupted==true' "$history_path" >/dev/null || fail 'pending request was not terminalized to persistent interrupted history'
 history_before=$(cksum "$history_path")
 calls_before=$(cksum "$PIM_CAMERA_CALL_LOG")
-PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=3 expect_rc 0 bash "$PIM_BIN/cam_operate_stop.sh" --systemd
+PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=7 expect_rc 0 bash "$PIM_BIN/cam_operate_stop.sh" --systemd
 [ "$history_before" = "$(cksum "$history_path")" ] || fail 'completed stop rewrote interrupted history'
 [ "$calls_before" = "$(cksum "$PIM_CAMERA_CALL_LOG")" ] || fail 'completed stop repeated managed cleanup'
 
@@ -388,7 +388,7 @@ for _ in $(seq 1 1000); do [ ! -e "$WORK/concurrent-ready" ] || break; /bin/slee
 [ -e "$WORK/concurrent-ready" ] || { : > "$WORK/concurrent-release"; wait "$first_stop_pid" 2>/dev/null || :; fail 'first concurrent stop did not reach managed cleanup'; }
 expect_rc 75 cam_liveness_ordered_stop --external
 rm -f "$WORK/concurrent-retry-seen" "$WORK/concurrent-retry-release"
-PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=3 \
+PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=7 \
 PIM_CAMERA_TEST_RETRY_SEEN="$WORK/concurrent-retry-seen" \
 PIM_CAMERA_TEST_RETRY_GATE="$WORK/concurrent-retry-release" \
     bash "$PIM_BIN/cam_operate_stop.sh" --systemd & waiting_stop_pid=$!
@@ -458,7 +458,7 @@ echo '=== only systemd retries exact BUSY with a fixed bound ==='
 printf '75\n75\n0\n' > "$WORK/stop-stub-sequence"
 rm -f "$WORK/stop-stub-count"
 : > "$WORK/stop-stub-calls"; : > "$WORK/stop-stub-sleeps"
-PIM_LIB="$WORK/exit-lib" PIM_BIN="$PIM_BIN" PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=3 \
+PIM_LIB="$WORK/exit-lib" PIM_BIN="$PIM_BIN" PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=7 \
     STOP_STUB_RC=70 STOP_STUB_SEQUENCE_FILE="$WORK/stop-stub-sequence" \
     STOP_STUB_COUNT_FILE="$WORK/stop-stub-count" STOP_STUB_CALL_LOG="$WORK/stop-stub-calls" \
     STOP_STUB_SLEEP_LOG="$WORK/stop-stub-sleeps" \
@@ -470,7 +470,7 @@ PIM_LIB="$WORK/exit-lib" PIM_BIN="$PIM_BIN" PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=3 \
 for stop_rc in 0 69 70; do
     rm -f "$WORK/stop-stub-count"
     : > "$WORK/stop-stub-calls"; : > "$WORK/stop-stub-sleeps"
-    PIM_LIB="$WORK/exit-lib" PIM_BIN="$PIM_BIN" PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=3 \
+    PIM_LIB="$WORK/exit-lib" PIM_BIN="$PIM_BIN" PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=7 \
         STOP_STUB_RC="$stop_rc" STOP_STUB_COUNT_FILE="$WORK/stop-stub-count" \
         STOP_STUB_CALL_LOG="$WORK/stop-stub-calls" STOP_STUB_SLEEP_LOG="$WORK/stop-stub-sleeps" \
         expect_rc "$stop_rc" bash "$PIM_BIN/cam_operate_stop.sh" --systemd
@@ -478,16 +478,52 @@ for stop_rc in 0 69 70; do
     [ ! -s "$WORK/stop-stub-sleeps" ] || fail "systemd stop slept after rc=$stop_rc"
 done
 
-printf '75\n75\n75\n69\n' > "$WORK/stop-stub-sequence"
+printf '75\n75\n75\n75\n75\n75\n75\n69\n' > "$WORK/stop-stub-sequence"
 rm -f "$WORK/stop-stub-count"
 : > "$WORK/stop-stub-calls"; : > "$WORK/stop-stub-sleeps"
-PIM_LIB="$WORK/exit-lib" PIM_BIN="$PIM_BIN" PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=3 \
+PIM_LIB="$WORK/exit-lib" PIM_BIN="$PIM_BIN" PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=7 \
     STOP_STUB_RC=69 STOP_STUB_SEQUENCE_FILE="$WORK/stop-stub-sequence" \
     STOP_STUB_COUNT_FILE="$WORK/stop-stub-count" STOP_STUB_CALL_LOG="$WORK/stop-stub-calls" \
     STOP_STUB_SLEEP_LOG="$WORK/stop-stub-sleeps" \
     expect_rc 75 bash "$PIM_BIN/cam_operate_stop.sh" --systemd
-[ "$(cat "$WORK/stop-stub-count")" -eq 3 ] || fail 'systemd retry bound was removed or disabled'
-[ "$(grep -c '^sleep:1$' "$WORK/stop-stub-sleeps")" -eq 2 ] || fail 'systemd retry exhaustion slept outside the bound'
+[ "$(cat "$WORK/stop-stub-count")" -eq 7 ] || fail 'systemd retry bound was removed or disabled'
+[ "$(grep -c '^sleep:1$' "$WORK/stop-stub-sleeps")" -eq 6 ] || fail 'systemd retry exhaustion slept outside the bound'
+
+echo '=== unsafe systemd attempt overrides fall back to the bounded default ==='
+: > "$WORK/stop-stub-sequence"
+for _ in $(seq 1 30); do printf '75\n' >> "$WORK/stop-stub-sequence"; done
+printf '69\n' >> "$WORK/stop-stub-sequence"
+override_failures=
+for override_case in absent malformed low-one low-six high-31 high-100 zero negative leading-zero oversized; do
+    case "$override_case" in
+        absent) unset PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS ;;
+        malformed) export PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=7x ;;
+        low-one) export PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=1 ;;
+        low-six) export PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=6 ;;
+        high-31) export PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=31 ;;
+        high-100) export PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=100 ;;
+        zero) export PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=0 ;;
+        negative) export PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=-7 ;;
+        leading-zero) export PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=07 ;;
+        oversized) export PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS=99999999999999999999999999999999999999999999 ;;
+    esac
+    rm -f "$WORK/stop-stub-count"
+    : > "$WORK/stop-stub-calls"; : > "$WORK/stop-stub-sleeps"
+    set +e
+    PIM_LIB="$WORK/exit-lib" PIM_BIN="$PIM_BIN" STOP_STUB_RC=69 \
+        STOP_STUB_SEQUENCE_FILE="$WORK/stop-stub-sequence" STOP_STUB_COUNT_FILE="$WORK/stop-stub-count" \
+        STOP_STUB_CALL_LOG="$WORK/stop-stub-calls" STOP_STUB_SLEEP_LOG="$WORK/stop-stub-sleeps" \
+        bash "$PIM_BIN/cam_operate_stop.sh" --systemd
+    override_rc=$?
+    set -e
+    override_calls=$(cat "$WORK/stop-stub-count" 2>/dev/null || printf 0)
+    override_sleeps=$(wc -l < "$WORK/stop-stub-sleeps")
+    if [ "$override_rc" -ne 75 ] || [ "$override_calls" -ne 30 ] || [ "$override_sleeps" -ne 29 ]; then
+        override_failures="$override_failures $override_case:rc=$override_rc/calls=$override_calls/sleeps=$override_sleeps"
+    fi
+done
+unset PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS
+[ -z "$override_failures" ] || fail "unsafe attempt overrides escaped 7..30:$override_failures"
 
 printf '75\n75\n75\n75\n75\n75\n0\n' > "$WORK/stop-stub-sequence"
 rm -f "$WORK/stop-stub-count"

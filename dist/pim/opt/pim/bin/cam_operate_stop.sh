@@ -16,7 +16,10 @@ source "$PIM_LIB/cam_liveness.sh"
 
 cam_operate_systemd_stop() {
     local attempts=${PIM_CAMERA_SYSTEMD_STOP_ATTEMPTS:-30} attempt=1 rc
-    [[ $attempts =~ ^[1-9][0-9]*$ ]] || attempts=30
+    case "$attempts" in
+        [7-9]|1[0-9]|2[0-9]|30) ;;
+        *) attempts=30 ;;
+    esac
     while [ "$attempt" -le "$attempts" ]; do
         cam_liveness_ordered_stop --external
         rc=$?
