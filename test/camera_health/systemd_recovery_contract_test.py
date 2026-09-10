@@ -144,7 +144,7 @@ def cam_operate_errors(text: str) -> List[str]:
         "TimeoutStopSec": "90s",
         "Restart": "on-failure",
         "RestartSec": "10s",
-        "SuccessExitStatus": "75 143",
+        "SuccessExitStatus": "143",
     }
     for key, value in expected.items():
         require_single(errors, sections, "Service", key, value)
@@ -153,7 +153,7 @@ def cam_operate_errors(text: str) -> List[str]:
         sections,
         "Service",
         "ExecStop",
-        "/opt/pim/bin/cam_operate_stop.sh",
+        "/opt/pim/bin/cam_operate_stop.sh --systemd",
     )
     require_single(errors, sections, "Service", "ExecStartPost", RUNTIME_BARRIER)
     service_type = effective_scalar(sections, "Service", "Type")
@@ -1143,7 +1143,7 @@ KillMode=control-group
 TimeoutStopSec=90s
 Restart=on-failure
 RestartSec=10s
-SuccessExitStatus=75 143
+SuccessExitStatus=143
 """
         errors = cam_operate_errors(fixture)
         self.assertTrue(any("RuntimeDirectory=" in error for error in errors), errors)
@@ -1232,7 +1232,7 @@ ExecStart=/bin/true
 Requires=pim-camera-config.service
 After=pim-camera-config.service sd-mount.service
 [Service]
-ExecStop=/opt/pim/bin/cam_operate_stop.sh
+ExecStop=/opt/pim/bin/cam_operate_stop.sh --systemd
 ExecStartPost={RUNTIME_BARRIER}
 RuntimeDirectory=pim-camera
 RuntimeDirectoryMode=0750
@@ -1243,7 +1243,7 @@ TimeoutStartSec=90s
 TimeoutStopSec=90s
 Restart=on-failure
 RestartSec=10s
-SuccessExitStatus=75 143
+SuccessExitStatus=143
 """
         self.assertEqual([], cam_operate_errors(fixture))
         mutations = {
@@ -1263,24 +1263,50 @@ SuccessExitStatus=75 143
     def test_coordinated_stop_exit_status_is_exact(self) -> None:
         unit = read(Path("etc/systemd/system/cam-operate.service"))
         unit = re.sub(r"^SuccessExitStatus=.*\n", "", unit, flags=re.MULTILINE)
+        unit = re.sub(r"^ExecStop=.*\n", "", unit, flags=re.MULTILINE)
         fixture = unit.replace(
-            "[Service]\n", "[Service]\nSuccessExitStatus=75 143\n", 1
+            "[Service]\n",
+            "[Service]\n"
+            "ExecStop=/opt/pim/bin/cam_operate_stop.sh --systemd\n"
+            "SuccessExitStatus=143\n",
+            1,
         )
         self.assertEqual([], cam_operate_errors(fixture))
-        directive = "SuccessExitStatus=75 143\n"
-        mutations = {
-            "removed": fixture.replace(directive, "", 1),
-            "missing 75": fixture.replace(directive, "SuccessExitStatus=143\n", 1),
-            "missing 143": fixture.replace(directive, "SuccessExitStatus=75\n", 1),
-            "wrong section": fixture.replace(directive, "", 1).replace(
-                "[Unit]\n", "[Unit]\n" + directive, 1
+        status = "SuccessExitStatus=143\n"
+        status_mutations = {
+            "removed": fixture.replace(status, "", 1),
+            "adds 75": fixture.replace(status, "SuccessExitStatus=75 143\n", 1),
+            "removes 143": fixture.replace(status, "SuccessExitStatus=75\n", 1),
+            "duplicate": fixture.replace(status, status + status, 1),
+            "reset": fixture.replace(status, status + "SuccessExitStatus=\n", 1),
+            "wrong section": fixture.replace(status, "", 1).replace(
+                "[Unit]\n", "[Unit]\n" + status, 1
             ),
         }
-        for label, mutation in mutations.items():
+        for label, mutation in status_mutations.items():
             with self.subTest(mutation=label):
                 errors = cam_operate_errors(mutation)
                 self.assertTrue(
                     any("[Service] SuccessExitStatus=" in error for error in errors),
+                    (label, errors),
+                )
+
+        exec_stop = "ExecStop=/opt/pim/bin/cam_operate_stop.sh --systemd\n"
+        exec_mutations = {
+            "loses systemd": fixture.replace(
+                exec_stop, "ExecStop=/opt/pim/bin/cam_operate_stop.sh\n", 1
+            ),
+            "duplicate": fixture.replace(exec_stop, exec_stop + exec_stop, 1),
+            "reset": fixture.replace(exec_stop, exec_stop + "ExecStop=\n", 1),
+            "wrong section": fixture.replace(exec_stop, "", 1).replace(
+                "[Unit]\n", "[Unit]\n" + exec_stop, 1
+            ),
+        }
+        for label, mutation in exec_mutations.items():
+            with self.subTest(mutation=label):
+                errors = cam_operate_errors(mutation)
+                self.assertTrue(
+                    any("[Service] ExecStop=" in error for error in errors),
                     (label, errors),
                 )
 
@@ -1564,8 +1590,13 @@ never_called ()
     def test_non_simple_cam_service_types_are_rejected(self) -> None:
         unit = read(Path("etc/systemd/system/cam-operate.service"))
         unit = re.sub(r"^SuccessExitStatus=.*\n", "", unit, flags=re.MULTILINE)
+        unit = re.sub(r"^ExecStop=.*\n", "", unit, flags=re.MULTILINE)
         unit = unit.replace(
-            "[Service]\n", "[Service]\nSuccessExitStatus=75 143\n", 1
+            "[Service]\n",
+            "[Service]\n"
+            "ExecStop=/opt/pim/bin/cam_operate_stop.sh --systemd\n"
+            "SuccessExitStatus=143\n",
+            1,
         )
         mutations = {
             service_type: unit.replace(
