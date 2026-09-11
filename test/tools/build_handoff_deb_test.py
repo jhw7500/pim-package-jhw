@@ -30,6 +30,7 @@ class HandoffDebTest(unittest.TestCase):
         source = root / "pim"
         (source / "DEBIAN").mkdir(parents=True)
         (source / "opt/pim/bin").mkdir(parents=True)
+        (source / "usr/local/bin").mkdir(parents=True)
         (source / "DEBIAN/control").write_text(
             "Package: pim-mp\nVersion: 0.6.3\nArchitecture: arm64\n"
             "Maintainer: PIM\nDescription: test\n",
@@ -39,7 +40,28 @@ class HandoffDebTest(unittest.TestCase):
         tool.write_text("#!/bin/sh\necho ok\n", encoding="utf-8")
         tool.chmod(0o755)
         (source / "opt/pim/current").symlink_to("bin/probe.sh")
+        for name in ("ord", "vcm", "vsd"):
+            runtime_binary = source / "usr/local/bin" / name
+            runtime_binary.write_bytes(b"runtime-binary\n")
+            runtime_binary.chmod(0o755)
         return source
+
+    def test_missing_ignored_runtime_binary_is_refused(self):
+        module = load_module()
+        for name in ("ord", "vcm", "vsd"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory(
+                prefix="handoff-deb-test."
+            ) as tmp:
+                work = Path(tmp)
+                source = self.make_package(work)
+                (source / "usr/local/bin" / name).unlink()
+
+                with self.assertRaisesRegex(
+                    FileNotFoundError, f"usr/local/bin/{name}"
+                ):
+                    module.build_package(
+                        source, work / "out", "0.6.3+jhw.camera1"
+                    )
 
     def set_tree_mtime(self, root: Path, epoch: int) -> None:
         paths = sorted(

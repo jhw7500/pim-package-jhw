@@ -23,6 +23,11 @@ DEFAULT_SOURCE = ROOT / "dist/pim"
 DEFAULT_OUTPUT = ROOT / "handover/pim-package-jhw-camera-vpu-20260831"
 DEFAULT_SOURCE_DATE_EPOCH = 1788134400  # 2026-08-31 00:00:00 UTC
 BANNED_NAMES = {".omc", ".bkit", ".serena", ".vscode", "__pycache__"}
+REQUIRED_LOCAL_RUNTIME_ARTIFACTS = (
+    Path("usr/local/bin/ord"),
+    Path("usr/local/bin/vcm"),
+    Path("usr/local/bin/vsd"),
+)
 VERSION_PATTERN = re.compile(r"^[0-9A-Za-z.+:~_-]+$")
 
 ManifestEntry = Tuple[str, int, str]
@@ -157,6 +162,22 @@ def validate_deb_fields(
         raise RuntimeError(f"DEB metadata mismatch: expected {expected}, got {fields}")
 
 
+def validate_local_runtime_artifacts(source: Path) -> None:
+    for relative in REQUIRED_LOCAL_RUNTIME_ARTIFACTS:
+        artifact = source / relative
+        if artifact.is_symlink() or not artifact.is_file():
+            raise FileNotFoundError(
+                f"required local runtime artifact missing: {relative}"
+            )
+        metadata = artifact.stat()
+        if metadata.st_size == 0:
+            raise ValueError(f"required local runtime artifact is empty: {relative}")
+        if stat.S_IMODE(metadata.st_mode) & 0o111 == 0:
+            raise ValueError(
+                f"required local runtime artifact is not executable: {relative}"
+            )
+
+
 def build_package(
     source: Path,
     output_dir: Path,
@@ -167,6 +188,7 @@ def build_package(
     control = source / "DEBIAN/control"
     if not control.is_file():
         raise FileNotFoundError(control)
+    validate_local_runtime_artifacts(source)
 
     package = control_field(control, "Package")
     architecture = control_field(control, "Architecture")
