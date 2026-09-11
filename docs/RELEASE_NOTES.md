@@ -6,6 +6,8 @@
 
 - Every package-managed ORD start, restart, stop, and readiness decision now uses
   `ord-operate.service`; the generic recovery launcher rejects direct ORD starts.
+- Recovery accepts ORD readiness only after the active systemd invocation publishes
+  its atomic post-initialization marker, so delayed bind/init failures propagate.
 - ORD initialization failures exit non-zero before teardown, so systemd and
   recovery callers can observe failure instead of a successful exit.
 - TCP bind failures report the bind address, port, and preserved errno number and

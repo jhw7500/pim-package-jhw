@@ -213,7 +213,7 @@ probe_status() {
     return 0
 }
 cam_process_present() { probe_status "$2"; }
-cam_ord_service_status() { probe_status ord; }
+cam_ord_service_ready() { probe_status ord; }
 sleep() { SLEEP_COUNT=$((SLEEP_COUNT + 1)); }
 
 for target in app bg ord vcm; do

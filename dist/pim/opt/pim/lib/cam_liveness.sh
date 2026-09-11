@@ -479,7 +479,7 @@ cam_liveness_stop_managed() {
     if [ "$rc" -eq 0 ]; then cam_stop_process "$PIM_CAMERA_RUNTIME_JSON" bg || rc=$?; fi
     if [ "$rc" -eq 0 ]; then
         _cl_stopping_guard || rc=$?
-        [ "$rc" -ne 0 ] || "$PIM_CAMERA_SYSTEMCTL" stop ord-operate.service || rc=$?
+        [ "$rc" -ne 0 ] || cam_stop_ord "$PIM_CAMERA_RUNTIME_JSON" || rc=$?
     fi
     if [ "$rc" -eq 0 ]; then cam_stop_process "$PIM_CAMERA_RUNTIME_JSON" vcm || rc=$?; fi
     unset PIM_CAMERA_STOP_EXECUTOR

@@ -172,6 +172,34 @@ cam_ord_service_status() {
     return 2
 }
 
+cam_ord_service_ready() {
+    local rc invocation marker ready
+    rc=0; cam_ord_service_status || rc=$?
+    [ "$rc" -eq 0 ] || return "$rc"
+    if invocation=$("$PIM_CAMERA_SYSTEMCTL" show ord-operate.service --property=InvocationID --value 2>/dev/null); then rc=0; else rc=$?; fi
+    [ "$rc" -eq 0 ] || return 2
+    [[ $invocation =~ ^[0-9a-f]{32}$ ]] || return 1
+    ready="$PIM_CAMERA_RUN_DIR/ord-ready"
+    [ -f "$ready" ] && [ ! -L "$ready" ] || return 1
+    marker=$(cat -- "$ready" 2>/dev/null) || return 2
+    [[ $marker =~ ^[0-9a-f]{32}$ ]] || return 1
+    [ "$marker" = "$invocation" ]
+}
+
+cam_wait_ord_ready() {
+    local runtime=$1 timeout=${PIM_CAMERA_READY_TIMEOUT_SEC:-5} i=0 rc
+    [[ $timeout =~ ^[0-9]+$ ]] || timeout=5
+    while :; do
+        cam_side_effect_guard "$runtime" || return $?
+        rc=0; cam_ord_service_ready || rc=$?
+        [ "$rc" -eq 0 ] && return 0
+        [ "$rc" -eq 1 ] || return "$rc"
+        [ "$i" -ge "$timeout" ] && return 1
+        sleep 1
+        i=$((i + 1))
+    done
+}
+
 cam_signal_process() {
     local runtime=$1 signal=$2 kind=$3 app bg records=${4:-}
     case "$kind" in
@@ -286,7 +314,8 @@ cam_launch_consumer() {
 cam_restart_ord() {
     local runtime=$1
     _cr_test_owner_rollover launch_ord || return 69
-    cam_effect "$runtime" "$PIM_CAMERA_SYSTEMCTL" restart ord-operate.service
+    cam_effect "$runtime" "$PIM_CAMERA_SYSTEMCTL" restart ord-operate.service || return $?
+    cam_wait_ord_ready "$runtime"
 }
 cam_stop_ord() {
     local runtime=$1 rc=0
@@ -314,7 +343,7 @@ cam_verify_process_ready() {
         [ "$rc" -eq 0 ] || return "$rc"
     done
     [ "$consumers" = 0 ] && return 0
-    rc=0; cam_ord_service_status || rc=$?
+    rc=0; cam_ord_service_ready || rc=$?
     [ "$rc" -eq 0 ] || return "$rc"
     rc=0; cam_process_present "$runtime" vcm || rc=$?
     [ "$rc" -eq 0 ] || return "$rc"
