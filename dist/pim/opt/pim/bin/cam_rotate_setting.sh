@@ -1,89 +1,70 @@
 #!/bin/bash
 
-JSON_PREFIX=edgeconf_
-JSON_SUFFIX=.json
-TEST_CONFIG_FILE=""
-for f in /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX}; do
-    [ -e "$f" ] || continue
-    if [ -z "$TEST_CONFIG_FILE" ] || [ "$f" -nt "$TEST_CONFIG_FILE" ]; then
-        TEST_CONFIG_FILE="$f"
+if [[ "${PIM_CAMERA_TEST_MODE:-0}" == "1" ]]; then
+    PIM_CAMERA_RUNTIME_JSON="${PIM_CAMERA_RUNTIME_JSON:?PIM_CAMERA_RUNTIME_JSON is required in test mode}"
+    ROTATE_DELAY_SEC="${PIM_CAMERA_ROTATE_DELAY_SEC:?PIM_CAMERA_ROTATE_DELAY_SEC is required in test mode}"
+else
+    PIM_CAMERA_RUNTIME_JSON="/run/pim-camera/config/pim_runtime.json"
+    ROTATE_DELAY_SEC=15
+fi
+
+config_invalid() {
+    logger -p local0.err "[ROTATE:$LINENO] CONFIG_INVALID: $PIM_CAMERA_RUNTIME_JSON" 2>/dev/null
+    echo "CONFIG_INVALID: $PIM_CAMERA_RUNTIME_JSON" >&2
+    exit 64
+}
+
+command -v jq >/dev/null 2>&1 || config_invalid
+runtime_json=$(<"$PIM_CAMERA_RUNTIME_JSON") || config_invalid
+camera_line=$(jq -er '
+    if type == "object" and
+       (.VHL_CAM | type) == "object" and
+       (.ORD | type) == "object" and
+       (.VCM | type) == "object" and
+       (.VHL_CAM.cam_ch0 | type) == "boolean" and
+       (.VHL_CAM.cam_ch0_rotate | type) == "boolean" and
+       (.VHL_CAM.cam_ch1 | type) == "boolean" and
+       (.VHL_CAM.cam_ch1_rotate | type) == "boolean" and
+       (.VHL_CAM.cam_ch2 | type) == "boolean" and
+       (.VHL_CAM.cam_ch2_rotate | type) == "boolean" and
+       (.VHL_CAM.cam_ch3 | type) == "boolean" and
+       (.VHL_CAM.cam_ch3_rotate | type) == "boolean"
+    then [.VHL_CAM.cam_ch0, .VHL_CAM.cam_ch0_rotate,
+          .VHL_CAM.cam_ch1, .VHL_CAM.cam_ch1_rotate,
+          .VHL_CAM.cam_ch2, .VHL_CAM.cam_ch2_rotate,
+          .VHL_CAM.cam_ch3, .VHL_CAM.cam_ch3_rotate] | @tsv
+    else error("invalid camera runtime") end
+' <<<"$runtime_json") || config_invalid
+IFS=$'\t' read -r -a camera_values <<<"$camera_line"
+[[ "${#camera_values[@]}" -eq 8 ]] || config_invalid
+
+sleep "$ROTATE_DELAY_SEC"
+
+apply_rotation() {
+    local channel=$1
+    local enabled=$2
+    local rotate=$3
+    local bus=$4
+    local address=$5
+    local value=0x00
+
+    if [[ "$enabled" != "true" ]]; then
+        echo "$channel disable"
+        return
     fi
-done
-SUCCESS_VAL="true"
-FAIL_VAL="error"
-result=1;
+    if [[ "$rotate" == "true" ]]; then
+        value=0x03
+    fi
 
-sleep 15
+    i2ctransfer -f -y -a "$bus" "w4@$address" 0x10 0x0c 0x00 "$value"
+    echo "$channel set rotate $rotate"
+}
 
-if [[ ! -s "$TEST_CONFIG_FILE" ]]; then 
-	echo "can't find $TEST_CONFIG_FILE"
-	result=1 ; 
-else
-	cam_ch0_en=$(cat $TEST_CONFIG_FILE | grep cam_ch0 | grep -v rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')	
-	if [[ "$cam_ch0_en" == *"$SUCCESS_VAL"* ]] ; then
-		cam0_rot=$(cat $TEST_CONFIG_FILE | grep cam_ch0_rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')	
-		if [[ "$cam0_rot" == *"$SUCCESS_VAL"* ]] ; then
-			i2ctransfer -f -y -a 2 w4@0x11 0x10 0x0c 0x00 0x03         #rotate ch0
-			echo "cam_ch0 set rotate $cam0_rot"
-		else 
-			i2ctransfer -f -y -a 2 w4@0x11 0x10 0x0c 0x00 0x00         #default ch0
-			echo "cam_ch0 set rotate $cam0_rot"
-		fi
-	else
-			echo "cam_ch0 disable"
-	fi	
+apply_rotation cam_ch0 "${camera_values[0]}" "${camera_values[1]}" 2 0x11
+apply_rotation cam_ch1 "${camera_values[2]}" "${camera_values[3]}" 2 0x12
+apply_rotation cam_ch2 "${camera_values[4]}" "${camera_values[5]}" 1 0x11
+apply_rotation cam_ch3 "${camera_values[6]}" "${camera_values[7]}" 1 0x12
 
-	cam_ch1_en=$(cat $TEST_CONFIG_FILE | grep cam_ch1 | grep -v rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')	
-	if [[ "$cam_ch1_en" == *"$SUCCESS_VAL"* ]] ; then
-		cam1_rot=$(cat $TEST_CONFIG_FILE | grep cam_ch1_rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')	
-		if [[ "$cam1_rot" == *"$SUCCESS_VAL"* ]] ; then
-			i2ctransfer -f -y -a 2 w4@0x12 0x10 0x0c 0x00 0x03         #rotate ch1
-			echo "cam_ch1 set rotate $cam1_rot"
-		else 
-			i2ctransfer -f -y -a 2 w4@0x12 0x10 0x0c 0x00 0x00         #default ch1
-			echo "cam_ch1 set rotate $cam1_rot"
-		fi
-	else
-			echo "cam_ch1 disable"
-	fi	
-
-	cam_ch2_en=$(cat $TEST_CONFIG_FILE | grep cam_ch2 | grep -v rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')	
-	if [[ "$cam_ch2_en" == *"$SUCCESS_VAL"* ]] ; then
-		cam2_rot=$(cat $TEST_CONFIG_FILE | grep cam_ch2_rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')	
-		if [[ "$cam2_rot" == *"$SUCCESS_VAL"* ]] ; then
-			i2ctransfer -f -y -a 1 w4@0x11 0x10 0x0c 0x00 0x03         #rotate ch2
-			echo "cam_ch2 set rotate $cam2_rot"
-		else 
-			i2ctransfer -f -y -a 1 w4@0x11 0x10 0x0c 0x00 0x00         #default ch2
-			echo "cam_ch2 set rotate $cam2_rot"
-		fi
-	else
-			echo "cam_ch2 disable"
-	fi	
-
-	cam_ch3_en=$(cat $TEST_CONFIG_FILE | grep cam_ch3 | grep -v rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')	
-	if [[ "$cam_ch3_en" == *"$SUCCESS_VAL"* ]] ; then		
-		cam3_rot=$(cat $TEST_CONFIG_FILE | grep cam_ch3_rotate | cut -d':' -f2 | cut -d',' -f1 | tr -d '"' | tr -d '\r\n')	
-		if [[ "$cam3_rot" == *"$SUCCESS_VAL"* ]] ; then
-			i2ctransfer -f -y -a 1 w4@0x12 0x10 0x0c 0x00 0x03         #rotate ch3
-			echo "cam_ch3 set rotate $cam3_rot"
-		else 
-			i2ctransfer -f -y -a 1 w4@0x12 0x10 0x0c 0x00 0x00         #default ch3
-			echo "cam_ch3 set rotate $cam3_rot"
-		fi
-	else
-			echo "cam_ch3 disable"
-	fi	
-	result=0;
-fi
-
-if [ $result -eq 1 ]
-then
-	timestamp=`date +"%Y-%m-%d %T,%3N"`
-	echo "$timestamp cam rotation fail"
-	exit 1
-else
-	timestamp=`date +"%Y-%m-%d %T,%3N"`
-	echo "$timestamp cam rotation success"	
-	exit 0
-fi
+timestamp=$(date +"%Y-%m-%d %T,%3N")
+echo "$timestamp cam rotation success"
+exit 0

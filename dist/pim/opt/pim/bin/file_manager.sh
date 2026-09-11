@@ -6,72 +6,89 @@ KEY=$4
 FILE_PATH=""
 tag=$(basename "$0")
 cnt=0
-MAX_SIZE=$(($SIZE * 1024 * 1024))
-JSON_PREFIX=edgeconf_
-JSON_SUFFIX=.json
-FILE_JSON=""
-VHL_NAME_CACHE="/tmp/pim_vhl_name.cache"
-VHL_NAME_CACHE_SRC="/tmp/pim_vhl_name.cache.src"
-for f in /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX}; do
-    [ -e "$f" ] || continue
-    if [ -z "$FILE_JSON" ] || [ "$f" -nt "$FILE_JSON" ]; then
-        FILE_JSON="$f"
-    fi
-done
+MAX_SIZE=$((SIZE * 1024 * 1024))
 
-VHL_NAME=""
-if [ -n "$FILE_JSON" ] && [ -f "$FILE_JSON" ]; then
-    if [ -f "$VHL_NAME_CACHE" ] && [ -f "$VHL_NAME_CACHE_SRC" ]; then
-        cache_src=$(cat "$VHL_NAME_CACHE_SRC" 2>/dev/null | tr -d '\n')
-        if [ "$cache_src" = "$FILE_JSON" ] && [ ! "$FILE_JSON" -nt "$VHL_NAME_CACHE" ]; then
-            VHL_NAME=$(cat "$VHL_NAME_CACHE" 2>/dev/null | tr -d '\n')
-        fi
-    fi
-
-    if [ -z "$VHL_NAME" ]; then
-        VHL_NAME=$(jq -r '(.VHL_CAM.vhl_name // "")' "$FILE_JSON" 2>/dev/null | tr -d '\n')
-        if [ -n "$VHL_NAME" ] && [ "$VHL_NAME" != "null" ]; then
-            printf "%s" "$VHL_NAME" > "$VHL_NAME_CACHE" 2>/dev/null
-            printf "%s" "$FILE_JSON" > "$VHL_NAME_CACHE_SRC" 2>/dev/null
-        fi
-    fi
+if [[ "${PIM_CAMERA_TEST_MODE:-0}" == "1" ]]; then
+    PIM_CAMERA_RUNTIME_JSON="${PIM_CAMERA_RUNTIME_JSON:?PIM_CAMERA_RUNTIME_JSON is required in test mode}"
+else
+    PIM_CAMERA_RUNTIME_JSON="/run/pim-camera/config/pim_runtime.json"
 fi
 
-if [ -n "$VHL_NAME" ] && [ "$VHL_NAME" != "null" ]; then
+config_invalid() {
+    logger -p local0.err "[$tag:$LINENO] CONFIG_INVALID: $PIM_CAMERA_RUNTIME_JSON" 2>/dev/null
+    exit 64
+}
+
+command -v jq >/dev/null 2>&1 || config_invalid
+runtime_json=$(<"$PIM_CAMERA_RUNTIME_JSON") || config_invalid
+VHL_NAME=$(jq -er '
+    if type == "object" and
+       (.VHL_CAM | type) == "object" and
+       (.ORD | type) == "object" and
+       (.VCM | type) == "object" and
+       ((.VHL_CAM.vhl_name // "") | type) == "string"
+    then (.VHL_CAM.vhl_name // "") else error("invalid camera runtime") end
+' <<<"$runtime_json") || config_invalid
+if [[ -n "$VHL_NAME" ]]; then
     KEY="$VHL_NAME"
+fi
+
+if [[ "$KEY" == "." || "$KEY" == ".." || ! "$KEY" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    logger -p local0.err "[$tag:$LINENO] CONFIG_INVALID: unsafe effective file key" 2>/dev/null
+    exit 64
 fi
 
 #echo "========================="
 #echo "input path : " $INPUT_PATH
 
-if [ ! -d "$INPUT_PATH" ]; then
+if [[ ! -d "$INPUT_PATH" ]]; then
     logger -p local0.crit "[$tag:$LINENO] failed : $INPUT_PATH is not directory"
     exit 1
 fi
+INPUT_PATH=$(realpath -e -- "$INPUT_PATH") || exit 1
 
-if [ $LIMIT -le 1 ]; then
+if [[ "$LIMIT" -le 1 ]]; then
     logger -p local0.crit "[$tag:$LINENO] failed : LIMIT:$LIMIT greater than 1"
     exit 1
 fi
 
-if [ -n "$KEY" ]; then
-    FILE_PATH=$INPUT_PATH/$KEY*
-    #cnt_cmd="ls -lt $FILE_PATH | grep ^- | wc -l"
-else
-    FILE_PATH=$INPUT_PATH
-    #cnt_cmd="ls -lt $FILE_PATH | grep ^d | wc -l"
-fi
+FILE_PATH="$INPUT_PATH/$KEY*"
+shopt -s nullglob
+
+collect_matching_files() {
+    MATCHING_FILES=()
+    local candidate
+    for candidate in "$INPUT_PATH"/"$KEY"*; do
+        [[ -f "$candidate" ]] || continue
+        candidate=$(realpath -m -- "$candidate") || config_invalid
+        [[ "$(dirname -- "$candidate")" == "$INPUT_PATH" ]] || config_invalid
+        MATCHING_FILES+=("$candidate")
+    done
+}
+
+oldest_matching_file() {
+    local candidate
+    local oldest=""
+    for candidate in "${MATCHING_FILES[@]}"; do
+        if [[ -z "$oldest" || "$candidate" -ot "$oldest" ]]; then
+            oldest="$candidate"
+        fi
+    done
+    printf '%s\n' "$oldest"
+}
 
 #logger -p local0.notice "[$tag:$LINENO] path : $INPUT_PATH, key : $KEY, $limit cnt : $LIMIT, limit size : $SIZE MB"
 
 while :; do
-    current_size=$(du -sb $INPUT_PATH | awk '{print $1}')
-    if [ $current_size -gt $MAX_SIZE ]; then
+    current_size=$(du -sb -- "$INPUT_PATH" | awk '{print $1}')
+    if [[ "$current_size" -gt "$MAX_SIZE" ]]; then
         #logger -p local0.info "[$tag:$LINENO] $INPUT_PATH dir $current_size byte over $MAX_SIZE byte!"
-        oldest_file=$(ls -tr $FILE_PATH | head -n 1)
+        collect_matching_files
+        oldest_file=$(oldest_matching_file)
+        [[ -n "$oldest_file" ]] || exit 1
         #echo "Deleting oldest log file: $oldest_file"
         logger -p local0.notice "[$tag:$LINENO] $FILE_PATH size ($current_size > $MAX_SIZE) :deleting $oldest_file"
-        rm -rf "$oldest_file"
+        rm -f -- "$oldest_file"
         #current_size=$(du -sb $INPUT_PATH | awk '{print $1}')
         #logger -p local0.info "[$tag:$LINENO] $INPUT_PATH dir size : $current_size byte"
         sleep 0.1
@@ -83,14 +100,15 @@ done
 while :; do
     #echo "file_path:$FILE_PATH, file_cnt:$cnt"
     #find $FILE_PATH -mindepth 1 -maxdepth 1 | wc -l
-    cnt=$(ls -lt $FILE_PATH | grep ^- | wc -l)
-    if [ $cnt -gt $LIMIT ]; then
+    collect_matching_files
+    cnt=${#MATCHING_FILES[@]}
+    if [[ "$cnt" -gt "$LIMIT" ]]; then
         #logger -p local0.info "[$tag:$LINENO] file cnt $cnt > $LIMIT ($tailcnt)"
         #del=$((cnt - LIMIT))
         #find $FILE_PATH* -maxdepth 1 -type f -printf '%T+ %p\n' | sort | head -n -$LIMIT | cut -d' ' -f2- | xargs -r rm -f
-        oldest_file=$(ls -tr $FILE_PATH | head -n 1)
+        oldest_file=$(oldest_matching_file)
         logger -p local0.notice "[$tag:$LINENO] $FILE_PATH cnt ($cnt > $LIMIT) : deleting $oldest_file"
-        rm -rf "$oldest_file"
+        rm -f -- "$oldest_file"
         #cnt=$(ls -lt $FILE_PATH | grep ^- | wc -l)
         #logger -p local0.info "[$tag:$LINENO] $INPUT_PATH file cnt : $cnt"
         sleep 0.1

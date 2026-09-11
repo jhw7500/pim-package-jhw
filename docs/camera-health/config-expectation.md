@@ -1,32 +1,32 @@
 # Camera capture expectation v1
 
-`camera_config_expectation.py` converts the current boot-scoped
-`/tmp/config/edgeconf_pim.json` into the capture-domain expectation consumed by
-`camera_capture_probe.py`. It is read-only with respect to camera hardware and
-does not start, stop, or recover a pipeline.
+`camera_config_expectation.py` converts the merged camera runtime at
+`/run/pim-camera/config/pim_runtime.json` into the capture-domain expectation
+consumed by `camera_capture_probe.py`. It is read-only with respect to camera
+hardware and does not start, stop, or recover a pipeline.
 
-The service remains intentionally disabled. When an engineer explicitly starts
-`camera-capture-probe.service`, its `ExecStartPre` resolves the expectation
-before the IRQ probe begins.
+`camera-capture-probe.service` remains intentionally non-enabled. When an
+engineer explicitly starts it, systemd orders it after `cam-operate.service`
+and conditions startup on the merged runtime. `ExecStartPre` resolves the
+expectation before the IRQ probe begins.
 
-## Inputs and generation rules
+## Input and validation
 
-The resolver requires:
+The resolver parses the current runtime file and requires object-valued
+`VHL_CAM`, `ORD`, and `VCM`. From `VHL_CAM` it requires positive
+`cam_width`, `cam_height`, and `fps` values plus boolean channel enables at:
 
-- `/tmp/config/READY` with the current `boot_id` and a valid boot-import SHA-256;
-- `/tmp/config/edgeconf_pim.json` with positive `cam_width`, `cam_height`, and
-  `fps` values;
-- boolean channel enables at `VHL_CAM.i2c2.ch0/ch1.enable` and
-  `VHL_CAM.i2c1.ch2/ch3.enable`. A missing `enable` is treated as `false`.
+- `i2c2.ch0.enable` and `i2c2.ch1.enable`
+- `i2c1.ch2.enable` and `i2c1.ch3.enable`
 
-`READY` is a boot publication gate, not a runtime hash pin. An engineer may
-atomically replace the JSON in `/tmp/config`; the resolver accepts the current
-valid file and publishes both its SHA-256 and the original import SHA-256. A
-difference is diagnosed as `runtime_override=true`.
+A missing `enable` is treated as `false`. The resolver records the current boot
+identity only as process/runtime diagnostics. A valid atomic manual edit of
+`pim_runtime.json` is reflected the next time the expectation/probe service is
+started; source files are not consulted or repaired by this path.
 
 ## Domain contract
 
-The output is atomically published as mode `0640` at
+The output is atomically published with mode `0640` at
 `/run/pim-camera/config-expectation.json`.
 
 | domain | possible channels | single | dual-wide |
@@ -36,12 +36,12 @@ The output is atomically published as mode `0640` at
 
 Each domain carries:
 
-- `possible_channels`: fixed hardware wiring;
-- `active_channels`: configured channel identity for observation scope;
-- `configured_channel_mask`: only that domain's bits;
-- `mode`: `disabled`, `single`, or `dual-wide`;
-- `expected_format`: CSI input dimensions. Dual-wide doubles the configured
-  per-sensor width because gstApp receives the pair as one wide frame.
+- `possible_channels`: fixed hardware wiring
+- `active_channels`: configured channel identity for observation scope
+- `configured_channel_mask`: only that domain's bits
+- `mode`: `disabled`, `single`, or `dual-wide`
+- `expected_format`: CSI input dimensions; dual-wide doubles the configured
+  per-sensor width because gstApp receives the pair as one wide frame
 
 The top-level `configured_channel_mask` covers all four channels. The
 top-level `stream_mode` is `unknown` when no domain is enabled, `single` when
@@ -51,16 +51,17 @@ all enabled domains are single, `dual-wide` when all are dual-wide, and
 This is only the **configured** mask. It must not be used as the physical link
 presence mask or the stream-domain activity mask. Those remain independent
 runtime evidence. In dual-wide mode, loss of either physical channel can make
-the shared CSI/capture domain unavailable; this resolver does not claim that
-the peer channel can continue recording independently.
+the shared CSI/capture domain unavailable; the resolver does not claim that the
+peer channel can continue recording independently.
 
 ## Failure behavior
 
-The resolver fails closed for stale `READY`, malformed JSON, invalid hashes,
-invalid dimensions/FPS, or non-boolean enable fields. The capture producer also
-validates that the expectation contains exactly the domains and channel wiring
-declared by `camera_capture_map_v1.json`. A stale or inconsistent expectation
-cannot silently enable a different domain.
+Malformed runtime JSON, missing required objects, invalid dimensions/FPS, or
+non-boolean enable fields fail closed before the probe starts. The capture
+producer also validates that the expectation contains exactly the domains and
+channel wiring declared by `camera_capture_map_v1.json`. An invalid or
+inconsistent expectation cannot silently enable a different domain, trigger
+source recovery, or escalate to a hardware reset.
 
 Offline coverage is provided by:
 

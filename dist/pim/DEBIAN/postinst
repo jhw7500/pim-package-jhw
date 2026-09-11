@@ -140,6 +140,7 @@ cpchk() {
   ldconfig
 
   ln -sf /opt/pim/bin/kill_test.sh /usr/local/bin/killcam
+  ln -sf /opt/pim/bin/cam-recoveryctl /usr/local/bin/cam-recoveryctl
   ln -sf /opt/pim/bin/start_cam.sh /usr/local/bin/startcam
   ln -sf /opt/pim/bin/update_edgeconf.sh /usr/local/bin/update_edgeconf
   ln -sf /opt/pim/bin/update_ordvcmconf.sh /usr/local/bin/update_ordvcmconf
@@ -285,6 +286,7 @@ customctl() {
 
   customctl enable pim-config-guard
   customctl enable pim-camera-config
+  customctl disable ord-operate
   customctl enable wpa-recovery
   customctl enable cam-operate
   customctl enable vsd-operate

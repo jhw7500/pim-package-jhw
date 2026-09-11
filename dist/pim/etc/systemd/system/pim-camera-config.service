@@ -1,8 +1,8 @@
 [Unit]
-Description=PIM Camera Boot Configuration Snapshot
+Description=PIM Camera Configuration Prerequisite Guard
 Requires=pim-config-guard.service
 After=pim-config-guard.service
-Before=cam-operate.service ord-operate.service vsd-operate.service
+Before=cam-operate.service
 RequiresMountsFor=/root/shared_v
 
 [Service]

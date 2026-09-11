@@ -36,9 +36,9 @@ ensure_default_locale_c_utf8
 #echo "install $PACKAGE_NAME-$(dpkg-query -W -f='${Version}' $PACKAGE_NAME)"
 logger -s -p local0.notice "[$KEY][$tag:$LINENO] install $PACKAGE_NAME-$(dpkg-query -W -f='${Version}' $PACKAGE_NAME) start"
 echo "stop cam-operate daemon"
-systemctl stop cam-operate
+systemctl stop cam-operate.service
 echo "stop sd-mount daemon"
-systemctl stop sd-mount
+systemctl stop sd-mount.service
 
 status=$(systemctl is-active pim-gate 2>/dev/null)
 if [ "$status" == "active" ]; then

@@ -17,9 +17,13 @@ from datetime import datetime
 LOG_KEY = "GARD"
 BG_FLAG_FILE = "/tmp/bg_chk_flag.bin"
 GUARDIAN_STATE_FILE = "/tmp/pim_guardian_state.json"
-RECOVERY_REQ_FILE = "/tmp/recover_req_init_cam"
-EDGE_CONF_DIR = "/root/shared_v"
-ORD_CONF_PATH = "/root/shared_v/ord_vcm_conf.json"
+RUNTIME_JSON_PATH = os.environ.get(
+    "PIM_CAMERA_RUNTIME_JSON", "/run/pim-camera/config/pim_runtime.json"
+)
+CAM_RECOVERYCTL = os.environ.get(
+    "PIM_CAMERA_RECOVERYCTL", "/opt/pim/bin/cam-recoveryctl"
+)
+CAM_RECOVERY_SOURCE = "pim-guardian"
 EXT_CSD_PATH = "/sys/kernel/debug/mmc2/mmc2:0001/ext_csd"
 THERMAL_ZONE0 = "/sys/devices/virtual/thermal/thermal_zone0/temp"
 THERMAL_ZONE1 = "/sys/devices/virtual/thermal/thermal_zone1/temp"
@@ -83,6 +87,9 @@ RECOVERY_PROMPT_TIMEOUT_SEC = 30
 SD_DEV_PARTITION = "/dev/mmcblk1p1"
 SD_MOUNT_PATH = "/mnt/sd_cam"
 SD_MOUNT_SERVICE = "sd-mount"
+SD_MOUNT_FLAG_PATH = "/dev/shm/sd_mount_flag"
+SD_READY_TIMEOUT_SEC = 120.0
+SD_READY_POLL_INTERVAL_SEC = 1.0
 FSCK_TOOLS: Dict[str, List[str]] = {
     "ext4": ["fsck.ext4", "-y"],
     "ext3": ["fsck.ext3", "-y"],
@@ -90,8 +97,6 @@ FSCK_TOOLS: Dict[str, List[str]] = {
     "vfat": ["fsck.vfat", "-a"],
     "exfat": ["fsck.exfat"],
 }
-BIN_DIR = "/opt/pim/bin"
-
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(LOG_KEY)
 
@@ -122,10 +127,28 @@ def syslog(level: str, msg: str) -> None:
     _ = subprocess.run(cmd, shell=True)
 
 
+def select_guardian_camera_action(
+    guardian_bits: int,
+) -> Optional[Tuple[str, str]]:
+    """Return the strongest camera action and an exact diagnostic reason."""
+    if guardian_bits & GUARD_BIT_CAM_MISMATCH:
+        return (
+            "module_reload",
+            f"guardian-camera-mismatch mask=0x{guardian_bits:x}",
+        )
+    if guardian_bits & GUARD_BIT_HB_FROZEN:
+        return (
+            "gstapp_restart",
+            f"guardian-heartbeat-frozen mask=0x{guardian_bits:x}",
+        )
+    return None
+
+
 class PIMHealthGuardian:
     def __init__(self, args: argparse.Namespace):
         self.args: argparse.Namespace = args
         self.conf: Dict[str, object] = self._load_all_configs()
+        self.config_valid: bool = self.conf.get("config_status") == "VALID"
         interval_raw = getattr(args, "interval", 5)
         self.interval: int = interval_raw if isinstance(interval_raw, int) else 5
 
@@ -293,41 +316,88 @@ class PIMHealthGuardian:
                 pass
         return None
 
+    def _wait_for_sd_mount_ready(self, step: int, total: int) -> bool:
+        timeout = getattr(self.args, "sd_ready_timeout_sec", SD_READY_TIMEOUT_SEC)
+        poll_interval = getattr(
+            self.args,
+            "sd_ready_poll_interval_sec",
+            SD_READY_POLL_INTERVAL_SEC,
+        )
+        if (
+            not isinstance(timeout, (int, float))
+            or isinstance(timeout, bool)
+            or timeout < 0
+        ):
+            timeout = SD_READY_TIMEOUT_SEC
+        if (
+            not isinstance(poll_interval, (int, float))
+            or isinstance(poll_interval, bool)
+            or poll_interval < 0
+        ):
+            poll_interval = SD_READY_POLL_INTERVAL_SEC
+
+        print(
+            f"[RECOVERY] [{step}/{total}] Waiting for SD availability and cam-operate..."
+        )
+        deadline = time.monotonic() + float(timeout)
+        while True:
+            try:
+                mount_service = subprocess.run(
+                    ["systemctl", "is-active", SD_MOUNT_SERVICE],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                print(f"[RECOVERY] [{step}/{total}] Readiness check... FAILED ({exc})")
+                return False
+            if mount_service.returncode != 0:
+                print(
+                    f"[RECOVERY] [{step}/{total}] Readiness check... FAILED "
+                    f"({SD_MOUNT_SERVICE} is not active)"
+                )
+                return False
+
+            try:
+                with open(SD_MOUNT_FLAG_PATH, "r", encoding="utf-8") as stream:
+                    available = stream.read().strip() == "1"
+            except OSError:
+                available = False
+
+            try:
+                camera_service = subprocess.run(
+                    ["systemctl", "is-active", "cam-operate"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                camera_active = camera_service.returncode == 0
+            except (OSError, subprocess.TimeoutExpired):
+                camera_active = False
+
+            if available and camera_active:
+                print(f"[RECOVERY] [{step}/{total}] SD and cam-operate ready... OK")
+                return True
+            if time.monotonic() >= deadline:
+                print(
+                    f"[RECOVERY] [{step}/{total}] Readiness check... FAILED "
+                    f"(timeout {float(timeout):g}s)"
+                )
+                return False
+            time.sleep(float(poll_interval))
+
     def _recover_sd_ro(self) -> bool:
-        total = 7
+        total = 5
         step = 0
 
         step += 1
         if not self._run_recovery_step(
             step,
             total,
-            "Stopping camera pipeline",
-            [f"{BIN_DIR}/kill_test.sh"],
-        ):
-            return False
-
-        step += 1
-        self._run_recovery_step(
-            step,
-            total,
             f"Stopping {SD_MOUNT_SERVICE} service",
             ["systemctl", "stop", SD_MOUNT_SERVICE],
-            allow_fail=True,
-        )
-
-        step += 1
-        if not self._run_recovery_step(
-            step,
-            total,
-            f"Unmounting {SD_MOUNT_PATH}",
-            ["umount", SD_MOUNT_PATH],
         ):
-            self._run_recovery_step(
-                step,
-                total,
-                f"Force unmounting {SD_MOUNT_PATH}",
-                ["umount", "-f", SD_MOUNT_PATH],
-            )
+            return False
 
         step += 1
         fs_type = self._detect_sd_fstype()
@@ -341,20 +411,15 @@ class PIMHealthGuardian:
             print(
                 f"[RECOVERY] SD card may be physically damaged or partition table corrupted."
             )
-            self._run_recovery_step(
+            if not self._run_recovery_step(
                 total - 1,
                 total,
                 f"Starting {SD_MOUNT_SERVICE} service",
                 ["systemctl", "start", SD_MOUNT_SERVICE],
-                allow_fail=True,
-            )
-            self._run_recovery_step(
-                total,
-                total,
-                "Starting camera pipeline",
-                [f"{BIN_DIR}/start_cam.sh"],
-                allow_fail=True,
-            )
+            ):
+                return False
+            if not self._wait_for_sd_mount_ready(total, total):
+                return False
             return False
 
         step += 1
@@ -427,54 +492,29 @@ class PIMHealthGuardian:
                 print(f"[RECOVERY] [{step}/{total}] Failed to set recovery flag: {e}")
 
         step += 1
-        self._run_recovery_step(
+        if not self._run_recovery_step(
             step,
             total,
             f"Starting {SD_MOUNT_SERVICE} service",
             ["systemctl", "start", SD_MOUNT_SERVICE],
-            allow_fail=True,
-        )
-
-        step += 1
-        self._run_recovery_step(
-            step,
-            total,
-            "Starting camera pipeline",
-            [f"{BIN_DIR}/start_cam.sh"],
-            allow_fail=True,
-        )
-
-        return fsck_ok
-
-    def _recover_cam_disconnect(self) -> bool:
-        total = 1
-        return self._run_recovery_step(
-            1,
-            total,
-            "Running init_cam to reload driver",
-            [f"{BIN_DIR}/init_cam.sh"],
-        )
-
-    def _recover_hb_frozen(self) -> bool:
-        total = 2
-        step = 0
-
-        step += 1
-        if not self._run_recovery_step(
-            step,
-            total,
-            "Stopping camera pipeline",
-            [f"{BIN_DIR}/kill_test.sh"],
         ):
             return False
 
         step += 1
-        return self._run_recovery_step(
-            step,
-            total,
-            "Starting camera pipeline",
-            [f"{BIN_DIR}/start_cam.sh"],
-        )
+        ready = self._wait_for_sd_mount_ready(step, total)
+        return fsck_ok and ready
+
+    def _recover_cam_disconnect(self) -> bool:
+        selection = select_guardian_camera_action(GUARD_BIT_CAM_MISMATCH)
+        assert selection is not None
+        action, reason = selection
+        return self._request_camera_recovery(action, reason, wait_sec=300) == 0
+
+    def _recover_hb_frozen(self) -> bool:
+        selection = select_guardian_camera_action(GUARD_BIT_HB_FROZEN)
+        assert selection is not None
+        action, reason = selection
+        return self._request_camera_recovery(action, reason, wait_sec=120) == 0
 
     def _clear_recovery_state(self, event_key: str) -> None:
         if self._recovery_prev_anomaly.get(event_key, False):
@@ -761,15 +801,57 @@ class PIMHealthGuardian:
             except:
                 pass
 
-    def _request_recovery(self, reason: str) -> None:
-        if os.path.exists(RECOVERY_REQ_FILE):
-            return
-        ts = int(time.time())
+    def _request_camera_recovery(
+        self,
+        action: str,
+        reason: str,
+        wait_sec: Optional[int] = None,
+    ) -> int:
+        if not self.config_valid:
+            return 64
+        if action not in {
+            "gstapp_restart",
+            "module_reload",
+            "camera_hard_reset",
+            "reboot_fallback",
+        } or not reason:
+            return 64
+        command = [
+            CAM_RECOVERYCTL,
+            "request",
+            action,
+            "--source",
+            CAM_RECOVERY_SOURCE,
+            "--reason",
+            reason,
+        ]
+        if wait_sec is not None:
+            command.extend(("--wait", str(wait_sec)))
         try:
-            with open(RECOVERY_REQ_FILE, "w") as f:
-                _ = f.write(f"{ts} {reason}\n")
-        except:
-            pass
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=(wait_sec + 5) if wait_sec is not None else 30,
+            )
+            return result.returncode
+        except subprocess.TimeoutExpired:
+            return 124
+        except OSError:
+            return 69
+
+    def _handle_automatic_camera_recovery(
+        self, guardian_bits: int
+    ) -> Optional[int]:
+        selection = select_guardian_camera_action(guardian_bits)
+        if selection is None or not self.config_valid:
+            self.error_count = 0
+            return None
+        self.error_count += 1
+        if self.error_count <= 3:
+            return None
+        action, reason = selection
+        return self._request_camera_recovery(action, reason)
 
     def _load_all_configs(self) -> Dict[str, object]:
         conf: Dict[str, object] = {
@@ -781,43 +863,54 @@ class PIMHealthGuardian:
             "v4l_map": {"csi0": 2, "csi1": 3},
             "tmp_path": "/dev/shm",
             "oht_name": "VD3001",
-            "edge_conf_path": "",
+            "edge_conf_path": RUNTIME_JSON_PATH,
+            "runtime_path": RUNTIME_JSON_PATH,
+            "config_status": "CONFIG_INVALID",
+            "config_error": "runtime not loaded",
         }
         try:
-            files = sorted(glob.glob(f"{EDGE_CONF_DIR}/edgeconf_*.json"))
-            if files:
-                conf["edge_conf_path"] = files[-1]
-                with open(files[-1], "r") as f:
-                    edge_conf_raw = cast(object, json.load(f))
-                    edge_conf = self._as_dict(edge_conf_raw)
-                    conf["edge"] = edge_conf
+            with open(RUNTIME_JSON_PATH, "r") as f:
+                runtime_raw = cast(object, json.load(f))
+            if not isinstance(runtime_raw, dict):
+                raise ValueError("runtime document must be an object")
+            for section in ("VHL_CAM", "ORD", "VCM"):
+                if not isinstance(runtime_raw.get(section), dict):
+                    raise ValueError(f"runtime {section} must be an object")
 
-                    cam = self._as_dict(edge_conf.get("VHL_CAM", {}))
+            runtime = self._as_dict(runtime_raw)
+            conf["edge"] = runtime
+            conf["ord"] = runtime
+            conf["config_status"] = "VALID"
+            conf["config_error"] = ""
 
-                    final_path = cam.get("final_path")
-                    tmp_path = cam.get("tmp_path")
-                    vhl_name = cam.get("vhl_name")
-                    if isinstance(final_path, str):
-                        conf["sd_path"] = final_path
-                    if isinstance(tmp_path, str):
-                        conf["tmp_path"] = tmp_path
-                    if isinstance(vhl_name, str):
-                        conf["oht_name"] = vhl_name
+            cam = self._as_dict(runtime["VHL_CAM"])
+            final_path = cam.get("final_path")
+            tmp_path = cam.get("tmp_path")
+            vhl_name = cam.get("vhl_name")
+            if isinstance(final_path, str):
+                conf["sd_path"] = final_path
+            if isinstance(tmp_path, str):
+                conf["tmp_path"] = tmp_path
+            if isinstance(vhl_name, str):
+                conf["oht_name"] = vhl_name
 
-                    v_map = self._as_dict(cam.get("v4l_map", cam.get("device_map", {})))
-                    if v_map:
-                        v4l_map_raw = self._as_dict(conf.get("v4l_map", {}))
-                        v4l_map = {
-                            "csi0": self._to_int(
-                                v_map.get("csi0_subdev", v_map.get("csi0_video", 2)),
-                                self._to_int(v4l_map_raw.get("csi0", 2), 2),
-                            ),
-                            "csi1": self._to_int(
-                                v_map.get("csi1_subdev", v_map.get("csi1_video", 3)),
-                                self._to_int(v4l_map_raw.get("csi1", 3), 3),
-                            ),
-                        }
-                        conf["v4l_map"] = v4l_map
+            v_map = self._as_dict(cam.get("v4l_map", cam.get("device_map", {})))
+            if v_map:
+                v4l_map_raw = self._as_dict(conf.get("v4l_map", {}))
+                conf["v4l_map"] = {
+                    "csi0": self._to_int(
+                        v_map.get("csi0_subdev", v_map.get("csi0_video", 2)),
+                        self._to_int(v4l_map_raw.get("csi0", 2), 2),
+                    ),
+                    "csi1": self._to_int(
+                        v_map.get("csi1_subdev", v_map.get("csi1_video", 3)),
+                        self._to_int(v4l_map_raw.get("csi1", 3), 3),
+                    ),
+                }
+        except (OSError, json.JSONDecodeError, ValueError, TypeError) as error:
+            conf["config_error"] = str(error)
+
+        try:
             with open("/proc/mounts", "r") as f:
                 for line in f:
                     fields = line.split()
@@ -833,30 +926,26 @@ class PIMHealthGuardian:
                             conf["sd_dev"] = m.group(1)
                             break
 
-            if conf["emmc_dev"] == conf["sd_dev"]:
-                try:
-                    with open("/proc/diskstats", "r") as f:
-                        for line in f:
-                            p = line.split()
-                            if len(p) < 3:
-                                continue
-                            dev = p[2]
-                            if (
-                                dev.startswith("mmcblk")
-                                and "p" not in dev
-                                and dev != conf["sd_dev"]
-                            ):
-                                conf["emmc_dev"] = dev
-                                break
-                except:
-                    pass
-
-            if os.path.exists(ORD_CONF_PATH):
-                with open(ORD_CONF_PATH, "r") as f:
-                    ord_conf_raw = cast(object, json.load(f))
-                    conf["ord"] = self._as_dict(ord_conf_raw)
-        except:
+        except OSError:
             pass
+
+        if conf["emmc_dev"] == conf["sd_dev"]:
+            try:
+                with open("/proc/diskstats", "r") as f:
+                    for line in f:
+                        p = line.split()
+                        if len(p) < 3:
+                            continue
+                        dev = p[2]
+                        if (
+                            dev.startswith("mmcblk")
+                            and "p" not in dev
+                            and dev != conf["sd_dev"]
+                        ):
+                            conf["emmc_dev"] = dev
+                            break
+            except OSError:
+                pass
         return conf
 
     def _detect_wifi_iface(self) -> str:
@@ -1597,6 +1686,11 @@ class PIMHealthGuardian:
                     {
                         "ts": int(time.time()),
                         "guardian_bits": guardian_bits,
+                        "config": {
+                            "status": self.conf.get("config_status"),
+                            "runtime_path": self.conf.get("runtime_path"),
+                            "error": self.conf.get("config_error"),
+                        },
                         "bg_bits": bg_bits,
                         "cam_state": cam_state,
                         "cam_streak": cam_streak,
@@ -1625,22 +1719,19 @@ class PIMHealthGuardian:
                     }
                 )
 
-                if (
-                    guardian_bits > 0
-                    and self.recovery_enabled
-                    and (guardian_bits & (GUARD_BIT_CAM_MISMATCH | GUARD_BIT_HB_FROZEN))
-                ):
-                    self.error_count += 1
-                    if self.error_count > 3:
-                        syslog(
-                            "err",
-                            f"Guardian anomaly mask:0x{guardian_bits:x}. Requesting recovery.",
-                        )
-                        self._request_recovery(
-                            f"guardian_watchdog mask=0x{guardian_bits:x}"
-                        )
+                recovery_rc: Optional[int] = None
+                if self.recovery_enabled:
+                    recovery_rc = self._handle_automatic_camera_recovery(
+                        guardian_bits
+                    )
                 else:
                     self.error_count = 0
+                if recovery_rc is not None:
+                    level = "notice" if recovery_rc == 0 else "err"
+                    syslog(
+                        level,
+                        f"Guardian camera recovery request mask=0x{guardian_bits:x} rc={recovery_rc}",
+                    )
 
                 # ── Interactive recovery prompts ──
                 sd_ro_fallback = not sd_d["mounted"] and os.path.exists("/dev/shm/sd_mount_flag") and open("/dev/shm/sd_mount_flag").read().strip() == "0"

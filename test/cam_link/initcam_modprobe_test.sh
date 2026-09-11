@@ -1,64 +1,30 @@
-#!/bin/bash
-# init_cam.sh 의 modprobe 가드 검증
-# 사용법: bash test/cam_link/initcam_modprobe_test.sh
-#
-# 회귀 배경 두 건:
-#  1) rc1=$? 가 modprobe 가 아니라 뒤따르는 sleep 의 종료코드를 담아 modprobe 실패가
-#     항상 무시됐다(1호기 로그에서 init_cam 후 CSI 블록이 번갈아 죽은 원인으로 지목).
-#  2) rc1 이 실패해도 의존 모듈 imx8-media-dev 를 계속 로드했다.
+#!/usr/bin/env bash
+# Module ordering now belongs to the recovery action library, not init_cam.sh.
 source "$(dirname "$0")/lib.sh"
 
 WORK=$(mktemp -d)
-BLOCK="$WORK/modprobe_block.sh"
 CALLS="$WORK/calls"
 trap 'rm -rf "$WORK"' EXIT
+source "$PIM_LIB/cam_recovery_actions.sh"
 
-# 'modprobe max9296' 부터 그 뒤 두 번째 '^fi$' 까지 (rc1 가드 + rc2 가드)
-START=$(grep -n '^modprobe max9296$' "$PIM_BIN/init_cam.sh" | head -1 | cut -d: -f1)
-END=$(awk -v s="$START" 'NR>=s && /^fi$/{n++; if(n==2){print NR; exit}}' "$PIM_BIN/init_cam.sh")
-[ -n "$START" ] && [ -n "$END" ] || { echo "modprobe 블록 추출 실패" >&2; exit 1; }
-sed -n "${START},${END}p" "$PIM_BIN/init_cam.sh" > "$BLOCK"
-
-# $1=설명 $2=실패시킬 모듈(none|max9296|imx8-media-dev) $3=기대 시도목록 $4=기대 exit
 run() {
     : > "$CALLS"
     (
-        export FAILMOD="$2" CALLS
-        tag=init_cam.sh
-        logger() { :; }
-        sleep()  { :; }
-        rm()     { :; }              # /tmp/init_cam_flag 실제 삭제 방지
-        modprobe() {
-            printf '%s\n' "$1" >> "$CALLS"
-            [ "$1" = "$FAILMOD" ] && return 1
+        cam_effect() {
+            local runtime=$1; shift
+            printf '%s\n' "$*" >> "$CALLS"
+            [ "${1:-}" = modprobe ] && [ "${2:-}" = "${FAILMOD:-}" ] && return 1
             return 0
         }
-        # shellcheck disable=SC1090
-        source "$BLOCK"
-    ) >/dev/null 2>&1
-    local rc=$?
+        cam_module_loaded() { return 0; }
+        FAILMOD=$2 cam_module_reload /runtime.json
+    )
+    rc=$?
     t_eq "$1" "$(paste -sd, "$CALLS")/$rc" "$3/$4"
 }
 
-echo "=== modprobe 가드 (시도목록/exit) ==="
-run "max9296 실패 → imx8 시도 안 하고 중단" max9296        "max9296"                1
-run "imx8 실패 → 둘 다 시도 후 중단"        imx8-media-dev "max9296,imx8-media-dev" 1
-run "둘 다 성공 → 계속 진행"                none           "max9296,imx8-media-dev" 0
-
-echo
-echo "=== rc 캡처 위치 회귀 방지 — modprobe 와 rc 캡처 사이에 실행 줄이 없어야 ==="
-# 빈 줄과 주석은 $? 를 바꾸지 않으므로 건너뛴다. 이를 dirty 로 보면 무고한 스타일
-# 편집에 오탐이 난다. 잡아야 할 것은 sleep 처럼 '$? 를 덮어쓰는 실행 줄' 뿐이다.
-between=$(sed -n "${START},${END}p" "$PIM_BIN/init_cam.sh" \
-          | awk '/^modprobe max9296$/       {f=1; next}
-                 f && /^[[:space:]]*$/      {next}
-                 f && /^[[:space:]]*#/      {next}
-                 f && /^rc1=\$\?$/          {print "clean"; exit}
-                 f                          {print "dirty:"$0; exit}')
-if [ -z "$between" ]; then
-    t_bad "위치 검사: 추출 블록에서 'modprobe max9296' 줄을 찾지 못했다"
-else
-    t_eq "modprobe max9296 직후 실행 줄이 rc1=\$?" "$between" "clean"
-fi
-
-t_summary "init_cam modprobe 가드"
+echo '=== module reload ordering ==='
+run 'max9296 failure skips dependent media load' max9296 'rmmod imx8-media-dev,rmmod max9296,modprobe max9296' 1
+run 'media failure follows deserializer load' imx8-media-dev 'rmmod imx8-media-dev,rmmod max9296,modprobe max9296,modprobe imx8-media-dev' 1
+run 'successful reload orders unload/load dependencies' none 'rmmod imx8-media-dev,rmmod max9296,modprobe max9296,modprobe imx8-media-dev' 0
+t_summary 'recovery action module guard'

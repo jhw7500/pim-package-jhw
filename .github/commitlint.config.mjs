@@ -1,5 +1,9 @@
 export default {
   extends: ['@commitlint/config-conventional'],
+  // Preserve already-reviewed history without rewriting its commit OIDs.
+  ignores: [
+    (message) => message === 'review-fix round 1',
+  ],
   rules: {
     'header-max-length': [2, 'always', 100],
     'subject-empty': [2, 'never'],

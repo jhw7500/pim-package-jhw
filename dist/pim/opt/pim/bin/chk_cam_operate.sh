@@ -1,6 +1,20 @@
 #!/bin/bash
-source /opt/pim/lib/cam_state.sh
-source /opt/pim/lib/cam_start_policy.sh
+if [ "${PIM_CAMERA_TEST_MONITOR_ONCE:-0}" = 1 ]; then
+    source "${PIM_LIB:?}/cam_state.sh"
+    source "$PIM_LIB/cam_start_policy.sh"
+    source "$PIM_LIB/cam_recovery.sh"
+    source "$PIM_LIB/cam_recovery_actions.sh"
+    source "$PIM_LIB/cam_operate_control.sh"
+    source "$PIM_LIB/cam_liveness.sh"
+else
+    source /opt/pim/lib/cam_state.sh
+    source /opt/pim/lib/cam_start_policy.sh
+    source /opt/pim/lib/cam_recovery.sh
+    source /opt/pim/lib/cam_recovery_actions.sh
+    source /opt/pim/lib/cam_operate_control.sh
+    source /opt/pim/lib/cam_liveness.sh
+    cam_liveness_install_traps
+fi
 
 tag=$(basename "$0")
 KEY=RST
@@ -167,6 +181,15 @@ modules_loaded() {
     [ -d "/sys/module/max9296" ] && [ -d "/sys/module/imx8_media_dev" ]
 }
 
+cam_submit_internal_action() {
+    local action=$1 reason=$2 rc lifecycle
+    lifecycle=$(jq -r '.lifecycle // empty' "$PIM_CAMERA_RUN_DIR/owner.json" 2>/dev/null)
+    [ "$lifecycle" = ACTIVE ] || return 69
+    cam_request_submit "$action" monitor "$reason" >/dev/null 2>&1
+    rc=$?
+    return "$rc"
+}
+
 read_ts() {
     [ -f "$1" ] && cat "$1" 2>/dev/null | tr -d '\n' || echo 0
 }
@@ -233,7 +256,10 @@ maybe_init_cam_on_disconnect() {
                 logger -p local0.emerg "[$KEY][$tag:$LINENO] rebooting because cam disconnect persisted $((now - first_seen))s (flag=$cam_disconnect_flag max=${max_sec}s)"
                 sync
                 sleep 1
-                reboot
+                if ! cam_submit_internal_action reboot_fallback "disconnect persisted $((now - first_seen))s"; then
+                    rm -f "$DISCONNECT_REBOOT_FLAG" 2>/dev/null
+                    logger -p local0.err "[$KEY][$tag:$LINENO] reboot fallback request was not accepted; retry remains enabled"
+                fi
                 return 0
             fi
             logger -p local0.err "[$KEY][$tag:$LINENO] cannot persist reboot flag ($DISCONNECT_REBOOT_FLAG) - skip escalation reboot"
@@ -245,44 +271,11 @@ maybe_init_cam_on_disconnect() {
     if (( (now - last_init) >= DISCONNECT_INIT_CAM_INTERVAL_SEC )); then
         logger -p local0.notice "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag): periodic init_cam.sh (interval=${DISCONNECT_INIT_CAM_INTERVAL_SEC}s)"
         printf "%s,%s" "$first_seen" "$now" > "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
-        /opt/pim/bin/init_cam.sh
+        cam_submit_internal_action module_reload "disconnect periodic recovery"
         return 0
     fi
 
     printf "%s,%s" "$first_seen" "$last_init" > "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
-    return 1
-}
-
-force_edgeconf_app_to_gstapp() {
-    local cfg="$1"
-    local cur_app=""
-    local tmpf=""
-
-    if [ -z "$cfg" ] || [ ! -f "$cfg" ]; then
-        logger -p local0.err "[$KEY][$tag:$LINENO] edgeconf file not found for app force: $cfg"
-        return 1
-    fi
-
-    cur_app=$(jq -r '(.VHL_CAM.app // "")' "$cfg" 2>/dev/null | tr -d '\n')
-    if [ "$cur_app" = "gstApp" ]; then
-        return 0
-    fi
-
-    tmpf=$(mktemp "${cfg}.tmp.XXXXXX" 2>/dev/null)
-    if [ -z "$tmpf" ]; then
-        logger -p local0.err "[$KEY][$tag:$LINENO] mktemp failed for app force: $cfg"
-        return 1
-    fi
-
-    if jq '.VHL_CAM.app = "gstApp"' "$cfg" > "$tmpf" 2>/dev/null; then
-        if mv -f "$tmpf" "$cfg"; then
-            logger -p local0.notice "[$KEY][$tag:$LINENO] forced .VHL_CAM.app to gstApp (was:${cur_app:-unset})"
-            return 0
-        fi
-    fi
-
-    rm -f "$tmpf" 2>/dev/null
-    logger -p local0.err "[$KEY][$tag:$LINENO] failed to force .VHL_CAM.app to gstApp"
     return 1
 }
 
@@ -1182,16 +1175,15 @@ CheckFinalArrival() {
     _write_final_health "STALL" "$final_stall_cnt"
 
     if [ "$final_stall_cnt" -le 2 ]; then
-        logger -p local0.error "[$KEY][$tag:$LINENO] FINAL STALL escalate: kill_test.sh (stall_cnt=$final_stall_cnt)"
-        /opt/pim/bin/kill_test.sh
+        logger -p local0.error "[$KEY][$tag:$LINENO] FINAL STALL request gstapp_restart (stall_cnt=$final_stall_cnt)"
+        cam_submit_internal_action gstapp_restart "final path stall count $final_stall_cnt"
     elif [ "$final_stall_cnt" -le 4 ]; then
-        logger -p local0.error "[$KEY][$tag:$LINENO] FINAL STALL escalate: init_cam.sh (stall_cnt=$final_stall_cnt)"
-        /opt/pim/bin/init_cam.sh
+        logger -p local0.error "[$KEY][$tag:$LINENO] FINAL STALL request module_reload (stall_cnt=$final_stall_cnt)"
+        cam_submit_internal_action module_reload "final path stall count $final_stall_cnt"
     else
         if [[ "$file_chk_reboot" == *"$ENABLE_VAL"* ]]; then
-            logger -p local0.emerg "[$KEY][$tag:$LINENO] FINAL STALL persistent (stall_cnt=$final_stall_cnt) — reboot"
-            sleep 1
-            reboot
+            logger -p local0.emerg "[$KEY][$tag:$LINENO] FINAL STALL request reboot_fallback (stall_cnt=$final_stall_cnt)"
+            cam_submit_internal_action reboot_fallback "final path stall count $final_stall_cnt"
         else
             logger -p local0.notice "[$KEY][$tag:$LINENO] FINAL STALL persistent but file_chk_reboot=false — reset counter"
             final_stall_cnt=0
@@ -1285,17 +1277,24 @@ CheckDiskSpace() {
     return 0
 }
 
+if [ "${PIM_CAMERA_TEST_MONITOR_ONCE:-0}" != 1 ]; then
 logger -p local0.emerg "[$KEY][$tag:$LINENO] cam-operate daemon start : Booting"
 #/opt/pim/bin/automnt_sd_for_emmc_boot.sh /mnt/sd_cam &
+if cam_daemon_startup "$$"; then
+    logger -p local0.notice "[$KEY][$tag:$LINENO] camera startup transaction ready"
+else
+    startup_rc=$?
+    logger -p local0.emerg "[$KEY][$tag:$LINENO] camera startup transaction failed rc=$startup_rc"
+    exit "$startup_rc"
+fi
+cam_liveness_init
 modprobe rtc_ds1307
-modprobe max9296 || logger -p local0.err "[$KEY][$tag:$LINENO] modprobe max9296 failed"
-modprobe imx8-media-dev || logger -p local0.err "[$KEY][$tag:$LINENO] modprobe imx8-media-dev failed"
 #/opt/pim/bin/start_cam.sh 20
 
 FILE_="/tmp/start_video_time_chk"
 SESSION_FILE_="/tmp/start_video_session_chk"
-#FILE_JSON=/root/shared_v/edgeconf_pim.json
-FILE_JSON_=/root/shared_v/ord_vcm_conf.json
+FILE_JSON="$PIM_CAMERA_RUNTIME_JSON"
+FILE_JSON_="$PIM_CAMERA_RUNTIME_JSON"
 FILE_CHECK=/tmp/file_check
 FLAG_PATH=/tmp
 ENABLE_VAL="true"
@@ -1306,11 +1305,6 @@ retry_total=0
 last_init_ts=0
 final_stall_cnt=0
 #touch $FILE_
-
-JSON_PREFIX=edgeconf_
-JSON_SUFFIX=.json
-FILE_JSON=$(ls -ptr /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX} | grep -v '/$' | grep "${JSON_SUFFIX}$" | tail -1 | tr -d '\r\n')
-force_edgeconf_app_to_gstapp "$FILE_JSON" || true
 
 timer=0
 mnt_path="/mnt/sd_cam"
@@ -1362,21 +1356,57 @@ if [ ! -d "$final_path" ]; then
     mkdir -p "$final_path"
 fi
 
-logger -p local0.info "[$KEY][$tag:$LINENO] /opt/pim/bin/start_cam.sh $app_delay"
-/opt/pim/bin/start_cam.sh $app_delay
-#rst_time=60
-#StartApp start_cam.sh
-#StartScript restart_app.sh
-
 GetConfig_
+else
+    timer=0
+fi
 
 logger -p local0.notice "[$KEY][$tag:$LINENO] ch0:$cam_ch0, ch1:$cam_ch1, ch2:$cam_ch2, ch3:$cam_ch3, srt:$srt_en, time_rec_en:$time_rec_en, vhl_name:$vhl_name, rec_time:$rec_time, rst_time:$rst_time, cap_en:$cap_en, mnt_path:$mnt_path, tmp_path:$tmp_path, sd_tmp_path:$sd_tmp_path, final_path:$final_path, app_delay:$app_delay, camera_startup_grace_sec:$camera_startup_grace_sec, muxer:$muxer, file_check_delay:$file_check_delay file_chk_reboot:$file_chk_reboot"
+
+cam_monitor_reload_config() {
+    if [ "${PIM_CAMERA_TEST_MONITOR_ONCE:-0}" = 1 ]; then
+        [ -z "${PIM_CAMERA_TEST_MONITOR_RELOAD_TRACE:-}" ] || printf 'config-reload\n' >> "$PIM_CAMERA_TEST_MONITOR_RELOAD_TRACE"
+        return 0
+    fi
+    GetConfig
+    apply_storage_mode_overrides
+}
 
 while :
 do
 
     check_num=0
     file_cnt=0
+
+    request_rc=0
+    cam_monitor_control_iteration cam_monitor_reload_config || request_rc=$?
+    case "$request_rc" in
+        0) [ "$PIM_CAMERA_MONITOR_DID_WORK" -eq 0 ] || timer=0 ;;
+        1) ;;
+        *)
+            logger -p local0.err "[$KEY][$tag:$LINENO] pending camera request failed type=$PIM_CAMERA_MONITOR_WORK_TYPE rc=$request_rc"
+            [ "${PIM_CAMERA_TEST_MONITOR_ONCE:-0}" != 1 ] || exit "$request_rc"
+            sleep 2
+            continue
+            ;;
+    esac
+
+    [ "$PIM_CAMERA_MONITOR_STOPPING" -eq 0 ] || break
+    liveness_rc=$PIM_CAMERA_MONITOR_LIVENESS_RC
+    if [ "$liveness_rc" -ne 0 ]; then
+        [ "$liveness_rc" -eq 75 ] || logger -p local0.err "[$KEY][$tag:$LINENO] liveness tick failed rc=$liveness_rc"
+    fi
+    [ "${PIM_CAMERA_TEST_MONITOR_ONCE:-0}" != 1 ] || exit "$liveness_rc"
+
+    if ! cam_validate_runtime "$PIM_CAMERA_RUNTIME_JSON"; then
+        logger -p local0.err "[$KEY][$tag:$LINENO] CONFIG_INVALID: runtime validation failed"
+        if ! cam_mark_degraded CONFIG_INVALID config false; then
+            logger -p local0.emerg "[$KEY][$tag:$LINENO] failed to persist CONFIG_INVALID"
+            exit 70
+        fi
+        sleep 2
+        continue
+    fi
 
     if [ -f /tmp/init_cam_flag ] || [ -f /tmp/restart_flag ]; then
         sleep 5
@@ -1414,17 +1444,17 @@ do
         elif in_init_cooldown || cam_in_init_cooldown "$init_cooldown_sec"; then
             :
         else
-            logger -p local0.error "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh because recover request"
+            logger -p local0.error "[$KEY][$tag:$LINENO] request module_reload because recover request"
             rm -f "$RECOVER_REQ_INIT_CAM"
             cam_clear_recovery
-            /opt/pim/bin/init_cam.sh
+            cam_submit_internal_action module_reload "legacy recover request"
             timer=0
             sleep 5
             continue
         fi
     fi
 
-    # Driver load failure: retry init_cam, then reboot (unless disconnect).
+    # Driver load failure: request serialized module recovery, then reboot fallback.
     if ! modules_loaded; then
         cam_disconnect_flag=$(get_cam_disconnect_flag)
         logger -p local0.error "[$KEY][$tag:$LINENO] driver module not loaded (max9296/imx8_media_dev)"
@@ -1433,15 +1463,14 @@ do
             ((retry_boot++))
             retry_total=$(($retry+$retry_boot))
             if [ "$retry_total" -le 5 ]; then
-                logger -p local0.error "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh because driver load fail (retry=$retry boot=$retry_boot total=$retry_total, next: reboot at total>5 if file_chk_reboot=$file_chk_reboot)"
+                logger -p local0.error "[$KEY][$tag:$LINENO] request module_reload because driver load fail (retry=$retry boot=$retry_boot total=$retry_total)"
                 cam_request_recovery "driver_load_fail"
-                /opt/pim/bin/init_cam.sh
+                cam_submit_internal_action module_reload "driver load failure"
             else
                 logger -p local0.error "[$KEY][$tag:$LINENO] retry_total $retry_total is over (driver load fail)"
                 if [[ "$file_chk_reboot" == *"$ENABLE_VAL"* ]]; then
-                    logger -p local0.emerg "[$KEY][$tag:$LINENO] rebooting because driver load fail (retry=$retry boot=$retry_boot total=$retry_total)"
-                    sleep 1
-                    reboot
+                    logger -p local0.emerg "[$KEY][$tag:$LINENO] request reboot_fallback because driver load fail (retry=$retry boot=$retry_boot total=$retry_total)"
+                    cam_submit_internal_action reboot_fallback "driver load failure exhausted"
                 else
                     logger -p local0.notice "[$KEY][$tag:$LINENO] retry count reset because file_check_reboot is not true"
                     retry=0
@@ -1620,19 +1649,17 @@ do
                     ((retry++))
                     retry_total=$(($retry+$retry_boot))
                     if [ "$retry_total" -le 3 ]; then
-                        logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/kill_test.sh (retry=$retry boot=$retry_boot total=$retry_total, next: init_cam at total>3)"
-                        /opt/pim/bin/kill_test.sh
+                        logger -p local0.error  "[$KEY][$tag:$LINENO] request gstapp_restart (retry=$retry boot=$retry_boot total=$retry_total, next: module_reload at total>3)"
+                        cam_submit_internal_action gstapp_restart "file check failure"
                     elif [ "$retry_total" -le 5 ]; then
-                        logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh (retry=$retry boot=$retry_boot total=$retry_total, next: reboot at total>5 if file_chk_reboot=$file_chk_reboot)"
+                        logger -p local0.error  "[$KEY][$tag:$LINENO] request module_reload (retry=$retry boot=$retry_boot total=$retry_total, next: reboot fallback at total>5 if file_chk_reboot=$file_chk_reboot)"
                         cam_request_recovery "file_check_fail"
-                        /opt/pim/bin/init_cam.sh
+                        cam_submit_internal_action module_reload "file check failure"
                     else
                         logger -p local0.error "[$KEY][$tag:$LINENO] retry total $retry_total is over"
                         if [[ "$file_chk_reboot" == *"$ENABLE_VAL"* ]]; then
-                            logger -p local0.emerg "[$KEY][$tag:$LINENO] rebooting because file check fail (retry=$retry boot=$retry_boot total=$retry_total)"
-                            sleep 1
-                            #creboot
-                            reboot
+                            logger -p local0.emerg "[$KEY][$tag:$LINENO] request reboot_fallback because file check fail (retry=$retry boot=$retry_boot total=$retry_total)"
+                            cam_submit_internal_action reboot_fallback "file check failure exhausted"
                         else
                             logger -p local0.notice "[$KEY][$tag:$LINENO] retry count reset because file_check_reboot is not true"
                             retry=0
@@ -1645,14 +1672,14 @@ do
                     if [ "$drv_disc_now" -ne 0 ]; then
                         logger -p local0.notice "[$KEY][$tag:$LINENO] skip init_cam: driver disconnect(0x$(printf '%x' $drv_disc_now)), file check fail expected"
                     else
-                        logger -p local0.err  "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag): /opt/pim/bin/init_cam.sh"
+                        logger -p local0.err  "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag): request module_reload"
                         if ! in_init_cooldown && ! cam_in_init_cooldown "$init_cooldown_sec"; then
                             # periodic init_cam 간격 추적을 위해 last_init 갱신
                             now_ts=$(date +%s)
                             first_seen_val=$(cat "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null | awk -F',' '{print $1}')
                             [[ ! "$first_seen_val" =~ ^[0-9]+$ ]] && first_seen_val=$now_ts
                             printf "%s,%s" "$first_seen_val" "$now_ts" > "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
-                            /opt/pim/bin/init_cam.sh
+                            cam_submit_internal_action module_reload "disconnect file check failure"
                         fi
                     fi
                 fi
@@ -1696,18 +1723,17 @@ do
                 if [ "$retry_total" -le 2 ]; then
                     # 카운터만 찍으면 지금이 사다리의 어디인지 알 수 없다. 다음 단계를
                     # 같이 남겨 재부팅이 임박했는지 로그만으로 보이게 한다.
-                    logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/kill_test.sh (retry=$retry boot=$retry_boot total=$retry_total, next: init_cam at total>2)"
-                    /opt/pim/bin/kill_test.sh
+                    logger -p local0.error  "[$KEY][$tag:$LINENO] request gstapp_restart (retry=$retry boot=$retry_boot total=$retry_total, next: module_reload at total>2)"
+                    cam_submit_internal_action gstapp_restart "gstapp start marker missing"
                 elif [ "$retry_total" -le 4 ]; then
-                    logger -p local0.error  "[$KEY][$tag:$LINENO] /opt/pim/bin/init_cam.sh (retry=$retry boot=$retry_boot total=$retry_total, next: reboot at total>4 if file_chk_reboot=$file_chk_reboot)"
+                    logger -p local0.error  "[$KEY][$tag:$LINENO] request module_reload (retry=$retry boot=$retry_boot total=$retry_total, next: reboot fallback at total>4 if file_chk_reboot=$file_chk_reboot)"
                     cam_request_recovery "startup_fail"
-                    /opt/pim/bin/init_cam.sh
+                    cam_submit_internal_action module_reload "gstapp start marker missing"
                 else
                     logger -p local0.error "[$KEY][$tag:$LINENO] retry_total $retry_total is over"
                     if [[ "$file_chk_reboot" == *"$ENABLE_VAL"* ]]; then
-                        logger -p local0.emerg "[$KEY][$tag:$LINENO] rebooting because no start marker (retry=$retry boot=$retry_boot total=$retry_total)"
-                        sleep 1
-                        reboot
+                        logger -p local0.emerg "[$KEY][$tag:$LINENO] request reboot_fallback because no start marker (retry=$retry boot=$retry_boot total=$retry_total)"
+                        cam_submit_internal_action reboot_fallback "gstapp start marker missing exhausted"
                     else
                         logger -p local0.notice "[$KEY][$tag:$LINENO] retry count reset because file_check_reboot is not true"
                         retry=0
@@ -1720,14 +1746,14 @@ do
                 if (( drv_disc != 0 )); then
                     logger -p local0.notice "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag) drv_disc=$drv_disc: skip init_cam (periodic handles recovery)"
                 else
-                    logger -p local0.err  "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag): /opt/pim/bin/init_cam.sh"
+                    logger -p local0.err  "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag): request module_reload"
                     if ! in_init_cooldown && ! cam_in_init_cooldown "$init_cooldown_sec"; then
                         # periodic init_cam 간격 추적을 위해 last_init 갱신
                         now_ts=$(date +%s)
                         first_seen_val=$(cat "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null | awk -F',' '{print $1}')
                         [[ ! "$first_seen_val" =~ ^[0-9]+$ ]] && first_seen_val=$now_ts
                         printf "%s,%s" "$first_seen_val" "$now_ts" > "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
-                        /opt/pim/bin/init_cam.sh
+                        cam_submit_internal_action module_reload "disconnect startup failure"
                     fi
                 fi
             fi

@@ -1,283 +1,236 @@
 #!/bin/bash
+
 TAG=$(basename "$0")
 KEY=MNT
-DEVICE=/dev/mmcblk1p1
-DIR=/mnt/sd_cam
 mnt_state=0
 mnt_cnt=0
-mnt_folder=0
-mnt_dev=0
-daemon_name=""
-status=""
-mnt_flag="/dev/shm/sd_mount_flag"
 fsck_cnt=0
 reinsert_fail_cnt=0
 ro_wait_cnt=0
 ro_fallback=0
-RO_RECOVERY_FLAG="/tmp/sd_ro_recovered"
 REINSERT_FAIL_MAX=5
 REINSERT_BACKOFF_SEC=60
-LOCKFILE="/tmp/automnt_sd_for_emmc_boot.lock"
+TEST_MODE=0
+MAX_ITERATIONS=0
+
+if [[ "${PIM_CAMERA_TEST_MODE:-0}" == "1" ]]; then
+    TEST_MODE=1
+    DEVICE="${PIM_SD_DEVICE:?PIM_SD_DEVICE is required in test mode}"
+    DIR="${PIM_SD_MOUNT_DIR:?PIM_SD_MOUNT_DIR is required in test mode}"
+    MNT_FLAG="${PIM_SD_MOUNT_FLAG:?PIM_SD_MOUNT_FLAG is required in test mode}"
+    PROC_MOUNTS="${PIM_SD_PROC_MOUNTS:?PIM_SD_PROC_MOUNTS is required in test mode}"
+    SD_PRESENT_PATH="${PIM_SD_PRESENT_PATH:?PIM_SD_PRESENT_PATH is required in test mode}"
+    SD_SYS_RO_PATH="${PIM_SD_SYS_RO_PATH:?PIM_SD_SYS_RO_PATH is required in test mode}"
+    RO_RECOVERY_FLAG="${PIM_SD_RO_RECOVERY_FLAG:?PIM_SD_RO_RECOVERY_FLAG is required in test mode}"
+    LOCKFILE="${PIM_SD_LOCKFILE:?PIM_SD_LOCKFILE is required in test mode}"
+    SESSION_DIR="${PIM_CAMERA_SESSION_DIR:?PIM_CAMERA_SESSION_DIR is required in test mode}"
+    MAX_ITERATIONS="${PIM_AUTOMOUNT_MAX_ITERATIONS:?PIM_AUTOMOUNT_MAX_ITERATIONS is required in test mode}"
+else
+    DEVICE="/dev/mmcblk1p1"
+    DIR="/mnt/sd_cam"
+    MNT_FLAG="/dev/shm/sd_mount_flag"
+    PROC_MOUNTS="/proc/mounts"
+    SD_PRESENT_GLOB="/sys/bus/mmc/devices/mmc1:*/block/mmcblk1/mmcblk1p1"
+    SD_SYS_RO_PATH="/sys/block/mmcblk1/ro"
+    RO_RECOVERY_FLAG="/tmp/sd_ro_recovered"
+    LOCKFILE="/tmp/automnt_sd_for_emmc_boot.lock"
+    SESSION_DIR="/tmp"
+fi
+
 exec 200>"$LOCKFILE"
 flock -n 200 || exit 1
 
-# SD가 read-only 상태인지 확인 (H/W 또는 S/W)
+publish_available() {
+    printf '%s\n' "$1" > "$MNT_FLAG"
+}
+
+is_sd_present() {
+    if [[ "$TEST_MODE" == "1" ]]; then
+        [[ -d "$SD_PRESENT_PATH" ]]
+    else
+        compgen -G "$SD_PRESENT_GLOB" >/dev/null
+    fi
+}
+
 is_sd_ro() {
-    if [ "$(cat /sys/block/mmcblk1/ro 2>/dev/null)" = "1" ]; then
+    if [[ "$(cat "$SD_SYS_RO_PATH" 2>/dev/null)" == "1" ]]; then
         return 0
     fi
-    if awk -v dev="$DEVICE" '$1 == dev && $4 ~ /^ro/ {found=1} END {exit !found}' /proc/mounts 2>/dev/null; then
-        return 0
-    fi
-    return 1
+    awk -v dev="$DEVICE" '$1 == dev && $4 ~ /^ro/ {found=1} END {exit !found}' \
+        "$PROC_MOUNTS" 2>/dev/null
 }
 
-# 공통 함수: tmp_path를 /dev/shm으로 fallback
-fallback_to_shm() {
-    local config_file="$1"
-    local tmp_path
-    tmp_path=$(jq -r '.VHL_CAM.tmp_path' "$config_file")
-    if [ "$tmp_path" != "/dev/shm" ]; then
-        logger -p local0.notice "[$KEY][$TAG:$LINENO] fallback tmp_path : $tmp_path -> /dev/shm"
-        local _tmpf
-        _tmpf=$(mktemp "${config_file}.XXXXXX") && \
-          jq --arg prev "$tmp_path" '.VHL_CAM.prev_tmp_path_before_fallback = $prev | .VHL_CAM.tmp_path_fallback_active = true | .VHL_CAM.tmp_path = "/dev/shm"' "$config_file" > "$_tmpf" && \
-          mv -f "$_tmpf" "$config_file" || rm -f "$_tmpf"
-        systemctl restart cam-operate
+detect_fstype() {
+    FSTYPE=$(blkid -o value -s TYPE "$DEVICE" 2>/dev/null)
+    if [[ -z "$FSTYPE" ]]; then
+        FSTYPE=$(lsblk -no FSTYPE "$DEVICE" 2>/dev/null)
     fi
 }
 
-# SD 재삽입 시 tmp_path를 SD 경로로 복구
-restore_to_sd() {
-    local config_file="$1"
-    local current_tmp
-    current_tmp=$(jq -r '.VHL_CAM.tmp_path' "$config_file")
+mount_sd() {
+    mount_quarantined=0
+    case "$FSTYPE" in
+        vfat|fat|fat32|msdos)
+            mount -t vfat -o noatime,nodiratime,flush,dirsync,utf8=1,shortname=mixed \
+                "$DEVICE" "$DIR"
+            ;;
+        ext4)
+            mount -t ext4 -o noatime,nodiratime,commit=60,data=ordered,barrier=1,errors=remount-ro \
+                "$DEVICE" "$DIR"
+            ;;
+        exfat)
+            mount -t exfat -o noatime,nodiratime "$DEVICE" "$DIR"
+            ;;
+        *)
+            logger -p local0.crit "[$KEY][$TAG:$LINENO] $DEVICE fstype is undefined : $FSTYPE"
+            reinsert_fail_cnt=$((reinsert_fail_cnt + 1))
+            if [[ "$reinsert_fail_cnt" -ge "$REINSERT_FAIL_MAX" ]]; then
+                logger -p local0.emerg "[$KEY][$TAG:$LINENO] $DEVICE fstype detection failed $reinsert_fail_cnt times. SD card may be damaged. Waiting ${REINSERT_BACKOFF_SEC}s before retry."
+                publish_available 0
+                mnt_state=2
+                mount_quarantined=1
+                sleep "$REINSERT_BACKOFF_SEC"
+                return 1
+            fi
+            mount "$DEVICE" "$DIR"
+            ;;
+    esac
+}
 
-    if [ "$current_tmp" == "/dev/shm" ]; then
-        local fallback_active
-        fallback_active=$(jq -r '(.VHL_CAM.tmp_path_fallback_active // false)' "$config_file")
-        if [ "$fallback_active" != "true" ]; then
-            logger -p local0.notice "[$KEY][$TAG:$LINENO] tmp_path is /dev/shm by configuration. skip auto-restore"
-            return 0
+cleanup_sd_files() {
+    shopt -s nocaseglob
+    local fsck_files=("$DIR"/FSCK*)
+    if [[ -e "${fsck_files[0]}" ]]; then
+        rm -f -- "$DIR"/FSCK*
+    fi
+    shopt -u nocaseglob
+
+    if [[ ! -d "$DIR/tmp" ]]; then
+        mkdir -p "$DIR/tmp"
+        logger -p local0.notice "[$KEY][$TAG:$LINENO] created $DIR/tmp"
+    fi
+
+    local part_count
+    part_count=$(find "$DIR/tmp" -type f -name '*.part' 2>/dev/null | wc -l)
+    if [[ "$part_count" -gt 0 ]]; then
+        logger -p local0.notice "[$KEY][$TAG:$LINENO] cleaning up $part_count .part files in $DIR/tmp"
+        find "$DIR/tmp" -type f -name '*.part' -delete 2>/dev/null
+    fi
+
+    rm -f -- "$SESSION_DIR"/session_*.all_done 2>/dev/null
+}
+
+start_camera_if_ready() {
+    local daemon_name=cam-operate
+    local status
+    status=$(systemctl is-enabled "$daemon_name" 2>/dev/null)
+    if [[ "$status" == "enabled" ]]; then
+        status=$(systemctl is-active "$daemon_name" 2>/dev/null)
+        if [[ "$status" != "active" ]]; then
+            systemctl start "$daemon_name"
         fi
-
-        local target_tmp=""
-        target_tmp=$(jq -r '(.VHL_CAM.prev_tmp_path_before_fallback // empty)' "$config_file")
-
-        if [ -z "$target_tmp" ] || [ "$target_tmp" = "null" ] || [ "$target_tmp" = "/dev/shm" ]; then
-            logger -p local0.warning "[$KEY][$TAG:$LINENO] skip tmp_path restore: previous path unavailable"
-            local _tmpf
-            _tmpf=$(mktemp "${config_file}.XXXXXX") && \
-              jq '.VHL_CAM.tmp_path_fallback_active = false | del(.VHL_CAM.prev_tmp_path_before_fallback)' "$config_file" > "$_tmpf" && \
-              mv -f "$_tmpf" "$config_file" || rm -f "$_tmpf"
-            return 0
-        fi
-
-        logger -p local0.notice "[$KEY][$TAG:$LINENO] restoring tmp_path : /dev/shm -> $target_tmp"
-        local _tmpf
-        _tmpf=$(mktemp "${config_file}.XXXXXX") && \
-          jq --arg target "$target_tmp" '.VHL_CAM.tmp_path = $target | .VHL_CAM.tmp_path_fallback_active = false | del(.VHL_CAM.prev_tmp_path_before_fallback)' "$config_file" > "$_tmpf" && \
-          mv -f "$_tmpf" "$config_file" || rm -f "$_tmpf"
-        systemctl restart cam-operate
     fi
 }
 
-JSON_PREFIX=edgeconf_
-JSON_SUFFIX=.json
-FILE_JSON=""
-for f in /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX}; do
-    [ -f "$f" ] && FILE_JSON="$f"
-done
+detect_fstype
+logger -p local0.notice "[$KEY][$TAG:$LINENO] dev : $DEVICE, dir : $DIR, fstype : $FSTYPE"
 
-if [ -z "$FILE_JSON" ] || [ ! -f "$FILE_JSON" ]; then
-    logger -p local0.emerg "[$KEY][$TAG:$LINENO] config file not found: /root/shared_v/${JSON_PREFIX}*${JSON_SUFFIX}"
-    exit 1
-fi
-tmp_path=$(jq -r '.VHL_CAM.tmp_path' "$FILE_JSON")
-
-FSTYPE="$(blkid -o value -s TYPE "$DEVICE" 2>/dev/null)"
-if [ -z "$FSTYPE" ]; then
-    FSTYPE="$(lsblk -no FSTYPE "$DEVICE" 2>/dev/null)"
-fi
-
-logger -p local0.notice "[$KEY][$TAG:$LINENO] dev : $DEVICE, dir : $DIR, fstype : $FSTYPE, tmp_path : $tmp_path"
-
+iteration=0
 while true; do
-    case $mnt_state in
+    case "$mnt_state" in
         0)
-            if [ -d /sys/bus/mmc/devices/mmc1:*/block/mmcblk1/mmcblk1p1 ]; then
+            if is_sd_present; then
                 logger -p local0.info "[$KEY][$TAG:$LINENO] umount -l $DIR (prep for re-mount)"
-                # 이전 마운트 상태가 남아있을 수 있으므로 lazy unmount 수행
                 umount -l "$DIR" 2>/dev/null
-                
-                mnt_dev=$(awk -v dev="$DEVICE" '$1 == dev {print $1}' /proc/mounts)
-                if [ -z "$mnt_dev" ]; then
-                    logger -p local0.notice "[$KEY][$TAG:$LINENO] mount folder clean : rm -rf /mnt/*"
-                    rm -rf "$DIR"
 
-                    if [ ! -d "$DIR" ]; then
-                        logger -p local0.info "[$KEY][$TAG:$LINENO] mkdir -p $DIR"
-                        mkdir -p "$DIR"
-                    fi
+                mnt_dev=$(awk -v dev="$DEVICE" '$1 == dev {print $1}' "$PROC_MOUNTS")
+                if [[ -z "$mnt_dev" ]]; then
+                    logger -p local0.notice "[$KEY][$TAG:$LINENO] mount folder clean : $DIR"
+                    rm -rf -- "$DIR"
+                    mkdir -p "$DIR"
 
-                    FSTYPE="$(blkid -o value -s TYPE "$DEVICE" 2>/dev/null)"
-                    if [ -z "$FSTYPE" ]; then
-                        FSTYPE="$(lsblk -no FSTYPE "$DEVICE" 2>/dev/null)"
-                    fi
-
+                    detect_fstype
                     logger -p local0.notice "[$KEY][$TAG:$LINENO] $DEVICE fstype : $FSTYPE, mounting to $DIR"
-                    case "$FSTYPE" in
-                        vfat|fat|fat32|msdos)
-                            mount -t vfat -o noatime,nodiratime,flush,dirsync,utf8=1,shortname=mixed "$DEVICE" "$DIR"
-                            ;;
-                        ext4)
-                            mount -t ext4 -o noatime,nodiratime,commit=60,data=ordered,barrier=1,errors=remount-ro "$DEVICE" "$DIR"
-                            ;;
-                        exfat)
-                            mount -t exfat -o noatime,nodiratime "$DEVICE" "$DIR"
-                            ;;
-                        *)
-                            logger -p local0.crit "[$KEY][$TAG:$LINENO] $DEVICE fstype is undefined : $FSTYPE"
-                            ((reinsert_fail_cnt++))
-                            if [ $reinsert_fail_cnt -ge $REINSERT_FAIL_MAX ]; then
-                                logger -p local0.emerg "[$KEY][$TAG:$LINENO] $DEVICE fstype detection failed $reinsert_fail_cnt times. SD card may be damaged. Waiting ${REINSERT_BACKOFF_SEC}s before retry."
-                                fallback_to_shm "$FILE_JSON"
-                                mnt_state=2
-                                sleep $REINSERT_BACKOFF_SEC
-                                continue
-                            fi
-                            mount "$DEVICE" "$DIR"
-                            ;;
-                    esac
+                    mount_sd
+                    mount_rc=$?
+                    if [[ "$mount_quarantined" -eq 1 ]]; then
+                        continue
+                    fi
+                    mnt_folder=$(awk -v dev="$DEVICE" '$1 == dev {print $2}' "$PROC_MOUNTS")
 
-                    mnt_folder=$(awk -v dev="$DEVICE" '$1 == dev {print $2}' /proc/mounts)
-                    if [ "$mnt_folder" == "$DIR" ]; then
-                        if awk -v dev="$DEVICE" '$1 == dev && $4 ~ /^rw/ {found=1} END {exit !found}' /proc/mounts; then
-                            shopt -s nocaseglob
-                            FILES=("$DIR"/FSCK*)
-                            if [ -e "${FILES[0]}" ]; then
-                                rm -f "$DIR"/FSCK*
-                            fi
-                            shopt -u nocaseglob
-
+                    if [[ "$mount_rc" -eq 0 && "$mnt_folder" == "$DIR" ]]; then
+                        if awk -v dev="$DEVICE" '$1 == dev && $4 ~ /^rw/ {found=1} END {exit !found}' \
+                            "$PROC_MOUNTS"; then
+                            cleanup_sd_files
+                            publish_available 1
                             logger -p local0.notice "[$KEY][$TAG:$LINENO] sd_mount_flag set"
-                            echo '1' > "$mnt_flag"
                             mnt_state=1
                             mnt_cnt=0
                             fsck_cnt=0
                             reinsert_fail_cnt=0
-
-                            sd_tmp_path_cfg=$(jq -r '(.VHL_CAM.sd_tmp_path // "'"$DIR"'/tmp")' "$FILE_JSON" 2>/dev/null)
-                            cleanup_dirs=("$DIR/tmp")
-                            if [ -n "$sd_tmp_path_cfg" ] && [ "$sd_tmp_path_cfg" != "$DIR/tmp" ]; then
-                                case "$sd_tmp_path_cfg" in
-                                    "$DIR"/*)
-                                        cleanup_dirs+=("$sd_tmp_path_cfg")
-                                        ;;
-                                    *)
-                                        logger -p local0.warning "[$KEY][$TAG:$LINENO] sd_tmp_path outside $DIR, skip cleanup: $sd_tmp_path_cfg"
-                                        ;;
-                                esac
-                            fi
-
-                            for d in "${cleanup_dirs[@]}"; do
-                                if [ ! -d "$d" ]; then
-                                    mkdir -p "$d"
-                                    logger -p local0.notice "[$KEY][$TAG:$LINENO] created $d"
-                                fi
-
-                                part_count=$(find "$d" -name "*.part" 2>/dev/null | wc -l)
-                                if [ "$part_count" -gt 0 ]; then
-                                    logger -p local0.notice "[$KEY][$TAG:$LINENO] cleaning up $part_count .part files in $d"
-                                    find "$d" -name "*.part" -delete 2>/dev/null
-                                fi
-                            done
-
-                            rm -f /tmp/session_*.all_done 2>/dev/null
-
-                            daemon_name=cam-operate
-                            status=$(systemctl is-enabled "$daemon_name" 2>/dev/null)
-                            if [ "$status" == "enabled" ]; then
-                                status=$(systemctl is-active "$daemon_name" 2>/dev/null)
-                                if [ "$status" != "active" ]; then
-                                    systemctl start "$daemon_name"
-                                fi
-                            fi
-
-                            # /dev/shm으로 전환된 설정을 다시 SD 경로로 복구
-                            restore_to_sd "$FILE_JSON"
+                            start_camera_if_ready
                         else
-                            logger -p local0.crit "[$KEY][$TAG:$LINENO] mounted as read-only, immediate fallback"
-                            echo '0' > "$mnt_flag"
+                            logger -p local0.crit "[$KEY][$TAG:$LINENO] mounted as read-only"
+                            publish_available 0
                             umount -l "$DIR" 2>/dev/null
-                            fallback_to_shm "$FILE_JSON"
                             ro_fallback=1
                             mnt_state=2
                         fi
                     else
-                        logger -p local0.err "[$KEY][$TAG:$LINENO] sd mount failed, fallback to /dev/shm"
-                        echo '0' > "$mnt_flag"
-                        fallback_to_shm "$FILE_JSON"
+                        logger -p local0.err "[$KEY][$TAG:$LINENO] sd mount failed"
+                        publish_available 0
                         mnt_state=2
                     fi
-                elif [ "$mnt_dev" != "$DEVICE" ]; then
+                elif [[ "$mnt_dev" != "$DEVICE" ]]; then
                     logger -p local0.err "[$KEY][$TAG:$LINENO] mnt_dev : $mnt_dev != $DEVICE"
+                    publish_available 0
                     mnt_state=1
                 elif is_sd_ro; then
-                    logger -p local0.crit "[$KEY][$TAG:$LINENO] $DEVICE read-only (pre-mount), immediate fallback"
-                    echo '0' > "$mnt_flag"
+                    logger -p local0.crit "[$KEY][$TAG:$LINENO] $DEVICE read-only (pre-mount)"
+                    publish_available 0
                     umount -l "$DIR" 2>/dev/null
-                    fallback_to_shm "$FILE_JSON"
                     ro_fallback=1
                     mnt_state=2
                 else
+                    publish_available 1
                     mnt_state=1
                 fi
             else
-                # SD 물리적으로 없음 — 재삽입 대기 상태로 전환
-                fallback_to_shm "$FILE_JSON"
+                publish_available 0
                 mnt_state=2
             fi
-        ;;
+            ;;
         1)
-            if [ ! -d /sys/bus/mmc/devices/mmc1:*/block/mmcblk1/mmcblk1p1 ]; then
-                ((mnt_cnt++))
-                if [ $mnt_cnt -gt 3 ]; then
-                    echo '0' > "$mnt_flag"
+            if ! is_sd_present; then
+                mnt_cnt=$((mnt_cnt + 1))
+                if [[ "$mnt_cnt" -gt 3 ]]; then
+                    publish_available 0
                     logger -p local0.emerg "[$KEY][$TAG:$LINENO] please insert sd card!!"
                     sd_pids=$(fuser -m "$DIR" 2>/dev/null)
-                    if [ -n "$sd_pids" ]; then
+                    if [[ -n "$sd_pids" ]]; then
                         logger -p local0.warning "[$KEY][$TAG:$LINENO] processes using $DIR:$sd_pids"
                         fuser -TERM -km "$DIR" 2>/dev/null
                         sleep 1
                     fi
                     umount -l "$DIR" 2>/dev/null
-                    fallback_to_shm "$FILE_JSON"
                     mnt_cnt=0
                     mnt_state=2
                 fi
             elif is_sd_ro; then
-                # RO는 자연 복구되지 않음 — 즉시 fallback
-                echo '0' > "$mnt_flag"
-                if [ "$(cat /sys/block/mmcblk1/ro 2>/dev/null)" = "1" ]; then
-                    logger -p local0.crit "[$KEY][$TAG:$LINENO] $DEVICE H/W read-only detected, immediate fallback"
-                else
-                    logger -p local0.crit "[$KEY][$TAG:$LINENO] $DEVICE S/W read-only detected, immediate fallback"
-                fi
+                publish_available 0
+                logger -p local0.crit "[$KEY][$TAG:$LINENO] $DEVICE read-only detected"
                 umount -l "$DIR" 2>/dev/null
-                fallback_to_shm "$FILE_JSON"
                 mnt_cnt=0
                 fsck_cnt=0
                 ro_fallback=1
                 mnt_state=2
             else
-                mnt_dev=$(awk -v dir="$DIR" '$2 == dir {print $1}' /proc/mounts)
-                if [ "$mnt_dev" != "$DEVICE" ]; then
-                    ((mnt_cnt++))
-                    echo '0' > "$mnt_flag"
-                    logger -p local0.error "[$KEY][$TAG:$LINENO] mnt_dev mismatch: $mnt_dev != $DEVICE (mnt_cnt:$mnt_cnt)"
-                    if [ $mnt_cnt -gt 3 ]; then
-                        fallback_to_shm "$FILE_JSON"
+                mnt_dev=$(awk -v dir="$DIR" '$2 == dir {print $1}' "$PROC_MOUNTS")
+                if [[ "$mnt_dev" != "$DEVICE" ]]; then
+                    mnt_cnt=$((mnt_cnt + 1))
+                    publish_available 0
+                    logger -p local0.err "[$KEY][$TAG:$LINENO] mnt_dev mismatch: $mnt_dev != $DEVICE (mnt_cnt:$mnt_cnt)"
+                    if [[ "$mnt_cnt" -gt 3 ]]; then
                         mnt_cnt=0
                         mnt_state=2
                     fi
@@ -285,28 +238,25 @@ while true; do
                     mnt_cnt=0
                 fi
             fi
-        ;;
+            ;;
         2)
-            # SD absent 또는 RO fallback 완료 — 재삽입/복구만 감시
-            if [ -d /sys/bus/mmc/devices/mmc1:*/block/mmcblk1/mmcblk1p1 ]; then
-                if [ $reinsert_fail_cnt -ge $REINSERT_FAIL_MAX ]; then
-                    logger -p local0.notice "[$KEY][$TAG:$LINENO] SD present but fstype failed ${reinsert_fail_cnt}x. Waiting for physical re-insert."
-                elif [ "$ro_fallback" -eq 1 ]; then
-                    # RO fallback 상태 — umount 후 /proc/mounts에 없으므로 is_sd_ro 사용 불가
-                    # pim_guardian fsck 완료 시 RO_RECOVERY_FLAG 파일 생성으로 복구 신호
-                    if [ -f "$RO_RECOVERY_FLAG" ]; then
+            if is_sd_present; then
+                if [[ "$reinsert_fail_cnt" -ge "$REINSERT_FAIL_MAX" ]]; then
+                    logger -p local0.notice "[$KEY][$TAG:$LINENO] SD present but mount failed ${reinsert_fail_cnt}x; waiting for physical re-insert"
+                elif [[ "$ro_fallback" -eq 1 ]]; then
+                    if [[ -f "$RO_RECOVERY_FLAG" ]]; then
                         logger -p local0.notice "[$KEY][$TAG:$LINENO] RO recovery flag detected, attempting mount"
-                        rm -f "$RO_RECOVERY_FLAG"
+                        rm -f -- "$RO_RECOVERY_FLAG"
                         ro_fallback=0
                         ro_wait_cnt=0
                         mnt_cnt=0
                         fsck_cnt=0
                         mnt_state=0
                     else
-                        if [ $((ro_wait_cnt % 20)) -eq 0 ]; then
-                            logger -p local0.notice "[$KEY][$TAG:$LINENO] SD read-only fallback active, waiting for recovery (pim_guardian fsck) [${ro_wait_cnt}]"
+                        if [[ $((ro_wait_cnt % 20)) -eq 0 ]]; then
+                            logger -p local0.notice "[$KEY][$TAG:$LINENO] SD read-only fallback active, waiting for recovery [$ro_wait_cnt]"
                         fi
-                        ((ro_wait_cnt++))
+                        ro_wait_cnt=$((ro_wait_cnt + 1))
                     fi
                 else
                     logger -p local0.notice "[$KEY][$TAG:$LINENO] SD card available and writable, attempting mount"
@@ -316,19 +266,24 @@ while true; do
                     mnt_state=0
                 fi
             else
-                # SD 물리적으로 제거됨 — RO 플래그 리셋 (재삽입 시 clean 시작)
-                if [ $reinsert_fail_cnt -gt 0 ]; then
-                    logger -p local0.notice "[$KEY][$TAG:$LINENO] SD card physically removed. Resetting failure counter."
+                publish_available 0
+                if [[ "$reinsert_fail_cnt" -gt 0 ]]; then
                     reinsert_fail_cnt=0
                 fi
-                if [ "$ro_fallback" -eq 1 ]; then
-                    logger -p local0.notice "[$KEY][$TAG:$LINENO] SD card physically removed. Clearing RO fallback."
+                if [[ "$ro_fallback" -eq 1 ]]; then
                     ro_fallback=0
-                    rm -f "$RO_RECOVERY_FLAG"
+                    rm -f -- "$RO_RECOVERY_FLAG"
                 fi
                 ro_wait_cnt=0
             fi
-        ;;
+            ;;
     esac
+
+    iteration=$((iteration + 1))
+    if [[ "$TEST_MODE" == "1" && "$iteration" -ge "$MAX_ITERATIONS" ]]; then
+        break
+    fi
     sleep 3
 done
+
+exit 0

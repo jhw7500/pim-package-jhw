@@ -1,6 +1,38 @@
 # PIM Package Release Notes
 
-## Unreleased (2026-09-01)
+## Unreleased (2026-09-10)
+
+### #89 ORD single-owner startup contract
+
+- Every package-managed ORD start, restart, stop, and readiness decision now uses
+  `ord-operate.service`; the generic recovery launcher rejects direct ORD starts.
+- Recovery accepts ORD readiness only after the active systemd invocation publishes
+  its atomic post-initialization marker, so delayed bind/init failures propagate.
+- ORD initialization failures exit non-zero before teardown, so systemd and
+  recovery callers can observe failure instead of a successful exit.
+- TCP bind failures report the bind address, port, and preserved errno number and
+  description. Regression coverage includes a real loopback port collision.
+
+### camera7 serialized recovery package integration
+
+- Package version is `0.6.3+jhw.camera7` with explicit runtime dependencies on
+  Python 3, PyYAML, jq, util-linux, and procps.
+- `cam-operate.service` now owns the systemd runtime/state directories, uses
+  control-group shutdown, and waits up to 90 seconds for its ordered stop path.
+- The camera config unit is a prerequisite guard only. Camera probe/shadow units
+  wait for cam-operate and the merged runtime file.
+- ORD is a non-enabled manual executor ordered after cam-operate; cam-operate's
+  ordered `ExecStop` remains the sole owner of ORD shutdown. ORD no longer has
+  an autonomous restart policy. Installation disables stale enablement without
+  masking manual `systemctl start/restart` use.
+- Upgrade stops cam-operate before sd-mount, installs the `cam-recoveryctl`
+  compatibility link, retains the one-release wrapper surface, and preserves
+  persistent recovery counters/history across every package removal mode.
+- [`cam-recovery-operations.md`](./camera-health/cam-recovery-operations.md)
+  documents startup, `apply-config`, explicit recovery, BUSY/terminal results,
+  manual runtime testing, and `ACTIVE` versus `DEGRADED` handling.
+- External `pim-check` integration and live target acceptance remain separate
+  gates and are not claimed by this package-only change.
 
 ### camera6 gstApp 설정 파서 안전성 통합
 

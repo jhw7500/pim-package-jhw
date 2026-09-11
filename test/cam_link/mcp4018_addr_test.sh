@@ -13,10 +13,10 @@ source "$(dirname "$0")/lib.sh"
 
 WORK=$(mktemp -d)
 STUB="$WORK/stub"
-CONF="$WORK/conf"
+CONF="$WORK/pim_runtime.json"
 CALLS="$WORK/calls"
 SCRIPT="$PIM_BIN/mcp4018_ctrl.sh"
-mkdir -p "$STUB" "$CONF"
+mkdir -p "$STUB"
 trap 'rm -rf "$WORK"' EXIT
 
 command -v jq >/dev/null 2>&1 || { echo "jq 없음 — 건너뜀" >&2; exit 0; }
@@ -40,20 +40,21 @@ chmod +x "$STUB"/*
 
 # $1..$4 = ch0,ch1,ch2,ch3 의 enable
 write_conf() {
-    cat > "$CONF/edgeconf_pim.json" <<EOF
+    cat > "$CONF" <<EOF
 { "VHL_CAM": {
     "i2c2": { "ch0": {"enable": $1}, "ch1": {"enable": $2} },
-    "i2c1": { "ch2": {"enable": $3}, "ch3": {"enable": $4} } } }
+    "i2c1": { "ch2": {"enable": $3}, "ch3": {"enable": $4} } },
+  "ORD": {}, "VCM": {} }
 EOF
 }
-clear_conf() { rm -f "$CONF"/edgeconf_*.json; }
+clear_conf() { rm -f "$CONF"; }
 
 # $1=설명 $2=DETECT(i2cdetect 흉내) $3=채널 $4=명령 $5=기대 쓰기주소(none) $6=기대 exit
 # $7=값(set 전용, 선택)
 run() {
     : > "$CALLS"
     local out rc w
-    out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="$2" EDGECONF_DIR="$CONF" \
+    out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="$2" PIM_CAMERA_RUNTIME_JSON="$CONF" \
           MCP4018_LOCK_DIR="${MCP4018_LOCK_DIR:-$WORK}" \
           bash "$SCRIPT" "$3" "$4" ${7:+"$7"} 2>&1); rc=$?
     w=$(grep -oE 'w3@0x[0-9a-fA-F]+' "$CALLS" 2>/dev/null | head -1 | sed 's/.*@//')
@@ -90,6 +91,10 @@ echo "=== 설정으로 판정 못 하면 i2cdetect 로 폴백 ==="
 write_conf false false false false
 run "전부 disable + 스캔 무응답 → 거절" ""        0 on none 1
 run "전부 disable + 스캔 dual 이어도 거절" "11 12" 1 on none 1
+printf '{bad json}\n' > "$CONF"
+run "손상 runtime + 스캔 dual → fail closed" "11 12" 1 on none 1
+printf '%s\n' '{"VHL_CAM":{},"ORD":[],"VCM":{}}' > "$CONF"
+run "필수 object 오류 + 스캔 single → fail closed" "3c" 1 on none 1
 clear_conf
 run "설정 없음 + 스캔 dual → 0x60"      "11 12"   1 on 0x60 0
 run "설정 없음 + 스캔 single → 0x40"    "3c"      1 on 0x40 0
@@ -98,7 +103,7 @@ run "설정 없음 + 스캔 무응답 → 중단"    ""        1 on none 1
 echo
 echo "=== 폴백 판정에서는 채널 확인을 하지 않는다 (근거가 없으므로) ==="
 clear_conf
-out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="3c" EDGECONF_DIR="$CONF" \
+out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="3c" PIM_CAMERA_RUNTIME_JSON="$CONF" \
       bash "$SCRIPT" 1 on 2>&1)
 # 패턴에 .* 와 공백 섞인 한글을 함께 쓰면 UTF-8 로케일에서 매칭이 어긋난다.
 t_eq "단일 폴백 시 Note 로 한계를 알린다" \
@@ -109,13 +114,13 @@ echo "=== on 은 게이트를 열어 둔 채 끝난다는 것을 경고한다 ==
 # 주석과 usage 에만 있으면 실제 실행 시점에는 안 보인다. on 다음 수동 조작이
 # 이어지는 경우가 이 도구의 오용 경로다.
 write_conf true true false false
-out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" EDGECONF_DIR="$CONF" \
+out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" PIM_CAMERA_RUNTIME_JSON="$CONF" \
       bash "$SCRIPT" 0 on 2>&1)
 t_eq "on 실행 시 경고"   "$(printf '%s' "$out" | grep -c 'no bus lock')" 1
-out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" EDGECONF_DIR="$CONF" \
+out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" PIM_CAMERA_RUNTIME_JSON="$CONF" \
       bash "$SCRIPT" 0 off 2>&1)
 t_eq "off 도 같은 경고"  "$(printf '%s' "$out" | grep -c 'no bus lock')" 1
-out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" EDGECONF_DIR="$CONF" \
+out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" PIM_CAMERA_RUNTIME_JSON="$CONF" \
       MCP4018_LOCK_DIR="$WORK" bash "$SCRIPT" 0 set 0x10 2>&1)
 t_eq "set 에는 그 경고가 없다" "$(printf '%s' "$out" | grep -c 'no bus lock')" 0
 
@@ -141,7 +146,7 @@ gate_seq() {   # CALLS 에서 MFP4 쓰기만 순서대로 뽑는다
 }
 seq_for() {    # $1=DETECT $2=채널 $3=명령 $4=값
     : > "$CALLS"
-    PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="$1" EDGECONF_DIR="$CONF" \
+    PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="$1" PIM_CAMERA_RUNTIME_JSON="$CONF" \
         MCP4018_LOCK_DIR="${MCP4018_LOCK_DIR:-$WORK}" \
         bash "$SCRIPT" "$2" "$3" ${4:+"$4"} >/dev/null 2>&1
     gate_seq
@@ -167,7 +172,7 @@ t_eq "단일 ch0 · set → 상대가 없으므로 열고 닫기만" "$(seq_for 
 # 게이트를 연 뒤에 실제 전송이 일어나야 한다 (순서 확인)
 : > "$CALLS"
 write_conf true true false false
-PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" EDGECONF_DIR="$CONF" MCP4018_LOCK_DIR="$WORK" \
+PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" PIM_CAMERA_RUNTIME_JSON="$CONF" MCP4018_LOCK_DIR="$WORK" \
     bash "$SCRIPT" 1 set 0x10 >/dev/null 2>&1
 t_eq "상대 내리기 → 열기 → i2cset → 닫기 순서" \
      "$(grep -nE '0xca 0x90|i2cset|0xca 0x80' "$CALLS" | cut -d: -f1 | tr '\n' ' ')" "1 2 3 4 "
@@ -208,7 +213,7 @@ EOF
 write_conf true true false false
 gate_fail_stub 0x80          # 상대 내리기(및 닫기)가 실패
 : > "$CALLS"
-out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" EDGECONF_DIR="$CONF" MCP4018_LOCK_DIR="$WORK" \
+out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" PIM_CAMERA_RUNTIME_JSON="$CONF" MCP4018_LOCK_DIR="$WORK" \
       bash "$SCRIPT" 1 set 0x10 2>&1); rc=$?
 t_eq "상대 게이트 못 내리면 중단"        "exit=$rc set=$(grep -c i2cset "$CALLS")" "exit=1 set=0"
 t_eq "중단 사유를 stderr 로 알린다"      "$(printf '%s' "$out" | grep -c 'peer MCP4018 gate')" 1
@@ -223,7 +228,7 @@ restore_stub
 write_conf true false false false   # 단일 — 상대가 없어 닫기만 실패시킬 수 있다
 gate_fail_stub 0x80
 : > "$CALLS"
-out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" EDGECONF_DIR="$CONF" MCP4018_LOCK_DIR="$WORK" \
+out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" PIM_CAMERA_RUNTIME_JSON="$CONF" MCP4018_LOCK_DIR="$WORK" \
       bash "$SCRIPT" 0 set 0x10 2>&1); rc=$?
 t_eq "쓰기 성공 + 닫기 실패 → 실패로 보고" "exit=$rc set=$(grep -c i2cset "$CALLS")" "exit=1 set=1"
 t_eq "닫기 실패를 경고로 알린다"           "$(printf '%s' "$out" | grep -c 'may stay open')" 1
@@ -233,7 +238,7 @@ t_eq "닫기 실패를 경고로 알린다"           "$(printf '%s' "$out" | gr
 restore_stub
 gate_fail_stub 0x90
 : > "$CALLS"
-out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" EDGECONF_DIR="$CONF" MCP4018_LOCK_DIR="$WORK" \
+out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" PIM_CAMERA_RUNTIME_JSON="$CONF" MCP4018_LOCK_DIR="$WORK" \
       bash "$SCRIPT" 0 set 0x10 2>&1); rc=$?
 t_eq "게이트 열기 실패 → 중단, 전송 없음" "exit=$rc set=$(grep -c i2cset "$CALLS")" "exit=1 set=0"
 t_eq "열기 실패해도 닫기는 보낸다"        "$(gate_seq)" "0x40 0x90,0x40 0x80"
@@ -245,14 +250,14 @@ restore_stub
 write_conf true true false false
 gate_fail_stub 0x80
 : > "$CALLS"
-out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" EDGECONF_DIR="$CONF" MCP4018_LOCK_DIR="$WORK" \
+out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" PIM_CAMERA_RUNTIME_JSON="$CONF" MCP4018_LOCK_DIR="$WORK" \
       bash "$SCRIPT" 1 get 2>&1); rc=$?
 t_eq "get: 상대 게이트 못 내리면 중단" "exit=$rc read=$(grep -c i2cget "$CALLS")" "exit=1 read=0"
 restore_stub
 write_conf true false false false
 gate_fail_stub 0x90
 : > "$CALLS"
-out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" EDGECONF_DIR="$CONF" MCP4018_LOCK_DIR="$WORK" \
+out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" PIM_CAMERA_RUNTIME_JSON="$CONF" MCP4018_LOCK_DIR="$WORK" \
       bash "$SCRIPT" 0 get 2>&1); rc=$?
 t_eq "get: 게이트 열기 실패 → 중단"    "exit=$rc read=$(grep -c i2cget "$CALLS")" "exit=1 read=0"
 restore_stub
@@ -300,7 +305,7 @@ if command -v flock >/dev/null 2>&1; then
     # 먼저 락을 잡고 있으면 진입하지 못한다 (대기 후 포기).
     hold_lock || t_eq "hold_lock 이 락을 잡았다" "실패" "성공"
     : > "$CALLS"
-    out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" EDGECONF_DIR="$CONF" \
+    out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" PIM_CAMERA_RUNTIME_JSON="$CONF" \
           MCP4018_LOCK_DIR="$LOCKDIR" bash "$SCRIPT" 1 set 0x10 2>&1); rc=$?
     t_eq "set: 락이 잡혀 있으면 게이트를 건드리지 않는다" \
          "exit=$rc gate=$(grep -c 0xca "$CALLS")" "exit=1 gate=0"
@@ -309,7 +314,7 @@ if command -v flock >/dev/null 2>&1; then
     # get 도 게이트를 조작하므로 같은 락을 잡아야 한다. set 만 검증하면 get 쪽
     # 누락이 그대로 통과한다(실제로 그렇게 빠뜨렸다).
     : > "$CALLS"
-    out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" EDGECONF_DIR="$CONF" \
+    out=$(PATH="$STUB:$PATH" CALLS="$CALLS" DETECT="" PIM_CAMERA_RUNTIME_JSON="$CONF" \
           MCP4018_LOCK_DIR="$LOCKDIR" bash "$SCRIPT" 1 get 2>&1); rc=$?
     t_eq "get: 락이 잡혀 있으면 게이트를 건드리지 않는다" \
          "exit=$rc gate=$(grep -c 0xca "$CALLS")" "exit=1 gate=0"

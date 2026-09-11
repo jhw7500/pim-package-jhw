@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Offline tests for /tmp/config camera-domain expectation resolution."""
+"""Offline tests for merged runtime camera-domain expectation resolution."""
 
 from __future__ import annotations
 
-import hashlib
 import importlib.util
+import inspect
 import json
 import subprocess
 import sys
@@ -23,7 +23,12 @@ resolver = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(resolver)
 
 
-def edgeconf(enabled: Mapping[int, object], width: object = 1920, height: object = 1080, fps: object = 30) -> Dict[str, Any]:
+def runtime_config(
+    enabled: Mapping[int, object],
+    width: object = 1920,
+    height: object = 1080,
+    fps: object = 30,
+) -> Dict[str, Any]:
     return {
         "VHL_CAM": {
             "cam_width": width,
@@ -37,7 +42,10 @@ def edgeconf(enabled: Mapping[int, object], width: object = 1920, height: object
                 "ch2": {"enable": enabled.get(2, False)},
                 "ch3": {"enable": enabled.get(3, False)},
             },
-        }
+        },
+        "ORD": {},
+        "VCM": {},
+        "ETC": {"camera_startup_grace_sec": 25},
     }
 
 
@@ -45,9 +53,7 @@ def resolve(config: Mapping[str, Any]) -> Dict[str, Any]:
     return resolver.resolve_expectation(
         config,
         "boot-a",
-        "1" * 64,
-        "1" * 64,
-        Path("/tmp/config/edgeconf_pim.json"),
+        Path("/run/pim-camera/config/pim_runtime.json"),
         1000,
     )
 
@@ -79,6 +85,17 @@ class Tests:
 
     def run(self) -> int:
         print("=== camera config expectation ===")
+        parameters = tuple(inspect.signature(resolver.resolve_expectation).parameters)
+        if parameters != (
+            "runtime",
+            "boot_id",
+            "source_path",
+            "observed_monotonic_ms",
+        ):
+            self.check(False, "resolver API has no hash/import-generation inputs")
+            print()
+            print(f"camera config expectation: {self.passed} passed / {self.failed} failed")
+            return 1
         self.mode_tests()
         self.validation_tests()
         with tempfile.TemporaryDirectory(prefix="camera-expectation-test.") as temporary:
@@ -88,7 +105,7 @@ class Tests:
         return 1 if self.failed else 0
 
     def mode_tests(self) -> None:
-        result = resolve(edgeconf({0: True, 1: True, 2: True, 3: True}))
+        result = resolve(runtime_config({0: True, 1: True, 2: True, 3: True}))
         indexed = domains(result)
         self.check(result["configured_channel_mask"] == 15, "four configured channels produce mask 0xF")
         self.check(result["stream_mode"] == "dual-wide", "two fully populated pairs are dual-wide")
@@ -103,7 +120,7 @@ class Tests:
             "ch23 domain retains physical channel bits 2 and 3",
         )
 
-        result = resolve(edgeconf({0: True}))
+        result = resolve(runtime_config({0: True}))
         indexed = domains(result)
         self.check(
             result["stream_mode"] == "single"
@@ -118,13 +135,13 @@ class Tests:
             "empty peer domain is explicitly disabled",
         )
 
-        result = resolve(edgeconf({0: True, 1: True, 2: True}))
+        result = resolve(runtime_config({0: True, 1: True, 2: True}))
         self.check(
             result["stream_mode"] == "independent",
             "mixed dual-wide and single domains are reported as independent",
         )
 
-        result = resolve(edgeconf({}))
+        result = resolve(runtime_config({}))
         self.check(
             result["stream_mode"] == "unknown"
             and result["configured_channel_mask"] == 0
@@ -132,7 +149,7 @@ class Tests:
             "all-disabled config has no fabricated stream expectation",
         )
 
-        missing_enable = edgeconf({0: True})
+        missing_enable = runtime_config({0: True})
         del missing_enable["VHL_CAM"]["i2c2"]["ch1"]["enable"]
         self.check(
             domains(resolve(missing_enable))["ch01"]["active_channels"] == [0],
@@ -140,47 +157,55 @@ class Tests:
         )
 
     def validation_tests(self) -> None:
-        self.rejects(lambda: resolve(edgeconf({0: 1})), "non-boolean enable is rejected")
-        self.rejects(lambda: resolve(edgeconf({}, width=0)), "zero camera width is rejected")
-        self.rejects(lambda: resolve(edgeconf({}, height=True)), "boolean camera height is rejected")
-        self.rejects(lambda: resolve(edgeconf({}, fps="30")), "non-integer FPS is rejected")
+        self.rejects(lambda: resolve(runtime_config({0: 1})), "non-boolean enable is rejected")
+        self.rejects(lambda: resolve(runtime_config({}, width=0)), "zero camera width is rejected")
+        self.rejects(lambda: resolve(runtime_config({}, height=True)), "boolean camera height is rejected")
+        self.rejects(lambda: resolve(runtime_config({}, fps="30")), "non-integer FPS is rejected")
         self.rejects(lambda: resolve({}), "missing VHL_CAM object is rejected")
+        for section in ("VHL_CAM", "ORD", "VCM"):
+            malformed = runtime_config({0: True})
+            malformed[section] = []
+            self.rejects(
+                lambda malformed=malformed: resolve(malformed),
+                f"non-object {section} is rejected",
+            )
 
     def file_tests(self, root: Path) -> None:
-        config_dir = root / "config"
-        config_dir.mkdir()
         boot_id_file = root / "boot_id"
         boot_id_file.write_text("boot-file\n", encoding="utf-8")
-        edge_path = config_dir / "edgeconf_pim.json"
-        raw = json.dumps(edgeconf({1: True, 2: True}), sort_keys=True).encode()
-        edge_path.write_bytes(raw)
-        imported_hash = hashlib.sha256(raw).hexdigest()
-        ready = {
-            "schema": 1,
-            "boot_id": "boot-file",
-            "files": {"edgeconf_pim": {"sha256": imported_hash}},
-        }
-        (config_dir / "READY").write_text(json.dumps(ready), encoding="utf-8")
+        runtime_path = root / "pim_runtime.json"
+        runtime_path.write_text(
+            json.dumps(runtime_config({1: True, 2: True}), sort_keys=True),
+            encoding="utf-8",
+        )
 
-        result = resolver.resolve_from_files(config_dir, boot_id_file, 1234)
-        self.check(not result["runtime_override"], "unchanged boot import is not a runtime override")
+        result = resolver.resolve_from_files(runtime_path, boot_id_file, 1234)
         self.check(
             result["configured_channel_mask"] == 6
             and domains(result)["ch01"]["active_channels"] == [1]
             and domains(result)["ch23"]["active_channels"] == [2],
-            "file resolver maps enabled channels to both capture domains",
+            "merged runtime maps enabled channels to both capture domains",
+        )
+        self.check(
+            result["source"] == str(runtime_path)
+            and result["boot_id"] == "boot-file",
+            "resolver diagnoses the exact runtime path and current boot",
+        )
+        forbidden = {"config_sha256", "boot_import_sha256", "runtime_override"}
+        self.check(
+            forbidden.isdisjoint(result),
+            "expectation contains no hash or runtime-override contract",
         )
 
-        changed = json.dumps(edgeconf({0: True, 1: True}), sort_keys=True).encode()
-        temporary = config_dir / ".edgeconf.runtime"
-        temporary.write_bytes(changed)
-        temporary.replace(edge_path)
-        result = resolver.resolve_from_files(config_dir, boot_id_file, 1235)
+        changed = json.dumps(runtime_config({0: True, 1: True}), sort_keys=True)
+        temporary = root / ".pim_runtime.edit"
+        temporary.write_text(changed, encoding="utf-8")
+        temporary.replace(runtime_path)
+        result = resolver.resolve_from_files(runtime_path, boot_id_file, 1235)
         self.check(
-            result["runtime_override"]
-            and result["boot_import_sha256"] == imported_hash
-            and result["config_sha256"] == hashlib.sha256(changed).hexdigest(),
-            "atomic runtime edit remains authoritative and is diagnosed by hash",
+            result["configured_channel_mask"] == 3
+            and domains(result)["ch01"]["mode"] == "dual-wide",
+            "atomic runtime replacement changes the next resolver invocation without hashes",
         )
 
         output = root / "run/config-expectation.json"
@@ -188,8 +213,8 @@ class Tests:
             [
                 sys.executable,
                 str(MODULE_PATH),
-                "--config-dir",
-                str(config_dir),
+                "--runtime-config",
+                str(runtime_path),
                 "--boot-id-file",
                 str(boot_id_file),
                 "--output",
@@ -202,20 +227,23 @@ class Tests:
         self.check(oct(output.stat().st_mode & 0o777) == "0o640", "CLI output mode is 0640")
         self.check(not list(output.parent.glob(".config-expectation.json.*")), "CLI atomic write leaves no temporary")
 
-        stale_ready = dict(ready)
-        stale_ready["boot_id"] = "older-boot"
-        (config_dir / "READY").write_text(json.dumps(stale_ready), encoding="utf-8")
+        runtime_path.write_text("{bad json}\n", encoding="utf-8")
         self.rejects(
-            lambda: resolver.resolve_from_files(config_dir, boot_id_file, 1236),
-            "stale READY from another boot is rejected",
+            lambda: resolver.resolve_from_files(runtime_path, boot_id_file, 1236),
+            "malformed runtime JSON is rejected",
         )
 
-        stale_ready["boot_id"] = "boot-file"
-        stale_ready["files"] = {"edgeconf_pim": {"sha256": "not-a-hash"}}
-        (config_dir / "READY").write_text(json.dumps(stale_ready), encoding="utf-8")
+        runtime_path.write_text(json.dumps(runtime_config({0: True})), encoding="utf-8")
+        boot_id_file.write_text("\n", encoding="utf-8")
         self.rejects(
-            lambda: resolver.resolve_from_files(config_dir, boot_id_file, 1237),
-            "invalid READY import hash is rejected",
+            lambda: resolver.resolve_from_files(runtime_path, boot_id_file, 1237),
+            "empty current boot ID is rejected",
+        )
+
+        parsed = resolver.parse_args([])
+        self.check(
+            parsed.runtime_config == Path("/run/pim-camera/config/pim_runtime.json"),
+            "CLI defaults directly to the fixed merged runtime file",
         )
 
 

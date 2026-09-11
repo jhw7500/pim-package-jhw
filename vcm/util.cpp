@@ -199,40 +199,6 @@ long getTick()
 	return tspec.tv_sec;
 }
 
-char* search_json_file(char* path, char* prefix, char* suffix)
-{
-	int ret;
-	FILE *fp;
-	static char str[128];
-	const char* search_path = path;
-
-	// Check access permission, if not accessible, try fallback
-	if (access(path, R_OK | X_OK) != 0) {
-		__LOG(LOG_WARNING, "[CFG][%s:%d] Cannot access %s (errno:%d), trying fallback...", _FILE_, __LINE__, path, errno);
-		if (access(PATH_JSON_LOCAL, R_OK | X_OK) == 0) {
-			search_path = PATH_JSON_LOCAL;
-		} else {
-			search_path = "/tmp";
-		}
-		__LOG(LOG_INFO, "[CFG][%s:%d] Fallback path selected: %s", _FILE_, __LINE__, search_path);
-	}
-
-    ret = snprintf(str, sizeof(str), "ls -ptr %s/%s*%s | grep -v '/$' | grep '\\%s$' | tail -1 | tr -d '\\r\\n'", search_path, prefix, suffix, suffix);
-    __LOG(LOG_INFO, "[CFG][%s:%d] Search command: %s", _FILE_, __LINE__, str);
-
-    fp = popen(str, "r");
-    if (NULL == fp) {
-        perror("popen() fail");
-        __LOG(LOG_CRIT, "[CFG][%s:%d] popen fail", _FILE_, __LINE__);
-		return (char*)"";
-    }
-    while (fgets(str, 128, fp));
-
-	__LOG(LOG_INFO, "[CFG][%s:%d] search_json_file result: %s", _FILE_, __LINE__, str);
-	ret = pclose(fp);
-	return str;
-}
-
 void Eliminate(char *str, char ch)
 {
     for (; *str != '\0'; str++) {

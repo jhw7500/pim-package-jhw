@@ -12,36 +12,27 @@ mkdir -p "$TEST_TMP" "$TEST_SHM/recordings" "$TEST_SHM/capture"
 key="TST"
 tag="test_cleanup"
 
-# --- 함수 정의 (init_cam.sh에서 발췌) ---
-cleanup_recording_orphans() {
-    local dir="${1%/}"
-    [ -d "$dir" ] || return 0
-    local count=0
-    local f
-    for f in "$dir"/*.mp4 "$dir"/*.ts "$dir"/*.srt \
-             "$dir"/*.mp4.part "$dir"/*.ts.part "$dir"/*.srt.part; do
-        [ -f "$f" ] || continue
-        rm -f "$f"
-        count=$((count + 1))
-    done
-    rm -f /tmp/session_*.video_done /tmp/session_*.srt_done 2>/dev/null
-    if [ $count -gt 0 ]; then
-        echo "  cleaned=$count"
-    else
-        echo "  cleaned=0"
-    fi
-}
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+export PIM_LIB="$ROOT/dist/pim/opt/pim/lib"
+source "$PIM_LIB/cam_recovery_actions.sh"
+# This unit test exercises the moved cleanup routine without needing a lease.
+cam_effect() { local runtime=$1; shift; "$@"; }
+RUNTIME="$TEST_TMP/runtime.json"
+printf '{"VHL_CAM":{"tmp_path":"%s","vhl_name":"VD3001"},"ORD":{},"VCM":{}}\n' "$TEST_TMP" > "$RUNTIME"
+printf '2026-02-24 12:00:00\n' > "$TEST_TMP/session-start"
+export PIM_CAMERA_SESSION_TIME_FILE="$TEST_TMP/session-start"
+cleanup_recording_orphans() { cam_cleanup_recording_orphans "$RUNTIME"; }
 
 # --- Test 1: 녹화 확장자 파일 삭제 ---
 echo "Test 1: Recording orphan cleanup"
-touch "$TEST_TMP/VD3001_20260224_120000-ch0.mp4"
-touch "$TEST_TMP/VD3001_20260224_120000-ch1.mp4.part"
-touch "$TEST_TMP/VD3001_20260224_120000-data.srt"
-touch "$TEST_TMP/VD3001_20260224_120000-ch0.ts"
-touch "$TEST_TMP/VD3001_20260224_120000-ch1.ts.part"
-touch "$TEST_TMP/VD3001_20260224_120000-data.srt.part"
+touch "$TEST_TMP/VD3001_20260224_1200-ch0.mp4"
+touch "$TEST_TMP/VD3001_20260224_1200-ch1.mp4.part"
+touch "$TEST_TMP/VD3001_20260224_1200-data.srt"
+touch "$TEST_TMP/VD3001_20260224_1200-ch0.ts"
+touch "$TEST_TMP/VD3001_20260224_1200-ch1.ts.part"
+touch "$TEST_TMP/VD3001_20260224_1200-data.srt.part"
 cleanup_recording_orphans "$TEST_TMP"
-remaining=$(ls "$TEST_TMP" 2>/dev/null | wc -l)
+remaining=$(find "$TEST_TMP" -maxdepth 1 -type f ! -name runtime.json ! -name session-start | wc -l)
 if [ "$remaining" -eq 0 ]; then
     echo "  PASS: All recording files removed"
 else
@@ -63,18 +54,19 @@ else
 fi
 rm -f "$TEST_TMP/some_flag_file" "$TEST_TMP/debug.log"
 
-# --- Test 3: 세션 플래그 정리 ---
-echo "Test 3: Session flags cleanup"
+# --- Test 3: unrelated session flags are retained ---
+echo "Test 3: Session flags retained"
 touch /tmp/session_20260224_1200.video_done
 touch /tmp/session_20260224_1200.srt_done
 cleanup_recording_orphans "$TEST_TMP"
-if [ ! -f /tmp/session_20260224_1200.video_done ] && \
-   [ ! -f /tmp/session_20260224_1200.srt_done ]; then
-    echo "  PASS: Session flags cleaned"
+if [ -f /tmp/session_20260224_1200.video_done ] && \
+   [ -f /tmp/session_20260224_1200.srt_done ]; then
+    echo "  PASS: Session flags retained"
 else
-    echo "  FAIL: Session flags remain"
+    echo "  FAIL: Session flags were deleted"
     exit 1
 fi
+rm -f /tmp/session_20260224_1200.video_done /tmp/session_20260224_1200.srt_done
 
 # --- Test 4: 빈 디렉터리에서 에러 없이 동작 ---
 echo "Test 4: Empty directory is no-op"

@@ -1,11 +1,7 @@
 [Unit]
 Description=Ord Operate Daemon
+After=cam-operate.service
 
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/ord
-Restart=on-failure
-RestartSec=5s
-
-[Install]
-WantedBy=multi-user.target

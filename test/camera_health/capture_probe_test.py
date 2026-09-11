@@ -66,7 +66,11 @@ def expectation_document(
                 "possible_channels": possible[domain_id],
                 "active_channels": active,
                 "configured_channel_mask": mask,
-                "expected_format": {"width": 1920, "height": 1080, "fps": 30},
+                "expected_format": {
+                    "width": 0 if not active else 1920 * len(active),
+                    "height": 0 if not active else 1080,
+                    "fps": 0 if not active else 30,
+                },
             }
         )
     if not modes:
@@ -80,9 +84,9 @@ def expectation_document(
     return {
         "schema": 1,
         "boot_id": boot_id,
-        "config_sha256": "a" * 64,
         "configured_channel_mask": configured_mask,
         "stream_mode": stream_mode,
+        "sensor_format": {"width": 1920, "height": 1080, "fps": 30},
         "domains": items,
     }
 
@@ -299,7 +303,7 @@ class Tests:
         expectation_path.write_text(json.dumps(expectation), encoding="utf-8")
         output = nodes / "pim-probe-expectation.json"
         boot_id = nodes / "boot_id"
-        subprocess.run(
+        completed = subprocess.run(
             [
                 sys.executable,
                 str(MODULE_PATH),
@@ -321,8 +325,14 @@ class Tests:
                 "--interval-ms",
                 "1000",
             ],
-            check=True,
+            check=False,
         )
+        self.check(
+            completed.returncode == 0,
+            "capture probe accepts a hash-free validated expectation",
+        )
+        if completed.returncode != 0:
+            return
         result = load(output)
         ch01 = by_block(result, "csi1")
         ch23 = by_block(result, "csi0")
@@ -336,8 +346,8 @@ class Tests:
         )
         self.check(
             result["stream_mode"] == "single"
-            and result["producer_data"]["config_sha256"] == "a" * 64,
-            "capture snapshot carries validated stream mode and config generation",
+            and "config_sha256" not in result["producer_data"],
+            "capture snapshot carries stream mode without config hash coupling",
         )
         schema_errors = list(Draft202012Validator(load(SCHEMA_PATH)).iter_errors(result))
         self.check(not schema_errors, "expectation-driven output validates against health v1 schema")
@@ -357,6 +367,27 @@ class Tests:
             self.check(True, "expectation from another boot is rejected")
         else:
             self.check(False, "expectation from another boot is rejected")
+
+        invalid_format = expectation_document({"ch01": [0], "ch23": []})
+        invalid_format["domains"][0]["expected_format"]["width"] = 1
+        invalid_format_path = nodes / "invalid-format-expectation.json"
+        invalid_format_path.write_text(json.dumps(invalid_format), encoding="utf-8")
+        try:
+            probe.load_expectation(invalid_format_path, "boot-cli", available)
+        except probe.ProbeError:
+            self.check(True, "inconsistent capture-domain format is rejected")
+        else:
+            self.check(False, "inconsistent capture-domain format is rejected")
+
+        valid_enabled, valid_domains, valid_mode = probe.load_expectation(
+            expectation_path, "boot-cli", available
+        )
+        self.check(
+            valid_enabled == {"ch01"}
+            and valid_domains["ch01"]["active_channels"] == [0]
+            and valid_mode == "single",
+            "expectation loader returns domains and stream mode without a hash",
+        )
 
         conflict = subprocess.run(
             [

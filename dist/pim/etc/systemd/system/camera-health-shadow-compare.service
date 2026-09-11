@@ -1,7 +1,8 @@
 [Unit]
 Description=PIM Legacy versus Camera Health v1 Shadow Comparator
-After=pim-camera-config.service camera-health-shadow.service camera-capture-probe.service
-ConditionPathExists=/tmp/config/READY
+Requires=cam-operate.service
+After=cam-operate.service camera-health-shadow.service camera-capture-probe.service
+ConditionPathExists=/run/pim-camera/config/pim_runtime.json
 ConditionPathExists=/run/pim-camera/aggregate-shadow.json
 StartLimitIntervalSec=60s
 StartLimitBurst=5

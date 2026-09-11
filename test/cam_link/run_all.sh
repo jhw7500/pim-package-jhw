@@ -15,6 +15,10 @@ TESTS=(
     escalation_test.sh
     startup_timing_policy_test.sh
     config_default_test.sh
+    recovery_actions_test.sh
+    recovery_actions_safety_test.sh
+    recovery_launch_safety_test.sh
+    legacy_wrapper_test.sh
     initcam_modprobe_test.sh
     flag_e2e_test.sh
     disconnect_log_test.sh
