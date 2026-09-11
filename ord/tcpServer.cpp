@@ -1386,20 +1386,20 @@ int CTCPServer::init()
 	//setMaxFD(m_pipe[0]) ;
 
 	ret = pthread_create(&m_threadConnect, NULL, &thread_waitingConnect, NULL);
-	if(ret < 0) {
+	if(ret != 0) {
 		__LOG(LOG_CRIT, "[TCP][%s:%d] ret:%d", _FILE_, __LINE__, ret);
 		return ret;
 	}
 
 	ret = pthread_create(&m_threadError, NULL, &thread_waitingError, NULL);
-	if(ret < 0) {
+	if(ret != 0) {
 		__LOG(LOG_CRIT, "[TCP][%s:%d] ret:%d", _FILE_, __LINE__, ret);
 		return ret;
 	}
 
 	if(_TOrdConf.vib_enable) {
 		ret = pthread_create(&m_threadRedis, NULL, &thread_waitingRedis, NULL);
-		if(ret < 0) {
+		if(ret != 0) {
 			__LOG(LOG_CRIT, "[TCP][%s:%d] ret:%d", _FILE_, __LINE__, ret);
 			return ret;
 		}
@@ -1407,7 +1407,7 @@ int CTCPServer::init()
 
 	if(_TOrdConf.disk_manage) {
 		ret = pthread_create(&m_threadDisk, NULL, &thread_waitingDisk, NULL);
-		if(ret < 0) {
+		if(ret != 0) {
 			__LOG(LOG_CRIT, "[DSK][%s:%d] ret:%d", _FILE_, __LINE__, ret);
 			return ret;
 		}

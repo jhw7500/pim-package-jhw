@@ -149,7 +149,7 @@ int main()
 	//__E(LOG_LEVEL_EMG, "Init Version : %s\n", SW_VERSION);
 	__LOG(LOG_NOTICE, "[CFG][%s:%d] version : %s", _FILE_, __LINE__, SW_VERSION);
 
-	if(server->init() < 0)
+	if(server->init() != 0)
 		return 1;
 	if(managed_invocation && ord_publish_readiness(invocation_id) < 0)
 		return 1;

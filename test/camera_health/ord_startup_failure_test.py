@@ -160,6 +160,100 @@ public:
                         process.kill()
                         process.wait(timeout=2)
 
+    def test_positive_init_failure_exits_without_publishing_readiness(self):
+        compiler = shutil.which("g++")
+        self.assertIsNotNone(compiler, "g++ is required for the native ORD contract")
+
+        with tempfile.TemporaryDirectory(prefix="ord-positive-init-failure.") as raw:
+            work = Path(raw)
+            run_dir = work / "run"
+            run_dir.mkdir()
+            (work / "main.cpp").write_bytes(ORD_MAIN.read_bytes())
+            (work / "tcpServer.h").write_text(
+                r"""
+#ifndef _TCPSERVER_H_
+#define _TCPSERVER_H_
+#define _UTIL_H_
+#include <cerrno>
+#define LOG_NOTICE 0
+#define _FILE_ "main.cpp"
+#define __LOG(...) do { } while (0)
+class CTCPServer {
+public:
+    int m_flagDestroy;
+    CTCPServer() : m_flagDestroy(0) {}
+    static CTCPServer *getInstance() {
+        static CTCPServer server;
+        return &server;
+    }
+    int init() { return EAGAIN; }
+    int destroy() { return 0; }
+};
+#endif
+""",
+                encoding="utf-8",
+            )
+            binary = work / "ord-positive-init-probe"
+            compiled = subprocess.run(
+                [
+                    compiler,
+                    "-std=c++11",
+                    "-Wall",
+                    "-Wextra",
+                    "-Werror",
+                    str(work / "main.cpp"),
+                    "-o",
+                    str(binary),
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                check=False,
+            )
+            self.assertEqual(0, compiled.returncode, compiled.stderr)
+
+            invocation = "0123456789abcdef0123456789abcdef"
+            ready = run_dir / "ord-ready"
+            env = os.environ.copy()
+            env["PIM_CAMERA_RUN_DIR"] = str(run_dir)
+            env["INVOCATION_ID"] = invocation
+            process = subprocess.Popen(
+                [str(binary)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=env,
+            )
+            try:
+                deadline = time.monotonic() + 2
+                while (
+                    process.poll() is None
+                    and not ready.exists()
+                    and time.monotonic() < deadline
+                ):
+                    time.sleep(0.01)
+                returncode = process.poll()
+                self.assertIsNotNone(
+                    returncode,
+                    "positive initialization failure left ORD running",
+                )
+                self.assertNotEqual(
+                    0,
+                    returncode,
+                    "positive initialization failure exited successfully",
+                )
+                self.assertFalse(
+                    ready.exists(),
+                    "positive initialization failure published readiness",
+                )
+            finally:
+                if process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=2)
+
     def test_init_failure_exits_nonzero_before_destroy_can_mask_it(self):
         compiler = shutil.which("g++")
         self.assertIsNotNone(compiler, "g++ is required for the native ORD contract")
