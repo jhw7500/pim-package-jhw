@@ -65,20 +65,45 @@ cd /home/jhw/ai/my-claude-code-setup/pim-package
 `tools/verify_binaries.py`를 자동 실행한다. Docker 빌드는 release 산출물의
 ARM aarch64/GLIBC 정보도 추가로 확인한다.
 
-기본 모드는 `warn`이라 불일치가 있어도 경고만 남기고 빌드 성공을 유지한다.
+검사는 두 종류이고 **기본값이 서로 다르다**.
+
+| 검사 | 대상 | 환경변수 | 기본값 |
+|---|---|---|---|
+| 매니페스트 대조 | git 추적 바이너리(gstApp, `.ko` 등) | `PIM_VERIFY_BINARIES` | `warn` |
+| release 산출물 검증 | 존재 / ARM aarch64 / GLIBC | `PIM_VERIFY_BINARIES` | **`strict`** |
+| GLIBC 게이트 | 컴파일된 모듈 8종과 pim_gate 산출물 | `PIM_GLIBC_GATE` | **`strict`** |
+
+GLIBC 게이트가 보는 모듈 8종은 `ord`, `vsd`, `vcm`, `adab`, `adab_ecat`, `cism`,
+`stm32update`, `mcp_trust_test` 이고, `pim_gate` 는 자체 빌드 산출물의 실행 파일을
+검사한다. 즉 `docker/build.sh` 의 `MODULE_BIN` 과 같은 집합이다.
+
+매니페스트 불일치는 경고로 남긴다(검증 전 중간 상태 작업이 흔하다). 반면 release
+산출물 결함과 GLIBC 초과는 `.deb`에 그대로 실릴 문제라 기본으로 빌드를 세운다.
 
 ```bash
-# 기본: 경고만 출력
+# 기본: 산출물 결함·GLIBC 초과는 빌드 실패(exit 2), 매니페스트 불일치는 경고
 ./docker/build.sh
 
-# 자동 검증 생략
+# 자동 검증 전부 생략
 PIM_VERIFY_BINARIES=off ./docker/build.sh
 
-# 불일치를 빌드 실패로 처리
-PIM_VERIFY_BINARIES=strict ./docker/build.sh
+# release 산출물 검증도 경고로 낮춤
+PIM_VERIFY_BINARIES=warn ./docker/build.sh
+
+# GLIBC 게이트만 경고로 낮춤 / 끔
+PIM_GLIBC_GATE=warn ./docker/build.sh
+PIM_GLIBC_GATE=off  ./docker/build.sh
+
+# 타깃 rootfs 가 바뀌어 천장을 올릴 때 (기본 2.31)
+# 점으로 구분된 숫자만 받는다 — 형식이 어긋나면 통과시키지 않고 exit 2 로 멈춘다.
+PIM_MAX_GLIBC=2.35 ./docker/build.sh
 ```
 
-지원 값은 `off`, `warn`, `strict`뿐이다. 매니페스트는 빌드가 자동 갱신하지
+`PIM_VERIFY_BINARIES` 지원 값은 `off`, `warn`, `strict`, `PIM_GLIBC_GATE` 는
+`off`, `warn`, `strict` 다. 세 변수 모두 `docker run` 으로 컨테이너에 전달되므로
+호스트에서 지정한 값이 컨테이너 안 검사에도 그대로 적용된다.
+
+매니페스트는 빌드가 자동 갱신하지
 않는다. 바이너리를 의도적으로 바꾼 경우에만 검토자가 경로를 명시해 갱신한다.
 
 ```bash
