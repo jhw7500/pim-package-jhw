@@ -164,7 +164,11 @@ cam_owner_set_lifecycle STOPPING
 PIM_CAMERA_STOP_EXECUTOR=1 expect_rc 0 cam_executor_assert_context
 printf '{invalid runtime}\n' > "$PIM_CAMERA_RUNTIME_JSON"
 set +e
+# The sourced implementation is intentionally exercised before later scenario stubs.
+# shellcheck disable=SC2218
 PIM_CAMERA_STOP_EXECUTOR=1 cam_stop_process "$PIM_CAMERA_RUNTIME_JSON" gstapp; invalid_gstapp_rc=$?
+# The sourced implementation is intentionally exercised before later scenario stubs.
+# shellcheck disable=SC2218
 PIM_CAMERA_STOP_EXECUTOR=1 cam_stop_process "$PIM_CAMERA_RUNTIME_JSON" pimcam; invalid_pimcam_rc=$?
 set -e
 [ "$invalid_gstapp_rc" -eq 0 ] && [ "$invalid_pimcam_rc" -eq 0 ] || review_failures="$review_failures invalid-runtime:$invalid_gstapp_rc/$invalid_pimcam_rc"

@@ -1609,13 +1609,13 @@ def python_config_read_paths(text: str) -> list[str]:
             function.args.defaults
         )
         keyword_parameters = list(function.args.kwonlyargs)
-        for parameter, default in zip(
-            positional_parameters, positional_defaults, strict=True
-        ):
+        if len(positional_parameters) != len(positional_defaults):
+            raise AssertionError("positional parameter/default arity mismatch")
+        for parameter, default in zip(positional_parameters, positional_defaults):
             local_env[parameter.arg] = resolve(default, outer_env)
-        for parameter, default in zip(
-            keyword_parameters, function.args.kw_defaults, strict=True
-        ):
+        if len(keyword_parameters) != len(function.args.kw_defaults):
+            raise AssertionError("keyword parameter/default arity mismatch")
+        for parameter, default in zip(keyword_parameters, function.args.kw_defaults):
             local_env[parameter.arg] = resolve(default, outer_env)
         if call is not None:
             for parameter, argument in zip(positional_parameters, call.args):

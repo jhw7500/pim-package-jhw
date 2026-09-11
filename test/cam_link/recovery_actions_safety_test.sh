@@ -41,6 +41,8 @@ cam_executor_assert_context() { :; }; cam_validate_runtime() { :; }
 # RED before the compact-marker implementation accepted only dashed dates.
 runtime "$W/recordings"; printf '20260901 12:34:56\n' > "$W/marker"
 touch "$W/recordings/VD3001_20260901_1234-a.mp4" "$W/recordings/VD3001_20260901_1235-b.mp4"
+# The sourced implementation is intentionally exercised before a later test stub.
+# shellcheck disable=SC2218
 cam_cleanup_recording_orphans "$PIM_CAMERA_RUNTIME_JSON"
 [ ! -e "$W/recordings/VD3001_20260901_1234-a.mp4" ] || fail compact
 [ -e "$W/recordings/VD3001_20260901_1235-b.mp4" ] || fail retained
@@ -55,6 +57,8 @@ ln -s "$W/recordings" "$W/link"
 for bad in / relative ../x "$W/link"; do runtime "$bad"; expect_rc 64 cam_cleanup_recording_orphans "$PIM_CAMERA_RUNTIME_JSON"; done
 [ -e "$W/recordings/VD3001_20260901_1234-missing.mp4" ] || fail symlink_target
 runtime "$W/recordings"
+# The sourced implementation is intentionally exercised before a later test stub.
+# shellcheck disable=SC2218
 cam_cleanup_recording_orphans "$PIM_CAMERA_RUNTIME_JSON"
 [ -e "$W/recordings/VD3001_20260901_1234-missing.mp4" ] || fail canonical_missing_marker_delete
 
