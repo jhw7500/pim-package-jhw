@@ -42,7 +42,10 @@ class HandoffDebTest(unittest.TestCase):
         (source / "opt/pim/current").symlink_to("bin/probe.sh")
         for name in ("ord", "vcm", "vsd"):
             runtime_binary = source / "usr/local/bin" / name
-            runtime_binary.write_bytes(b"runtime-binary\n")
+            payload = b"runtime-binary\n"
+            if name == "ord":
+                payload += b"ord-ready\0INVOCATION_ID\0"
+            runtime_binary.write_bytes(payload)
             runtime_binary.chmod(0o755)
         return source
 
@@ -62,6 +65,18 @@ class HandoffDebTest(unittest.TestCase):
                     module.build_package(
                         source, work / "out", "0.6.3+jhw.camera1"
                     )
+
+    def test_stale_ord_without_readiness_markers_is_refused(self):
+        module = load_module()
+        with tempfile.TemporaryDirectory(prefix="handoff-deb-test.") as tmp:
+            work = Path(tmp)
+            source = self.make_package(work)
+            (source / "usr/local/bin/ord").write_bytes(b"stale-ord\n")
+
+            with self.assertRaisesRegex(ValueError, "ord.*ord-ready"):
+                module.build_package(
+                    source, work / "out", "0.6.3+jhw.camera1"
+                )
 
     def set_tree_mtime(self, root: Path, epoch: int) -> None:
         paths = sorted(

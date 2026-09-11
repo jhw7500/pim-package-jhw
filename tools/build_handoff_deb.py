@@ -28,6 +28,9 @@ REQUIRED_LOCAL_RUNTIME_ARTIFACTS = (
     Path("usr/local/bin/vcm"),
     Path("usr/local/bin/vsd"),
 )
+REQUIRED_RUNTIME_MARKERS = {
+    Path("usr/local/bin/ord"): (b"ord-ready", b"INVOCATION_ID"),
+}
 VERSION_PATTERN = re.compile(r"^[0-9A-Za-z.+:~_-]+$")
 
 ManifestEntry = Tuple[str, int, str]
@@ -175,6 +178,17 @@ def validate_local_runtime_artifacts(source: Path) -> None:
         if stat.S_IMODE(metadata.st_mode) & 0o111 == 0:
             raise ValueError(
                 f"required local runtime artifact is not executable: {relative}"
+            )
+        payload = artifact.read_bytes()
+        missing_markers = [
+            marker.decode("ascii")
+            for marker in REQUIRED_RUNTIME_MARKERS.get(relative, ())
+            if marker not in payload
+        ]
+        if missing_markers:
+            raise ValueError(
+                f"required local runtime artifact is stale: {relative}; "
+                f"missing markers: {', '.join(missing_markers)}"
             )
 
 
