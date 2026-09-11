@@ -1374,7 +1374,7 @@ exit 97
                 recording = root / f"file-case-{index}"
                 recording.mkdir()
                 effective = runtime_name or caller_key
-                prefix = effective.removeprefix("../")
+                prefix = effective[3:] if effective.startswith("../") else effective
                 candidate_parent = root if escapes_root else recording
                 candidates = []
                 for file_index in range(3):
@@ -1414,7 +1414,7 @@ exit 97
                 ("control-character VHL", "ftp\nname", False),
             )
             for index, (label, vhl_name, escapes_root) in enumerate(ftp_cases):
-                prefix = vhl_name.removeprefix("../")
+                prefix = vhl_name[3:] if vhl_name.startswith("../") else vhl_name
                 candidate_parent = root if escapes_root else transfer_root
                 candidate = (
                     candidate_parent
