@@ -929,6 +929,55 @@ expect_rc 0 cam_action_counter_finish module_reload "$retry_running_id" SUCCEEDE
 jq -e '.actions.module_reload.attempted==2 and .actions.module_reload.succeeded==1 and .actions.module_reload.failed==1 and .actions.module_reload.consecutive_failures==0' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "same-action retry did not settle stale attempt exactly once"
 [ "$stale_running_history" = "$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/history/$stale_running_id.json")" ] || fail "same-action retry rewrote predecessor history"
 
+echo "=== same-action restart clears terminal finish before interruption ==="
+reset_protocol_sandbox
+owner_active
+mkdir -p "$PIM_CAMERA_STATE_DIR"
+printf '{"dirty":false,"sentinel":"terminal-then-interrupted"}\n' > "$PIM_CAMERA_STATE_DIR/service-state.json"
+terminal_predecessor_id=$(cam_request_submit module_reload health "terminal predecessor" /source/terminal 111)
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+cam_action_counter_begin module_reload "$terminal_predecessor_id"
+cam_action_counter_finish module_reload "$terminal_predecessor_id" SUCCEEDED 0
+cam_request_transition VERIFYING
+cam_request_finish SUCCEEDED 0
+jq -e '.actions.module_reload.last_status=="SUCCEEDED" and (.actions.module_reload.last_finished_at|type)=="number"' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "terminal predecessor did not record its finish"
+
+terminal_interrupted_id=$(cam_request_submit module_reload health "interrupted successor" /source/interrupted 112)
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+cam_action_counter_begin module_reload "$terminal_interrupted_id"
+jq -e --arg id "$terminal_interrupted_id" '.actions.module_reload.last_request_id==$id and .actions.module_reload.last_status=="RUNNING" and .actions.module_reload.last_rc==null and .actions.module_reload.last_finished_at==null' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "new RUNNING action retained predecessor finish time"
+fake_stat 222
+cam_owner_create "$DAEMON_PID"
+cam_owner_set_lifecycle ACTIVE
+terminal_retry_id=$(cam_request_submit module_reload health "retry interrupted successor" /source/retry 113)
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+cam_action_counter_begin module_reload "$terminal_retry_id"
+cam_action_counter_finish module_reload "$terminal_retry_id" SUCCEEDED 0
+cam_request_transition VERIFYING
+cam_request_finish SUCCEEDED 0
+jq -e '.actions.module_reload.attempted==3 and .actions.module_reload.succeeded==2 and .actions.module_reload.failed==1 and .actions.module_reload.consecutive_failures==0' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "terminal successor interruption did not settle exactly once"
+
+echo "=== installed cam-recoveryctl symlink resolves packaged library ==="
+installed_root="$WORK/installed-layout"
+mkdir -p "$installed_root/opt/pim/bin" "$installed_root/opt/pim/lib" "$installed_root/usr/local/bin"
+cp "$ROOT/dist/pim/opt/pim/bin/cam-recoveryctl" "$installed_root/opt/pim/bin/cam-recoveryctl"
+cp "$ROOT/dist/pim/opt/pim/lib/cam_recovery.sh" "$installed_root/opt/pim/lib/cam_recovery.sh"
+ln -s "$installed_root/opt/pim/bin/cam-recoveryctl" "$installed_root/usr/local/bin/cam-recoveryctl"
+env -u PIM_LIB \
+    PIM_CAMERA_RUN_DIR="$installed_root/run/pim-camera" \
+    PIM_CAMERA_STATE_DIR="$installed_root/var/lib/pim-camera" \
+    PIM_CAMERA_BOOT_ID_FILE="$installed_root/boot_id" \
+    PIM_CAMERA_PROC_ROOT="$installed_root/proc" \
+    "$installed_root/usr/local/bin/cam-recoveryctl" status --json \
+    > "$WORK/installed-status.json" || fail "installed cam-recoveryctl symlink could not load packaged library"
+jq -e '.owner==null and .pending==null and .active==null and .state==null' "$WORK/installed-status.json" >/dev/null || fail "installed cam-recoveryctl symlink returned invalid status"
+
 stale_running_retry_setup() {
     local label=$1
     reset_protocol_sandbox

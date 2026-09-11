@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -u
 
-PIM_LIB="${PIM_LIB:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" && pwd)}"
+if [ -z "${PIM_LIB:-}" ]; then
+    SCRIPT_PATH=$(readlink -f "${BASH_SOURCE[0]}") || exit 70
+    PIM_LIB=$(cd "$(dirname "$SCRIPT_PATH")/../lib" && pwd) || exit 70
+fi
 source "$PIM_LIB/cam_recovery.sh"
 
 usage() { echo 'usage: cam-recoveryctl request ACTION --source NAME --reason TEXT [--wait SEC] | apply-config --source NAME --reason TEXT [--wait SEC] | status [--request-id UUID] [--json]' >&2; }
