@@ -562,6 +562,14 @@ jq -e '.status=="FAILED" and .rc==1' "$PIM_CAMERA_RUN_DIR/recovery/results/$LAST
 [ "$(count_log action:camera_hard_reset)" -eq 1 ] && [ "$(count_log action:policy_reload)" -eq 1 ] || fail "policy failure action count"
 reject_log verify:camera
 
+: > "$PIM_CAMERA_CALL_LOG"
+unset FAIL_ACTION
+submit_apply hardware-policy-retry
+expected=$'quiesce:consumers\naction:camera_hard_reset\naction:policy_reload\nverify:camera\nverify:processes:1'
+[ "$(cat "$PIM_CAMERA_CALL_LOG")" = "$expected" ] || { cat "$PIM_CAMERA_CALL_LOG" >&2; fail "hardware+policy no-change retry"; }
+jq -e '.lifecycle=="ACTIVE"' "$PIM_CAMERA_RUN_DIR/owner.json" >/dev/null || fail "hardware+policy retry owner lifecycle"
+jq -e '.dirty==false and .degraded_reason==null and .degraded_target==null' "$PIM_CAMERA_STATE_DIR/service-state.json" >/dev/null || fail "hardware+policy retry did not clear degradation after success"
+
 echo "=== apply intake lifecycle guard ==="
 cam_owner_set_lifecycle STOPPING
 expect_rc 69 cam_request_submit apply_config test stopped

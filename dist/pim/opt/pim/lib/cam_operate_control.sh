@@ -277,9 +277,12 @@ cam_reload_policy() { _coc_policy_reload; }
 _coc_effective_steps() {
     local plan=$1 state owner_lifecycle target
     state=$(_coc_state_current) || return $?
+    target=$(jq -r '.degraded_target // empty' <<<"$state")
     if [ "$(jq -r .dirty <<<"$state")" = true ]; then
         printf 'camera_hard_reset\n'
-        jq -e '.steps | index("policy_reload") != null' >/dev/null <<<"$plan" && printf 'policy_reload\n'
+        if jq -e '.steps | index("policy_reload") != null' >/dev/null <<<"$plan" || [ "$target" = policy ]; then
+            printf 'policy_reload\n'
+        fi
         return 0
     fi
     if [ "$(jq -r .semantic_change <<<"$plan")" = true ]; then
@@ -288,7 +291,6 @@ _coc_effective_steps() {
     fi
     owner_lifecycle=$(jq -r .lifecycle "$(_cr_owner_file)") || return 69
     [ "$owner_lifecycle" = DEGRADED ] || return 0
-    target=$(jq -r '.degraded_target // empty' <<<"$state")
     case "$target" in
         ord) printf 'ord_restart\n' ;;
         vcm) printf 'vcm_restart\n' ;;
