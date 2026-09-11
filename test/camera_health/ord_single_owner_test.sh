@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# This test intentionally redefines sourced helpers after exercising them.
+# shellcheck disable=SC2218
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
