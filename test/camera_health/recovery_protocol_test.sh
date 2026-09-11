@@ -142,6 +142,66 @@ source "$PIM_LIB/cam_recovery.sh"
 # shellcheck source=/dev/null
 source "$PIM_LIB/cam_operate_control.sh"
 
+echo "=== legacy RUNNING counter settles only an older finish timestamp ==="
+reset_protocol_sandbox
+owner_active
+mkdir -p "$PIM_CAMERA_STATE_DIR"
+printf '{"dirty":false,"sentinel":"legacy-running-finish"}\n' > "$PIM_CAMERA_STATE_DIR/service-state.json"
+legacy_terminal_id=$(cam_request_submit module_reload health "legacy terminal predecessor" /source/terminal 114)
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+cam_action_counter_begin module_reload "$legacy_terminal_id"
+cam_action_counter_finish module_reload "$legacy_terminal_id" SUCCEEDED 0
+cam_request_transition VERIFYING
+cam_request_finish SUCCEEDED 0
+legacy_finished=$(jq -r '.actions.module_reload.last_finished_at' "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+sleep 1
+
+legacy_interrupted_id=$(cam_request_submit module_reload health "legacy interrupted successor" /source/interrupted 115)
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+cam_action_counter_begin module_reload "$legacy_interrupted_id"
+legacy_started=$(jq -r '.actions.module_reload.last_started_at' "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+[ "$legacy_finished" -lt "$legacy_started" ] || fail "legacy fixture did not preserve an older predecessor finish"
+fake_stat 222
+cam_owner_create "$DAEMON_PID"
+jq --argjson finished "$legacy_finished" '.actions.module_reload.last_finished_at=$finished' "$PIM_CAMERA_STATE_DIR/recovery/state.json" > "$WORK/legacy-running-state.json"
+mv "$WORK/legacy-running-state.json" "$PIM_CAMERA_STATE_DIR/recovery/state.json"
+cam_owner_set_lifecycle ACTIVE
+
+legacy_retry_id=$(cam_request_submit module_reload health "retry legacy interrupted successor" /source/retry 116)
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+legacy_retry_history="$PIM_CAMERA_STATE_DIR/recovery/history/$legacy_retry_id.json"
+
+jq '.actions.module_reload.last_finished_at=.actions.module_reload.last_started_at' "$PIM_CAMERA_STATE_DIR/recovery/state.json" > "$WORK/legacy-running-state.json"
+mv "$WORK/legacy-running-state.json" "$PIM_CAMERA_STATE_DIR/recovery/state.json"
+legacy_equal_state=$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+legacy_equal_history=$(file_fingerprint "$legacy_retry_history")
+expect_rc 70 cam_action_counter_begin module_reload "$legacy_retry_id"
+[ "$legacy_equal_state" = "$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail "equal legacy finish mutated counter state"
+[ "$legacy_equal_history" = "$(file_fingerprint "$legacy_retry_history")" ] || fail "equal legacy finish mutated current history"
+
+jq '.actions.module_reload.last_finished_at=.actions.module_reload.last_started_at+1' "$PIM_CAMERA_STATE_DIR/recovery/state.json" > "$WORK/legacy-running-state.json"
+mv "$WORK/legacy-running-state.json" "$PIM_CAMERA_STATE_DIR/recovery/state.json"
+legacy_future_state=$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+legacy_future_history=$(file_fingerprint "$legacy_retry_history")
+expect_rc 70 cam_action_counter_begin module_reload "$legacy_retry_id"
+[ "$legacy_future_state" = "$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail "future legacy finish mutated counter state"
+[ "$legacy_future_history" = "$(file_fingerprint "$legacy_retry_history")" ] || fail "future legacy finish mutated current history"
+
+jq --argjson finished "$legacy_finished" '.actions.module_reload.last_finished_at=$finished' "$PIM_CAMERA_STATE_DIR/recovery/state.json" > "$WORK/legacy-running-state.json"
+mv "$WORK/legacy-running-state.json" "$PIM_CAMERA_STATE_DIR/recovery/state.json"
+expect_rc 0 cam_action_counter_begin module_reload "$legacy_retry_id"
+jq -e --arg id "$legacy_retry_id" '.actions.module_reload.last_request_id==$id and .actions.module_reload.last_status=="RUNNING" and .actions.module_reload.last_finished_at==null' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "legacy running finish did not normalize on retry"
+cam_action_counter_finish module_reload "$legacy_retry_id" SUCCEEDED 0
+cam_request_transition VERIFYING
+cam_request_finish SUCCEEDED 0
+jq -e '.actions.module_reload.attempted==3 and .actions.module_reload.succeeded==2 and .actions.module_reload.failed==1 and .actions.module_reload.consecutive_failures==0' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "legacy running finish did not settle exactly once"
+
 echo "=== request finish rejects impossible public-counter arithmetic ==="
 finish_arithmetic_failures=0
 for finish_variant in normal result_first history_first; do

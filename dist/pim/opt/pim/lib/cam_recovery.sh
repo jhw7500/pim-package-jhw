@@ -735,9 +735,11 @@ _cr_counter_finish_pair_valid() {
 _cr_counter_begin_prior_interruption_valid() {
     local state=$1 action=$2 prior_id=$3 history request history_action result
     _cr_counter_finish_state_action_valid "$state" "$action" "$prior_id" || return 1
+    # Pre-fix builds could carry the predecessor's older finish into a new RUNNING record.
     jq -e --arg action "$action" '
-      .actions[$action].last_status=="RUNNING" and
-      .actions[$action].last_finished_at==null
+      .actions[$action] as $a |
+      $a.last_status=="RUNNING" and
+      ($a.last_finished_at==null or $a.last_finished_at<$a.last_started_at)
     ' >/dev/null <<<"$state" || return 1
     history=$(cat "$(_cr_history_file "$prior_id")" 2>/dev/null) || return 1
     request=$(jq -ce '.request | select(type=="object")' <<<"$history") || return 1
