@@ -73,11 +73,7 @@ _cl_process_status() {
 }
 
 _cl_ord_status() {
-    local status rc
-    if status=$("$PIM_CAMERA_SYSTEMCTL" is-active ord-operate.service 2>/dev/null); then rc=0; else rc=$?; fi
-    [ "$rc" -eq 0 ] && [ "$status" = active ] && return 0
-    case "$status" in inactive|failed) return 1;; esac
-    return 2
+    cam_ord_service_status
 }
 
 _cl_restart_ord_locked() {
@@ -483,7 +479,7 @@ cam_liveness_stop_managed() {
     if [ "$rc" -eq 0 ]; then cam_stop_process "$PIM_CAMERA_RUNTIME_JSON" bg || rc=$?; fi
     if [ "$rc" -eq 0 ]; then
         _cl_stopping_guard || rc=$?
-        [ "$rc" -ne 0 ] || "$PIM_CAMERA_SYSTEMCTL" stop ord-operate.service || rc=$?
+        [ "$rc" -ne 0 ] || cam_stop_ord "$PIM_CAMERA_RUNTIME_JSON" || rc=$?
     fi
     if [ "$rc" -eq 0 ]; then cam_stop_process "$PIM_CAMERA_RUNTIME_JSON" vcm || rc=$?; fi
     unset PIM_CAMERA_STOP_EXECUTOR

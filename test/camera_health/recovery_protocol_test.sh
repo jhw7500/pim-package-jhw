@@ -142,6 +142,111 @@ source "$PIM_LIB/cam_recovery.sh"
 # shellcheck source=/dev/null
 source "$PIM_LIB/cam_operate_control.sh"
 
+echo "=== legacy RUNNING counter settles only an older finish timestamp ==="
+reset_protocol_sandbox
+owner_active
+mkdir -p "$PIM_CAMERA_STATE_DIR"
+printf '{"dirty":false,"sentinel":"legacy-running-finish"}\n' > "$PIM_CAMERA_STATE_DIR/service-state.json"
+legacy_terminal_id=$(cam_request_submit module_reload health "legacy terminal predecessor" /source/terminal 114)
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+cam_action_counter_begin module_reload "$legacy_terminal_id"
+cam_action_counter_finish module_reload "$legacy_terminal_id" SUCCEEDED 0
+cam_request_transition VERIFYING
+cam_request_finish SUCCEEDED 0
+legacy_finished=$(jq -r '.actions.module_reload.last_finished_at' "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+sleep 1
+
+legacy_interrupted_id=$(cam_request_submit module_reload health "legacy interrupted successor" /source/interrupted 115)
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+cam_action_counter_begin module_reload "$legacy_interrupted_id"
+legacy_started=$(jq -r '.actions.module_reload.last_started_at' "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+[ "$legacy_finished" -lt "$legacy_started" ] || fail "legacy fixture did not preserve an older predecessor finish"
+fake_stat 222
+cam_owner_create "$DAEMON_PID"
+jq --argjson finished "$legacy_finished" '.actions.module_reload.last_finished_at=$finished' "$PIM_CAMERA_STATE_DIR/recovery/state.json" > "$WORK/legacy-running-state.json"
+mv "$WORK/legacy-running-state.json" "$PIM_CAMERA_STATE_DIR/recovery/state.json"
+cam_owner_set_lifecycle ACTIVE
+
+legacy_retry_id=$(cam_request_submit module_reload health "retry legacy interrupted successor" /source/retry 116)
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+legacy_retry_history="$PIM_CAMERA_STATE_DIR/recovery/history/$legacy_retry_id.json"
+
+jq '.actions.module_reload.last_finished_at=.actions.module_reload.last_started_at' "$PIM_CAMERA_STATE_DIR/recovery/state.json" > "$WORK/legacy-running-state.json"
+mv "$WORK/legacy-running-state.json" "$PIM_CAMERA_STATE_DIR/recovery/state.json"
+legacy_equal_state=$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+legacy_equal_history=$(file_fingerprint "$legacy_retry_history")
+expect_rc 70 cam_action_counter_begin module_reload "$legacy_retry_id"
+[ "$legacy_equal_state" = "$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail "equal legacy finish mutated counter state"
+[ "$legacy_equal_history" = "$(file_fingerprint "$legacy_retry_history")" ] || fail "equal legacy finish mutated current history"
+
+jq '.actions.module_reload.last_finished_at=.actions.module_reload.last_started_at+1' "$PIM_CAMERA_STATE_DIR/recovery/state.json" > "$WORK/legacy-running-state.json"
+mv "$WORK/legacy-running-state.json" "$PIM_CAMERA_STATE_DIR/recovery/state.json"
+legacy_future_state=$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+legacy_future_history=$(file_fingerprint "$legacy_retry_history")
+expect_rc 70 cam_action_counter_begin module_reload "$legacy_retry_id"
+[ "$legacy_future_state" = "$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] || fail "future legacy finish mutated counter state"
+[ "$legacy_future_history" = "$(file_fingerprint "$legacy_retry_history")" ] || fail "future legacy finish mutated current history"
+
+jq --argjson finished "$legacy_finished" '.actions.module_reload.last_finished_at=$finished' "$PIM_CAMERA_STATE_DIR/recovery/state.json" > "$WORK/legacy-running-state.json"
+mv "$WORK/legacy-running-state.json" "$PIM_CAMERA_STATE_DIR/recovery/state.json"
+expect_rc 0 cam_action_counter_begin module_reload "$legacy_retry_id"
+jq -e --arg id "$legacy_retry_id" '.actions.module_reload.last_request_id==$id and .actions.module_reload.last_status=="RUNNING" and .actions.module_reload.last_finished_at==null' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "legacy running finish did not normalize on retry"
+cam_action_counter_finish module_reload "$legacy_retry_id" SUCCEEDED 0
+cam_request_transition VERIFYING
+cam_request_finish SUCCEEDED 0
+jq -e '.actions.module_reload.attempted==3 and .actions.module_reload.succeeded==2 and .actions.module_reload.failed==1 and .actions.module_reload.consecutive_failures==0' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "legacy running finish did not settle exactly once"
+
+echo "=== boot-history reconciliation can settle a legacy RUNNING counter ==="
+reset_protocol_sandbox
+owner_active
+mkdir -p "$PIM_CAMERA_STATE_DIR"
+printf '{"dirty":false,"sentinel":"boot-history-reconciliation"}\n' > "$PIM_CAMERA_STATE_DIR/service-state.json"
+boot_history_terminal_id=$(cam_request_submit module_reload health "boot history terminal predecessor" /source/terminal 117)
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+cam_action_counter_begin module_reload "$boot_history_terminal_id"
+cam_action_counter_finish module_reload "$boot_history_terminal_id" SUCCEEDED 0
+cam_request_transition VERIFYING
+cam_request_finish SUCCEEDED 0
+boot_history_finished=$(jq -r '.actions.module_reload.last_finished_at' "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+sleep 1
+
+boot_history_interrupted_id=$(cam_request_submit module_reload health "boot history interrupted successor" /source/interrupted 118)
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+cam_action_counter_begin module_reload "$boot_history_interrupted_id"
+boot_history_started=$(jq -r '.actions.module_reload.last_started_at' "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+[ "$boot_history_finished" -lt "$boot_history_started" ] || fail "boot-history fixture did not preserve an older predecessor finish"
+fake_stat 222
+cam_owner_create "$DAEMON_PID"
+boot_history_interrupted_history="$PIM_CAMERA_STATE_DIR/recovery/history/$boot_history_interrupted_id.json"
+boot_history_interrupted_result="$PIM_CAMERA_RUN_DIR/recovery/results/$boot_history_interrupted_id.json"
+jq '.request.interrupted_reason="interrupted"' "$boot_history_interrupted_history" > "$WORK/boot-history-interrupted.json"
+mv "$WORK/boot-history-interrupted.json" "$boot_history_interrupted_history"
+rm -f "$boot_history_interrupted_result"
+jq --argjson finished "$boot_history_finished" '.actions.module_reload.last_finished_at=$finished' "$PIM_CAMERA_STATE_DIR/recovery/state.json" > "$WORK/boot-history-state.json"
+mv "$WORK/boot-history-state.json" "$PIM_CAMERA_STATE_DIR/recovery/state.json"
+cam_owner_set_lifecycle ACTIVE
+
+boot_history_retry_id=$(cam_request_submit module_reload health "retry boot history interruption" /source/retry 119)
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+expect_rc 0 cam_action_counter_begin module_reload "$boot_history_retry_id"
+jq -e --arg id "$boot_history_retry_id" '.actions.module_reload.attempted==3 and .actions.module_reload.succeeded==1 and .actions.module_reload.failed==1 and .actions.module_reload.consecutive_failures==1 and .actions.module_reload.last_request_id==$id and .actions.module_reload.last_status=="RUNNING" and .actions.module_reload.last_finished_at==null' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "boot-history interruption did not settle exactly once"
+cam_action_counter_finish module_reload "$boot_history_retry_id" SUCCEEDED 0
+cam_request_transition VERIFYING
+cam_request_finish SUCCEEDED 0
+jq -e '.actions.module_reload.attempted==3 and .actions.module_reload.succeeded==2 and .actions.module_reload.failed==1 and .actions.module_reload.consecutive_failures==0' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "boot-history retry did not finish with exact counter arithmetic"
+
 echo "=== request finish rejects impossible public-counter arithmetic ==="
 finish_arithmetic_failures=0
 for finish_variant in normal result_first history_first; do
@@ -928,6 +1033,55 @@ expect_rc 0 cam_action_counter_begin module_reload "$retry_running_id"
 expect_rc 0 cam_action_counter_finish module_reload "$retry_running_id" SUCCEEDED 0
 jq -e '.actions.module_reload.attempted==2 and .actions.module_reload.succeeded==1 and .actions.module_reload.failed==1 and .actions.module_reload.consecutive_failures==0' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "same-action retry did not settle stale attempt exactly once"
 [ "$stale_running_history" = "$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/history/$stale_running_id.json")" ] || fail "same-action retry rewrote predecessor history"
+
+echo "=== same-action restart clears terminal finish before interruption ==="
+reset_protocol_sandbox
+owner_active
+mkdir -p "$PIM_CAMERA_STATE_DIR"
+printf '{"dirty":false,"sentinel":"terminal-then-interrupted"}\n' > "$PIM_CAMERA_STATE_DIR/service-state.json"
+terminal_predecessor_id=$(cam_request_submit module_reload health "terminal predecessor" /source/terminal 111)
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+cam_action_counter_begin module_reload "$terminal_predecessor_id"
+cam_action_counter_finish module_reload "$terminal_predecessor_id" SUCCEEDED 0
+cam_request_transition VERIFYING
+cam_request_finish SUCCEEDED 0
+jq -e '.actions.module_reload.last_status=="SUCCEEDED" and (.actions.module_reload.last_finished_at|type)=="number"' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "terminal predecessor did not record its finish"
+
+terminal_interrupted_id=$(cam_request_submit module_reload health "interrupted successor" /source/interrupted 112)
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+cam_action_counter_begin module_reload "$terminal_interrupted_id"
+jq -e --arg id "$terminal_interrupted_id" '.actions.module_reload.last_request_id==$id and .actions.module_reload.last_status=="RUNNING" and .actions.module_reload.last_rc==null and .actions.module_reload.last_finished_at==null' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "new RUNNING action retained predecessor finish time"
+fake_stat 222
+cam_owner_create "$DAEMON_PID"
+cam_owner_set_lifecycle ACTIVE
+terminal_retry_id=$(cam_request_submit module_reload health "retry interrupted successor" /source/retry 113)
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+cam_action_counter_begin module_reload "$terminal_retry_id"
+cam_action_counter_finish module_reload "$terminal_retry_id" SUCCEEDED 0
+cam_request_transition VERIFYING
+cam_request_finish SUCCEEDED 0
+jq -e '.actions.module_reload.attempted==3 and .actions.module_reload.succeeded==2 and .actions.module_reload.failed==1 and .actions.module_reload.consecutive_failures==0' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "terminal successor interruption did not settle exactly once"
+
+echo "=== installed cam-recoveryctl symlink resolves packaged library ==="
+installed_root="$WORK/installed-layout"
+mkdir -p "$installed_root/opt/pim/bin" "$installed_root/opt/pim/lib" "$installed_root/usr/local/bin"
+cp "$ROOT/dist/pim/opt/pim/bin/cam-recoveryctl" "$installed_root/opt/pim/bin/cam-recoveryctl"
+cp "$ROOT/dist/pim/opt/pim/lib/cam_recovery.sh" "$installed_root/opt/pim/lib/cam_recovery.sh"
+ln -s "$installed_root/opt/pim/bin/cam-recoveryctl" "$installed_root/usr/local/bin/cam-recoveryctl"
+env -u PIM_LIB \
+    PIM_CAMERA_RUN_DIR="$installed_root/run/pim-camera" \
+    PIM_CAMERA_STATE_DIR="$installed_root/var/lib/pim-camera" \
+    PIM_CAMERA_BOOT_ID_FILE="$installed_root/boot_id" \
+    PIM_CAMERA_PROC_ROOT="$installed_root/proc" \
+    "$installed_root/usr/local/bin/cam-recoveryctl" status --json \
+    > "$WORK/installed-status.json" || fail "installed cam-recoveryctl symlink could not load packaged library"
+jq -e '.owner==null and .pending==null and .active==null and .state==null' "$WORK/installed-status.json" >/dev/null || fail "installed cam-recoveryctl symlink returned invalid status"
 
 stale_running_retry_setup() {
     local label=$1

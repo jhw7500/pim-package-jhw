@@ -11,9 +11,11 @@ python3 pim_guardian_startup_grace_test.py
 python3 runtime_consumer_path_test.py
 python3 runtime_script_consumers_test.py
 python3 native_runtime_config_test.py
+python3 ord_startup_failure_test.py
 python3 config_expectation_test.py
 python3 runtime_config_test.py
 bash recovery_protocol_test.sh
+bash ord_single_owner_test.sh
 bash cam_operate_control_test.sh
 bash cam_liveness_test.sh
 bash cam_stop_order_test.sh

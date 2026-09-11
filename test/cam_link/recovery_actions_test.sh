@@ -24,6 +24,9 @@ export PIM_CAMERA_SHM_DIR="$WORK/shm"
 export PIM_CAMERA_PROCESS_ROOT="$WORK/processes"
 EDGE_TEMPLATE="$ROOT/dist/pim/opt/pim/config/edgeconf_pim_base.json"
 ORD_TEMPLATE="$ROOT/dist/pim/opt/pim/config/ord_vcm_conf.json"
+export PIM_CAMERA_SYSTEMCTL=systemctl
+export PIM_CAMERA_ORD_STATE_FILE="$WORK/ord-state"
+export PIM_CAMERA_ORD_POLL_FILE="$WORK/ord-poll"
 DAEMON_PID=4242
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -50,7 +53,7 @@ prepare_sysfs() {
 prepare_stubs() {
     mkdir -p "$WORK/stub"; : > "$PIM_CAMERA_CALL_LOG"
     for cmd in rmmod modprobe reboot logger sleep; do
-        printf '#!/bin/sh\nprintf "%%s %%s\\n" "$(basename "$0")" "$*" >> "$PIM_CAMERA_CALL_LOG"\n[ "$(basename "$0")" = modprobe ] && [ "$1" = "${FAIL_MODPROBE:-}" ] && exit 23\nexit 0\n' > "$WORK/stub/$cmd"
+        printf '#!/bin/sh\nprintf "%%s %%s\\n" "$(basename "$0")" "$*" >> "$PIM_CAMERA_CALL_LOG"\n[ "$(basename "$0")" = modprobe ] && [ "$1" = "${FAIL_MODPROBE:-}" ] && exit 23\n[ "$(basename "$0")" = reboot ] && [ -n "${FAIL_REBOOT_RC:-}" ] && exit "$FAIL_REBOOT_RC"\nexit 0\n' > "$WORK/stub/$cmd"
         chmod +x "$WORK/stub/$cmd"
     done
     printf '#!/bin/sh\nprintf "kill %%s\\n" "$*" >> "$PIM_CAMERA_CALL_LOG"\n[ "${KEEP_BG:-0}" = 1 ] || rm -f "$PIM_CAMERA_PROCESS_ROOT/$2/cmdline"\nexit 0\n' > "$WORK/stub/kill"
@@ -58,9 +61,11 @@ prepare_stubs() {
     printf '#!/bin/sh\nlast=\nfor arg; do last=$arg; done\nprintf "pgrep %%s\\n" "$*" >> "$PIM_CAMERA_CALL_LOG"\ngrep -Fqx "$last" "$WORK/procs" 2>/dev/null\n' > "$WORK/stub/pgrep"
     printf '#!/bin/sh\nlast=\nfor arg; do last=$arg; done\nprintf "pkill %%s\\n" "$*" >> "$PIM_CAMERA_CALL_LOG"\ngrep -Fvx "$last" "$WORK/procs" > "$WORK/procs.next" 2>/dev/null || :\nmv "$WORK/procs.next" "$WORK/procs"\ncase "$last" in *BG_Check_for_pim.sh) rm -f "$PIM_CAMERA_PROCESS_ROOT"/*/cmdline;; esac\n' > "$WORK/stub/pkill"
     printf '#!/bin/sh\nprintf "lsmod\\n" >> "$PIM_CAMERA_CALL_LOG"\nprintf "%%s\\n" "${LSMOD_ROWS:-}"\nexit 0\n' > "$WORK/stub/lsmod"
+    printf '#!/bin/sh\nprintf "systemctl %%s\\n" "$*" >> "$PIM_CAMERA_CALL_LOG"\ncase "$1" in\n  is-active) state=$(cat "$PIM_CAMERA_ORD_STATE_FILE" 2>/dev/null || printf inactive); if [ "$state" = active-then-failed ]; then if [ ! -e "$PIM_CAMERA_ORD_POLL_FILE" ]; then : > "$PIM_CAMERA_ORD_POLL_FILE"; printf "active\\n"; exit 0; fi; printf "failed\\n"; exit 4; fi; printf "%%s\\n" "$state"; [ "$state" = active ] && exit 0 || [ "$state" = inactive ] && exit 3 || exit 4 ;;\n  show) [ "$2" = ord-operate.service ] && [ "$3" = --property=InvocationID ] && [ "$4" = --value ] || exit 64; printf "0123456789abcdef0123456789abcdef\\n" ;;\n  stop) grep -Fvx ord "$WORK/procs" > "$WORK/procs.next" 2>/dev/null || :; mv "$WORK/procs.next" "$WORK/procs"; printf "inactive\\n" > "$PIM_CAMERA_ORD_STATE_FILE"; rm -f "$PIM_CAMERA_RUN_DIR/ord-ready" "$PIM_CAMERA_ORD_POLL_FILE" ;;\n  restart) grep -Fvx ord "$WORK/procs" > "$WORK/procs.next" 2>/dev/null || :; mv "$WORK/procs.next" "$WORK/procs"; printf "ord\\n" >> "$WORK/procs"; mkdir -p "$PIM_CAMERA_RUN_DIR"; if [ "${ORD_RESTART_MODE:-ready}" = delayed-fail ]; then printf "active-then-failed\\n" > "$PIM_CAMERA_ORD_STATE_FILE"; rm -f "$PIM_CAMERA_RUN_DIR/ord-ready" "$PIM_CAMERA_ORD_POLL_FILE"; else printf "active\\n" > "$PIM_CAMERA_ORD_STATE_FILE"; printf "0123456789abcdef0123456789abcdef\\n" > "$PIM_CAMERA_RUN_DIR/ord-ready"; fi ;;\n  *) exit 64 ;;\nesac\n' > "$WORK/stub/systemctl"
     printf '#!/bin/sh\nprintf "start_cam\\n" >> "$PIM_CAMERA_CALL_LOG"\nprintf "gstApp\\n" >> "$WORK/procs"\nmkdir -p "$PIM_CAMERA_PROCESS_ROOT/100"\nprintf "%%s" "100 (BG_Check_for_pim) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1000 0" > "$PIM_CAMERA_PROCESS_ROOT/100/stat"\nprintf "/bin/bash\\000'"$PIM_BIN"'/BG_Check_for_pim.sh\\0004\\000" > "$PIM_CAMERA_PROCESS_ROOT/100/cmdline"\nexit 0\n' > "$PIM_CAMERA_START_CAM"
     for cmd in ord vcm; do printf '#!/bin/sh\nprintf "start %%s\\n" "$(basename "$0")" >> "$PIM_CAMERA_CALL_LOG"\nprintf "%%s\\n" "$(basename "$0")" >> "$WORK/procs"\n' > "$WORK/stub/$cmd"; chmod +x "$WORK/stub/$cmd"; done
-    chmod +x "$WORK/stub/pgrep" "$WORK/stub/pkill" "$WORK/stub/lsmod" "$PIM_CAMERA_START_CAM"
+    chmod +x "$WORK/stub/pgrep" "$WORK/stub/pkill" "$WORK/stub/lsmod" "$WORK/stub/systemctl" "$PIM_CAMERA_START_CAM"
+    printf 'inactive\n' > "$PIM_CAMERA_ORD_STATE_FILE"
     export PATH="$WORK/stub:$PATH"
 }
 
@@ -127,7 +132,7 @@ cam_poll_pending_request
 [ "$(grep -c '^quiesce-all-complete$' "$PIM_CAMERA_CALL_LOG")" -eq 1 ] || fail "module apply did not confirm all consumers stopped"
 quiesce_line=$(grep -n '^quiesce-all-complete$' "$PIM_CAMERA_CALL_LOG" | cut -d: -f1)
 module_line=$(grep -n -m1 -E '^(rmmod|modprobe) ' "$PIM_CAMERA_CALL_LOG" | cut -d: -f1)
-start_line=$(grep -n -m1 -E '^(start ord|start vcm|start_cam)$' "$PIM_CAMERA_CALL_LOG" | cut -d: -f1)
+start_line=$(grep -n -m1 -E '^(systemctl restart ord-operate\.service|start vcm|start_cam)$' "$PIM_CAMERA_CALL_LOG" | cut -d: -f1)
 verify_line=$(grep -n '^final-verify$' "$PIM_CAMERA_CALL_LOG" | tail -1 | cut -d: -f1)
 [ "$quiesce_line" -lt "$module_line" ] && [ "$module_line" -lt "$start_line" ] && [ "$start_line" -lt "$verify_line" ] || { cat "$PIM_CAMERA_CALL_LOG" >&2; fail "module apply order was not quiesce -> module -> restart -> final verify"; }
 jq -e --arg id "$apply_id" '.id==$id and .status=="SUCCEEDED" and .rc==0' "$PIM_CAMERA_RUN_DIR/recovery/results/$apply_id.json" >/dev/null || fail "module apply result"
@@ -182,12 +187,13 @@ bind=$(grep '^sysfs bind ' "$PIM_CAMERA_CALL_LOG" | tr '\n' ',')
 case "$unbind" in *isi-capture*isi-m2m*mxc-isi*mxc-mipi-csi2-sam*) ;; *) fail "child-first unbind order: $unbind";; esac
 case "$bind" in *mxc-mipi-csi2-sam*mxc-isi*) ;; *) fail "parent-first bind order: $bind";; esac
 ! grep -q 'systemctl .*cam-operate' "$PIM_CAMERA_CALL_LOG" || fail "hard reset controlled cam-operate service"
+! grep -q '^start ord$' "$PIM_CAMERA_CALL_LOG" || fail "hard reset launched ORD outside systemd"
 ! grep -q '^sysfs bind 32e00000.isi:cap_device ' "$PIM_CAMERA_CALL_LOG" || fail "auto-bound capture child was bound twice"
 ! grep -q '^sysfs bind 32e00000.isi:m2m_device ' "$PIM_CAMERA_CALL_LOG" || fail "auto-bound m2m child was bound twice"
 hard_reset_settle=$(awk '
     $0 == "rmmod imx8-media-dev" { hardware = 1 }
     hardware && /^(rmmod|modprobe|sleep|sysfs (unbind|bind)) / { print }
-    hardware && /^(start ord|start vcm|start_cam)$/ { exit }
+    hardware && /^(systemctl restart ord-operate\.service|start vcm|start_cam)$/ { exit }
 ' "$PIM_CAMERA_CALL_LOG" | sed "s#$PIM_CAMERA_SYSFS_ROOT/bus/platform/drivers/##")
 expected_hard_reset_settle=$'rmmod imx8-media-dev\nsleep 1\nrmmod max9296\nsleep 1\nsysfs unbind 32e00000.isi:cap_device isi-capture/unbind\nsysfs unbind 32e02000.isi:cap_device isi-capture/unbind\nsleep 1\nsysfs unbind 32e00000.isi:m2m_device isi-m2m/unbind\nsleep 1\nsysfs unbind 32e00000.isi mxc-isi/unbind\nsysfs unbind 32e02000.isi mxc-isi/unbind\nsleep 1\nsysfs unbind 32e40000.csi mxc-mipi-csi2-sam/unbind\nsysfs unbind 32e50000.csi mxc-mipi-csi2-sam/unbind\nsleep 2\nsysfs bind 32e40000.csi mxc-mipi-csi2-sam/bind\nsysfs bind 32e50000.csi mxc-mipi-csi2-sam/bind\nsleep 1\nsysfs bind 32e00000.isi mxc-isi/bind\nsysfs bind 32e02000.isi mxc-isi/bind\nsleep 2\nsysfs bind 32e02000.isi:cap_device isi-capture/bind\nsleep 1\nmodprobe max9296\nsleep 3\nmodprobe imx8-media-dev\nsleep 5'
 if [ "$hard_reset_settle" != "$expected_hard_reset_settle" ]; then
@@ -224,5 +230,19 @@ jq -s --arg tmp "$WORK/linked-recordings" '
     .VHL_CAM.vhl_name="VD3001"
 ' "$EDGE_TEMPLATE" "$ORD_TEMPLATE" > "$PIM_CAMERA_RUNTIME_JSON"
 expect_rc 64 env PIM_CAMERA_SESSION_TIME_FILE="$WORK/start-time" bash -c 'source "$PIM_LIB/cam_recovery_actions.sh"; cam_cleanup_recording_orphans "$PIM_CAMERA_RUNTIME_JSON"'
+
+echo "=== delayed ORD init failure cannot complete a recovery request ==="
+runtime
+owner_active
+: > "$PIM_CAMERA_CALL_LOG"
+failed_ord_id=$(cam_request_submit module_reload test "delayed ORD init failure")
+export ORD_RESTART_MODE=delayed-fail PIM_CAMERA_READY_TIMEOUT_SEC=1 FAIL_REBOOT_RC=29
+expect_rc 29 cam_poll_pending_request
+unset ORD_RESTART_MODE PIM_CAMERA_READY_TIMEOUT_SEC FAIL_REBOOT_RC
+jq -e --arg id "$failed_ord_id" '.id==$id and .status=="FAILED" and .rc==29' "$PIM_CAMERA_RUN_DIR/recovery/results/$failed_ord_id.json" >/dev/null || fail "delayed ORD init failure reached a successful request result"
+[ "$(jq -r .lifecycle "$PIM_CAMERA_RUN_DIR/owner.json")" = DEGRADED ] || fail "delayed ORD init failure returned the owner to ACTIVE"
+failed_ord_history=$(grep -rl -- "\"id\":\"$failed_ord_id\"" "$PIM_CAMERA_STATE_DIR/recovery/history")
+jq -e '[.actions[] | {action,status,rc}] == [{"action":"module_reload","status":"FAILED","rc":1},{"action":"camera_hard_reset","status":"FAILED","rc":1},{"action":"reboot_fallback","status":"FAILED","rc":29}]' "$failed_ord_history" >/dev/null || fail "delayed ORD init failure did not propagate through recovery fallback"
+[ "$(grep -Fxc 'systemctl is-active ord-operate.service' "$PIM_CAMERA_CALL_LOG")" -eq 4 ] || fail "recovery did not observe both delayed ORD init failures"
 
 echo "recovery actions: PASS"
