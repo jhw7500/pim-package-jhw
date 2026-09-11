@@ -202,6 +202,51 @@ cam_request_transition VERIFYING
 cam_request_finish SUCCEEDED 0
 jq -e '.actions.module_reload.attempted==3 and .actions.module_reload.succeeded==2 and .actions.module_reload.failed==1 and .actions.module_reload.consecutive_failures==0' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "legacy running finish did not settle exactly once"
 
+echo "=== boot-history reconciliation can settle a legacy RUNNING counter ==="
+reset_protocol_sandbox
+owner_active
+mkdir -p "$PIM_CAMERA_STATE_DIR"
+printf '{"dirty":false,"sentinel":"boot-history-reconciliation"}\n' > "$PIM_CAMERA_STATE_DIR/service-state.json"
+boot_history_terminal_id=$(cam_request_submit module_reload health "boot history terminal predecessor" /source/terminal 117)
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+cam_action_counter_begin module_reload "$boot_history_terminal_id"
+cam_action_counter_finish module_reload "$boot_history_terminal_id" SUCCEEDED 0
+cam_request_transition VERIFYING
+cam_request_finish SUCCEEDED 0
+boot_history_finished=$(jq -r '.actions.module_reload.last_finished_at' "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+sleep 1
+
+boot_history_interrupted_id=$(cam_request_submit module_reload health "boot history interrupted successor" /source/interrupted 118)
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+cam_action_counter_begin module_reload "$boot_history_interrupted_id"
+boot_history_started=$(jq -r '.actions.module_reload.last_started_at' "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+[ "$boot_history_finished" -lt "$boot_history_started" ] || fail "boot-history fixture did not preserve an older predecessor finish"
+fake_stat 222
+cam_owner_create "$DAEMON_PID"
+boot_history_interrupted_history="$PIM_CAMERA_STATE_DIR/recovery/history/$boot_history_interrupted_id.json"
+boot_history_interrupted_result="$PIM_CAMERA_RUN_DIR/recovery/results/$boot_history_interrupted_id.json"
+jq '.request.interrupted_reason="interrupted"' "$boot_history_interrupted_history" > "$WORK/boot-history-interrupted.json"
+mv "$WORK/boot-history-interrupted.json" "$boot_history_interrupted_history"
+rm -f "$boot_history_interrupted_result"
+jq --argjson finished "$boot_history_finished" '.actions.module_reload.last_finished_at=$finished' "$PIM_CAMERA_STATE_DIR/recovery/state.json" > "$WORK/boot-history-state.json"
+mv "$WORK/boot-history-state.json" "$PIM_CAMERA_STATE_DIR/recovery/state.json"
+cam_owner_set_lifecycle ACTIVE
+
+boot_history_retry_id=$(cam_request_submit module_reload health "retry boot history interruption" /source/retry 119)
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+expect_rc 0 cam_action_counter_begin module_reload "$boot_history_retry_id"
+jq -e --arg id "$boot_history_retry_id" '.actions.module_reload.attempted==3 and .actions.module_reload.succeeded==1 and .actions.module_reload.failed==1 and .actions.module_reload.consecutive_failures==1 and .actions.module_reload.last_request_id==$id and .actions.module_reload.last_status=="RUNNING" and .actions.module_reload.last_finished_at==null' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "boot-history interruption did not settle exactly once"
+cam_action_counter_finish module_reload "$boot_history_retry_id" SUCCEEDED 0
+cam_request_transition VERIFYING
+cam_request_finish SUCCEEDED 0
+jq -e '.actions.module_reload.attempted==3 and .actions.module_reload.succeeded==2 and .actions.module_reload.failed==1 and .actions.module_reload.consecutive_failures==0' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "boot-history retry did not finish with exact counter arithmetic"
+
 echo "=== request finish rejects impossible public-counter arithmetic ==="
 finish_arithmetic_failures=0
 for finish_variant in normal result_first history_first; do
