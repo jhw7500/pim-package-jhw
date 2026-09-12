@@ -214,7 +214,7 @@ _cl_gstapp_failures() {
         _cr_counter_finish_state_action_valid "$state" gstapp_restart "$id" || return 70
         status=$(jq -r '.last_status' <<<"$action") || return 70
         if [ "$status" = RUNNING ]; then
-            _cr_counter_begin_prior_interruption_valid "$state" gstapp_restart "$id" 2>/dev/null || return 70
+            _cr_counter_begin_prior_interruption_valid "$state" gstapp_restart "$id" true 2>/dev/null || return 70
         else
             history=$(cat "$(_cr_history_file "$id")" 2>/dev/null) || return 70
             terminal=$(jq -ce '.request | select(type=="object")' <<<"$history") || return 70

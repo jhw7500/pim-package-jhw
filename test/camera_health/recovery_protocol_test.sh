@@ -1034,6 +1034,36 @@ expect_rc 0 cam_action_counter_finish module_reload "$retry_running_id" SUCCEEDE
 jq -e '.actions.module_reload.attempted==2 and .actions.module_reload.succeeded==1 and .actions.module_reload.failed==1 and .actions.module_reload.consecutive_failures==0' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "same-action retry did not settle stale attempt exactly once"
 [ "$stale_running_history" = "$(file_fingerprint "$PIM_CAMERA_STATE_DIR/recovery/history/$stale_running_id.json")" ] || fail "same-action retry rewrote predecessor history"
 
+echo "=== same-action retry survives RuntimeDirectory removal across reboot ==="
+reset_protocol_sandbox
+owner_active
+mkdir -p "$PIM_CAMERA_STATE_DIR"
+printf '{"dirty":false,"sentinel":"runtime-directory-removal"}\n' > "$PIM_CAMERA_STATE_DIR/service-state.json"
+runtime_removed_id=$(cam_request_submit camera_hard_reset health "runtime directory predecessor" /source/stale 120)
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+cam_action_counter_begin camera_hard_reset "$runtime_removed_id"
+fake_stat 222
+expect_rc 0 cam_owner_create "$DAEMON_PID"
+jq -e --arg id "$runtime_removed_id" '.request.id==$id and .request.status=="FAILED" and .request.rc==70 and .request.interrupted==true and .request.interrupted_reason=="owner_stale" and ([.actions[] | select(.action=="camera_hard_reset" and .request_id==$id and .status=="RUNNING")] | length)==1' "$PIM_CAMERA_STATE_DIR/recovery/history/$runtime_removed_id.json" >/dev/null || fail "runtime removal fixture did not persist owner-stale history"
+jq -e --arg id "$runtime_removed_id" '.actions.camera_hard_reset.attempted==1 and .actions.camera_hard_reset.failed==0 and .actions.camera_hard_reset.last_request_id==$id and .actions.camera_hard_reset.last_status=="RUNNING"' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "runtime removal fixture did not persist RUNNING counter"
+rm -rf "$PIM_CAMERA_RUN_DIR"
+printf 'test-boot-id-after-reboot\n' > "$PIM_CAMERA_BOOT_ID_FILE"
+expect_rc 0 cam_owner_create "$DAEMON_PID"
+expect_rc 0 cam_reconcile_interrupted
+cam_owner_set_lifecycle ACTIVE
+runtime_removed_retry_id=$(cam_request_submit camera_hard_reset startup "retry after runtime removal" /source/retry 121)
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+expect_rc 0 cam_action_counter_begin camera_hard_reset "$runtime_removed_retry_id"
+jq -e --arg id "$runtime_removed_retry_id" '.actions.camera_hard_reset.attempted==2 and .actions.camera_hard_reset.succeeded==0 and .actions.camera_hard_reset.failed==1 and .actions.camera_hard_reset.consecutive_failures==1 and .actions.camera_hard_reset.last_request_id==$id and .actions.camera_hard_reset.last_status=="RUNNING" and .actions.camera_hard_reset.last_finished_at==null' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "runtime removal retry did not settle stale hard reset exactly once"
+cam_action_counter_finish camera_hard_reset "$runtime_removed_retry_id" SUCCEEDED 0
+cam_request_transition VERIFYING
+cam_request_finish SUCCEEDED 0
+jq -e '.actions.camera_hard_reset.attempted==2 and .actions.camera_hard_reset.succeeded==1 and .actions.camera_hard_reset.failed==1 and .actions.camera_hard_reset.consecutive_failures==0' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail "runtime removal retry did not finish with exact counter arithmetic"
+
 echo "=== same-action restart clears terminal finish before interruption ==="
 reset_protocol_sandbox
 owner_active
@@ -1186,10 +1216,9 @@ assert_stale_begin_bytes_unchanged() {
 
 echo "=== invalid stale settlement evidence fails closed byte-for-byte ==="
 stale_begin_failures=''
-for mutation in missing_result corrupt_result missing_history corrupt_history nonsynthetic request_id started_at duplicate_action missing_action bad_arithmetic; do
+for mutation in corrupt_result missing_history corrupt_history nonsynthetic request_id started_at duplicate_action missing_action bad_arithmetic; do
     stale_running_retry_setup "invalid $mutation"
     case "$mutation" in
-        missing_result) rm -f "$stale_retry_prior_result" ;;
         corrupt_result) printf '{bad result}\n' > "$stale_retry_prior_result" ;;
         missing_history) rm -f "$stale_retry_prior_history" ;;
         corrupt_history) printf '{bad history}\n' > "$stale_retry_prior_history" ;;

@@ -732,10 +732,8 @@ _cr_counter_finish_pair_valid() {
       $a.last_finished_at==$history_action.finished_at
     ' >/dev/null
 }
-_cr_legacy_reconciled_interruption_valid() {
+_cr_reconciled_owner_inactive() {
     local request=$1 owner boot owner_boot pid start actual
-    _cr_terminal_request_valid "$request" || return 1
-    jq -e '.status=="FAILED" and .rc==70 and .interrupted==true and .interrupted_reason=="interrupted"' >/dev/null <<<"$request" || return 1
     owner=$(jq -ce '.owner | select(type=="object")' <<<"$request") || return 1
     _cr_owner_schema <<<"$owner" || return 1
     boot=$(cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null) || return 1
@@ -746,8 +744,15 @@ _cr_legacy_reconciled_interruption_valid() {
     actual=$(_cr_proc_start "$pid" 2>/dev/null || true)
     [ -z "$actual" ] || [ "$actual" != "$start" ]
 }
+_cr_legacy_reconciled_interruption_valid() {
+    local request=$1
+    _cr_terminal_request_valid "$request" || return 1
+    jq -e '.status=="FAILED" and .rc==70 and .interrupted==true and .interrupted_reason=="interrupted"' >/dev/null <<<"$request" || return 1
+    _cr_reconciled_owner_inactive "$request"
+}
 _cr_counter_begin_prior_interruption_valid() {
-    local state=$1 action=$2 prior_id=$3 history request history_action result normalized
+    local state=$1 action=$2 prior_id=$3 allow_missing_result=${4:-false}
+    local history request history_action result normalized
     _cr_counter_finish_state_action_valid "$state" "$action" "$prior_id" || return 1
     # Pre-fix builds could carry the predecessor's older finish into a new RUNNING record.
     jq -e --arg action "$action" '
@@ -760,9 +765,16 @@ _cr_counter_begin_prior_interruption_valid() {
     [ "$(jq -r .id <<<"$request")" = "$prior_id" ] || return 1
     if _cr_interrupted_terminal_valid "$request"; then
         _cr_terminal_history_actions_valid "$history" "$request" || return 1
-        result=$(cat "$(_cr_result_file "$prior_id")" 2>/dev/null) || return 1
-        _cr_terminal_result_valid "$result" "$request" || return 1
-        _cr_terminal_request_result_equal "$request" "$result" || return 1
+        if [ -e "$(_cr_result_file "$prior_id")" ]; then
+            result=$(cat "$(_cr_result_file "$prior_id")" 2>/dev/null) || return 1
+            _cr_terminal_result_valid "$result" "$request" || return 1
+            _cr_terminal_request_result_equal "$request" "$result" || return 1
+        else
+            # RuntimeDirectory removal discards results, so persistent evidence
+            # is sufficient only after the recorded owner is no longer active.
+            [ "$allow_missing_result" = true ] || return 1
+            _cr_reconciled_owner_inactive "$request" || return 1
+        fi
     elif _cr_legacy_reconciled_interruption_valid "$request"; then
         # The legacy boot-history sweep persisted this terminal form without a volatile result.
         [ ! -e "$(_cr_result_file "$prior_id")" ] || return 1
@@ -798,7 +810,7 @@ _cr_counter_begin_state_mode() {
         [ "$prior_status" = RUNNING ] || return 1
         printf 'CURRENT\n'
     elif [ "$prior_status" = RUNNING ]; then
-        _cr_counter_begin_prior_interruption_valid "$state" "$action" "$prior_id" 2>/dev/null || return 1
+        _cr_counter_begin_prior_interruption_valid "$state" "$action" "$prior_id" true 2>/dev/null || return 1
         printf 'SETTLE\n'
     else
         printf 'NONE\n'
