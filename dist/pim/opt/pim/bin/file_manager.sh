@@ -25,6 +25,7 @@ runtime_unavailable() {
 }
 
 runtime_path_confirmed_missing() {
+    local runtime_path="$PIM_CAMERA_RUNTIME_JSON"
     local probe="$PIM_CAMERA_RUNTIME_JSON"
     local parent
 
@@ -36,10 +37,10 @@ runtime_path_confirmed_missing() {
         probe=$parent
     done
 
-    [[ -d "$probe" && -x "$probe" ]]
+    [[ "$probe" != "$runtime_path" && -d "$probe" && -x "$probe" ]]
 }
 
-runtime_json=$(<"$PIM_CAMERA_RUNTIME_JSON") || {
+{ runtime_json=$(<"$PIM_CAMERA_RUNTIME_JSON"); } 2>/dev/null || {
     runtime_path_confirmed_missing && runtime_unavailable
     config_invalid
 }

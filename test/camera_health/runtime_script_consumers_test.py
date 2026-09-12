@@ -829,35 +829,55 @@ exit 97
                 "malformed runtime remains CONFIG_INVALID with zero file deletion",
             )
 
-            self.write_json(runtime_path, runtime_document(vhl_name="runtime"))
-            runtime_path.chmod(0)
+            runtime_path.unlink()
+            runtime_path.mkdir()
+            self.clear_events(env)
+            directory_before = {
+                path.name: path.read_bytes() for path in invalid_dir.iterdir()
+            }
+            result = self.run_script(
+                BIN / "file_manager.sh",
+                root,
+                env,
+                (str(invalid_dir), "2", "100", "caller"),
+            )
+            self.check(
+                result.returncode == 64
+                and runtime_path.is_dir()
+                and directory_before
+                == {path.name: path.read_bytes() for path in invalid_dir.iterdir()}
+                and "CONFIG_INVALID:" in self.events(env),
+                "runtime directory remains CONFIG_INVALID with zero file deletion",
+            )
+            runtime_path.rmdir()
+
+            unreadable_runtime = Path("/proc/self/mem")
+            unreadable_env = {
+                **env,
+                "PIM_CAMERA_RUNTIME_JSON": str(unreadable_runtime),
+            }
             self.clear_events(env)
             unreadable_before = {
                 path.name: path.read_bytes() for path in invalid_dir.iterdir()
             }
-            try:
-                result = self.run_script(
-                    BIN / "file_manager.sh",
-                    root,
-                    env,
-                    (str(invalid_dir), "2", "100", "caller"),
-                )
-            finally:
-                runtime_path.chmod(0o600)
+            result = self.run_script(
+                BIN / "file_manager.sh",
+                root,
+                unreadable_env,
+                (str(invalid_dir), "2", "100", "caller"),
+            )
             self.check(
                 result.returncode == 64
+                and unreadable_runtime.exists()
                 and unreadable_before
                 == {path.name: path.read_bytes() for path in invalid_dir.iterdir()}
                 and "CONFIG_INVALID:" in self.events(env),
-                "unreadable runtime remains CONFIG_INVALID with zero file deletion",
+                "unreadable runtime remains CONFIG_INVALID independent of caller UID",
             )
 
-            inaccessible_parent = root / "inaccessible-runtime"
-            inaccessible_parent.mkdir()
+            inaccessible_parent = root / "unresolvable-runtime-parent"
+            inaccessible_parent.symlink_to(inaccessible_parent)
             inaccessible_runtime = inaccessible_parent / "runtime.json"
-            self.write_json(
-                inaccessible_runtime, runtime_document(vhl_name="runtime")
-            )
             inaccessible_env = {
                 **env,
                 "PIM_CAMERA_RUNTIME_JSON": str(inaccessible_runtime),
@@ -866,23 +886,19 @@ exit 97
             inaccessible_before = {
                 path.name: path.read_bytes() for path in invalid_dir.iterdir()
             }
-            inaccessible_parent.chmod(0)
-            try:
-                result = self.run_script(
-                    BIN / "file_manager.sh",
-                    root,
-                    inaccessible_env,
-                    (str(invalid_dir), "2", "100", "caller"),
-                )
-            finally:
-                inaccessible_parent.chmod(0o700)
+            result = self.run_script(
+                BIN / "file_manager.sh",
+                root,
+                inaccessible_env,
+                (str(invalid_dir), "2", "100", "caller"),
+            )
             self.check(
                 result.returncode == 64
-                and inaccessible_runtime.exists()
+                and inaccessible_parent.is_symlink()
                 and inaccessible_before
                 == {path.name: path.read_bytes() for path in invalid_dir.iterdir()}
                 and "CONFIG_INVALID:" in self.events(env),
-                "runtime beneath an inaccessible parent remains CONFIG_INVALID with zero file deletion",
+                "runtime beneath an unresolvable parent remains CONFIG_INVALID with zero file deletion",
             )
 
             self.write_json(runtime_path, runtime_document(vhl_name="runtime"))
@@ -938,7 +954,8 @@ exit 97
                 result.returncode == 0
                 and after_missing == before_missing
                 and "RUNTIME_UNAVAILABLE:" in self.events(env)
-                and not self.command_lines(env, "jq"),
+                and not self.command_lines(env, "jq")
+                and result.stderr == "",
                 "missing runtime is unavailable and cron-safe with zero file deletion",
             )
 
