@@ -929,6 +929,46 @@ exit 97
                 "runtime disappearance immediately before read is unavailable and deletion-safe",
             )
 
+            recreate_hook = root / "recreate-runtime-before-classification.sh"
+            recreate_hook.write_text(
+                "trap 'if [[ \"$BASH_COMMAND\" == runtime_path_confirmed_missing ]]; then "
+                "trap - DEBUG; /usr/bin/mv -- \"$PIM_TEST_RECREATED_RUNTIME\" "
+                "\"$PIM_CAMERA_RUNTIME_JSON\"; fi' DEBUG\n",
+                encoding="utf-8",
+            )
+            for label, document, expected_rc in (
+                ("valid", json.dumps(runtime_document(vhl_name="runtime")), 0),
+                ("malformed", "{broken", 64),
+            ):
+                runtime_path.unlink(missing_ok=True)
+                replacement = root / "recreated-runtime.json"
+                replacement.write_text(document, encoding="utf-8")
+                recreate_env = {
+                    **env,
+                    "BASH_ENV": str(recreate_hook),
+                    "PIM_TEST_RECREATED_RUNTIME": str(replacement),
+                }
+                self.clear_events(env)
+                recreate_before = {
+                    path.name: path.read_bytes() for path in invalid_dir.iterdir()
+                }
+                result = self.run_script(
+                    BIN / "file_manager.sh",
+                    root,
+                    recreate_env,
+                    (str(invalid_dir), "2", "100", "caller"),
+                )
+                self.check(
+                    result.returncode == expected_rc
+                    and runtime_path.read_text(encoding="utf-8") == document
+                    and recreate_before
+                    == {path.name: path.read_bytes() for path in invalid_dir.iterdir()}
+                    and ("CONFIG_INVALID:" in self.events(env)) == (expected_rc == 64)
+                    and result.stderr == "",
+                    f"{label} runtime recreated before classification exits {expected_rc} "
+                    "and preserves unrelated recordings",
+                )
+
             missing_dir = root / "missing-runtime-recording"
             missing_dir.mkdir()
             for index in range(3):

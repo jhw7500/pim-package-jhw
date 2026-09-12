@@ -40,10 +40,7 @@ runtime_path_confirmed_missing() {
     [[ "$probe" != "$runtime_path" && -d "$probe" && -x "$probe" ]]
 }
 
-if [[ ! -e "$PIM_CAMERA_RUNTIME_JSON" ]]; then
-    runtime_path_confirmed_missing && runtime_unavailable
-    config_invalid
-fi
+runtime_path_confirmed_missing && runtime_unavailable
 
 command -v jq >/dev/null 2>&1 || config_invalid
 VHL_NAME=$(jq -ner --slurpfile runtime "$PIM_CAMERA_RUNTIME_JSON" '
