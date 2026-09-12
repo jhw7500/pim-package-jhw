@@ -331,6 +331,35 @@ jq -e '.degraded_target=="vcm" and .degraded_reason=="liveness_start_failed"' "$
 ! grep -q '^request:' "$PIM_CAMERA_CALL_LOG" || fail 'immediate VCM exit requested camera recovery'
 
 echo '=== gstApp gates, exact process match, and persistent threshold ==='
+reset_case; owner_at ACTIVE
+printf 'vcm\n' > "$WORK/procs"
+touch "$PIM_CAMERA_DEVICE_ROOT/video3"
+runtime_loss_id=$(cam_request_submit gstapp_restart liveness 'runtime directory predecessor')
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+cam_action_counter_begin gstapp_restart "$runtime_loss_id"
+fake_stat 222
+expect_rc 0 cam_owner_create "$DAEMON_PID"
+runtime_loss_history="$PIM_CAMERA_STATE_DIR/recovery/history/$runtime_loss_id.json"
+jq -e --arg id "$runtime_loss_id" '.request.id==$id and .request.status=="FAILED" and .request.rc==70 and .request.interrupted==true and .request.interrupted_reason=="owner_stale" and ([.actions[] | select(.action=="gstapp_restart" and .request_id==$id and .status=="RUNNING")] | length)==1' "$runtime_loss_history" >/dev/null || fail 'runtime loss fixture did not persist owner-stale gstApp history'
+rm -rf "$PIM_CAMERA_RUN_DIR"
+write_runtime
+expect_rc 0 cam_owner_create "$DAEMON_PID"
+cam_owner_set_lifecycle ACTIVE
+export_owner_context
+runtime_loss_history_before=$(fingerprint "$runtime_loss_history")
+: > "$PIM_CAMERA_CALL_LOG"
+expect_rc 0 cam_liveness_tick
+jq -e '.type=="gstapp_restart" and .source=="liveness" and .reason=="gstapp process absent"' "$PIM_CAMERA_RUN_DIR/recovery/pending.json" >/dev/null || fail 'liveness did not submit retry after RuntimeDirectory result loss'
+runtime_loss_retry_id=$(jq -r .id "$PIM_CAMERA_RUN_DIR/recovery/pending.json")
+cam_request_claim
+cam_request_transition QUIESCING
+cam_request_transition RUNNING
+expect_rc 0 cam_action_counter_begin gstapp_restart "$runtime_loss_retry_id"
+jq -e --arg id "$runtime_loss_retry_id" '.actions.gstapp_restart.attempted==2 and .actions.gstapp_restart.succeeded==0 and .actions.gstapp_restart.failed==1 and .actions.gstapp_restart.consecutive_failures==1 and .actions.gstapp_restart.last_request_id==$id and .actions.gstapp_restart.last_status=="RUNNING"' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail 'liveness retry did not settle missing-result predecessor exactly once'
+[ "$runtime_loss_history_before" = "$(fingerprint "$runtime_loss_history")" ] || fail 'liveness retry rewrote missing-result predecessor history'
+
 reset_case; owner_at ACTIVE; prepare_gst_missing 0
 jq '.actions.gstapp_restart.consecutive_failures=5' "$PIM_CAMERA_STATE_DIR/recovery/state.json" > "$WORK/state.impossible" && mv "$WORK/state.impossible" "$PIM_CAMERA_STATE_DIR/recovery/state.json"
 impossible_owner_before=$(fingerprint "$PIM_CAMERA_RUN_DIR/owner.json")
