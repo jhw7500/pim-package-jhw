@@ -24,12 +24,26 @@ runtime_unavailable() {
     exit 0
 }
 
-[[ -e "$PIM_CAMERA_RUNTIME_JSON" ]] || runtime_unavailable
-command -v jq >/dev/null 2>&1 || config_invalid
+runtime_path_confirmed_missing() {
+    local probe="$PIM_CAMERA_RUNTIME_JSON"
+    local parent
+
+    while [[ ! -e "$probe" ]]; do
+        [[ ! -L "$probe" ]] || return 1
+        parent=${probe%/*}
+        [[ -n "$parent" ]] || parent=/
+        [[ "$parent" != "$probe" ]] || return 1
+        probe=$parent
+    done
+
+    [[ -d "$probe" && -x "$probe" ]]
+}
+
 runtime_json=$(<"$PIM_CAMERA_RUNTIME_JSON") || {
-    [[ -e "$PIM_CAMERA_RUNTIME_JSON" ]] || runtime_unavailable
+    runtime_path_confirmed_missing && runtime_unavailable
     config_invalid
 }
+command -v jq >/dev/null 2>&1 || config_invalid
 VHL_NAME=$(jq -er '
     if type == "object" and
        (.VHL_CAM | type) == "object" and
