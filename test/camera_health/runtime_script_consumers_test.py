@@ -904,7 +904,7 @@ exit 97
             self.write_json(runtime_path, runtime_document(vhl_name="runtime"))
             disappear_hook = root / "remove-runtime-before-read.sh"
             disappear_hook.write_text(
-                "trap 'if [[ \"$BASH_COMMAND\" == runtime_json=* ]]; then "
+                "trap 'if [[ \"$BASH_COMMAND\" == VHL_NAME=* ]]; then "
                 "trap - DEBUG; /usr/bin/rm -f -- \"$PIM_CAMERA_RUNTIME_JSON\"; "
                 "fi' DEBUG\n",
                 encoding="utf-8",
@@ -925,8 +925,7 @@ exit 97
                 and not runtime_path.exists()
                 and disappear_before
                 == {path.name: path.read_bytes() for path in invalid_dir.iterdir()}
-                and "RUNTIME_UNAVAILABLE:" in self.events(env)
-                and not self.command_lines(env, "jq"),
+                and "RUNTIME_UNAVAILABLE:" in self.events(env),
                 "runtime disappearance immediately before read is unavailable and deletion-safe",
             )
 

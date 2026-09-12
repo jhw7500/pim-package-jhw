@@ -40,19 +40,25 @@ runtime_path_confirmed_missing() {
     [[ "$probe" != "$runtime_path" && -d "$probe" && -x "$probe" ]]
 }
 
-{ runtime_json=$(<"$PIM_CAMERA_RUNTIME_JSON"); } 2>/dev/null || {
+if [[ ! -e "$PIM_CAMERA_RUNTIME_JSON" ]]; then
+    runtime_path_confirmed_missing && runtime_unavailable
+    config_invalid
+fi
+
+command -v jq >/dev/null 2>&1 || config_invalid
+VHL_NAME=$(jq -ner --slurpfile runtime "$PIM_CAMERA_RUNTIME_JSON" '
+    if ($runtime | length) == 1 and
+       ($runtime[0] | type) == "object" and
+       ($runtime[0].VHL_CAM | type) == "object" and
+       ($runtime[0].ORD | type) == "object" and
+       ($runtime[0].VCM | type) == "object" and
+       (($runtime[0].VHL_CAM.vhl_name // "") | type) == "string"
+    then ($runtime[0].VHL_CAM.vhl_name // "")
+    else error("invalid camera runtime") end
+' 2>/dev/null) || {
     runtime_path_confirmed_missing && runtime_unavailable
     config_invalid
 }
-command -v jq >/dev/null 2>&1 || config_invalid
-VHL_NAME=$(jq -er '
-    if type == "object" and
-       (.VHL_CAM | type) == "object" and
-       (.ORD | type) == "object" and
-       (.VCM | type) == "object" and
-       ((.VHL_CAM.vhl_name // "") | type) == "string"
-    then (.VHL_CAM.vhl_name // "") else error("invalid camera runtime") end
-' <<<"$runtime_json") || config_invalid
 if [[ -n "$VHL_NAME" ]]; then
     KEY="$VHL_NAME"
 fi
