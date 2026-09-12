@@ -809,13 +809,57 @@ exit 97
                 "invalid runtime fails closed before file deletion",
             )
 
+            runtime_path = Path(env["PIM_CAMERA_RUNTIME_JSON"])
+            runtime_path.write_text("{broken", encoding="utf-8")
+            self.clear_events(env)
+            malformed_before = {
+                path.name: path.read_bytes() for path in invalid_dir.iterdir()
+            }
+            result = self.run_script(
+                BIN / "file_manager.sh",
+                root,
+                env,
+                (str(invalid_dir), "2", "100", "caller"),
+            )
+            self.check(
+                result.returncode == 64
+                and malformed_before
+                == {path.name: path.read_bytes() for path in invalid_dir.iterdir()}
+                and "CONFIG_INVALID:" in self.events(env),
+                "malformed runtime remains CONFIG_INVALID with zero file deletion",
+            )
+
+            self.write_json(runtime_path, runtime_document(vhl_name="runtime"))
+            runtime_path.chmod(0)
+            self.clear_events(env)
+            unreadable_before = {
+                path.name: path.read_bytes() for path in invalid_dir.iterdir()
+            }
+            try:
+                result = self.run_script(
+                    BIN / "file_manager.sh",
+                    root,
+                    env,
+                    (str(invalid_dir), "2", "100", "caller"),
+                )
+            finally:
+                runtime_path.chmod(0o600)
+            self.check(
+                result.returncode == 64
+                and unreadable_before
+                == {path.name: path.read_bytes() for path in invalid_dir.iterdir()}
+                and "CONFIG_INVALID:" in self.events(env),
+                "unreadable runtime remains CONFIG_INVALID with zero file deletion",
+            )
+
             missing_dir = root / "missing-runtime-recording"
             missing_dir.mkdir()
             for index in range(3):
                 (missing_dir / f"caller_{index}.mp4").write_text(
                     f"caller-{index}", encoding="utf-8"
                 )
-            Path(env["PIM_CAMERA_RUNTIME_JSON"]).unlink()
+            runtime_path.unlink()
+            self.clear_events(env)
             before_missing = {
                 path.name: path.read_bytes() for path in missing_dir.iterdir()
             }
@@ -829,8 +873,11 @@ exit 97
                 path.name: path.read_bytes() for path in missing_dir.iterdir()
             }
             self.check(
-                result.returncode == 64 and after_missing == before_missing,
-                "missing runtime fails closed with zero file deletion",
+                result.returncode == 0
+                and after_missing == before_missing
+                and "RUNTIME_UNAVAILABLE:" in self.events(env)
+                and not self.command_lines(env, "jq"),
+                "missing runtime is unavailable and cron-safe with zero file deletion",
             )
 
     def cpu_limit_test(self) -> None:

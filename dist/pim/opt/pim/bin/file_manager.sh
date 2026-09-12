@@ -19,8 +19,17 @@ config_invalid() {
     exit 64
 }
 
+runtime_unavailable() {
+    logger -p local0.notice "[$tag:$LINENO] RUNTIME_UNAVAILABLE: $PIM_CAMERA_RUNTIME_JSON" 2>/dev/null
+    exit 0
+}
+
+[[ -e "$PIM_CAMERA_RUNTIME_JSON" ]] || runtime_unavailable
 command -v jq >/dev/null 2>&1 || config_invalid
-runtime_json=$(<"$PIM_CAMERA_RUNTIME_JSON") || config_invalid
+runtime_json=$(<"$PIM_CAMERA_RUNTIME_JSON") || {
+    [[ -e "$PIM_CAMERA_RUNTIME_JSON" ]] || runtime_unavailable
+    config_invalid
+}
 VHL_NAME=$(jq -er '
     if type == "object" and
        (.VHL_CAM | type) == "object" and
