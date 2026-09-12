@@ -128,21 +128,29 @@ cam_process_start_time() {
 cam_bg_argv_matches() {
     local cmdline=$1 bg=$2 arg args=()
     [ -r "$cmdline" ] || return 2
-    while IFS= read -r -d '' arg; do args+=("$arg"); done < "$cmdline"
+    while IFS= read -r -d '' arg; do args+=("$arg"); done 2>/dev/null < "$cmdline" || return 2
     [ "${#args[@]}" -eq 2 ] && [ "${args[0]:-}" = "$bg" ] && [[ ${args[1]:-} =~ ^[0-9]+$ ]] && return 0
     [ "${#args[@]}" -eq 3 ] && [ "${args[0]:-}" = /bin/bash ] && [ "${args[1]:-}" = "$bg" ] && [[ ${args[2]:-} =~ ^[0-9]+$ ]]
 }
 cam_bg_checker_records() {
-    local bg=$1 root=${PIM_CAMERA_PROCESS_ROOT:-/proc} cmdline stat arg pid start rc
+    local bg=$1 root=${PIM_CAMERA_PROCESS_ROOT:-/proc} cmdline stat pid start rc
     [ -e "$root/.inspect_error" ] && return 2
     for cmdline in "${PIM_CAMERA_PROCESS_ROOT:-/proc}"/[0-9]*/cmdline; do
-        [ -r "$cmdline" ] || continue
-        cam_bg_argv_matches "$cmdline" "$bg"; rc=$?
-        [ "$rc" -eq 0 ] || { [ "$rc" -eq 1 ] && continue; return "$rc"; }
+        rc=0; cam_bg_argv_matches "$cmdline" "$bg" || rc=$?
+        [ "$rc" -eq 0 ] || {
+            [ "$rc" -eq 1 ] && continue
+            # /proc entries can vanish after enumeration. A live but unreadable
+            # process is still an inspection error, not an absent candidate.
+            [ -e "${cmdline%/cmdline}" ] || continue
+            return "$rc"
+        }
         pid=${cmdline%/cmdline}; pid=${pid##*/}
         stat=${cmdline%/cmdline}/stat
-        [ -r "$stat" ] || return 2
-        start=$(cam_process_start_time "$stat") || return $?
+        start=$(cam_process_start_time "$stat") || {
+            rc=$?
+            [ -e "${cmdline%/cmdline}" ] || continue
+            return "$rc"
+        }
         printf '%s %s\n' "$pid" "$start"
     done
 }

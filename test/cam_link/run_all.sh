@@ -17,6 +17,7 @@ TESTS=(
     config_default_test.sh
     recovery_actions_test.sh
     recovery_actions_safety_test.sh
+    bg_process_scan_test.sh
     recovery_launch_safety_test.sh
     legacy_wrapper_test.sh
     initcam_modprobe_test.sh
