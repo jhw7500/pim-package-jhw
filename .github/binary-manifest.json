@@ -144,13 +144,13 @@
     },
     {
       "path": "dist/pim/usr/lib/gstreamer-1.0/libgstvpu.so",
-      "sha256": "d83594447b7dac184c019371c0c296b72345585913ed03adf6e0a56f60a38b27",
+      "sha256": "d509fb1b98d733e2202fc07e4c722cff7164243cb52a0a6ba49e5dffa3b24702",
       "size": 111720,
       "mode": "100755",
       "arch": "aarch64",
       "source": {
         "repo": "jhw7500/imx-vpu",
-        "commit": "5b9573c",
+        "commit": "1f55ed4",
         "build": "./setup-deps.sh && ./build.sh reconf; SDK strip --strip-unneeded"
       },
       "required_strings": [
@@ -163,13 +163,13 @@
     },
     {
       "path": "dist/pim/usr/lib/libfslvpuwrap.so.3.0.0",
-      "sha256": "03980af335703b0352a9a43f2dff62657671db5aaf822e476a415d5e762a4927",
+      "sha256": "acfec82c89ee84c9009d4ea3c31b20cdf892010481a27c20d18fbfdd5c8a3384",
       "size": 58576,
       "mode": "100755",
       "arch": "aarch64",
       "source": {
         "repo": "jhw7500/imx-vpu",
-        "commit": "5b9573c",
+        "commit": "1f55ed4",
         "build": "./setup-deps.sh && ./build.sh reconf; SDK strip --strip-unneeded"
       },
       "required_strings": [
