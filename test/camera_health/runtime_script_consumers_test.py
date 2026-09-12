@@ -809,13 +809,174 @@ exit 97
                 "invalid runtime fails closed before file deletion",
             )
 
+            runtime_path = Path(env["PIM_CAMERA_RUNTIME_JSON"])
+            runtime_path.write_text("{broken", encoding="utf-8")
+            self.clear_events(env)
+            malformed_before = {
+                path.name: path.read_bytes() for path in invalid_dir.iterdir()
+            }
+            result = self.run_script(
+                BIN / "file_manager.sh",
+                root,
+                env,
+                (str(invalid_dir), "2", "100", "caller"),
+            )
+            self.check(
+                result.returncode == 64
+                and malformed_before
+                == {path.name: path.read_bytes() for path in invalid_dir.iterdir()}
+                and "CONFIG_INVALID:" in self.events(env),
+                "malformed runtime remains CONFIG_INVALID with zero file deletion",
+            )
+
+            runtime_path.unlink()
+            runtime_path.mkdir()
+            self.clear_events(env)
+            directory_before = {
+                path.name: path.read_bytes() for path in invalid_dir.iterdir()
+            }
+            result = self.run_script(
+                BIN / "file_manager.sh",
+                root,
+                env,
+                (str(invalid_dir), "2", "100", "caller"),
+            )
+            self.check(
+                result.returncode == 64
+                and runtime_path.is_dir()
+                and directory_before
+                == {path.name: path.read_bytes() for path in invalid_dir.iterdir()}
+                and "CONFIG_INVALID:" in self.events(env),
+                "runtime directory remains CONFIG_INVALID with zero file deletion",
+            )
+            runtime_path.rmdir()
+
+            unreadable_runtime = Path("/proc/self/mem")
+            unreadable_env = {
+                **env,
+                "PIM_CAMERA_RUNTIME_JSON": str(unreadable_runtime),
+            }
+            self.clear_events(env)
+            unreadable_before = {
+                path.name: path.read_bytes() for path in invalid_dir.iterdir()
+            }
+            result = self.run_script(
+                BIN / "file_manager.sh",
+                root,
+                unreadable_env,
+                (str(invalid_dir), "2", "100", "caller"),
+            )
+            self.check(
+                result.returncode == 64
+                and unreadable_runtime.exists()
+                and unreadable_before
+                == {path.name: path.read_bytes() for path in invalid_dir.iterdir()}
+                and "CONFIG_INVALID:" in self.events(env),
+                "unreadable runtime remains CONFIG_INVALID independent of caller UID",
+            )
+
+            inaccessible_parent = root / "unresolvable-runtime-parent"
+            inaccessible_parent.symlink_to(inaccessible_parent)
+            inaccessible_runtime = inaccessible_parent / "runtime.json"
+            inaccessible_env = {
+                **env,
+                "PIM_CAMERA_RUNTIME_JSON": str(inaccessible_runtime),
+            }
+            self.clear_events(env)
+            inaccessible_before = {
+                path.name: path.read_bytes() for path in invalid_dir.iterdir()
+            }
+            result = self.run_script(
+                BIN / "file_manager.sh",
+                root,
+                inaccessible_env,
+                (str(invalid_dir), "2", "100", "caller"),
+            )
+            self.check(
+                result.returncode == 64
+                and inaccessible_parent.is_symlink()
+                and inaccessible_before
+                == {path.name: path.read_bytes() for path in invalid_dir.iterdir()}
+                and "CONFIG_INVALID:" in self.events(env),
+                "runtime beneath an unresolvable parent remains CONFIG_INVALID with zero file deletion",
+            )
+
+            self.write_json(runtime_path, runtime_document(vhl_name="runtime"))
+            disappear_hook = root / "remove-runtime-before-read.sh"
+            disappear_hook.write_text(
+                "trap 'if [[ \"$BASH_COMMAND\" == VHL_NAME=* ]]; then "
+                "trap - DEBUG; /usr/bin/rm -f -- \"$PIM_CAMERA_RUNTIME_JSON\"; "
+                "fi' DEBUG\n",
+                encoding="utf-8",
+            )
+            disappear_env = {**env, "BASH_ENV": str(disappear_hook)}
+            self.clear_events(env)
+            disappear_before = {
+                path.name: path.read_bytes() for path in invalid_dir.iterdir()
+            }
+            result = self.run_script(
+                BIN / "file_manager.sh",
+                root,
+                disappear_env,
+                (str(invalid_dir), "2", "100", "caller"),
+            )
+            self.check(
+                result.returncode == 0
+                and not runtime_path.exists()
+                and disappear_before
+                == {path.name: path.read_bytes() for path in invalid_dir.iterdir()}
+                and "RUNTIME_UNAVAILABLE:" in self.events(env),
+                "runtime disappearance immediately before read is unavailable and deletion-safe",
+            )
+
+            recreate_hook = root / "recreate-runtime-before-classification.sh"
+            recreate_hook.write_text(
+                "trap 'if [[ \"$BASH_COMMAND\" == runtime_path_confirmed_missing ]]; then "
+                "trap - DEBUG; /usr/bin/mv -- \"$PIM_TEST_RECREATED_RUNTIME\" "
+                "\"$PIM_CAMERA_RUNTIME_JSON\"; fi' DEBUG\n",
+                encoding="utf-8",
+            )
+            for label, document, expected_rc in (
+                ("valid", json.dumps(runtime_document(vhl_name="runtime")), 0),
+                ("malformed", "{broken", 64),
+            ):
+                runtime_path.unlink(missing_ok=True)
+                replacement = root / "recreated-runtime.json"
+                replacement.write_text(document, encoding="utf-8")
+                recreate_env = {
+                    **env,
+                    "BASH_ENV": str(recreate_hook),
+                    "PIM_TEST_RECREATED_RUNTIME": str(replacement),
+                }
+                self.clear_events(env)
+                recreate_before = {
+                    path.name: path.read_bytes() for path in invalid_dir.iterdir()
+                }
+                result = self.run_script(
+                    BIN / "file_manager.sh",
+                    root,
+                    recreate_env,
+                    (str(invalid_dir), "2", "100", "caller"),
+                )
+                self.check(
+                    result.returncode == expected_rc
+                    and runtime_path.read_text(encoding="utf-8") == document
+                    and recreate_before
+                    == {path.name: path.read_bytes() for path in invalid_dir.iterdir()}
+                    and ("CONFIG_INVALID:" in self.events(env)) == (expected_rc == 64)
+                    and result.stderr == "",
+                    f"{label} runtime recreated before classification exits {expected_rc} "
+                    "and preserves unrelated recordings",
+                )
+
             missing_dir = root / "missing-runtime-recording"
             missing_dir.mkdir()
             for index in range(3):
                 (missing_dir / f"caller_{index}.mp4").write_text(
                     f"caller-{index}", encoding="utf-8"
                 )
-            Path(env["PIM_CAMERA_RUNTIME_JSON"]).unlink()
+            runtime_path.unlink(missing_ok=True)
+            self.clear_events(env)
             before_missing = {
                 path.name: path.read_bytes() for path in missing_dir.iterdir()
             }
@@ -829,8 +990,12 @@ exit 97
                 path.name: path.read_bytes() for path in missing_dir.iterdir()
             }
             self.check(
-                result.returncode == 64 and after_missing == before_missing,
-                "missing runtime fails closed with zero file deletion",
+                result.returncode == 0
+                and after_missing == before_missing
+                and "RUNTIME_UNAVAILABLE:" in self.events(env)
+                and not self.command_lines(env, "jq")
+                and result.stderr == "",
+                "missing runtime is unavailable and cron-safe with zero file deletion",
             )
 
     def cpu_limit_test(self) -> None:
