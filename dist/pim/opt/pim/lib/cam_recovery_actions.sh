@@ -13,6 +13,30 @@ if ! declare -F cam_owner_assert >/dev/null 2>&1; then
     source "$PIM_LIB/cam_recovery.sh"
 fi
 
+# 복구 액션은 20 단계 가까운 순차 부작용이고, 어느 단계에서 멈췄는지가 곧 원인이다.
+# 이 파일은 지금까지 logger 호출이 하나도 없어서, 실패하면 상위가 남기는
+# "startup transaction failed rc=1" 한 줄만 남았다. 단계 이름을 남긴다.
+#
+# 주의: logger -s 는 쓰지 않는다. stderr 로도 나가면 이 라이브러리를 source 하는
+# 시험의 출력 판정을 오염시킨다. PIM_CAMERA_ACTION_LOG 가 있으면 파일로도 남긴다.
+PIM_CAMERA_ACTION_TAG="${PIM_CAMERA_ACTION_TAG:-cam_recovery_actions}"
+
+_cra_log() {
+    local level=$1; shift
+    logger -p "local0.$level" "[CAM][$PIM_CAMERA_ACTION_TAG] $*" 2>/dev/null
+    [ -z "${PIM_CAMERA_ACTION_LOG:-}" ] || printf '%s %s\n' "$level" "$*" >> "$PIM_CAMERA_ACTION_LOG"
+    return 0
+}
+
+# 실패한 단계 이름을 남기고 rc 를 그대로 돌려준다.
+# 사용: <명령> || { _cra_fail <단계이름> $?; return $?; }
+_cra_fail() {
+    local step=$1 rc=$2
+    PIM_CAMERA_FAILED_STEP="$step"
+    _cra_log err "step failed: action=${PIM_CAMERA_CURRENT_ACTION:-?} step=$step rc=$rc"
+    return "$rc"
+}
+
 cam_validate_runtime() {
     [ $# -eq 1 ] || return 64
     [ "$1" = "$PIM_CAMERA_RUNTIME_JSON" ] || return 64
@@ -416,47 +440,59 @@ cam_sysfs_write() {
 }
 
 cam_action_camera_hard_reset() {
-    local runtime=$1 root=$PIM_CAMERA_SYSFS_ROOT csi isi cap m2m d
+    local runtime=$1 root=$PIM_CAMERA_SYSFS_ROOT csi isi cap m2m d rc
     csi="$root/bus/platform/drivers/mxc-mipi-csi2-sam"; isi="$root/bus/platform/drivers/mxc-isi"
     cap="$root/bus/platform/drivers/isi-capture"; m2m="$root/bus/platform/drivers/isi-m2m"
-    cam_consumers_prequiesced || cam_quiesce_consumers "$runtime" || return $?
-    cam_unload_module "$runtime" imx8-media-dev || return $?
-    sleep 1 || return $?
-    cam_unload_module "$runtime" max9296 || return $?
-    sleep 1 || return $?
-    for d in 32e00000.isi:cap_device 32e02000.isi:cap_device; do cam_sysfs_write "$runtime" unbind "$cap/unbind" "$d" || return $?; done
-    sleep 1 || return $?
-    for d in 32e00000.isi:m2m_device; do cam_sysfs_write "$runtime" unbind "$m2m/unbind" "$d" || return $?; done
-    sleep 1 || return $?
-    for d in 32e00000.isi 32e02000.isi; do cam_sysfs_write "$runtime" unbind "$isi/unbind" "$d" || return $?; done
-    sleep 1 || return $?
-    for d in 32e40000.csi 32e50000.csi; do cam_sysfs_write "$runtime" unbind "$csi/unbind" "$d" || return $?; done
-    sleep 2 || return $?
-    for d in 32e40000.csi 32e50000.csi; do cam_sysfs_write "$runtime" bind "$csi/bind" "$d" || return $?; done
-    sleep 1 || return $?
-    for d in 32e00000.isi 32e02000.isi; do cam_sysfs_write "$runtime" bind "$isi/bind" "$d" || return $?; done
-    sleep 2 || return $?
-    for d in 32e00000.isi:cap_device 32e02000.isi:cap_device; do [ -e "$cap/$d" ] || cam_sysfs_write "$runtime" bind "$cap/bind" "$d" || return $?; done
-    for d in 32e00000.isi:m2m_device; do [ -e "$m2m/$d" ] || cam_sysfs_write "$runtime" bind "$m2m/bind" "$d" || return $?; done
-    sleep 1 || return $?
-    cam_effect "$runtime" modprobe max9296 || return $?
-    sleep 3 || return $?
-    cam_effect "$runtime" modprobe imx8-media-dev || return $?
-    sleep 5 || return $?
-    cam_verify_camera_ready "$runtime" || return $?
-    cam_restart_ord "$runtime" || return $?
-    cam_restart_vcm "$runtime" || return $?
-    cam_start_gstapp "$runtime" || return $?
-    cam_wait_process_ready "$runtime" 1
+    cam_consumers_prequiesced || cam_quiesce_consumers "$runtime" || { _cra_fail quiesce_consumers $?; return $?; }
+    cam_unload_module "$runtime" imx8-media-dev || { _cra_fail unload_imx8_media_dev $?; return $?; }
+    sleep 1
+    cam_unload_module "$runtime" max9296 || { _cra_fail unload_max9296 $?; return $?; }
+    sleep 1
+    for d in 32e00000.isi:cap_device 32e02000.isi:cap_device; do cam_sysfs_write "$runtime" unbind "$cap/unbind" "$d" || { _cra_fail "unbind_cap:$d" $?; return $?; }; done
+    sleep 1
+    for d in 32e00000.isi:m2m_device; do cam_sysfs_write "$runtime" unbind "$m2m/unbind" "$d" || { _cra_fail "unbind_m2m:$d" $?; return $?; }; done
+    sleep 1
+    for d in 32e00000.isi 32e02000.isi; do cam_sysfs_write "$runtime" unbind "$isi/unbind" "$d" || { _cra_fail "unbind_isi:$d" $?; return $?; }; done
+    sleep 1
+    for d in 32e40000.csi 32e50000.csi; do cam_sysfs_write "$runtime" unbind "$csi/unbind" "$d" || { _cra_fail "unbind_csi:$d" $?; return $?; }; done
+    sleep 2
+    for d in 32e40000.csi 32e50000.csi; do cam_sysfs_write "$runtime" bind "$csi/bind" "$d" || { _cra_fail "bind_csi:$d" $?; return $?; }; done
+    sleep 1
+    for d in 32e00000.isi 32e02000.isi; do cam_sysfs_write "$runtime" bind "$isi/bind" "$d" || { _cra_fail "bind_isi:$d" $?; return $?; }; done
+    sleep 2
+    for d in 32e00000.isi:cap_device 32e02000.isi:cap_device; do [ -e "$cap/$d" ] || cam_sysfs_write "$runtime" bind "$cap/bind" "$d" || { _cra_fail "bind_cap:$d" $?; return $?; }; done
+    for d in 32e00000.isi:m2m_device; do [ -e "$m2m/$d" ] || cam_sysfs_write "$runtime" bind "$m2m/bind" "$d" || { _cra_fail "bind_m2m:$d" $?; return $?; }; done
+    sleep 1
+    cam_effect "$runtime" modprobe max9296 || { _cra_fail modprobe_max9296 $?; return $?; }
+    sleep 3
+    cam_effect "$runtime" modprobe imx8-media-dev || { _cra_fail modprobe_imx8_media_dev $?; return $?; }
+    sleep 5
+    cam_verify_camera_ready "$runtime" || { _cra_fail verify_camera_ready $?; return $?; }
+    cam_restart_ord "$runtime" || { rc=$?; _cra_consumer_detail ord-operate.service /usr/local/bin/ord; _cra_fail restart_ord "$rc"; return $?; }
+    cam_restart_vcm "$runtime" || { rc=$?; _cra_consumer_detail "" /usr/local/bin/vcm; _cra_fail restart_vcm "$rc"; return $?; }
+    cam_start_gstapp "$runtime" || { _cra_fail start_gstapp $?; return $?; }
+    cam_wait_process_ready "$runtime" 1 || { _cra_fail wait_process_ready $?; return $?; }
+}
+
+# 소비자 실패는 원인이 다른 유닛 로그로 흩어진다(예: ord-operate.service 의 203/EXEC).
+# 실패한 그 자리에서 유닛 상태와 실행 파일 존재 여부를 함께 남긴다.
+_cra_consumer_detail() {
+    local unit=$1 binary=$2
+    [ -z "$unit" ] || _cra_log err "  unit=$unit active=$($PIM_CAMERA_SYSTEMCTL is-active "$unit" 2>&1) result=$($PIM_CAMERA_SYSTEMCTL show -p Result --value "$unit" 2>&1)"
+    [ -z "$binary" ] || _cra_log err "  binary=$binary $([ -x "$binary" ] && echo present || echo MISSING)"
+    return 0
 }
 
 cam_action_reboot_fallback() { local runtime=$1; cam_effect "$runtime" reboot; }
 
 cam_execute_action_step() {
     local action=$1 runtime=$2 rc finish_rc
-    cam_executor_assert_context || return 69
-    cam_validate_runtime "$runtime" || return 64
+    cam_executor_assert_context || { _cra_log err "action=$action aborted: executor context assert failed"; return 69; }
+    cam_validate_runtime "$runtime" || { _cra_log err "action=$action aborted: runtime validate failed ($runtime)"; return 64; }
     cam_action_counter_begin "$action" "$PIM_CAMERA_REQUEST_ID" || return $?
+    PIM_CAMERA_CURRENT_ACTION="$action"
+    PIM_CAMERA_FAILED_STEP=""
+    _cra_log notice "action begin: $action request=${PIM_CAMERA_REQUEST_ID:-?}"
     case "$action" in
         gstapp_restart) cam_action_gstapp_restart "$runtime"; rc=$? ;;
         module_reload) cam_action_module_reload "$runtime"; rc=$? ;;
@@ -464,7 +500,13 @@ cam_execute_action_step() {
         reboot_fallback) cam_action_reboot_fallback "$runtime"; rc=$? ;;
         *) return 64 ;;
     esac
-    if [ "$rc" -eq 0 ]; then cam_action_counter_finish "$action" "$PIM_CAMERA_REQUEST_ID" SUCCEEDED 0; finish_rc=$?; else cam_action_counter_finish "$action" "$PIM_CAMERA_REQUEST_ID" FAILED "$rc"; finish_rc=$?; fi
+    if [ "$rc" -eq 0 ]; then
+        _cra_log notice "action ok: $action request=${PIM_CAMERA_REQUEST_ID:-?}"
+        cam_action_counter_finish "$action" "$PIM_CAMERA_REQUEST_ID" SUCCEEDED 0; finish_rc=$?
+    else
+        _cra_log err "action FAILED: $action rc=$rc step=${PIM_CAMERA_FAILED_STEP:-<unnamed>} request=${PIM_CAMERA_REQUEST_ID:-?}"
+        cam_action_counter_finish "$action" "$PIM_CAMERA_REQUEST_ID" FAILED "$rc"; finish_rc=$?
+    fi
     [ "$finish_rc" -eq 0 ] || return "$finish_rc"
     return "$rc"
 }

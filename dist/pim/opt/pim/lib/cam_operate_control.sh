@@ -105,25 +105,38 @@ _coc_plan_apply() {
     cat "$(_coc_plan_file)"
 }
 
+# 계획 근거를 남긴다. 이게 없으면 상위 로그에 "transaction failed rc=1" 만 남고,
+# 왜 그 액션이 선택됐는지는 service-state.json 을 직접 열어야 알 수 있었다.
+# stdout 은 액션 이름 전용이므로(_coc 가 명령치환으로 읽는다) 반드시 logger 로만 남긴다.
+_coc_plan_log() {
+    logger -p local0.notice "[CAM][cam_operate_control] plan: action=$1 reason=$2" 2>/dev/null
+    [ -z "${PIM_CAMERA_ACTION_LOG:-}" ] || printf 'notice plan: action=%s reason=%s\n' "$1" "$2" >> "$PIM_CAMERA_ACTION_LOG"
+    return 0
+}
+
 cam_plan_startup_action() {
     local candidate=${1:-$(_coc_candidate_file)} previous=${2:-} boot projection prior_projection dirty
     boot=$(_coc_boot_id) || return 70
     projection=$(_coc_projection "$candidate") || return $?
     if [ -z "$previous" ]; then
+        _coc_plan_log initial_module_load "no previous state"
         printf 'initial_module_load\n'
         return 0
     fi
     if ! _coc_state_schema <<<"$previous"; then
+        _coc_plan_log camera_hard_reset "previous state schema invalid"
         printf 'camera_hard_reset\n'
         return 0
     fi
-    [ "$(jq -r .last_boot_id <<<"$previous")" = "$boot" ] || { printf 'initial_module_load\n'; return 0; }
+    [ "$(jq -r .last_boot_id <<<"$previous")" = "$boot" ] || { _coc_plan_log initial_module_load "boot_id changed"; printf 'initial_module_load\n'; return 0; }
     dirty=$(jq -r .dirty <<<"$previous")
-    [ "$dirty" = false ] || { printf 'camera_hard_reset\n'; return 0; }
-    prior_projection=$(jq -c .last_successful_hardware_projection <<<"$previous") || { printf 'camera_hard_reset\n'; return 0; }
+    [ "$dirty" = false ] || { _coc_plan_log camera_hard_reset "dirty=$dirty (previous run left state degraded)"; printf 'camera_hard_reset\n'; return 0; }
+    prior_projection=$(jq -c .last_successful_hardware_projection <<<"$previous") || { _coc_plan_log camera_hard_reset "prior projection unreadable"; printf 'camera_hard_reset\n'; return 0; }
     if jq -ne --argjson current "$projection" --argjson previous "$prior_projection" '$current == $previous' >/dev/null; then
+        _coc_plan_log module_reload "projection unchanged"
         printf 'module_reload\n'
     else
+        _coc_plan_log camera_hard_reset "projection changed from prior success"
         printf 'camera_hard_reset\n'
     fi
 }
