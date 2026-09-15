@@ -325,14 +325,15 @@ MOUNT_POINT="/mnt/sd_cam"
 DEVICE="/dev/mmcblk1p1"
 TARGET_DIR="$MOUNT_POINT/event"
 
-umount $MOUNT_POINT
-mnt_status=$(df -h |grep $MOUNT_POINT)
+umount $DEVICE
+
+mnt_status=$(df -h |grep $DEVICE)
 
 if [ -z $mnt_status ]; then
-    logger -s -p local0.notice "[$KEY][$tag:$LINENO] umount $MOUNT_POINT ok : clean dir"
+    logger -s -p local0.notice "[$KEY][$tag:$LINENO] umount $DEVICE ok : clean dir"
     rm -rf /mnt/*
 else
-    logger -s -p local0.err "[$KEY][$tag:$LINENO] umount $MOUNT_POINT error!"
+    logger -s -p local0.err "[$KEY][$tag:$LINENO] umount $DEVICE error!"
 fi
 
 makeDirectory $MOUNT_POINT
