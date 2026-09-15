@@ -243,6 +243,9 @@ jq -e --arg id "$failed_ord_id" '.id==$id and .status=="FAILED" and .rc==29' "$P
 [ "$(jq -r .lifecycle "$PIM_CAMERA_RUN_DIR/owner.json")" = DEGRADED ] || fail "delayed ORD init failure returned the owner to ACTIVE"
 failed_ord_history=$(grep -rl -- "\"id\":\"$failed_ord_id\"" "$PIM_CAMERA_STATE_DIR/recovery/history")
 jq -e '[.actions[] | {action,status,rc}] == [{"action":"module_reload","status":"FAILED","rc":1},{"action":"camera_hard_reset","status":"FAILED","rc":1},{"action":"reboot_fallback","status":"FAILED","rc":29}]' "$failed_ord_history" >/dev/null || fail "delayed ORD init failure did not propagate through recovery fallback"
-[ "$(grep -Fxc 'systemctl is-active ord-operate.service' "$PIM_CAMERA_CALL_LOG")" -eq 4 ] || fail "recovery did not observe both delayed ORD init failures"
+# module_reload 2회 + camera_hard_reset 2회 = 4 가 원래 기대값이었다. 9987dfb(복구 액션의
+# 실패 단계 로깅)가 restart_ord 실패 시 unit 상태를 한 번 더 조회하도록 추가해, 진단
+# 재조회가 일어나는 camera_hard_reset 경로에서만 1회 늘어 5회가 된다.
+[ "$(grep -Fxc 'systemctl is-active ord-operate.service' "$PIM_CAMERA_CALL_LOG")" -eq 5 ] || fail "recovery did not observe both delayed ORD init failures"
 
 echo "recovery actions: PASS"
