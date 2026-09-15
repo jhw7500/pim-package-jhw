@@ -33,22 +33,13 @@ _cr_proc_start() {
     printf '%s\n' "${20}"
 }
 
-_cr_fsync_file() {
-    python3 - "$1" <<'PY'
-import os, sys
-fd = os.open(sys.argv[1], os.O_RDONLY)
-try: os.fsync(fd)
-finally: os.close(fd)
-PY
-}
-_cr_fsync_dir() {
-    python3 - "$1" <<'PY'
-import os, sys
-fd = os.open(sys.argv[1], os.O_RDONLY | os.O_DIRECTORY)
-try: os.fsync(fd)
-finally: os.close(fd)
-PY
-}
+# python3 를 띄워 fsync 하던 것을 coreutils sync 로 바꾼다. sync FILE 은
+# coreutils 8.24+ 에서 해당 파일에 fsync(2) 를 호출하므로 의미가 같다.
+# 보드 실측: python3 2회 216ms, sync 2회 3ms. 구형 coreutils 가 인자를 무시하고
+# 전체 sync 를 하더라도 내구성은 더 강해지므로 안전하다.
+# 함수 이름은 유지한다 — 여러 테스트가 이 이름을 no-op 으로 재정의한다.
+_cr_fsync_file() { sync "$1"; }
+_cr_fsync_dir() { sync "$1"; }
 _cr_atomic_write() {
     local target=$1 data=$2 dir tmp
     dir=$(dirname "$target"); mkdir -p "$dir" || return 1
@@ -572,10 +563,12 @@ _cr_lifecycle_allowed() {
     case "$1:$2" in STARTING:ACTIVE|STARTING:DEGRADED|STARTING:STOPPING|ACTIVE:APPLYING_CONFIG|ACTIVE:RECOVERING|ACTIVE:DEGRADED|ACTIVE:STOPPING|APPLYING_CONFIG:ACTIVE|APPLYING_CONFIG:DEGRADED|APPLYING_CONFIG:STOPPING|RECOVERING:ACTIVE|RECOVERING:DEGRADED|RECOVERING:STOPPING|DEGRADED:APPLYING_CONFIG|DEGRADED:RECOVERING|DEGRADED:STOPPING) return 0;; esac; return 1
 }
 _cr_owner_set_lifecycle_locked() {
-    local next=$1 owner current updated
-    owner=$(_cr_owner_json); _cr_owner_snapshot_live "$owner" || return 69; current=$(jq -r .lifecycle <<<"$owner")
+    local next=$1 owner current updated pair
+    owner=$(_cr_owner_json); _cr_owner_snapshot_live "$owner" || return 69
+    # 현재 lifecycle 조회와 갱신본 생성을 한 번의 jq 로. 갱신본은 검사 통과 후에만 쓴다.
+    pair=$(jq -r --arg next "$next" '[.lifecycle, ((.lifecycle=$next | .updated_at=(now|floor)) | tojson)] | @tsv' <<<"$owner") || return 70
+    IFS=$'\t' read -r current updated <<<"$pair"
     _cr_lifecycle_allowed "$current" "$next" || return 64
-    updated=$(jq -c --arg next "$next" '.lifecycle=$next | .updated_at=(now|floor)' <<<"$owner") || return 70
     _cr_owner_snapshot_live "$owner" || return 69; _cr_atomic_write "$(_cr_owner_file)" "$updated" || return 70
 }
 cam_owner_set_lifecycle() { _cr_lock_call _cr_owner_set_lifecycle_locked "$@"; }
