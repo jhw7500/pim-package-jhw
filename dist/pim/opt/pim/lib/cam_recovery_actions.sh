@@ -424,9 +424,9 @@ cam_action_module_reload() {
     cam_consumers_prequiesced || cam_quiesce_consumers "$runtime" || return $?
     cam_module_reload "$runtime" || return $?
     cam_verify_camera_ready "$runtime" || return $?
-    cam_restart_ord "$runtime" || return $?
-    cam_restart_vcm "$runtime" || return $?
     cam_start_gstapp "$runtime" || return $?
+    cam_restart_vcm "$runtime" || return $?
+    cam_restart_ord "$runtime" || return $?
     cam_wait_process_ready "$runtime" 1
 }
 
@@ -467,9 +467,9 @@ cam_action_camera_hard_reset() {
     cam_effect "$runtime" modprobe imx8-media-dev || { _cra_fail modprobe_imx8_media_dev $?; return $?; }
     sleep 5
     cam_verify_camera_ready "$runtime" || { _cra_fail verify_camera_ready $?; return $?; }
-    cam_restart_ord "$runtime" || { rc=$?; _cra_consumer_detail ord-operate.service /usr/local/bin/ord; _cra_fail restart_ord "$rc"; return $?; }
-    cam_restart_vcm "$runtime" || { rc=$?; _cra_consumer_detail "" /usr/local/bin/vcm; _cra_fail restart_vcm "$rc"; return $?; }
     cam_start_gstapp "$runtime" || { _cra_fail start_gstapp $?; return $?; }
+    cam_restart_vcm "$runtime" || { rc=$?; _cra_consumer_detail "" /usr/local/bin/vcm; _cra_fail restart_vcm "$rc"; return $?; }
+    cam_restart_ord "$runtime" || { rc=$?; _cra_consumer_detail ord-operate.service /usr/local/bin/ord; _cra_fail restart_ord "$rc"; return $?; }
     cam_wait_process_ready "$runtime" 1 || { _cra_fail wait_process_ready $?; return $?; }
 }
 

@@ -147,10 +147,15 @@ _coc_export_owner_context() {
     _cr_owner_export_fields "$owner" || return 69
 }
 
+# 영상 앱을 먼저 띄운다. cam_restart_ord 는 cam_wait_ord_ready 로 ord 가 준비 마커를
+# 쓸 때까지 기다리는데(보드 실측 2초), gstApp 은 ord 를 기다릴 이유가 없다.
+# cam_restart_vcm 은 이미 백그라운드라 직렬 비용이 없다. 검증은 _coc_verify_all 의
+# cam_wait_process_ready ... 1 이 넷을 모두 확인하므로, 대기를 없애는 게 아니라
+# gstApp 뒤로 미루는 것이다.
 _coc_start_all_consumers() {
-    cam_restart_ord "$PIM_CAMERA_RUNTIME_JSON" || return $?
+    cam_start_gstapp "$PIM_CAMERA_RUNTIME_JSON" || return $?
     cam_restart_vcm "$PIM_CAMERA_RUNTIME_JSON" || return $?
-    cam_start_gstapp "$PIM_CAMERA_RUNTIME_JSON"
+    cam_restart_ord "$PIM_CAMERA_RUNTIME_JSON"
 }
 
 _coc_verify_all() {
