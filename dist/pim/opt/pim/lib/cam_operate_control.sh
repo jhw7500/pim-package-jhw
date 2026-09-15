@@ -153,9 +153,15 @@ _coc_export_owner_context() {
 # cam_wait_process_ready ... 1 이 넷을 모두 확인하므로, 대기를 없애는 게 아니라
 # gstApp 뒤로 미루는 것이다.
 _coc_start_all_consumers() {
+    _cr_timing consumers_begin
     cam_start_gstapp "$PIM_CAMERA_RUNTIME_JSON" || return $?
+    _cr_timing gstapp_started
     cam_restart_vcm "$PIM_CAMERA_RUNTIME_JSON" || return $?
+    _cr_timing vcm_started
     cam_restart_ord "$PIM_CAMERA_RUNTIME_JSON"
+    local rc=$?
+    _cr_timing ord_started
+    return "$rc"
 }
 
 _coc_verify_all() {
@@ -198,15 +204,23 @@ _coc_begin_startup_action() {
 
 cam_daemon_startup() {
     local pid=${1:-$$} previous='' candidate action projection rc countered=false
+    _cr_timing startup_begin
     cam_owner_create "$pid" || return $?
+    _cr_timing owner_created
     _coc_export_owner_context || return $?
+    _cr_timing owner_exported
     cam_reconcile_interrupted || return $?
+    _cr_timing reconciled
     if [ -f "$(_cr_service_file)" ]; then previous=$(cat "$(_cr_service_file)" 2>/dev/null || printf invalid); fi
     candidate=$(_coc_candidate_file)
     cam_stage_source_candidate "$candidate" "$(_coc_stage_result_file)" || { rc=$?; _coc_startup_fail "$rc" CONFIG_INVALID false; return $?; }
+    _cr_timing staged
     action=$(cam_plan_startup_action "$candidate" "$previous") || { rc=$?; _coc_startup_fail "$rc" CONFIG_INVALID false; return $?; }
+    _cr_timing "planned:$action"
     _coc_publish_candidate "$candidate" || { rc=$?; _coc_startup_fail "$rc" publish_failed false; return $?; }
+    _cr_timing published
     _coc_set_dirty true || { rc=$?; _coc_startup_fail "$rc" state_write_failed true; return $?; }
+    _cr_timing dirty_set
     PIM_CAMERA_STARTUP_EXECUTOR=1
     export PIM_CAMERA_STARTUP_EXECUTOR
     case "$action" in
@@ -229,12 +243,15 @@ cam_daemon_startup() {
         return $?
     fi
     if [ "$countered" = true ]; then cam_request_transition VERIFYING || return $?; fi
+    _cr_timing action_done
     _coc_verify_all || { rc=$?; unset PIM_CAMERA_STARTUP_EXECUTOR; if [ "$countered" = true ]; then _coc_fail_active "$rc" startup_verify_failed camera_health true; else _coc_startup_fail "$rc" startup_verify_failed true; fi; return $?; }
     unset PIM_CAMERA_STARTUP_EXECUTOR
     projection=$(_coc_projection "$PIM_CAMERA_RUNTIME_JSON") || { rc=$?; if [ "$countered" = true ]; then _coc_fail_active "$rc" projection_failed camera_health true; else _coc_startup_fail "$rc" projection_failed true; fi; return $?; }
     _coc_persist_success "$projection" || { rc=$?; if [ "$countered" = true ]; then _coc_fail_active "$rc" state_write_failed state true; else _coc_startup_fail "$rc" state_write_failed true; fi; return $?; }
     if [ "$countered" = true ]; then cam_request_finish SUCCEEDED 0 || return $?; fi
+    _cr_timing persisted
     cam_owner_set_lifecycle ACTIVE
+    _cr_timing active
 }
 
 _coc_record_step() {

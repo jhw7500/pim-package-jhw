@@ -15,6 +15,14 @@ _cr_state_file() { printf '%s/recovery/state.json' "$PIM_CAMERA_STATE_DIR"; }
 _cr_history_file() { printf '%s/recovery/history/%s.json' "$PIM_CAMERA_STATE_DIR" "$1"; }
 _cr_service_file() { printf '%s/service-state.json' "$PIM_CAMERA_STATE_DIR"; }
 _cr_now() { date +%s; }
+# 구간 계측. PIM_CAMERA_TIMING_LOG 가 설정될 때만 기록한다(기본 off).
+# EPOCHREALTIME 은 bash 5.0+ 내장이라 fork 가 없다 — 보드 실측 100회 8ms.
+# date 는 100회 480ms 라 계측이 측정을 왜곡한다.
+_cr_timing() {
+    [ -n "${PIM_CAMERA_TIMING_LOG:-}" ] || return 0
+    printf '%s %s\n' "${EPOCHREALTIME:-0}" "$1" >> "$PIM_CAMERA_TIMING_LOG" 2>/dev/null
+    return 0
+}
 _cr_uuid() { cat /proc/sys/kernel/random/uuid; }
 _cr_proc_start() {
     local stat tail

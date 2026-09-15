@@ -301,14 +301,19 @@ cam_quiesce_consumers() {
 
 cam_initial_module_load() {
     local runtime=$1
+    _cr_timing modload_begin
     cam_validate_runtime "$runtime" || return 64
+    _cr_timing modload_validated
     cam_effect "$runtime" modprobe max9296 || return $?
+    _cr_timing modprobe_max9296
     cam_effect "$runtime" modprobe imx8-media-dev || return $?
+    _cr_timing modprobe_imx8
     [ -e "$PIM_CAMERA_DEVICE_ROOT/video3" ] && [ -e "$PIM_CAMERA_DEVICE_ROOT/video4" ] || return 1
 }
 
 cam_start_gstapp() {
     local runtime=$1 delay bg
+    _cr_timing gstapp_enter
     delay=$(jq -r '.VHL_CAM.app_delay // 4' "$runtime") || return 64
     bg=$(cam_bg_checker_path) || return $?
     cam_side_effect_guard "$runtime" || return $?
