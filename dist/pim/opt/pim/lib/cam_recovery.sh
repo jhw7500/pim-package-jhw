@@ -76,18 +76,29 @@ _cr_public_action() { case "$1" in gstapp_restart|module_reload|camera_hard_rese
 _cr_request_type() { _cr_public_action "$1" || [ "$1" = apply_config ]; }
 _cr_owner_json() { cat "$(_cr_owner_file)" 2>/dev/null; }
 
+# jq 한 번이 보드(A53, loadavg 5.7)에서 412ms 다. 같은 문서를 필드마다 새 프로세스로
+# 파싱하면 owner 검증 한 번에 3초가 든다. 필터를 변수로 두고 한 번의 jq 로 합친다.
+# 조건 자체는 바꾸지 않는다 — 검증을 줄이는 게 아니라 프로세스 스폰만 줄인다.
+_CR_OWNER_SCHEMA_FILTER='type == "object" and (.boot_id|type == "string" and length > 0) and (.invocation_id|type == "string" and length > 0) and (.pid|type == "number" and floor == . and . > 0) and (.proc_start_time|type == "string" and test("^[0-9]+$")) and (.token|type == "string" and length > 0) and (.created_at|type == "number" and floor == . and . > 0) and (.lifecycle as $l | ["STARTING","ACTIVE","APPLYING_CONFIG","RECOVERING","DEGRADED","STOPPING"] | index($l) != null)'
+_CR_OWNER_LIVE_MATCH_FILTER='(.boot_id == $boot) and ($ei == "" or .invocation_id == $ei) and ($et == "" or .token == $et)'
+_CR_OWNER_EXPORTED_MATCH_FILTER='($b != "" and .boot_id == $b) and ($iv != "" and .invocation_id == $iv) and ($p != "" and (.pid|tostring) == $p) and ($ps != "" and .proc_start_time == $ps) and ($tk != "" and .token == $tk) and ($ca != "" and (.created_at|tostring) == $ca)'
+# cam_executor_assert_context 의 루프는 빈 값 검사 없이 동등 비교만 한다. 그 의미를
+# 그대로 옮기려면 non-empty 조건이 없는 필터가 따로 필요하다.
+_CR_OWNER_EXPORTED_EQ_FILTER='(.boot_id == $b) and (.invocation_id == $iv) and ((.pid|tostring) == $p) and (.proc_start_time == $ps) and (.token == $tk) and ((.created_at|tostring) == $ca)'
+
 _cr_owner_schema() {
-    jq -e 'type == "object" and (.boot_id|type == "string" and length > 0) and (.invocation_id|type == "string" and length > 0) and (.pid|type == "number" and floor == . and . > 0) and (.proc_start_time|type == "string" and test("^[0-9]+$")) and (.token|type == "string" and length > 0) and (.created_at|type == "number" and floor == . and . > 0) and (.lifecycle as $l | ["STARTING","ACTIVE","APPLYING_CONFIG","RECOVERING","DEGRADED","STOPPING"] | index($l) != null)' >/dev/null
+    jq -e "$_CR_OWNER_SCHEMA_FILTER" >/dev/null
 }
 _cr_owner_snapshot_live() {
-    local owner=$1 expected_invocation=${2:-} expected_token=${3:-} boot pid start invocation token actual
-    _cr_owner_schema <<<"$owner" || return 69
+    local owner=$1 expected_invocation=${2:-} expected_token=${3:-} boot fields pid start actual
     boot=$(cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null) || return 69
-    pid=$(jq -r .pid <<<"$owner"); start=$(jq -r .proc_start_time <<<"$owner")
-    invocation=$(jq -r .invocation_id <<<"$owner"); token=$(jq -r .token <<<"$owner"); actual=$(_cr_proc_start "$pid")
-    [ -n "$actual" ] && [ "$boot" = "$(jq -r .boot_id <<<"$owner")" ] && [ "$actual" = "$start" ] || return 69
-    [ -z "$expected_invocation" ] || [ "$expected_invocation" = "$invocation" ] || return 69
-    [ -z "$expected_token" ] || [ "$expected_token" = "$token" ] || return 69
+    fields=$(jq -r --arg boot "$boot" --arg ei "$expected_invocation" --arg et "$expected_token" \
+        "if (($_CR_OWNER_SCHEMA_FILTER) and ($_CR_OWNER_LIVE_MATCH_FILTER)) then [(.pid|tostring), .proc_start_time] | @tsv else empty end" \
+        <<<"$owner") || return 69
+    [ -n "$fields" ] || return 69
+    IFS=$'\t' read -r pid start <<<"$fields"
+    actual=$(_cr_proc_start "$pid")
+    [ -n "$actual" ] && [ "$actual" = "$start" ] || return 69
 }
 _cr_owner_snapshot_lifecycle_in() {
     local owner=$1 lifecycle allowed
@@ -103,21 +114,19 @@ _cr_owner_immutable_equal() {
         [ "$(jq -c ".$key" <<<"$saved")" = "$(jq -c ".$key" <<<"$current")" ] || return 1
     done
 }
+# schema 없이 6필드만 비교한다. cam_executor_assert_context 는 cam_owner_assert 가
+# 이미 schema 를 본 뒤에 이 비교만 필요로 하므로 분리해 둔다.
+_cr_owner_exported_fields_equal() {
+    jq -e --arg b "${PIM_CAMERA_OWNER_BOOT_ID:-}" --arg iv "${PIM_CAMERA_OWNER_INVOCATION:-}" \
+          --arg p "${PIM_CAMERA_OWNER_PID:-}" --arg ps "${PIM_CAMERA_OWNER_PROC_START_TIME:-}" \
+          --arg tk "${PIM_CAMERA_OWNER_TOKEN:-}" --arg ca "${PIM_CAMERA_OWNER_CREATED_AT:-}" \
+        "$_CR_OWNER_EXPORTED_EQ_FILTER" >/dev/null <<<"$1"
+}
 _cr_owner_matches_exported_context() {
-    local owner=$1 key expected actual
-    _cr_owner_schema <<<"$owner" || return 69
-    for key in boot_id invocation_id pid proc_start_time token created_at; do
-        expected=$(jq -r --arg key "$key" '.[$key]' <<<"$owner") || return 69
-        case "$key" in
-            boot_id) actual=${PIM_CAMERA_OWNER_BOOT_ID:-} ;;
-            invocation_id) actual=${PIM_CAMERA_OWNER_INVOCATION:-} ;;
-            pid) actual=${PIM_CAMERA_OWNER_PID:-} ;;
-            proc_start_time) actual=${PIM_CAMERA_OWNER_PROC_START_TIME:-} ;;
-            token) actual=${PIM_CAMERA_OWNER_TOKEN:-} ;;
-            created_at) actual=${PIM_CAMERA_OWNER_CREATED_AT:-} ;;
-        esac
-        [ -n "$actual" ] && [ "$expected" = "$actual" ] || return 69
-    done
+    jq -e --arg b "${PIM_CAMERA_OWNER_BOOT_ID:-}" --arg iv "${PIM_CAMERA_OWNER_INVOCATION:-}" \
+          --arg p "${PIM_CAMERA_OWNER_PID:-}" --arg ps "${PIM_CAMERA_OWNER_PROC_START_TIME:-}" \
+          --arg tk "${PIM_CAMERA_OWNER_TOKEN:-}" --arg ca "${PIM_CAMERA_OWNER_CREATED_AT:-}" \
+        "($_CR_OWNER_SCHEMA_FILTER) and ($_CR_OWNER_EXPORTED_MATCH_FILTER)" >/dev/null <<<"$1" || return 69
 }
 cam_owner_assert() { local owner; owner=$(_cr_owner_json); _cr_owner_snapshot_live "$owner" "${1:-}" "${2:-}"; }
 _cr_owner_lifecycle_in() { local owner; owner=$(_cr_owner_json); _cr_owner_snapshot_live "$owner" || return 69; _cr_owner_snapshot_lifecycle_in "$owner" "$@"; }

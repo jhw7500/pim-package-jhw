@@ -37,28 +37,27 @@ _cra_fail() {
     return "$rc"
 }
 
+# 런타임 JSON 은 atomic_publish 의 rename 이후 바뀌지 않는다. 보드에서 validate 한 번이
+# 398ms 인데 부작용 명령마다 불리므로, 파일 정체(장치·inode·크기·mtime(ns))가 같으면
+# 재검증을 건너뛴다. 정체가 조금이라도 다르면 반드시 다시 검증하므로, 돌던 중 문서가
+# 바뀌는 경우를 놓치지 않는다. 캐시는 프로세스 로컬이다.
+_CAM_RUNTIME_VALIDATED_KEY=""
 cam_validate_runtime() {
     [ $# -eq 1 ] || return 64
     [ "$1" = "$PIM_CAMERA_RUNTIME_JSON" ] || return 64
+    local key
+    key=$(stat -c '%d:%i:%s:%y' "$1" 2>/dev/null) || key=""
+    [ -n "$key" ] && [ "$key" = "$_CAM_RUNTIME_VALIDATED_KEY" ] && return 0
     python3 "$PIM_CAMERA_RUNTIME_VALIDATOR" validate --file "$1" >/dev/null 2>&1 || return 64
+    _CAM_RUNTIME_VALIDATED_KEY="$key"
+    return 0
 }
 
 cam_executor_assert_context() {
-    local owner active key expected actual
+    local owner active
     owner=$(_cr_owner_json) || return 69
     [ "${PIM_CAMERA_STOP_EXECUTOR:-}" = 1 ] || cam_owner_assert "${PIM_CAMERA_OWNER_INVOCATION:-}" "${PIM_CAMERA_OWNER_TOKEN:-}" || return 69
-    for key in boot_id invocation_id pid proc_start_time token created_at; do
-        expected=$(jq -r --arg key "$key" '.[$key]' <<<"$owner") || return 69
-        case "$key" in
-            boot_id) actual=${PIM_CAMERA_OWNER_BOOT_ID:-} ;;
-            invocation_id) actual=${PIM_CAMERA_OWNER_INVOCATION:-} ;;
-            pid) actual=${PIM_CAMERA_OWNER_PID:-} ;;
-            proc_start_time) actual=${PIM_CAMERA_OWNER_PROC_START_TIME:-} ;;
-            token) actual=${PIM_CAMERA_OWNER_TOKEN:-} ;;
-            created_at) actual=${PIM_CAMERA_OWNER_CREATED_AT:-} ;;
-        esac
-        [ "$expected" = "$actual" ] || return 69
-    done
+    _cr_owner_exported_fields_equal "$owner" || return 69
     if [ "${PIM_CAMERA_STOP_EXECUTOR:-}" = 1 ]; then
         _cr_owner_snapshot_lifecycle_in "$owner" STOPPING || return 69
         return 0
