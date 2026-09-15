@@ -144,14 +144,7 @@ cam_plan_startup_action() {
 _coc_export_owner_context() {
     local owner
     owner=$(_cr_owner_json) || return 69
-    PIM_CAMERA_OWNER_BOOT_ID=$(jq -r .boot_id <<<"$owner")
-    PIM_CAMERA_OWNER_INVOCATION=$(jq -r .invocation_id <<<"$owner")
-    PIM_CAMERA_OWNER_PID=$(jq -r .pid <<<"$owner")
-    PIM_CAMERA_OWNER_PROC_START_TIME=$(jq -r .proc_start_time <<<"$owner")
-    PIM_CAMERA_OWNER_TOKEN=$(jq -r .token <<<"$owner")
-    PIM_CAMERA_OWNER_CREATED_AT=$(jq -r .created_at <<<"$owner")
-    export PIM_CAMERA_OWNER_BOOT_ID PIM_CAMERA_OWNER_INVOCATION PIM_CAMERA_OWNER_PID
-    export PIM_CAMERA_OWNER_PROC_START_TIME PIM_CAMERA_OWNER_TOKEN PIM_CAMERA_OWNER_CREATED_AT
+    _cr_owner_export_fields "$owner" || return 69
 }
 
 _coc_start_all_consumers() {

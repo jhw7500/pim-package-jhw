@@ -527,19 +527,21 @@ _cr_owner_create_locked() {
     record=$(jq -cn --arg boot "$boot" --arg invocation "$invocation" --arg start "$start" --arg token "$token" --argjson pid "$pid" --argjson now "$now" '{boot_id:$boot,invocation_id:$invocation,pid:$pid,proc_start_time:$start,token:$token,created_at:$now,lifecycle:"STARTING"}') || return 70
     _cr_atomic_write "$(_cr_owner_file)" "$record" || return 70
 }
+# 스키마 검증과 6필드 추출을 한 번의 jq 로 합친다 (기존 jq 7회).
+_cr_owner_export_fields() {
+    local owner=$1 fields
+    fields=$(jq -r "if ($_CR_OWNER_SCHEMA_FILTER) then [.boot_id,.invocation_id,(.pid|tostring),.proc_start_time,.token,(.created_at|tostring)] | @tsv else empty end" <<<"$owner") || return 70
+    [ -n "$fields" ] || return 70
+    IFS=$'\t' read -r PIM_CAMERA_OWNER_BOOT_ID PIM_CAMERA_OWNER_INVOCATION PIM_CAMERA_OWNER_PID \
+        PIM_CAMERA_OWNER_PROC_START_TIME PIM_CAMERA_OWNER_TOKEN PIM_CAMERA_OWNER_CREATED_AT <<<"$fields"
+    export PIM_CAMERA_OWNER_BOOT_ID PIM_CAMERA_OWNER_INVOCATION PIM_CAMERA_OWNER_PID
+    export PIM_CAMERA_OWNER_PROC_START_TIME PIM_CAMERA_OWNER_TOKEN PIM_CAMERA_OWNER_CREATED_AT
+}
 cam_owner_create() {
     local owner
     _cr_lock_call _cr_owner_create_locked "$@" || return $?
     owner=$(_cr_owner_json) || return 70
-    _cr_owner_schema <<<"$owner" || return 70
-    PIM_CAMERA_OWNER_BOOT_ID=$(jq -r .boot_id <<<"$owner")
-    PIM_CAMERA_OWNER_INVOCATION=$(jq -r .invocation_id <<<"$owner")
-    PIM_CAMERA_OWNER_PID=$(jq -r .pid <<<"$owner")
-    PIM_CAMERA_OWNER_PROC_START_TIME=$(jq -r .proc_start_time <<<"$owner")
-    PIM_CAMERA_OWNER_TOKEN=$(jq -r .token <<<"$owner")
-    PIM_CAMERA_OWNER_CREATED_AT=$(jq -r .created_at <<<"$owner")
-    export PIM_CAMERA_OWNER_BOOT_ID PIM_CAMERA_OWNER_INVOCATION PIM_CAMERA_OWNER_PID
-    export PIM_CAMERA_OWNER_PROC_START_TIME PIM_CAMERA_OWNER_TOKEN PIM_CAMERA_OWNER_CREATED_AT
+    _cr_owner_export_fields "$owner"
 }
 _cr_lifecycle_allowed() {
     case "$1:$2" in STARTING:ACTIVE|STARTING:DEGRADED|STARTING:STOPPING|ACTIVE:APPLYING_CONFIG|ACTIVE:RECOVERING|ACTIVE:DEGRADED|ACTIVE:STOPPING|APPLYING_CONFIG:ACTIVE|APPLYING_CONFIG:DEGRADED|APPLYING_CONFIG:STOPPING|RECOVERING:ACTIVE|RECOVERING:DEGRADED|RECOVERING:STOPPING|DEGRADED:APPLYING_CONFIG|DEGRADED:RECOVERING|DEGRADED:STOPPING) return 0;; esac; return 1
@@ -1006,17 +1008,33 @@ _cr_embedded_owner_valid() {
     owner=$(jq -c .request.owner "$file" 2>/dev/null) || return 1; current=$(_cr_owner_json) || return 1
     _cr_owner_immutable_equal "$owner" "$current" && _cr_owner_snapshot_live "$current"
 }
+# history 는 복구가 일어날 때마다 쌓이고 /var/lib 라 재부팅에도 남는다. 파일마다 jq 를
+# 띄우면 부팅 시간이 파일 개수에 비례해 늘어난다 (보드 실측: 69개 = jq 69회 = 28초).
+# 대부분은 이미 SUCCEEDED/FAILED 로 건너뛸 대상이므로, 한 번의 jq 로 처리 대상만 추린다.
+# jq 가 실패하면(파싱 불가 파일 등) 전체를 대상으로 삼아 기존 순회로 폴백한다.
+_cr_reconcile_pending_files() {
+    local dir=$1 listed
+    listed=$(jq -r 'select(((.request.status // "") | . != "SUCCEEDED" and . != "FAILED")) | input_filename' "$dir"/*.json 2>/dev/null) || return 1
+    printf '%s\n' "$listed"
+}
 _cr_reconcile_interrupted_locked() {
-    local file history updated changed=0
-    mkdir -p "$PIM_CAMERA_STATE_DIR/recovery/history" || return 70; shopt -s nullglob
-    for file in "$PIM_CAMERA_STATE_DIR"/recovery/history/*.json; do
+    local file history updated changed=0 dir="$PIM_CAMERA_STATE_DIR/recovery/history" files=() pending=()
+    mkdir -p "$dir" || return 70
+    shopt -s nullglob; files=("$dir"/*.json); shopt -u nullglob
+    [ "${#files[@]}" -gt 0 ] || return 0
+    if listed=$(_cr_reconcile_pending_files "$dir"); then
+        while IFS= read -r file; do [ -n "$file" ] && pending+=("$file"); done <<<"$listed"
+    else
+        pending=("${files[@]}")
+    fi
+    for file in "${pending[@]}"; do
         history=$(cat "$file") || return 70
         case "$(jq -r '.request.status // empty' <<<"$history")" in SUCCEEDED|FAILED) continue;; esac
         _cr_embedded_owner_valid "$file" && continue
         updated=$(jq -c --argjson now "$(_cr_now)" '.request.status="FAILED" | .request.rc=70 | .request.interrupted=true | .request.finished_at=$now | .request.interrupted_reason="interrupted"' <<<"$history") || return 70
         _cr_atomic_write "$file" "$updated" || return 70; changed=1
     done
-    shopt -u nullglob; [ "$changed" -eq 0 ] || _cr_mark_dirty || return 70
+    [ "$changed" -eq 0 ] || _cr_mark_dirty || return 70
 }
 cam_reconcile_interrupted() { _cr_lock_call _cr_reconcile_interrupted_locked; }
 cam_recovery_status_json() {
