@@ -124,6 +124,23 @@ _cr_owner_immutable_equal() {
 }
 # schema 없이 6필드만 비교한다. cam_executor_assert_context 는 cam_owner_assert 가
 # 이미 schema 를 본 뒤에 이 비교만 필요로 하므로 분리해 둔다.
+# cam_executor_assert_context 전용. schema + live(boot/invocation/token) + exported 6필드
+# 비교를 한 번의 jq 로 끝내고, /proc 확인에 필요한 pid·proc_start_time 과 분기에 쓸
+# lifecycle 만 돌려준다. 기존에는 snapshot_live / exported_fields_equal /
+# snapshot_lifecycle_in 이 각각 jq 를 띄워 호출당 3회였다.
+_cr_owner_executor_snapshot() {
+    local owner=$1 boot=$2 ei=$3 et=$4 skip_live=$5
+    jq -r --arg boot "$boot" --arg ei "$ei" --arg et "$et" --arg skip "$skip_live" \
+          --arg b "${PIM_CAMERA_OWNER_BOOT_ID:-}" --arg iv "${PIM_CAMERA_OWNER_INVOCATION:-}" \
+          --arg p "${PIM_CAMERA_OWNER_PID:-}" --arg ps "${PIM_CAMERA_OWNER_PROC_START_TIME:-}" \
+          --arg tk "${PIM_CAMERA_OWNER_TOKEN:-}" --arg ca "${PIM_CAMERA_OWNER_CREATED_AT:-}" \
+      "if ($_CR_OWNER_SCHEMA_FILTER)
+          and ($_CR_OWNER_EXPORTED_EQ_FILTER)
+          and (\$skip == \"1\" or ((.boot_id == \$boot)
+               and (\$ei == \"\" or .invocation_id == \$ei)
+               and (\$et == \"\" or .token == \$et)))
+       then [(.pid|tostring), .proc_start_time, .lifecycle] | @tsv else empty end" <<<"$owner"
+}
 _cr_owner_exported_fields_equal() {
     jq -e --arg b "${PIM_CAMERA_OWNER_BOOT_ID:-}" --arg iv "${PIM_CAMERA_OWNER_INVOCATION:-}" \
           --arg p "${PIM_CAMERA_OWNER_PID:-}" --arg ps "${PIM_CAMERA_OWNER_PROC_START_TIME:-}" \

@@ -54,16 +54,24 @@ cam_validate_runtime() {
 }
 
 cam_executor_assert_context() {
-    local owner active
+    local owner active boot fields pid start lifecycle actual skip_live=0
     owner=$(_cr_owner_json) || return 69
-    [ "${PIM_CAMERA_STOP_EXECUTOR:-}" = 1 ] || cam_owner_assert "${PIM_CAMERA_OWNER_INVOCATION:-}" "${PIM_CAMERA_OWNER_TOKEN:-}" || return 69
-    _cr_owner_exported_fields_equal "$owner" || return 69
+    [ "${PIM_CAMERA_STOP_EXECUTOR:-}" != 1 ] || skip_live=1
+    boot=$(cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null) || return 69
+    fields=$(_cr_owner_executor_snapshot "$owner" "$boot" "${PIM_CAMERA_OWNER_INVOCATION:-}" \
+        "${PIM_CAMERA_OWNER_TOKEN:-}" "$skip_live") || return 69
+    [ -n "$fields" ] || return 69
+    IFS=$'\t' read -r pid start lifecycle <<<"$fields"
+    if [ "$skip_live" -eq 0 ]; then
+        actual=$(_cr_proc_start "$pid")
+        [ -n "$actual" ] && [ "$actual" = "$start" ] || return 69
+    fi
     if [ "${PIM_CAMERA_STOP_EXECUTOR:-}" = 1 ]; then
-        _cr_owner_snapshot_lifecycle_in "$owner" STOPPING || return 69
+        [ "$lifecycle" = STOPPING ] || return 69
         return 0
     fi
     if [ "${PIM_CAMERA_STARTUP_EXECUTOR:-}" = 1 ]; then
-        _cr_owner_snapshot_lifecycle_in "$owner" STARTING || return 69
+        [ "$lifecycle" = STARTING ] || return 69
         return 0
     fi
     [ "${PIM_CAMERA_EXECUTOR:-}" = 1 ] || return 69
@@ -87,9 +95,9 @@ cam_effect() {
 }
 
 cam_runtime_app() {
-    local runtime=$1 app capture
-    app=$(jq -r '.VHL_CAM.app // "gstApp"' "$runtime") || return 64
-    capture=$(jq -r '.VHL_CAM.capture.enable // false' "$runtime") || return 64
+    local runtime=$1 app capture fields
+    fields=$(jq -r '[(.VHL_CAM.app // "gstApp"), ((.VHL_CAM.capture.enable // false)|tostring)] | @tsv' "$runtime") || return 64
+    IFS=$'\t' read -r app capture <<<"$fields"
     [ "$capture" = true ] && app=gstApp
     [ "$app" = streamApp ] && app=PIMCAM
     case "$app" in gstApp|PIMCAM) printf '%s\n' "$app";; *) return 64;; esac

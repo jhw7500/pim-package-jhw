@@ -20,7 +20,9 @@ delay=${1:-$(jq -r '.VHL_CAM.app_delay // 4' "$PIM_CAMERA_RUNTIME_JSON")}
 [[ $delay =~ ^[0-9]+$ ]] || exit 64
 
 cam_side_effect_guard "$PIM_CAMERA_RUNTIME_JSON" || exit $?
-cam_process_present "$PIM_CAMERA_RUNTIME_JSON" app; app_rc=$?
+# cam_process_present 의 app 분기는 cam_runtime_app 을 다시 호출한다. 위에서 이미
+# 구한 $app 을 그대로 써서 jq 2회를 아낀다. 판정 자체는 pgrep -x 로 동일하다.
+pgrep -x "$app" >/dev/null 2>&1; app_rc=$?
 [ "$app_rc" -eq 0 ] || [ "$app_rc" -eq 1 ] || exit "$app_rc"
 cam_side_effect_guard "$PIM_CAMERA_RUNTIME_JSON" || exit $?
 cam_process_present "$PIM_CAMERA_RUNTIME_JSON" bg; bg_rc=$?
