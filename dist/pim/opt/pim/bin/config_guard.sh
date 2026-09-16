@@ -62,12 +62,20 @@ _unexpected_failure() {
 # Validate a JSON file: exists, non-empty, parses, and contains required headers.
 # Args: <path> <header1> [<header2> ...]
 # Returns: 0 valid, non-zero invalid (1=missing/empty, 2=parse, 3=header)
+# 정상 경로는 jq 한 번으로 끝낸다. 파싱 검증과 헤더 확인을 따로 하면 파일당 jq 가
+# 1+N 회가 되고, 부팅 시 이 스크립트 전체가 2.6초를 쓴다 (보드 실측: jq 5회).
+# 반환 코드(2=파싱 실패, 3=헤더 없음)는 로그 진단에 쓰이므로, 빠른 경로가 실패했을
+# 때만 원래 순서대로 다시 확인해 원인을 구분한다.
 validate_json() {
     local f=$1
     shift
     [ -s "$f" ] || return 1
+    local cond='type == "object"' hdr
+    for hdr in "$@"; do
+        cond="$cond and has(\"${hdr#.}\")"
+    done
+    jq -e "$cond" "$f" > /dev/null 2>&1 && return 0
     jq -e . "$f" > /dev/null 2>&1 || return 2
-    local hdr
     for hdr in "$@"; do
         jq -e "has(\"${hdr#.}\")" "$f" > /dev/null 2>&1 || return 3
     done
