@@ -51,10 +51,18 @@ _coc_state_current() {
     _coc_state_default
 }
 
+# canonical 추출과 스키마 검증을 한 번의 jq 로 합친다. select 는 조건이 참일 때
+# 파이프 입력을 그대로 흘리므로, 검증 대상은 여전히 '추출된 canonical' 이다.
+#
+# 조건을 _coc_state_schema 와 공유하지 않고 인라인으로 적는 이유:
+# runtime_consumer_path_test.py 가 이 파일을 런타임 소비자로 보고 jq 피연산자를
+# 정적으로 증명하는데, 필터에 셸 변수를 확장하면 파일 인자로 오인해 거부한다.
+# 두 번 시도해 두 번 거부당했다. 조건을 고칠 때는 _coc_state_schema 와 여기
+# 두 곳을 함께 고쳐야 한다.
 _coc_write_state() {
     local state=$1 canonical
-    canonical=$(jq -c '{schema,last_boot_id,last_successful_hardware_projection,dirty,degraded_reason,degraded_target,last_invocation_id}' <<<"$state") || return 70
-    _coc_state_schema <<<"$canonical" || return 70
+    canonical=$(jq -c '{schema,last_boot_id,last_successful_hardware_projection,dirty,degraded_reason,degraded_target,last_invocation_id} | select(type == "object" and .schema == 1 and (.last_boot_id | type == "string" and length > 0) and (.last_successful_hardware_projection | type == "object") and (.dirty | type == "boolean") and (.degraded_reason == null or (.degraded_reason | type == "string")) and (.degraded_target == null or (.degraded_target | type == "string")) and (.last_invocation_id | type == "string" and length > 0))' <<<"$state") || return 70
+    [ -n "$canonical" ] || return 70
     _cr_atomic_write "$(_cr_service_file)" "$canonical" || return 70
 }
 
