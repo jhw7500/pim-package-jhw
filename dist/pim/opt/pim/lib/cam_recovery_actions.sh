@@ -123,13 +123,27 @@ cam_runtime_app_delay() {
     [[ $delay =~ ^[0-9]+$ ]] || return 64
     printf '%s\t%s\n' "$app" "$delay"
 }
+# cam_process_present 의 app 분기가 이 함수를 매번 부르고, _coc_verify_all 의
+# 폴링이 그 경로를 반복한다 (부팅 1회에 3번 관측). 런타임 문서가 그대로면 앱
+# 이름도 그대로이므로 cam_validate_runtime 과 같은 방식으로 파일 정체를 키로
+# 메모이즈한다. 문서가 바뀌면 stat 이 달라져 다시 계산한다. 캐시는 프로세스 로컬.
+_CAM_RUNTIME_APP_KEY=""
+_CAM_RUNTIME_APP_VAL=""
 cam_runtime_app() {
-    local runtime=$1 app capture fields
+    local runtime=$1 app capture fields key
+    key=$(stat -c '%d:%i:%s:%y' "$runtime" 2>/dev/null) || key=""
+    if [ -n "$key" ] && [ "$key" = "$_CAM_RUNTIME_APP_KEY" ] && [ -n "$_CAM_RUNTIME_APP_VAL" ]; then
+        printf '%s\n' "$_CAM_RUNTIME_APP_VAL"
+        return 0
+    fi
     fields=$(jq -r '[(.VHL_CAM.app // "gstApp"), ((.VHL_CAM.capture.enable // false)|tostring)] | @tsv' "$runtime") || return 64
     IFS=$'\t' read -r app capture <<<"$fields"
     [ "$capture" = true ] && app=gstApp
     [ "$app" = streamApp ] && app=PIMCAM
-    case "$app" in gstApp|PIMCAM) printf '%s\n' "$app";; *) return 64;; esac
+    case "$app" in
+        gstApp|PIMCAM) _CAM_RUNTIME_APP_KEY=$key; _CAM_RUNTIME_APP_VAL=$app; printf '%s\n' "$app";;
+        *) return 64;;
+    esac
 }
 
 cam_cleanup_recording_orphans() {
