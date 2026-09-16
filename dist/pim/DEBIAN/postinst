@@ -325,14 +325,20 @@ MOUNT_POINT="/mnt/sd_cam"
 DEVICE="/dev/mmcblk1p1"
 TARGET_DIR="$MOUNT_POINT/event"
 
-umount $MOUNT_POINT
-mnt_status=$(df -h |grep $MOUNT_POINT)
+umount $DEVICE
 
-if [ -z $mnt_status ]; then
-    logger -s -p local0.notice "[$KEY][$tag:$LINENO] umount $MOUNT_POINT ok : clean dir"
+# 파괴적 분기(rm -rf /mnt/*)의 조건은 "이 디바이스가 안 보인다" 가 아니라
+# "/mnt 아래에 아무것도 마운트돼 있지 않다" 여야 한다. 디바이스로만 확인하면
+# /mnt/sd_cam 에 다른 파일시스템이 마운트된 채 grep 이 비어 나와 그 마운트
+# 내용을 root 권한으로 지운다. /proc/self/mounts 의 마운트포인트 필드를 직접
+# 본다 (df + grep 은 문자열 부분일치라 같은 판단을 하지 못한다).
+mnt_status=$(awk '$2 == "/mnt" || index($2, "/mnt/") == 1 { print $2 }' /proc/self/mounts)
+
+if [ -z "$mnt_status" ]; then
+    logger -s -p local0.notice "[$KEY][$tag:$LINENO] umount $DEVICE ok : clean dir"
     rm -rf /mnt/*
 else
-    logger -s -p local0.err "[$KEY][$tag:$LINENO] umount $MOUNT_POINT error!"
+    logger -s -p local0.err "[$KEY][$tag:$LINENO] umount $DEVICE error! still mounted: $mnt_status"
 fi
 
 makeDirectory $MOUNT_POINT

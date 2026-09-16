@@ -1279,6 +1279,7 @@ CheckDiskSpace() {
 
 if [ "${PIM_CAMERA_TEST_MONITOR_ONCE:-0}" != 1 ]; then
 logger -p local0.emerg "[$KEY][$tag:$LINENO] cam-operate daemon start : Booting"
+_cr_timing daemon_boot
 #/opt/pim/bin/automnt_sd_for_emmc_boot.sh /mnt/sd_cam &
 if cam_daemon_startup "$$"; then
     logger -p local0.notice "[$KEY][$tag:$LINENO] camera startup transaction ready"

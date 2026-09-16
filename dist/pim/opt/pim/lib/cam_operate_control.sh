@@ -22,7 +22,14 @@ _coc_plan_file() { printf '%s/plan.json' "$PIM_CAMERA_CONTROL_WORK_DIR"; }
 _coc_projection_file() { printf '%s/projection.json' "$PIM_CAMERA_CONTROL_WORK_DIR"; }
 
 _coc_boot_id() { cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null; }
-_coc_invocation_id() { jq -r .invocation_id "$(_cr_owner_file)" 2>/dev/null; }
+# 출처는 항상 owner.json 이다. env(PIM_CAMERA_OWNER_INVOCATION)로 대체하지
+# 않는다 — env 는 자식에게 상속되므로 owner.json 이 사라지거나 세대가 바뀐 뒤에도
+# 낡은 값이 남고, 그러면 owner 없이 상태를 쓰지 않아야 할 호출부가 성공한다.
+# 파일 정체 메모이즈도 두지 않는다. 호출부가 전부 invocation=$(_coc_invocation_id)
+# 형태라 캐시를 담는 전역이 서브셸과 함께 사라지고, 남는 것은 stat fork 뿐이다.
+_coc_invocation_id() {
+    jq -r .invocation_id "$(_cr_owner_file)" 2>/dev/null
+}
 _coc_runtime_dir() { dirname "$PIM_CAMERA_RUNTIME_JSON"; }
 
 _coc_state_schema() {
@@ -51,10 +58,21 @@ _coc_state_current() {
     _coc_state_default
 }
 
+# canonical 추출과 스키마 검증을 한 번의 jq 로 합친다. select 는 조건이 참일 때
+# 파이프 입력을 그대로 흘리므로, 검증 대상은 여전히 '추출된 canonical' 이다.
+#
+# 조건을 _coc_state_schema 와 공유하지 않고 인라인으로 적는 이유:
+# runtime_consumer_path_test.py 의 proven_helpers() 가 _coc_state_current 의
+# 출처를 증명할 때 _coc_state_schema 를 quiet_validator 로 인정하는데, 그
+# 정규식(:1018)이 그 함수 본문을 jq -e '<단일따옴표 리터럴>' >/dev/null 2>&1
+# 형태로 못박는다. 따라서 변수화가 막히는 곳은 _coc_state_schema 하나뿐이고,
+# jq 필터 안의 셸 변수 확장 일반이 거부되는 것은 아니다 (cam_recovery.sh 는
+# 같은 소비자 목록에 있으면서 6곳에서 확장하고 통과한다).
+# 두 사본이 어긋나지 않는지는 state_schema_parity_test.py 가 기계적으로 본다.
 _coc_write_state() {
     local state=$1 canonical
-    canonical=$(jq -c '{schema,last_boot_id,last_successful_hardware_projection,dirty,degraded_reason,degraded_target,last_invocation_id}' <<<"$state") || return 70
-    _coc_state_schema <<<"$canonical" || return 70
+    canonical=$(jq -c '{schema,last_boot_id,last_successful_hardware_projection,dirty,degraded_reason,degraded_target,last_invocation_id} | select(type == "object" and .schema == 1 and (.last_boot_id | type == "string" and length > 0) and (.last_successful_hardware_projection | type == "object") and (.dirty | type == "boolean") and (.degraded_reason == null or (.degraded_reason | type == "string")) and (.degraded_target == null or (.degraded_target | type == "string")) and (.last_invocation_id | type == "string" and length > 0))' <<<"$state") || return 70
+    [ -n "$canonical" ] || return 70
     _cr_atomic_write "$(_cr_service_file)" "$canonical" || return 70
 }
 
@@ -105,25 +123,38 @@ _coc_plan_apply() {
     cat "$(_coc_plan_file)"
 }
 
+# 계획 근거를 남긴다. 이게 없으면 상위 로그에 "transaction failed rc=1" 만 남고,
+# 왜 그 액션이 선택됐는지는 service-state.json 을 직접 열어야 알 수 있었다.
+# stdout 은 액션 이름 전용이므로(_coc 가 명령치환으로 읽는다) 반드시 logger 로만 남긴다.
+_coc_plan_log() {
+    logger -p local0.notice "[CAM][cam_operate_control] plan: action=$1 reason=$2" 2>/dev/null
+    [ -z "${PIM_CAMERA_ACTION_LOG:-}" ] || printf 'notice plan: action=%s reason=%s\n' "$1" "$2" >> "$PIM_CAMERA_ACTION_LOG"
+    return 0
+}
+
 cam_plan_startup_action() {
     local candidate=${1:-$(_coc_candidate_file)} previous=${2:-} boot projection prior_projection dirty
     boot=$(_coc_boot_id) || return 70
     projection=$(_coc_projection "$candidate") || return $?
     if [ -z "$previous" ]; then
+        _coc_plan_log initial_module_load "no previous state"
         printf 'initial_module_load\n'
         return 0
     fi
     if ! _coc_state_schema <<<"$previous"; then
+        _coc_plan_log camera_hard_reset "previous state schema invalid"
         printf 'camera_hard_reset\n'
         return 0
     fi
-    [ "$(jq -r .last_boot_id <<<"$previous")" = "$boot" ] || { printf 'initial_module_load\n'; return 0; }
+    [ "$(jq -r .last_boot_id <<<"$previous")" = "$boot" ] || { _coc_plan_log initial_module_load "boot_id changed"; printf 'initial_module_load\n'; return 0; }
     dirty=$(jq -r .dirty <<<"$previous")
-    [ "$dirty" = false ] || { printf 'camera_hard_reset\n'; return 0; }
-    prior_projection=$(jq -c .last_successful_hardware_projection <<<"$previous") || { printf 'camera_hard_reset\n'; return 0; }
+    [ "$dirty" = false ] || { _coc_plan_log camera_hard_reset "dirty=$dirty (previous run left state degraded)"; printf 'camera_hard_reset\n'; return 0; }
+    prior_projection=$(jq -c .last_successful_hardware_projection <<<"$previous") || { _coc_plan_log camera_hard_reset "prior projection unreadable"; printf 'camera_hard_reset\n'; return 0; }
     if jq -ne --argjson current "$projection" --argjson previous "$prior_projection" '$current == $previous' >/dev/null; then
+        _coc_plan_log module_reload "projection unchanged"
         printf 'module_reload\n'
     else
+        _coc_plan_log camera_hard_reset "projection changed from prior success"
         printf 'camera_hard_reset\n'
     fi
 }
@@ -131,20 +162,24 @@ cam_plan_startup_action() {
 _coc_export_owner_context() {
     local owner
     owner=$(_cr_owner_json) || return 69
-    PIM_CAMERA_OWNER_BOOT_ID=$(jq -r .boot_id <<<"$owner")
-    PIM_CAMERA_OWNER_INVOCATION=$(jq -r .invocation_id <<<"$owner")
-    PIM_CAMERA_OWNER_PID=$(jq -r .pid <<<"$owner")
-    PIM_CAMERA_OWNER_PROC_START_TIME=$(jq -r .proc_start_time <<<"$owner")
-    PIM_CAMERA_OWNER_TOKEN=$(jq -r .token <<<"$owner")
-    PIM_CAMERA_OWNER_CREATED_AT=$(jq -r .created_at <<<"$owner")
-    export PIM_CAMERA_OWNER_BOOT_ID PIM_CAMERA_OWNER_INVOCATION PIM_CAMERA_OWNER_PID
-    export PIM_CAMERA_OWNER_PROC_START_TIME PIM_CAMERA_OWNER_TOKEN PIM_CAMERA_OWNER_CREATED_AT
+    _cr_owner_export_fields "$owner" || return 69
 }
 
+# 영상 앱을 먼저 띄운다. cam_restart_ord 는 cam_wait_ord_ready 로 ord 가 준비 마커를
+# 쓸 때까지 기다리는데(보드 실측 2초), gstApp 은 ord 를 기다릴 이유가 없다.
+# cam_restart_vcm 은 이미 백그라운드라 직렬 비용이 없다. 검증은 _coc_verify_all 의
+# cam_wait_process_ready ... 1 이 넷을 모두 확인하므로, 대기를 없애는 게 아니라
+# gstApp 뒤로 미루는 것이다.
 _coc_start_all_consumers() {
-    cam_restart_ord "$PIM_CAMERA_RUNTIME_JSON" || return $?
+    _cr_timing consumers_begin
+    cam_start_gstapp "$PIM_CAMERA_RUNTIME_JSON" || return $?
+    _cr_timing gstapp_started
     cam_restart_vcm "$PIM_CAMERA_RUNTIME_JSON" || return $?
-    cam_start_gstapp "$PIM_CAMERA_RUNTIME_JSON"
+    _cr_timing vcm_started
+    cam_restart_ord "$PIM_CAMERA_RUNTIME_JSON"
+    local rc=$?
+    _cr_timing ord_started
+    return "$rc"
 }
 
 _coc_verify_all() {
@@ -187,15 +222,25 @@ _coc_begin_startup_action() {
 
 cam_daemon_startup() {
     local pid=${1:-$$} previous='' candidate action projection rc countered=false
+    _cr_timing startup_begin
+    # cam_owner_create 가 owner.json 을 쓴 직후 _cr_owner_export_fields 로 6개 변수를
+    # 이미 export 한다. 바로 뒤에서 _coc_export_owner_context 를 또 부르면 같은 파일을
+    # 다시 읽어 같은 값을 넣을 뿐이다 (보드 실측 0.26초). 함수는 다른 호출자를 위해 남긴다.
     cam_owner_create "$pid" || return $?
-    _coc_export_owner_context || return $?
+    _cr_timing owner_created
+    _cr_timing owner_exported
     cam_reconcile_interrupted || return $?
+    _cr_timing reconciled
     if [ -f "$(_cr_service_file)" ]; then previous=$(cat "$(_cr_service_file)" 2>/dev/null || printf invalid); fi
     candidate=$(_coc_candidate_file)
     cam_stage_source_candidate "$candidate" "$(_coc_stage_result_file)" || { rc=$?; _coc_startup_fail "$rc" CONFIG_INVALID false; return $?; }
+    _cr_timing staged
     action=$(cam_plan_startup_action "$candidate" "$previous") || { rc=$?; _coc_startup_fail "$rc" CONFIG_INVALID false; return $?; }
+    _cr_timing "planned:$action"
     _coc_publish_candidate "$candidate" || { rc=$?; _coc_startup_fail "$rc" publish_failed false; return $?; }
+    _cr_timing published
     _coc_set_dirty true || { rc=$?; _coc_startup_fail "$rc" state_write_failed true; return $?; }
+    _cr_timing dirty_set
     PIM_CAMERA_STARTUP_EXECUTOR=1
     export PIM_CAMERA_STARTUP_EXECUTOR
     case "$action" in
@@ -218,12 +263,15 @@ cam_daemon_startup() {
         return $?
     fi
     if [ "$countered" = true ]; then cam_request_transition VERIFYING || return $?; fi
+    _cr_timing action_done
     _coc_verify_all || { rc=$?; unset PIM_CAMERA_STARTUP_EXECUTOR; if [ "$countered" = true ]; then _coc_fail_active "$rc" startup_verify_failed camera_health true; else _coc_startup_fail "$rc" startup_verify_failed true; fi; return $?; }
     unset PIM_CAMERA_STARTUP_EXECUTOR
     projection=$(_coc_projection "$PIM_CAMERA_RUNTIME_JSON") || { rc=$?; if [ "$countered" = true ]; then _coc_fail_active "$rc" projection_failed camera_health true; else _coc_startup_fail "$rc" projection_failed true; fi; return $?; }
     _coc_persist_success "$projection" || { rc=$?; if [ "$countered" = true ]; then _coc_fail_active "$rc" state_write_failed state true; else _coc_startup_fail "$rc" state_write_failed true; fi; return $?; }
     if [ "$countered" = true ]; then cam_request_finish SUCCEEDED 0 || return $?; fi
+    _cr_timing persisted
     cam_owner_set_lifecycle ACTIVE
+    _cr_timing active
 }
 
 _coc_record_step() {

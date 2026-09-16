@@ -15,6 +15,14 @@ _cr_state_file() { printf '%s/recovery/state.json' "$PIM_CAMERA_STATE_DIR"; }
 _cr_history_file() { printf '%s/recovery/history/%s.json' "$PIM_CAMERA_STATE_DIR" "$1"; }
 _cr_service_file() { printf '%s/service-state.json' "$PIM_CAMERA_STATE_DIR"; }
 _cr_now() { date +%s; }
+# 구간 계측. PIM_CAMERA_TIMING_LOG 가 설정될 때만 기록한다(기본 off).
+# EPOCHREALTIME 은 bash 5.0+ 내장이라 fork 가 없다 — 보드 실측 100회 8ms.
+# date 는 100회 480ms 라 계측이 측정을 왜곡한다.
+_cr_timing() {
+    [ -n "${PIM_CAMERA_TIMING_LOG:-}" ] || return 0
+    printf '%s %s\n' "${EPOCHREALTIME:-0}" "$1" >> "$PIM_CAMERA_TIMING_LOG" 2>/dev/null
+    return 0
+}
 _cr_uuid() { cat /proc/sys/kernel/random/uuid; }
 _cr_proc_start() {
     local stat tail
@@ -25,22 +33,13 @@ _cr_proc_start() {
     printf '%s\n' "${20}"
 }
 
-_cr_fsync_file() {
-    python3 - "$1" <<'PY'
-import os, sys
-fd = os.open(sys.argv[1], os.O_RDONLY)
-try: os.fsync(fd)
-finally: os.close(fd)
-PY
-}
-_cr_fsync_dir() {
-    python3 - "$1" <<'PY'
-import os, sys
-fd = os.open(sys.argv[1], os.O_RDONLY | os.O_DIRECTORY)
-try: os.fsync(fd)
-finally: os.close(fd)
-PY
-}
+# python3 를 띄워 fsync 하던 것을 coreutils sync 로 바꾼다. sync FILE 은
+# coreutils 8.24+ 에서 해당 파일에 fsync(2) 를 호출하므로 의미가 같다.
+# 보드 실측: python3 2회 216ms, sync 2회 3ms. 구형 coreutils 가 인자를 무시하고
+# 전체 sync 를 하더라도 내구성은 더 강해지므로 안전하다.
+# 함수 이름은 유지한다 — 여러 테스트가 이 이름을 no-op 으로 재정의한다.
+_cr_fsync_file() { sync "$1"; }
+_cr_fsync_dir() { sync "$1"; }
 _cr_atomic_write() {
     local target=$1 data=$2 dir tmp
     dir=$(dirname "$target"); mkdir -p "$dir" || return 1
@@ -76,18 +75,33 @@ _cr_public_action() { case "$1" in gstapp_restart|module_reload|camera_hard_rese
 _cr_request_type() { _cr_public_action "$1" || [ "$1" = apply_config ]; }
 _cr_owner_json() { cat "$(_cr_owner_file)" 2>/dev/null; }
 
+# jq 한 번이 보드(A53, loadavg 5.7)에서 412ms 다. 같은 문서를 필드마다 새 프로세스로
+# 파싱하면 owner 검증 한 번에 3초가 든다. 필터를 변수로 두고 한 번의 jq 로 합친다.
+# 조건 자체는 바꾸지 않는다 — 검증을 줄이는 게 아니라 프로세스 스폰만 줄인다.
+# 예외 하나: boot_id·invocation_id·token 에 문자셋 제약을 더했다. 세 값은 전부
+# /proc/sys/kernel/random 의 UUID 에서 나오는데 스키마는 "비어 있지만 않으면 됨"
+# 이었다. 개행이 든 값이 통과하면 한 번의 jq 로 여러 필드를 받아 오는 쪽의
+# 프레이밍이 어긋나므로, 실제 생성기가 내는 문자만 받도록 불변식을 명시한다.
+_CR_OWNER_SCHEMA_FILTER='type == "object" and (.boot_id|type == "string" and test("^[A-Za-z0-9._:-]+$")) and (.invocation_id|type == "string" and test("^[A-Za-z0-9._:-]+$")) and (.pid|type == "number" and floor == . and . > 0) and (.proc_start_time|type == "string" and test("^[0-9]+$")) and (.token|type == "string" and test("^[A-Za-z0-9._:-]+$")) and (.created_at|type == "number" and floor == . and . > 0) and (.lifecycle as $l | ["STARTING","ACTIVE","APPLYING_CONFIG","RECOVERING","DEGRADED","STOPPING"] | index($l) != null)'
+_CR_OWNER_LIVE_MATCH_FILTER='(.boot_id == $boot) and ($ei == "" or .invocation_id == $ei) and ($et == "" or .token == $et)'
+_CR_OWNER_EXPORTED_MATCH_FILTER='($b != "" and .boot_id == $b) and ($iv != "" and .invocation_id == $iv) and ($p != "" and (.pid|tostring) == $p) and ($ps != "" and .proc_start_time == $ps) and ($tk != "" and .token == $tk) and ($ca != "" and (.created_at|tostring) == $ca)'
+# cam_executor_assert_context 의 루프는 빈 값 검사 없이 동등 비교만 한다. 그 의미를
+# 그대로 옮기려면 non-empty 조건이 없는 필터가 따로 필요하다.
+_CR_OWNER_EXPORTED_EQ_FILTER='(.boot_id == $b) and (.invocation_id == $iv) and ((.pid|tostring) == $p) and (.proc_start_time == $ps) and (.token == $tk) and ((.created_at|tostring) == $ca)'
+
 _cr_owner_schema() {
-    jq -e 'type == "object" and (.boot_id|type == "string" and length > 0) and (.invocation_id|type == "string" and length > 0) and (.pid|type == "number" and floor == . and . > 0) and (.proc_start_time|type == "string" and test("^[0-9]+$")) and (.token|type == "string" and length > 0) and (.created_at|type == "number" and floor == . and . > 0) and (.lifecycle as $l | ["STARTING","ACTIVE","APPLYING_CONFIG","RECOVERING","DEGRADED","STOPPING"] | index($l) != null)' >/dev/null
+    jq -e "$_CR_OWNER_SCHEMA_FILTER" >/dev/null
 }
 _cr_owner_snapshot_live() {
-    local owner=$1 expected_invocation=${2:-} expected_token=${3:-} boot pid start invocation token actual
-    _cr_owner_schema <<<"$owner" || return 69
+    local owner=$1 expected_invocation=${2:-} expected_token=${3:-} boot fields pid start actual
     boot=$(cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null) || return 69
-    pid=$(jq -r .pid <<<"$owner"); start=$(jq -r .proc_start_time <<<"$owner")
-    invocation=$(jq -r .invocation_id <<<"$owner"); token=$(jq -r .token <<<"$owner"); actual=$(_cr_proc_start "$pid")
-    [ -n "$actual" ] && [ "$boot" = "$(jq -r .boot_id <<<"$owner")" ] && [ "$actual" = "$start" ] || return 69
-    [ -z "$expected_invocation" ] || [ "$expected_invocation" = "$invocation" ] || return 69
-    [ -z "$expected_token" ] || [ "$expected_token" = "$token" ] || return 69
+    fields=$(jq -r --arg boot "$boot" --arg ei "$expected_invocation" --arg et "$expected_token" \
+        "if (($_CR_OWNER_SCHEMA_FILTER) and ($_CR_OWNER_LIVE_MATCH_FILTER)) then [(.pid|tostring), .proc_start_time] | join(\"\\n\") else empty end" \
+        <<<"$owner") || return 69
+    [ -n "$fields" ] || return 69
+    { IFS= read -r pid; IFS= read -r start; } <<<"$fields"
+    actual=$(_cr_proc_start "$pid")
+    [ -n "$actual" ] && [ "$actual" = "$start" ] || return 69
 }
 _cr_owner_snapshot_lifecycle_in() {
     local owner=$1 lifecycle allowed
@@ -96,28 +110,40 @@ _cr_owner_snapshot_lifecycle_in() {
     for allowed in "$@"; do [ "$lifecycle" = "$allowed" ] && return 0; done
     return 69
 }
+# 두 문서의 스키마 검증과 6키 비교를 한 번의 jq 로 끝낸다. 기존에는 schema 2회 +
+# 키마다 2회 = 14회였고, 이 함수는 _cr_record_owner_ready 를 통해 recovery 경로의
+# 모든 가드가 지난다 (camera_hard_reset 은 가드를 25회 부른다).
+_CR_OWNER_IMMUTABLE_EQ_FILTER='($a.boot_id == $b.boot_id) and ($a.invocation_id == $b.invocation_id) and ($a.pid == $b.pid) and ($a.proc_start_time == $b.proc_start_time) and ($a.token == $b.token) and ($a.created_at == $b.created_at)'
 _cr_owner_immutable_equal() {
-    local saved=$1 current=$2 key
-    _cr_owner_schema <<<"$saved" && _cr_owner_schema <<<"$current" || return 1
-    for key in boot_id invocation_id pid proc_start_time token created_at; do
-        [ "$(jq -c ".$key" <<<"$saved")" = "$(jq -c ".$key" <<<"$current")" ] || return 1
-    done
+    local saved=$1 current=$2
+    jq -e -n --argjson a "$saved" --argjson b "$current" \
+      "(\$a | ($_CR_OWNER_SCHEMA_FILTER)) and (\$b | ($_CR_OWNER_SCHEMA_FILTER)) and $_CR_OWNER_IMMUTABLE_EQ_FILTER" \
+      >/dev/null 2>&1 || return 1
+}
+# cam_executor_assert_context 전용. schema + live(boot/invocation/token) + exported 6필드
+# 비교를 한 번의 jq 로 끝내고, /proc 확인에 필요한 pid·proc_start_time 과 분기에 쓸
+# lifecycle 만 돌려준다. 기존에는 snapshot_live / exported_fields_equal /
+# snapshot_lifecycle_in 이 각각 jq 를 띄워 호출당 3회였다.
+_cr_owner_executor_snapshot() {
+    local owner=$1 boot=$2 ei=$3 et=$4 skip_live=$5
+    jq -r --arg boot "$boot" --arg ei "$ei" --arg et "$et" --arg skip "$skip_live" \
+          --arg b "${PIM_CAMERA_OWNER_BOOT_ID:-}" --arg iv "${PIM_CAMERA_OWNER_INVOCATION:-}" \
+          --arg p "${PIM_CAMERA_OWNER_PID:-}" --arg ps "${PIM_CAMERA_OWNER_PROC_START_TIME:-}" \
+          --arg tk "${PIM_CAMERA_OWNER_TOKEN:-}" --arg ca "${PIM_CAMERA_OWNER_CREATED_AT:-}" \
+      "if ($_CR_OWNER_SCHEMA_FILTER)
+          and ($_CR_OWNER_EXPORTED_EQ_FILTER)
+          and (\$skip == \"1\" or ((.boot_id == \$boot)
+               and (\$ei == \"\" or .invocation_id == \$ei)
+               and (\$et == \"\" or .token == \$et)))
+       then [(.pid|tostring), .proc_start_time, .lifecycle] | join(\"\\n\") else empty end" <<<"$owner"
 }
 _cr_owner_matches_exported_context() {
-    local owner=$1 key expected actual
-    _cr_owner_schema <<<"$owner" || return 69
-    for key in boot_id invocation_id pid proc_start_time token created_at; do
-        expected=$(jq -r --arg key "$key" '.[$key]' <<<"$owner") || return 69
-        case "$key" in
-            boot_id) actual=${PIM_CAMERA_OWNER_BOOT_ID:-} ;;
-            invocation_id) actual=${PIM_CAMERA_OWNER_INVOCATION:-} ;;
-            pid) actual=${PIM_CAMERA_OWNER_PID:-} ;;
-            proc_start_time) actual=${PIM_CAMERA_OWNER_PROC_START_TIME:-} ;;
-            token) actual=${PIM_CAMERA_OWNER_TOKEN:-} ;;
-            created_at) actual=${PIM_CAMERA_OWNER_CREATED_AT:-} ;;
-        esac
-        [ -n "$actual" ] && [ "$expected" = "$actual" ] || return 69
-    done
+    local verdict
+    verdict=$(jq -r --arg b "${PIM_CAMERA_OWNER_BOOT_ID:-}" --arg iv "${PIM_CAMERA_OWNER_INVOCATION:-}" \
+          --arg p "${PIM_CAMERA_OWNER_PID:-}" --arg ps "${PIM_CAMERA_OWNER_PROC_START_TIME:-}" \
+          --arg tk "${PIM_CAMERA_OWNER_TOKEN:-}" --arg ca "${PIM_CAMERA_OWNER_CREATED_AT:-}" \
+        "((($_CR_OWNER_SCHEMA_FILTER) and ($_CR_OWNER_EXPORTED_MATCH_FILTER)) | tostring)" <<<"$1") || return 69
+    [ "$verdict" = true ] || return 69
 }
 cam_owner_assert() { local owner; owner=$(_cr_owner_json); _cr_owner_snapshot_live "$owner" "${1:-}" "${2:-}"; }
 _cr_owner_lifecycle_in() { local owner; owner=$(_cr_owner_json); _cr_owner_snapshot_live "$owner" || return 69; _cr_owner_snapshot_lifecycle_in "$owner" "$@"; }
@@ -518,28 +544,33 @@ _cr_owner_create_locked() {
     record=$(jq -cn --arg boot "$boot" --arg invocation "$invocation" --arg start "$start" --arg token "$token" --argjson pid "$pid" --argjson now "$now" '{boot_id:$boot,invocation_id:$invocation,pid:$pid,proc_start_time:$start,token:$token,created_at:$now,lifecycle:"STARTING"}') || return 70
     _cr_atomic_write "$(_cr_owner_file)" "$record" || return 70
 }
+# 스키마 검증과 6필드 추출을 한 번의 jq 로 합친다 (기존 jq 7회).
+_cr_owner_export_fields() {
+    local owner=$1 fields
+    fields=$(jq -r "if ($_CR_OWNER_SCHEMA_FILTER) then [.boot_id,.invocation_id,(.pid|tostring),.proc_start_time,.token,(.created_at|tostring)] | join(\"\\n\") else empty end" <<<"$owner") || return 70
+    [ -n "$fields" ] || return 70
+    { IFS= read -r PIM_CAMERA_OWNER_BOOT_ID; IFS= read -r PIM_CAMERA_OWNER_INVOCATION
+      IFS= read -r PIM_CAMERA_OWNER_PID; IFS= read -r PIM_CAMERA_OWNER_PROC_START_TIME
+      IFS= read -r PIM_CAMERA_OWNER_TOKEN; IFS= read -r PIM_CAMERA_OWNER_CREATED_AT; } <<<"$fields"
+    export PIM_CAMERA_OWNER_BOOT_ID PIM_CAMERA_OWNER_INVOCATION PIM_CAMERA_OWNER_PID
+    export PIM_CAMERA_OWNER_PROC_START_TIME PIM_CAMERA_OWNER_TOKEN PIM_CAMERA_OWNER_CREATED_AT
+}
 cam_owner_create() {
     local owner
     _cr_lock_call _cr_owner_create_locked "$@" || return $?
     owner=$(_cr_owner_json) || return 70
-    _cr_owner_schema <<<"$owner" || return 70
-    PIM_CAMERA_OWNER_BOOT_ID=$(jq -r .boot_id <<<"$owner")
-    PIM_CAMERA_OWNER_INVOCATION=$(jq -r .invocation_id <<<"$owner")
-    PIM_CAMERA_OWNER_PID=$(jq -r .pid <<<"$owner")
-    PIM_CAMERA_OWNER_PROC_START_TIME=$(jq -r .proc_start_time <<<"$owner")
-    PIM_CAMERA_OWNER_TOKEN=$(jq -r .token <<<"$owner")
-    PIM_CAMERA_OWNER_CREATED_AT=$(jq -r .created_at <<<"$owner")
-    export PIM_CAMERA_OWNER_BOOT_ID PIM_CAMERA_OWNER_INVOCATION PIM_CAMERA_OWNER_PID
-    export PIM_CAMERA_OWNER_PROC_START_TIME PIM_CAMERA_OWNER_TOKEN PIM_CAMERA_OWNER_CREATED_AT
+    _cr_owner_export_fields "$owner"
 }
 _cr_lifecycle_allowed() {
     case "$1:$2" in STARTING:ACTIVE|STARTING:DEGRADED|STARTING:STOPPING|ACTIVE:APPLYING_CONFIG|ACTIVE:RECOVERING|ACTIVE:DEGRADED|ACTIVE:STOPPING|APPLYING_CONFIG:ACTIVE|APPLYING_CONFIG:DEGRADED|APPLYING_CONFIG:STOPPING|RECOVERING:ACTIVE|RECOVERING:DEGRADED|RECOVERING:STOPPING|DEGRADED:APPLYING_CONFIG|DEGRADED:RECOVERING|DEGRADED:STOPPING) return 0;; esac; return 1
 }
 _cr_owner_set_lifecycle_locked() {
-    local next=$1 owner current updated
-    owner=$(_cr_owner_json); _cr_owner_snapshot_live "$owner" || return 69; current=$(jq -r .lifecycle <<<"$owner")
+    local next=$1 owner current updated pair
+    owner=$(_cr_owner_json); _cr_owner_snapshot_live "$owner" || return 69
+    # 현재 lifecycle 조회와 갱신본 생성을 한 번의 jq 로. 갱신본은 검사 통과 후에만 쓴다.
+    pair=$(jq -r --arg next "$next" '.lifecycle, ((.lifecycle=$next | .updated_at=(now|floor)) | tojson)' <<<"$owner") || return 70
+    { IFS= read -r current; IFS= read -r updated; } <<<"$pair"
     _cr_lifecycle_allowed "$current" "$next" || return 64
-    updated=$(jq -c --arg next "$next" '.lifecycle=$next | .updated_at=(now|floor)' <<<"$owner") || return 70
     _cr_owner_snapshot_live "$owner" || return 69; _cr_atomic_write "$(_cr_owner_file)" "$updated" || return 70
 }
 cam_owner_set_lifecycle() { _cr_lock_call _cr_owner_set_lifecycle_locked "$@"; }
@@ -1009,17 +1040,37 @@ _cr_embedded_owner_valid() {
     owner=$(jq -c .request.owner "$file" 2>/dev/null) || return 1; current=$(_cr_owner_json) || return 1
     _cr_owner_immutable_equal "$owner" "$current" && _cr_owner_snapshot_live "$current"
 }
+# history 는 복구가 일어날 때마다 쌓이고 /var/lib 라 재부팅에도 남는다. 파일마다 jq 를
+# 띄우면 부팅 시간이 파일 개수에 비례해 늘어난다 (보드 실측: 69개 = jq 69회 = 28초).
+# 대부분은 이미 SUCCEEDED/FAILED 로 건너뛸 대상이므로, 한 번의 jq 로 처리 대상만 추린다.
+# jq 가 실패하면(파싱 불가 파일 등) 전체를 대상으로 삼아 기존 순회로 폴백한다.
+# 뽑는 대상이 '처리할 파일' 이 아니라 '종료 상태로 확인된 파일' 인 점이 중요하다.
+# jq 는 값이 하나도 없는 입력(0바이트·공백만)에는 필터를 적용하지 않아 아무것도
+# 내보내지 않는데, 그런 파일은 여기서 빠져 결국 처리 대상으로 남는다.
+_cr_reconcile_terminal_files() {
+    local dir=$1
+    jq -r 'select(((.request.status // "") | . == "SUCCEEDED" or . == "FAILED")) | input_filename' "$dir"/*.json 2>/dev/null
+}
 _cr_reconcile_interrupted_locked() {
-    local file history updated changed=0
-    mkdir -p "$PIM_CAMERA_STATE_DIR/recovery/history" || return 70; shopt -s nullglob
-    for file in "$PIM_CAMERA_STATE_DIR"/recovery/history/*.json; do
+    local file history updated changed=0 dir="$PIM_CAMERA_STATE_DIR/recovery/history" files=() pending=() listed
+    local -A terminal=()
+    mkdir -p "$dir" || return 70
+    shopt -s nullglob; files=("$dir"/*.json); shopt -u nullglob
+    [ "${#files[@]}" -gt 0 ] || return 0
+    if listed=$(_cr_reconcile_terminal_files "$dir"); then
+        while IFS= read -r file; do [ -n "$file" ] && terminal["$file"]=1; done <<<"$listed"
+        for file in "${files[@]}"; do [ -n "${terminal["$file"]:-}" ] || pending+=("$file"); done
+    else
+        pending=("${files[@]}")
+    fi
+    for file in "${pending[@]}"; do
         history=$(cat "$file") || return 70
         case "$(jq -r '.request.status // empty' <<<"$history")" in SUCCEEDED|FAILED) continue;; esac
         _cr_embedded_owner_valid "$file" && continue
         updated=$(jq -c --argjson now "$(_cr_now)" '.request.status="FAILED" | .request.rc=70 | .request.interrupted=true | .request.finished_at=$now | .request.interrupted_reason="interrupted"' <<<"$history") || return 70
         _cr_atomic_write "$file" "$updated" || return 70; changed=1
     done
-    shopt -u nullglob; [ "$changed" -eq 0 ] || _cr_mark_dirty || return 70
+    [ "$changed" -eq 0 ] || _cr_mark_dirty || return 70
 }
 cam_reconcile_interrupted() { _cr_lock_call _cr_reconcile_interrupted_locked; }
 cam_recovery_status_json() {

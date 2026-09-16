@@ -13,6 +13,7 @@ on:
     branches: [master]
     paths:
       - 'dist/pim/opt/pim/bin/**'
+      - 'dist/pim/opt/pim/lib/**'
       - 'dist/pim/opt/pim/config/**'
       - 'dist/pim/opt/cis/bin/update_network.py'
       - 'dist/pim/etc/systemd/system/**'
@@ -27,6 +28,7 @@ on:
     branches: [master]
     paths:
       - 'dist/pim/opt/pim/bin/**'
+      - 'dist/pim/opt/pim/lib/**'
       - 'dist/pim/opt/pim/config/**'
       - 'dist/pim/opt/cis/bin/update_network.py'
       - 'dist/pim/etc/systemd/system/**'
