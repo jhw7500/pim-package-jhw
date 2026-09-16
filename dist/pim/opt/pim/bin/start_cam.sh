@@ -15,7 +15,11 @@ fi
 [ $# -le 1 ] || { echo 'usage: start_cam.sh [delay]' >&2; exit 64; }
 cam_executor_assert_context || exit $?
 cam_validate_runtime "$PIM_CAMERA_RUNTIME_JSON" || exit 64
-app=$(cam_runtime_app "$PIM_CAMERA_RUNTIME_JSON") || exit 64
+# 호출자가 이미 같은 문서에서 읽어 넘겨준 값이 있으면 jq 를 다시 띄우지 않는다.
+# 외부에서 직접 실행하는 경로에서는 비어 있으므로 그때만 조회한다.
+app=${PIM_CAMERA_APP:-}
+[ -n "$app" ] || app=$(cam_runtime_app "$PIM_CAMERA_RUNTIME_JSON") || exit 64
+case "$app" in gstApp|PIMCAM) ;; *) exit 64;; esac
 delay=${1:-$(jq -r '.VHL_CAM.app_delay // 4' "$PIM_CAMERA_RUNTIME_JSON")}
 [[ $delay =~ ^[0-9]+$ ]] || exit 64
 

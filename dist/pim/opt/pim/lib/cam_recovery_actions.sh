@@ -94,6 +94,18 @@ cam_effect() {
     "$@"
 }
 
+# app 이름과 app_delay 는 같은 문서의 이웃 필드인데 지금까지 각각 jq 를 띄웠다
+# (cam_start_gstapp 이 delay, start_cam.sh 가 app). 한 번에 읽어 탭으로 돌려준다.
+cam_runtime_app_delay() {
+    local runtime=$1 app capture delay fields
+    fields=$(jq -r '[(.VHL_CAM.app // "gstApp"), ((.VHL_CAM.capture.enable // false)|tostring), (.VHL_CAM.app_delay // 4)] | @tsv' "$runtime") || return 64
+    IFS=$'\t' read -r app capture delay <<<"$fields"
+    [ "$capture" = true ] && app=gstApp
+    [ "$app" = streamApp ] && app=PIMCAM
+    case "$app" in gstApp|PIMCAM) ;; *) return 64;; esac
+    [[ $delay =~ ^[0-9]+$ ]] || return 64
+    printf '%s\t%s\n' "$app" "$delay"
+}
 cam_runtime_app() {
     local runtime=$1 app capture fields
     fields=$(jq -r '[(.VHL_CAM.app // "gstApp"), ((.VHL_CAM.capture.enable // false)|tostring)] | @tsv' "$runtime") || return 64
@@ -320,9 +332,10 @@ cam_initial_module_load() {
 }
 
 cam_start_gstapp() {
-    local runtime=$1 delay bg
+    local runtime=$1 delay bg app info
     _cr_timing gstapp_enter
-    delay=$(jq -r '.VHL_CAM.app_delay // 4' "$runtime") || return 64
+    info=$(cam_runtime_app_delay "$runtime") || return 64
+    IFS=$'\t' read -r app delay <<<"$info"
     bg=$(cam_bg_checker_path) || return $?
     cam_side_effect_guard "$runtime" || return $?
     PIM_CAMERA_EXECUTOR=1 \
@@ -334,6 +347,7 @@ cam_start_gstapp() {
     PIM_CAMERA_OWNER_TOKEN="$PIM_CAMERA_OWNER_TOKEN" \
     PIM_CAMERA_OWNER_CREATED_AT="$PIM_CAMERA_OWNER_CREATED_AT" \
     PIM_CAMERA_BG_CHECKER="$bg" \
+    PIM_CAMERA_APP="$app" \
     "$PIM_CAMERA_START_CAM" "$delay"
 }
 
