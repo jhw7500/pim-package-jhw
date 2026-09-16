@@ -222,9 +222,11 @@ _coc_begin_startup_action() {
 cam_daemon_startup() {
     local pid=${1:-$$} previous='' candidate action projection rc countered=false
     _cr_timing startup_begin
+    # cam_owner_create 가 owner.json 을 쓴 직후 _cr_owner_export_fields 로 6개 변수를
+    # 이미 export 한다. 바로 뒤에서 _coc_export_owner_context 를 또 부르면 같은 파일을
+    # 다시 읽어 같은 값을 넣을 뿐이다 (보드 실측 0.26초). 함수는 다른 호출자를 위해 남긴다.
     cam_owner_create "$pid" || return $?
     _cr_timing owner_created
-    _coc_export_owner_context || return $?
     _cr_timing owner_exported
     cam_reconcile_interrupted || return $?
     _cr_timing reconciled
