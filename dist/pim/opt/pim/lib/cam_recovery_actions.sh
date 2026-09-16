@@ -53,14 +53,31 @@ cam_validate_runtime() {
     return 0
 }
 
+# owner.json 은 lifecycle 이 바뀔 때만 갱신된다. 이 검증은 모든 부작용 명령 앞에서
+# 불리는데(부팅 1회에 14번 관측), 매번 jq 를 띄우면 그것만 4초다. 파일 정체와 비교
+# 입력이 그대로면 앞선 jq 결과를 재사용한다. 파일이 조금이라도 바뀌면 stat 이 달라져
+# 반드시 다시 검증하므로 lifecycle 전이를 놓치지 않는다.
+# 프로세스 생존(_cr_proc_start)은 캐시하지 않고 매번 확인한다 — "쓰기 직전에 owner 가
+# 아직 살아있는가" 가 이 검증의 핵심이기 때문이다. 캐시는 프로세스 로컬이다.
+_CR_EXECUTOR_CACHE_KEY=""
+_CR_EXECUTOR_CACHE_VAL=""
 cam_executor_assert_context() {
-    local owner active boot fields pid start lifecycle actual skip_live=0
-    owner=$(_cr_owner_json) || return 69
+    local owner active boot fields pid start lifecycle actual skip_live=0 key stamp
     [ "${PIM_CAMERA_STOP_EXECUTOR:-}" != 1 ] || skip_live=1
     boot=$(cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null) || return 69
-    fields=$(_cr_owner_executor_snapshot "$owner" "$boot" "${PIM_CAMERA_OWNER_INVOCATION:-}" \
-        "${PIM_CAMERA_OWNER_TOKEN:-}" "$skip_live") || return 69
-    [ -n "$fields" ] || return 69
+    stamp=$(stat -c '%d:%i:%s:%y' "$(_cr_owner_file)" 2>/dev/null) || stamp=""
+    key=""
+    [ -z "$stamp" ] || key="$stamp|$boot|${PIM_CAMERA_OWNER_INVOCATION:-}|${PIM_CAMERA_OWNER_TOKEN:-}|$skip_live"
+    if [ -n "$key" ] && [ "$key" = "$_CR_EXECUTOR_CACHE_KEY" ] && [ -n "$_CR_EXECUTOR_CACHE_VAL" ]; then
+        fields=$_CR_EXECUTOR_CACHE_VAL
+    else
+        owner=$(_cr_owner_json) || return 69
+        fields=$(_cr_owner_executor_snapshot "$owner" "$boot" "${PIM_CAMERA_OWNER_INVOCATION:-}" \
+            "${PIM_CAMERA_OWNER_TOKEN:-}" "$skip_live") || return 69
+        [ -n "$fields" ] || return 69
+        _CR_EXECUTOR_CACHE_KEY=$key
+        _CR_EXECUTOR_CACHE_VAL=$fields
+    fi
     IFS=$'\t' read -r pid start lifecycle <<<"$fields"
     if [ "$skip_live" -eq 0 ]; then
         actual=$(_cr_proc_start "$pid")
