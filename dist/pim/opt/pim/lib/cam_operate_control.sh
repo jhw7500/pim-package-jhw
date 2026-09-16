@@ -22,7 +22,16 @@ _coc_plan_file() { printf '%s/plan.json' "$PIM_CAMERA_CONTROL_WORK_DIR"; }
 _coc_projection_file() { printf '%s/projection.json' "$PIM_CAMERA_CONTROL_WORK_DIR"; }
 
 _coc_boot_id() { cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null; }
-_coc_invocation_id() { jq -r .invocation_id "$(_cr_owner_file)" 2>/dev/null; }
+# 이 값은 owner.json 에서 읽어 export 된 것과 같다 (cam_owner_create /
+# _coc_export_owner_context / cam_executor_set_context 가 함께 설정한다).
+# env 가 있으면 jq 를 다시 띄우지 않는다. 비어 있는 경로에서는 종전대로 조회한다.
+_coc_invocation_id() {
+    if [ -n "${PIM_CAMERA_OWNER_INVOCATION:-}" ]; then
+        printf '%s\n' "$PIM_CAMERA_OWNER_INVOCATION"
+        return 0
+    fi
+    jq -r .invocation_id "$(_cr_owner_file)" 2>/dev/null
+}
 _coc_runtime_dir() { dirname "$PIM_CAMERA_RUNTIME_JSON"; }
 
 _coc_state_schema() {
