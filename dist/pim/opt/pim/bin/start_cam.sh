@@ -17,6 +17,17 @@ cam_executor_assert_context || exit $?
 cam_validate_runtime "$PIM_CAMERA_RUNTIME_JSON" || exit 64
 # 호출자가 이미 같은 문서에서 읽어 넘겨준 값이 있으면 jq 를 다시 띄우지 않는다.
 # 외부에서 직접 실행하는 경로에서는 비어 있으므로 그때만 조회한다.
+#
+# 이 우선순위는 앱 이름의 출처를 '검증된 런타임 문서' 에서 '호출자가 넘긴 env' 로
+# 넓힌다. 트리뷰널 A-R1-011 / B-R1-006 이 지적한 축이며, 다음 두 경계 안에서
+# 의도적으로 받아들인 것이다:
+#   1. 아래 allowlist 가 값을 {gstApp, PIMCAM} 두 정규 바이너리로 한정한다 —
+#      임의 실행은 불가능하고 범위 밖 값은 rc 64 로 닫힌다.
+#   2. 여기까지 오려면 PIM_CAMERA_EXECUTOR=1 과 위의 cam_executor_assert_context
+#      통과가 필요하다. 즉 이미 owner 컨텍스트를 쥔 호출자만 선택할 수 있다.
+# 교차검증(cam_runtime_app 재호출)은 캐시가 없는 새 프로세스라 보드에서 jq 한 번
+# (실측 약 0.4초)을 그대로 되살리므로 넣지 않는다. 유일한 in-tree 설정자
+# (cam_recovery_actions.sh 의 cam_start_gstapp)는 같은 런타임 문서에서 읽는다.
 app=${PIM_CAMERA_APP:-}
 [ -n "$app" ] || app=$(cam_runtime_app "$PIM_CAMERA_RUNTIME_JSON") || exit 64
 case "$app" in gstApp|PIMCAM) ;; *) exit 64;; esac

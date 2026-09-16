@@ -10,7 +10,7 @@
       "arch": "aarch64",
       "source": {
         "repo": "jhw7500/gstApp",
-        "commit": "41b02dd",
+        "commit": "41b02dd801b86a9a8a87fde60e0d1c39ce4a8d43",
         "build": "./make-for-imx8 (Yocto SDK 5.10-hardknott, cortexa53-crypto-poky-linux)"
       },
       "required_strings": [
@@ -35,10 +35,10 @@
       "module_version": "2.12",
       "source": {
         "repo": "jhw7500/max9296",
-        "commit": "c25f7a6",
+        "commit": "c25f7a682b18521db55a784e9e7caed8a75b21a8",
         "build": "./make-for-imx8 clean && ./make-for-imx8 -j4 (Yocto SDK 5.10-hardknott, cortexa53-crypto-poky-linux)"
       },
-      "note": "MAX9296 2.12 clean build다. 1920x1080/3840x1080은 최대 30 FPS, 1280x720/2560x720은 최대 60 FPS, 640x360은 기본 빌드에서 1~120 FPS 요청을 허용한다. mode-valid 31 FPS 이상의 EXP_TIME(0x500c) 수동 쓰기는 frame-period 정보를 경고한 뒤 적용하며, 모드 상한 초과는 -EINVAL로 거부한다. 패키지 기본 edgeconf는 640x360@30을 유지한다. 640x360 KEEP은 AP1302/CSI 출력 context만 바꾸며, 과거 실측 113~115 FPS이므로 정확한 120 FPS 전달을 보장하지 않는다. crop_enable, 공통 1.00x~3.00x dz, 채널별 중심 cache/replay, 듀얼 HINF pair-health 판정, 노출 seed broadcast/replay 보존을 포함한다. module srcversion은 808F5815887C01F7C651DDE이고 source commit은 621f6605e1ec16251a1d086e8f3fc4e4ce36f212이다.",
+      "note": "MAX9296 2.12 clean build다. 1920x1080/3840x1080은 최대 30 FPS, 1280x720/2560x720은 최대 60 FPS, 640x360은 기본 빌드에서 1~120 FPS 요청을 허용한다. mode-valid 31 FPS 이상의 EXP_TIME(0x500c) 수동 쓰기는 frame-period 정보를 경고한 뒤 적용하며, 모드 상한 초과는 -EINVAL로 거부한다. 패키지 기본 edgeconf는 640x360@30을 유지한다. 640x360 KEEP은 AP1302/CSI 출력 context만 바꾸며, 과거 실측 113~115 FPS이므로 정확한 120 FPS 전달을 보장하지 않는다. crop_enable, 공통 1.00x~3.00x dz, 채널별 중심 cache/replay, 듀얼 HINF pair-health 판정, 노출 seed broadcast/replay 보존을 포함한다. module srcversion은 38670DF208FF25E7BC1C29F이고 source commit은 c25f7a682b18521db55a784e9e7caed8a75b21a8이다.",
       "required_strings": [
         "dev_attr_prepare",
         "max9296_prepare_adopt_power_locked",
