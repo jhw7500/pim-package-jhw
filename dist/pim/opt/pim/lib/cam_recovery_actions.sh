@@ -59,6 +59,9 @@ cam_validate_runtime() {
 # 반드시 다시 검증하므로 lifecycle 전이를 놓치지 않는다.
 # 프로세스 생존(_cr_proc_start)은 캐시하지 않고 매번 확인한다 — "쓰기 직전에 owner 가
 # 아직 살아있는가" 가 이 검증의 핵심이기 때문이다. 캐시는 프로세스 로컬이다.
+# 키에는 캐시된 술어가 비교하는 입력을 빠짐없이 담는다: 파일 정체와 부팅 ID 뿐
+# 아니라 export 된 owner 6필드 전부. 하나라도 빠지면 그 필드가 바뀌었을 때 warm
+# cache 가 이전 판정을 돌려줘 비교가 건너뛰어진다.
 _CR_EXECUTOR_CACHE_KEY=""
 _CR_EXECUTOR_CACHE_VAL=""
 cam_executor_assert_context() {
@@ -67,7 +70,7 @@ cam_executor_assert_context() {
     boot=$(cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null) || return 69
     stamp=$(stat -c '%d:%i:%s:%y' "$(_cr_owner_file)" 2>/dev/null) || stamp=""
     key=""
-    [ -z "$stamp" ] || key="$stamp|$boot|${PIM_CAMERA_OWNER_INVOCATION:-}|${PIM_CAMERA_OWNER_TOKEN:-}|$skip_live"
+    [ -z "$stamp" ] || key="$stamp|$boot|$skip_live|${PIM_CAMERA_OWNER_BOOT_ID:-}|${PIM_CAMERA_OWNER_INVOCATION:-}|${PIM_CAMERA_OWNER_PID:-}|${PIM_CAMERA_OWNER_PROC_START_TIME:-}|${PIM_CAMERA_OWNER_TOKEN:-}|${PIM_CAMERA_OWNER_CREATED_AT:-}"
     if [ -n "$key" ] && [ "$key" = "$_CR_EXECUTOR_CACHE_KEY" ] && [ -n "$_CR_EXECUTOR_CACHE_VAL" ]; then
         fields=$_CR_EXECUTOR_CACHE_VAL
     else
@@ -78,7 +81,7 @@ cam_executor_assert_context() {
         _CR_EXECUTOR_CACHE_KEY=$key
         _CR_EXECUTOR_CACHE_VAL=$fields
     fi
-    IFS=$'\t' read -r pid start lifecycle <<<"$fields"
+    { IFS= read -r pid; IFS= read -r start; IFS= read -r lifecycle; } <<<"$fields"
     if [ "$skip_live" -eq 0 ]; then
         actual=$(_cr_proc_start "$pid")
         [ -n "$actual" ] && [ "$actual" = "$start" ] || return 69
@@ -113,37 +116,42 @@ cam_effect() {
 
 # app 이름과 app_delay 는 같은 문서의 이웃 필드인데 지금까지 각각 jq 를 띄웠다
 # (cam_start_gstapp 이 delay, start_cam.sh 가 app). 한 번에 읽어 탭으로 돌려준다.
+#
+# 판정(capture 오버라이드 → streamApp 별칭 → allowlist, delay 의 숫자 검사)은 전부
+# jq 안에서 끝낸다. 셸로 나오는 값이 gstApp / PIMCAM / 빈 문자열, 그리고 숫자열 /
+# 빈 문자열로 한정되므로 프레이밍이 값의 내용에 흔들리지 않는다. 이 제약이 필요한
+# 이유는 .VHL_CAM.app 에 런타임 검증기(camera_runtime_config.py)가 아무 제약도
+# 걸지 않아 개행·탭이 든 값이 설정으로 들어올 수 있기 때문이다 — 셸에서 필드를
+# 재조립하면 그런 값이 잘려 allowlist 를 통과한다.
 cam_runtime_app_delay() {
-    local runtime=$1 app capture delay fields
-    fields=$(jq -r '[(.VHL_CAM.app // "gstApp"), ((.VHL_CAM.capture.enable // false)|tostring), (.VHL_CAM.app_delay // 4)] | @tsv' "$runtime") || return 64
-    IFS=$'\t' read -r app capture delay <<<"$fields"
-    [ "$capture" = true ] && app=gstApp
-    [ "$app" = streamApp ] && app=PIMCAM
-    case "$app" in gstApp|PIMCAM) ;; *) return 64;; esac
+    local runtime=$1 app delay fields
+    fields=$(jq -r '
+        (.VHL_CAM.app // "gstApp") as $a
+        | ((.VHL_CAM.capture.enable // false) | tostring) as $c
+        | (if $c == "true" then "gstApp" elif $a == "streamApp" then "PIMCAM" else $a end) as $app
+        | ((.VHL_CAM.app_delay // 4) | tostring) as $d
+        | [ (if $app == "gstApp" or $app == "PIMCAM" then $app else "" end),
+            (if ($d | test("^[0-9]+$")) then $d else "" end) ] | join("\n")' "$runtime") || return 64
+    { IFS= read -r app; IFS= read -r delay; } <<<"$fields"
+    [ -n "$app" ] || return 64
     [[ $delay =~ ^[0-9]+$ ]] || return 64
     printf '%s\t%s\n' "$app" "$delay"
 }
-# cam_process_present 의 app 분기가 이 함수를 매번 부르고, _coc_verify_all 의
-# 폴링이 그 경로를 반복한다 (부팅 1회에 3번 관측). 런타임 문서가 그대로면 앱
-# 이름도 그대로이므로 cam_validate_runtime 과 같은 방식으로 파일 정체를 키로
-# 메모이즈한다. 문서가 바뀌면 stat 이 달라져 다시 계산한다. 캐시는 프로세스 로컬.
-_CAM_RUNTIME_APP_KEY=""
-_CAM_RUNTIME_APP_VAL=""
+# 앱 선택 규칙을 전부 jq 안에서 끝낸다 (근거는 cam_runtime_app_delay 주석 참고).
+#
+# 파일 정체 메모이즈는 두지 않는다. 호출부가 전부 app=$(cam_runtime_app …) 형태라
+# 캐시를 담는 전역이 서브셸과 함께 사라져 재사용이 성립하지 않는다 — cam_validate_runtime
+# 이나 cam_executor_assert_context 처럼 명령 자체로 불리는 경우에만 캐시가 산다.
+# 이 함수에서 실제로 아낀 것은 jq 2회를 1회로 줄인 것이다.
 cam_runtime_app() {
-    local runtime=$1 app capture fields key
-    key=$(stat -c '%d:%i:%s:%y' "$runtime" 2>/dev/null) || key=""
-    if [ -n "$key" ] && [ "$key" = "$_CAM_RUNTIME_APP_KEY" ] && [ -n "$_CAM_RUNTIME_APP_VAL" ]; then
-        printf '%s\n' "$_CAM_RUNTIME_APP_VAL"
-        return 0
-    fi
-    fields=$(jq -r '[(.VHL_CAM.app // "gstApp"), ((.VHL_CAM.capture.enable // false)|tostring)] | @tsv' "$runtime") || return 64
-    IFS=$'\t' read -r app capture <<<"$fields"
-    [ "$capture" = true ] && app=gstApp
-    [ "$app" = streamApp ] && app=PIMCAM
-    case "$app" in
-        gstApp|PIMCAM) _CAM_RUNTIME_APP_KEY=$key; _CAM_RUNTIME_APP_VAL=$app; printf '%s\n' "$app";;
-        *) return 64;;
-    esac
+    local runtime=$1 app
+    app=$(jq -r '
+        (.VHL_CAM.app // "gstApp") as $a
+        | ((.VHL_CAM.capture.enable // false) | tostring) as $c
+        | (if $c == "true" then "gstApp" elif $a == "streamApp" then "PIMCAM" else $a end) as $app
+        | if $app == "gstApp" or $app == "PIMCAM" then $app else "" end' "$runtime") || return 64
+    [ -n "$app" ] || return 64
+    printf '%s\n' "$app"
 }
 
 cam_cleanup_recording_orphans() {
@@ -502,28 +510,28 @@ cam_action_camera_hard_reset() {
     cap="$root/bus/platform/drivers/isi-capture"; m2m="$root/bus/platform/drivers/isi-m2m"
     cam_consumers_prequiesced || cam_quiesce_consumers "$runtime" || { _cra_fail quiesce_consumers $?; return $?; }
     cam_unload_module "$runtime" imx8-media-dev || { _cra_fail unload_imx8_media_dev $?; return $?; }
-    sleep 1
+    sleep 1 || return $?
     cam_unload_module "$runtime" max9296 || { _cra_fail unload_max9296 $?; return $?; }
-    sleep 1
+    sleep 1 || return $?
     for d in 32e00000.isi:cap_device 32e02000.isi:cap_device; do cam_sysfs_write "$runtime" unbind "$cap/unbind" "$d" || { _cra_fail "unbind_cap:$d" $?; return $?; }; done
-    sleep 1
+    sleep 1 || return $?
     for d in 32e00000.isi:m2m_device; do cam_sysfs_write "$runtime" unbind "$m2m/unbind" "$d" || { _cra_fail "unbind_m2m:$d" $?; return $?; }; done
-    sleep 1
+    sleep 1 || return $?
     for d in 32e00000.isi 32e02000.isi; do cam_sysfs_write "$runtime" unbind "$isi/unbind" "$d" || { _cra_fail "unbind_isi:$d" $?; return $?; }; done
-    sleep 1
+    sleep 1 || return $?
     for d in 32e40000.csi 32e50000.csi; do cam_sysfs_write "$runtime" unbind "$csi/unbind" "$d" || { _cra_fail "unbind_csi:$d" $?; return $?; }; done
-    sleep 2
+    sleep 2 || return $?
     for d in 32e40000.csi 32e50000.csi; do cam_sysfs_write "$runtime" bind "$csi/bind" "$d" || { _cra_fail "bind_csi:$d" $?; return $?; }; done
-    sleep 1
+    sleep 1 || return $?
     for d in 32e00000.isi 32e02000.isi; do cam_sysfs_write "$runtime" bind "$isi/bind" "$d" || { _cra_fail "bind_isi:$d" $?; return $?; }; done
-    sleep 2
+    sleep 2 || return $?
     for d in 32e00000.isi:cap_device 32e02000.isi:cap_device; do [ -e "$cap/$d" ] || cam_sysfs_write "$runtime" bind "$cap/bind" "$d" || { _cra_fail "bind_cap:$d" $?; return $?; }; done
     for d in 32e00000.isi:m2m_device; do [ -e "$m2m/$d" ] || cam_sysfs_write "$runtime" bind "$m2m/bind" "$d" || { _cra_fail "bind_m2m:$d" $?; return $?; }; done
-    sleep 1
+    sleep 1 || return $?
     cam_effect "$runtime" modprobe max9296 || { _cra_fail modprobe_max9296 $?; return $?; }
-    sleep 3
+    sleep 3 || return $?
     cam_effect "$runtime" modprobe imx8-media-dev || { _cra_fail modprobe_imx8_media_dev $?; return $?; }
-    sleep 5
+    sleep 5 || return $?
     cam_verify_camera_ready "$runtime" || { _cra_fail verify_camera_ready $?; return $?; }
     cam_start_gstapp "$runtime" || { _cra_fail start_gstapp $?; return $?; }
     cam_restart_vcm "$runtime" || { rc=$?; _cra_consumer_detail "" /usr/local/bin/vcm; _cra_fail restart_vcm "$rc"; return $?; }

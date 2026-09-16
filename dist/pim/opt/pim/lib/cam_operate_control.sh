@@ -22,14 +22,12 @@ _coc_plan_file() { printf '%s/plan.json' "$PIM_CAMERA_CONTROL_WORK_DIR"; }
 _coc_projection_file() { printf '%s/projection.json' "$PIM_CAMERA_CONTROL_WORK_DIR"; }
 
 _coc_boot_id() { cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null; }
-# 이 값은 owner.json 에서 읽어 export 된 것과 같다 (cam_owner_create /
-# _coc_export_owner_context / cam_executor_set_context 가 함께 설정한다).
-# env 가 있으면 jq 를 다시 띄우지 않는다. 비어 있는 경로에서는 종전대로 조회한다.
+# 출처는 항상 owner.json 이다. env(PIM_CAMERA_OWNER_INVOCATION)로 대체하지
+# 않는다 — env 는 자식에게 상속되므로 owner.json 이 사라지거나 세대가 바뀐 뒤에도
+# 낡은 값이 남고, 그러면 owner 없이 상태를 쓰지 않아야 할 호출부가 성공한다.
+# 파일 정체 메모이즈도 두지 않는다. 호출부가 전부 invocation=$(_coc_invocation_id)
+# 형태라 캐시를 담는 전역이 서브셸과 함께 사라지고, 남는 것은 stat fork 뿐이다.
 _coc_invocation_id() {
-    if [ -n "${PIM_CAMERA_OWNER_INVOCATION:-}" ]; then
-        printf '%s\n' "$PIM_CAMERA_OWNER_INVOCATION"
-        return 0
-    fi
     jq -r .invocation_id "$(_cr_owner_file)" 2>/dev/null
 }
 _coc_runtime_dir() { dirname "$PIM_CAMERA_RUNTIME_JSON"; }
@@ -64,10 +62,13 @@ _coc_state_current() {
 # 파이프 입력을 그대로 흘리므로, 검증 대상은 여전히 '추출된 canonical' 이다.
 #
 # 조건을 _coc_state_schema 와 공유하지 않고 인라인으로 적는 이유:
-# runtime_consumer_path_test.py 가 이 파일을 런타임 소비자로 보고 jq 피연산자를
-# 정적으로 증명하는데, 필터에 셸 변수를 확장하면 파일 인자로 오인해 거부한다.
-# 두 번 시도해 두 번 거부당했다. 조건을 고칠 때는 _coc_state_schema 와 여기
-# 두 곳을 함께 고쳐야 한다.
+# runtime_consumer_path_test.py 의 proven_helpers() 가 _coc_state_current 의
+# 출처를 증명할 때 _coc_state_schema 를 quiet_validator 로 인정하는데, 그
+# 정규식(:1018)이 그 함수 본문을 jq -e '<단일따옴표 리터럴>' >/dev/null 2>&1
+# 형태로 못박는다. 따라서 변수화가 막히는 곳은 _coc_state_schema 하나뿐이고,
+# jq 필터 안의 셸 변수 확장 일반이 거부되는 것은 아니다 (cam_recovery.sh 는
+# 같은 소비자 목록에 있으면서 6곳에서 확장하고 통과한다).
+# 두 사본이 어긋나지 않는지는 state_schema_parity_test.py 가 기계적으로 본다.
 _coc_write_state() {
     local state=$1 canonical
     canonical=$(jq -c '{schema,last_boot_id,last_successful_hardware_projection,dirty,degraded_reason,degraded_target,last_invocation_id} | select(type == "object" and .schema == 1 and (.last_boot_id | type == "string" and length > 0) and (.last_successful_hardware_projection | type == "object") and (.dirty | type == "boolean") and (.degraded_reason == null or (.degraded_reason | type == "string")) and (.degraded_target == null or (.degraded_target | type == "string")) and (.last_invocation_id | type == "string" and length > 0))' <<<"$state") || return 70
