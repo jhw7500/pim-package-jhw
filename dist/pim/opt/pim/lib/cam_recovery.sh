@@ -106,12 +106,15 @@ _cr_owner_snapshot_lifecycle_in() {
     for allowed in "$@"; do [ "$lifecycle" = "$allowed" ] && return 0; done
     return 69
 }
+# 두 문서의 스키마 검증과 6키 비교를 한 번의 jq 로 끝낸다. 기존에는 schema 2회 +
+# 키마다 2회 = 14회였고, 이 함수는 _cr_record_owner_ready 를 통해 recovery 경로의
+# 모든 가드가 지난다 (camera_hard_reset 은 가드를 25회 부른다).
+_CR_OWNER_IMMUTABLE_EQ_FILTER='($a.boot_id == $b.boot_id) and ($a.invocation_id == $b.invocation_id) and ($a.pid == $b.pid) and ($a.proc_start_time == $b.proc_start_time) and ($a.token == $b.token) and ($a.created_at == $b.created_at)'
 _cr_owner_immutable_equal() {
-    local saved=$1 current=$2 key
-    _cr_owner_schema <<<"$saved" && _cr_owner_schema <<<"$current" || return 1
-    for key in boot_id invocation_id pid proc_start_time token created_at; do
-        [ "$(jq -c ".$key" <<<"$saved")" = "$(jq -c ".$key" <<<"$current")" ] || return 1
-    done
+    local saved=$1 current=$2
+    jq -e -n --argjson a "$saved" --argjson b "$current" \
+      "(\$a | ($_CR_OWNER_SCHEMA_FILTER)) and (\$b | ($_CR_OWNER_SCHEMA_FILTER)) and $_CR_OWNER_IMMUTABLE_EQ_FILTER" \
+      >/dev/null 2>&1
 }
 # schema 없이 6필드만 비교한다. cam_executor_assert_context 는 cam_owner_assert 가
 # 이미 schema 를 본 뒤에 이 비교만 필요로 하므로 분리해 둔다.
