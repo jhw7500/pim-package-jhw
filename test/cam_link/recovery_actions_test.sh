@@ -36,7 +36,14 @@ fake_stat() { mkdir -p "$PIM_CAMERA_PROC_ROOT/$DAEMON_PID"; { printf '%s' "$DAEM
 runtime() {
     mkdir -p "$(dirname "$PIM_CAMERA_RUNTIME_JSON")" "$WORK/recordings"
     jq -s --arg tmp "$WORK/recordings" '
-        .[1] + {VHL_CAM:.[0].VHL_CAM} |
+        .[1] + {
+            VHL_CAM:.[0].VHL_CAM,
+            NETWORK:{ETH1:(.[0].NETWORK.ETH1 | {
+                ping_check_enable,
+                client_ip_addr,
+                ping_max_fail_count
+            })}
+        } |
         .VHL_CAM.tmp_path=$tmp |
         .VHL_CAM.capture.enable=false
     ' "$EDGE_TEMPLATE" "$ORD_TEMPLATE" > "$PIM_CAMERA_RUNTIME_JSON"
@@ -103,7 +110,7 @@ mkdir -p "$PIM_CAMERA_SOURCE_ROOT"
 jq --arg tmp "$WORK/recordings" '
     .VHL_CAM.tmp_path=$tmp |
     .VHL_CAM.capture.enable=false |
-    {VHL_CAM:.VHL_CAM}
+    {VHL_CAM:.VHL_CAM, NETWORK:.NETWORK}
 ' "$EDGE_TEMPLATE" > "$PIM_CAMERA_SOURCE_ROOT/edgeconf_apply.json"
 jq '.ETC.policy="same"' "$ORD_TEMPLATE" > "$PIM_CAMERA_SOURCE_ROOT/ord_vcm_conf.json"
 python3 "$PIM_CAMERA_RUNTIME_HELPER" stage --source-root "$PIM_CAMERA_SOURCE_ROOT" --candidate "$WORK/candidate.json" --result "$WORK/source.json" >/dev/null
@@ -210,7 +217,14 @@ fi
 # markers; BG identity must use full-command matching; child auto-bind is skipped.
 mkdir -p "$WORK/recordings"
 jq -s --arg tmp "$WORK/recordings" '
-    .[1] + {VHL_CAM:.[0].VHL_CAM} |
+    .[1] + {
+        VHL_CAM:.[0].VHL_CAM,
+        NETWORK:{ETH1:(.[0].NETWORK.ETH1 | {
+            ping_check_enable,
+            client_ip_addr,
+            ping_max_fail_count
+        })}
+    } |
     .VHL_CAM.tmp_path=$tmp |
     .VHL_CAM.capture.enable=false |
     .VHL_CAM.vhl_name="VD3001"
@@ -229,7 +243,14 @@ PIM_CAMERA_SESSION_TIME_FILE="$WORK/start-time" cam_cleanup_recording_orphans "$
 printf '%s\n' '20260901 12:34:56' > "$WORK/start-time"
 ln -s "$WORK/recordings" "$WORK/linked-recordings"
 jq -s --arg tmp "$WORK/linked-recordings" '
-    .[1] + {VHL_CAM:.[0].VHL_CAM} |
+    .[1] + {
+        VHL_CAM:.[0].VHL_CAM,
+        NETWORK:{ETH1:(.[0].NETWORK.ETH1 | {
+            ping_check_enable,
+            client_ip_addr,
+            ping_max_fail_count
+        })}
+    } |
     .VHL_CAM.tmp_path=$tmp |
     .VHL_CAM.vhl_name="VD3001"
 ' "$EDGE_TEMPLATE" "$ORD_TEMPLATE" > "$PIM_CAMERA_RUNTIME_JSON"
