@@ -27,6 +27,7 @@ CAMERA_RUNTIME_CONSUMERS = (
     Path("dist/pim/opt/pim/bin/init_cam.sh"),
     Path("dist/pim/opt/pim/bin/cam_hard_reset.sh"),
     Path("dist/pim/opt/pim/bin/BG_Check_for_pim.sh"),
+    Path("dist/pim/opt/pim/bin/chk_eth1.sh"),
     Path("dist/pim/opt/pim/bin/cam_channel_resolve.sh"),
     Path("dist/pim/opt/pim/bin/pim_guardian.py"),
     Path("dist/pim/opt/pim/bin/camera_config_expectation.py"),
@@ -57,7 +58,6 @@ CAMERA_SOURCE_READERS = (
     Path("dist/pim/opt/pim/bin/factory_init.sh"),
     Path("dist/pim/opt/pim/bin/factory_init_pim_gate.sh"),
     Path("dist/pim/opt/pim/bin/chk_wifi.sh"),
-    Path("dist/pim/opt/pim/bin/chk_eth1.sh"),
     Path("dist/pim/opt/pim/bin/set_link_speed.py"),
 )
 
@@ -88,6 +88,7 @@ DAEMON_SOURCE_OWNER_FILES = {
 
 DIRECT_RUNTIME_DEFAULTS = {
     Path("dist/pim/opt/pim/bin/BG_Check_for_pim.sh"): RUNTIME_PATH,
+    Path("dist/pim/opt/pim/bin/chk_eth1.sh"): RUNTIME_PATH,
     Path("dist/pim/opt/pim/bin/cam_channel_resolve.sh"): RUNTIME_PATH,
     Path("dist/pim/opt/pim/bin/pim_guardian.py"): RUNTIME_PATH,
     Path("dist/pim/opt/pim/bin/camera_config_expectation.py"): RUNTIME_PATH,
@@ -108,6 +109,7 @@ RUNTIME_BOUNDARY_MARKERS = {
     Path("dist/pim/opt/pim/bin/init_cam.sh"): "cam-recoveryctl",
     Path("dist/pim/opt/pim/bin/cam_hard_reset.sh"): "cam-recoveryctl",
     Path("dist/pim/opt/pim/bin/BG_Check_for_pim.sh"): "PIM_CAMERA_RUNTIME_JSON",
+    Path("dist/pim/opt/pim/bin/chk_eth1.sh"): "PIM_CAMERA_RUNTIME_JSON",
     Path("dist/pim/opt/pim/bin/cam_channel_resolve.sh"): "PIM_CAMERA_RUNTIME_JSON",
     Path("dist/pim/opt/pim/bin/pim_guardian.py"): "PIM_CAMERA_RUNTIME_JSON",
     Path("dist/pim/opt/pim/bin/camera_config_expectation.py"): "pim_runtime.json",

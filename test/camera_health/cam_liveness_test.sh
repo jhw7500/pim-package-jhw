@@ -26,6 +26,8 @@ export PIM_CAMERA_LIVENESS_START_WAIT_SEC=100
 EDGE_TEMPLATE="$ROOT/dist/pim/opt/pim/config/edgeconf_pim_base.json"
 ORD_TEMPLATE="$ROOT/dist/pim/opt/pim/config/ord_vcm_conf.json"
 DAEMON_PID=4242
+PIM_CAMERA_REAL_JQ=$(command -v jq)
+export PIM_CAMERA_REAL_JQ PIM_CAMERA_JQ_LOG="$WORK/jq-calls"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 expect_rc() { local wanted=$1; shift; set +e; "$@"; local got=$?; set -e; [ "$got" -eq "$wanted" ] || fail "expected rc=$wanted got=$got: $*"; }
@@ -51,7 +53,7 @@ fake_stat() {
 write_runtime() {
     mkdir -p "$(dirname "$PIM_CAMERA_RUNTIME_JSON")" "$PIM_CAMERA_DEVICE_ROOT"
     jq -s '
-        .[1] + {VHL_CAM:.[0].VHL_CAM} |
+        .[1] + {VHL_CAM:.[0].VHL_CAM, NETWORK:.[0].NETWORK} |
         .VHL_CAM.capture.enable=false |
         .VHL_CAM.i2c2.ch0.enable=true |
         .VHL_CAM.i2c2.ch1.enable=false |
@@ -94,6 +96,13 @@ reset_case() {
     PIM_CAMERA_LIVENESS_GRACE_UNTIL=0
     PIM_CAMERA_LIVENESS_GRACE_USES=0
     export PIM_CAMERA_LIVENESS_QUIESCED PIM_CAMERA_LIVENESS_GRACE_UNTIL PIM_CAMERA_LIVENESS_GRACE_USES
+    _CR_LIFECYCLE_KEY=''
+    _CR_LIFECYCLE_VAL=''
+    _CL_GUARD_CACHE_KEY=''
+    _CL_GUARD_CACHE_VAL=''
+    _CL_RUNTIME_APP_KEY=''
+    _CL_RUNTIME_APP_VAL=''
+    _CAM_RUNTIME_VALIDATED_KEY=''
     fake_stat
     write_runtime
 }
@@ -168,6 +177,11 @@ cat > "$WORK/stub/sleep" <<'SH'
 #!/bin/sh
 /bin/sleep 0.01
 SH
+cat > "$WORK/stub/jq" <<'SH'
+#!/bin/sh
+printf 'jq\n' >> "$PIM_CAMERA_JQ_LOG"
+exec "$PIM_CAMERA_REAL_JQ" "$@"
+SH
 chmod +x "$WORK/stub"/*
 export WORK PATH="$WORK/stub:$PATH"
 
@@ -190,6 +204,66 @@ cam_request_submit() {
     printf 'request:%s\n' "$1" >> "$PIM_CAMERA_CALL_LOG"
     cam_request_submit_real "$@"
 }
+
+echo '=== warm monitor loop avoids periodic jq and observes owner transition ==='
+reset_case; owner_at ACTIVE; printf 'vcm\ngstApp\n' > "$WORK/procs"
+: > "$PIM_CAMERA_JQ_LOG"
+expect_rc 1 cam_monitor_control_iteration monitor_config_reload
+cold_jq_spawns=$(wc -l < "$PIM_CAMERA_JQ_LOG")
+[ "$cold_jq_spawns" -eq 3 ] || fail "cold monitor iteration spawned jq $cold_jq_spawns times instead of 3"
+expect_rc 1 cam_monitor_control_iteration monitor_config_reload
+warm_jq_spawns=$(wc -l < "$PIM_CAMERA_JQ_LOG")
+[ "$warm_jq_spawns" -eq "$cold_jq_spawns" ] || fail 'warm monitor iteration spawned periodic jq'
+owner=$(cat "$PIM_CAMERA_RUN_DIR/owner.json")
+stopping=$("$PIM_CAMERA_REAL_JQ" -c '.lifecycle="STOPPING" | .updated_at=(now|floor)' <<<"$owner")
+_cr_atomic_write "$PIM_CAMERA_RUN_DIR/owner.json" "$stopping"
+expect_rc 1 cam_monitor_control_iteration monitor_config_reload
+[ "$PIM_CAMERA_MONITOR_STOPPING" -eq 1 ] || fail 'warm monitor cache hid ACTIVE to STOPPING transition'
+transition_jq_spawns=$(wc -l < "$PIM_CAMERA_JQ_LOG")
+[ "$transition_jq_spawns" -eq $((cold_jq_spawns + 1)) ] || fail 'owner transition did not trigger exactly one lifecycle reparse'
+
+echo '=== warm liveness guard rechecks comparison inputs and process identity ==='
+for owner_var in PIM_CAMERA_OWNER_BOOT_ID PIM_CAMERA_OWNER_INVOCATION PIM_CAMERA_OWNER_PID PIM_CAMERA_OWNER_PROC_START_TIME PIM_CAMERA_OWNER_TOKEN PIM_CAMERA_OWNER_CREATED_AT; do
+    reset_case; owner_at ACTIVE
+    expect_rc 0 _cl_active_guard
+    printf -v "$owner_var" '%s-rolled' "${!owner_var}"
+    expect_rc 69 _cl_active_guard
+done
+reset_case; owner_at ACTIVE
+expect_rc 0 _cl_active_guard
+fake_stat 222
+expect_rc 69 _cl_active_guard
+
+reset_case; owner_at ACTIVE
+active_owner=$(cat "$PIM_CAMERA_RUN_DIR/owner.json")
+stopping_owner=$("$PIM_CAMERA_REAL_JQ" -c '.lifecycle="STOPPING" | .updated_at=(now|floor)' <<<"$active_owner")
+_cr_atomic_write "$PIM_CAMERA_RUN_DIR/owner.json" "$active_owner"$'\n'"$stopping_owner"
+expect_rc 69 _cl_active_guard
+
+echo '=== warm runtime app cache follows atomic runtime replacement ==='
+reset_case; owner_at ACTIVE; printf 'vcm\ngstApp\n' > "$WORK/procs"
+expect_rc 0 cam_liveness_tick
+runtime=$("$PIM_CAMERA_REAL_JQ" -c '.VHL_CAM.app="streamApp"' "$PIM_CAMERA_RUNTIME_JSON")
+_cr_atomic_write "$PIM_CAMERA_RUNTIME_JSON" "$runtime"
+printf 'vcm\nPIMCAM\n' > "$WORK/procs"
+: > "$PIM_CAMERA_CALL_LOG"
+expect_rc 0 cam_liveness_tick
+grep -Fqx 'pgrep:-x PIMCAM' "$PIM_CAMERA_CALL_LOG" || fail 'warm runtime app cache hid atomic app replacement'
+! grep -Fqx 'pgrep:-x gstApp' "$PIM_CAMERA_CALL_LOG" || fail 'warm runtime app cache reused stale app after replacement'
+
+echo '=== injected runtime validator remains nounset-safe ==='
+bash -eu -c '
+    cam_owner_assert() { :; }
+    cam_validate_runtime() { :; }
+    cam_mark_degraded() { :; }
+    source "$PIM_LIB/cam_liveness.sh"
+    _cl_active_guard() { :; }
+    _cl_handle_operation_flags() { :; }
+    _cl_ord_status() { :; }
+    _cl_process_status() { :; }
+    cam_runtime_app() { printf "gstApp\n"; }
+    cam_liveness_tick
+'
 
 echo '=== non-active, stale, quiesced, leased, and invalid guards ==='
 for guard_rc in 69 70 75; do

@@ -7,7 +7,7 @@
 | source authority | `/root/shared_v` | 영구 설정 작성·검증 |
 | cam-operate builder | `/root/shared_v` -> `/run/pim-camera/config/pim_runtime.json` | startup/`apply-config`에서만 선택·병합·검증·원자 교체 |
 | camera runtime consumer | `/run/pim-camera/config/pim_runtime.json` | process 시작 또는 명시적 policy reload 때 읽기 |
-| network-side input consumer | `/root/shared_v` | camera runtime에 포함되지 않는 `NETWORK` 등 읽기 |
+| network source authority | `/root/shared_v` | WLAN 설정 적용처럼 영구 `NETWORK` source를 직접 소유하는 작업 |
 | max9296 kernel driver | JSON 없음 | userspace가 전달한 완전한 control set만 소비 |
 
 camera runtime은 `pim_runtime.json` 하나다. `edgeconf_pim.json`과
@@ -26,7 +26,8 @@ camera runtime은 `pim_runtime.json` 하나다. `edgeconf_pim.json`과
 
 builder는 최신 regular `edgeconf_*.json`을 mtime nanosecond 내림차순, 같은 mtime이면
 filesystem-byte path 오름차순으로 하나 선택한다. 최신 파일이 invalid이면 이전 파일로
-후퇴하지 않는다. ord document 전체를 유지하고 선택한 edgeconf의 `VHL_CAM`을 적용한다.
+후퇴하지 않는다. ord document 전체를 유지하고 선택한 edgeconf의 `VHL_CAM`과
+`NETWORK.ETH1` ping policy 세 필드를 적용한다.
 source 변경만으로 running camera가 바뀌지는 않으며 `apply-config` 또는 cam-operate
 restart가 필요하다.
 
@@ -35,7 +36,8 @@ restart가 필요하다.
 | consumer | 읽기 시점 / 역할 | 재적용 경계 |
 | --- | --- | --- |
 | `chk_cam_operate.sh` + control/liveness/action library | daemon startup, policy reload, recovery | startup 또는 `apply-config` |
-| `start_cam.sh`, `BG_Check_for_pim.sh` | managed gstApp/BG 시작 | `gstapp_restart` 또는 상위 reset |
+| `start_cam.sh`, `BG_Check_for_pim.sh` | managed gstApp/BG 시작; BG는 camera/policy/ETH1 값을 한 번 고정 | `gstapp_restart` 또는 상위 reset |
+| `chk_eth1.sh` | BG가 전달한 고정 ETH1 값; 독립 실행 시 runtime을 한 번 읽음 | BG restart 또는 다음 독립 실행 |
 | `cam_channel_resolve.sh`와 camera diagnostic helper | 각 invocation | 다음 invocation |
 | `pim_guardian.py` | daemon 시작 | guardian restart 또는 관련 apply |
 | `camera_config_expectation.py` | probe `ExecStartPre` | probe restart |
@@ -49,12 +51,13 @@ restart가 필요하다.
 invalid runtime은 `CONFIG_INVALID`로 실패하며 source repair 또는 hardware escalation을
 시도하지 않는다.
 
-## C. network-side source input
+## C. network source authority
 
-`chk_wifi.sh`와 `chk_eth1.sh`는 camera config consumer가 아니다. camera runtime에는
-edgeconf의 `VHL_CAM`만 포함되고 `NETWORK`는 포함되지 않으므로, 두 script는 의도적으로
-`/root/shared_v` source를 계속 읽는다. source/config writer allowlist와 함께 유지하여
-camera 경로 감사가 이 network 계약을 잘못 금지하지 않게 한다.
+`chk_wifi.sh`는 WLAN 연결 상태와 영구 network source를 함께 다루므로 `/root/shared_v`를
+계속 읽는다. 반면 주기 실행되는 `chk_eth1.sh`는 source reader가 아니다. cam-operate가
+edgeconf의 `NETWORK`를 runtime에 고정하고, BG가 시작 시 `NETWORK.ETH1`을 한 번 추출해
+매 반복마다 값으로 전달한다. 따라서 source 파일이 바뀌어도 running BG에는 반영되지 않으며
+`apply-config` 또는 cam-operate restart가 필요하다.
 
 다음 항목도 camera owner로 단정하지 않는 별도 system/config domain이다.
 
@@ -72,6 +75,7 @@ camera 경로 감사가 이 network 계약을 잘못 금지하지 않게 한다.
 | --- | --- | --- |
 | `VHL_CAM` hardware | gstApp, ORD, VCM | hard reset 후 세 consumer 재기동 |
 | `VHL_CAM` non-hardware | gstApp, ORD, VCM | 세 consumer 재기동 |
+| `NETWORK` | BG/`chk_eth1.sh` | `gstapp_restart`로 managed gstApp/BG 재기동 |
 | `ORD` | ORD | ORD 재기동 |
 | `VCM` | VCM | VCM 재기동 |
 | cam-operate `ETC` | daemon | in-memory policy reload |
@@ -79,7 +83,7 @@ camera 경로 감사가 이 network 계약을 잘못 금지하지 않게 한다.
 
 ## 감사 기준과 외부 경계
 
-1. source authority, network-side consumer, startup/`apply-config` builder 외에는
+1. source authority와 startup/`apply-config` builder 외에는
    `/root/shared_v` camera JSON open이 없어야 한다.
 2. 세 native app과 camera script는 고정 runtime path 또는 두 compatibility alias만
    사용해야 한다.

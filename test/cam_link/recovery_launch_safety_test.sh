@@ -64,7 +64,14 @@ prepare_context() {
     rm -rf "$PIM_CAMERA_RUN_DIR" "$PIM_CAMERA_STATE_DIR"
     mkdir -p "$(dirname "$PIM_CAMERA_RUNTIME_JSON")" "$PIM_CAMERA_STATE_DIR" "$PIM_CAMERA_PROCESS_ROOT"
     jq -s --arg tmp "$W/recordings" '
-        .[1] + {VHL_CAM:.[0].VHL_CAM} |
+        .[1] + {
+            VHL_CAM:.[0].VHL_CAM,
+            NETWORK:{ETH1:(.[0].NETWORK.ETH1 | {
+                ping_check_enable,
+                client_ip_addr,
+                ping_max_fail_count
+            })}
+        } |
         .VHL_CAM.app="gstApp" |
         .VHL_CAM.capture.enable=false |
         .VHL_CAM.app_delay=0 |

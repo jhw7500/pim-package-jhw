@@ -137,6 +137,21 @@ _cr_owner_executor_snapshot() {
                and (\$et == \"\" or .token == \$et)))
        then [(.pid|tostring), .proc_start_time, .lifecycle] | join(\"\\n\") else empty end" <<<"$owner"
 }
+# cam liveness 의 주기 guard 전용. schema + exported 6필드 + 현재 boot + ACTIVE 를
+# 한 번의 jq 로 판정하고, 매 호출마다 다시 확인할 /proc tuple 만 돌려준다.
+_cr_owner_monitor_snapshot() {
+    local owner=$1 boot=$2
+    jq -rs --arg boot "$boot" \
+          --arg b "${PIM_CAMERA_OWNER_BOOT_ID:-}" --arg iv "${PIM_CAMERA_OWNER_INVOCATION:-}" \
+          --arg p "${PIM_CAMERA_OWNER_PID:-}" --arg ps "${PIM_CAMERA_OWNER_PROC_START_TIME:-}" \
+          --arg tk "${PIM_CAMERA_OWNER_TOKEN:-}" --arg ca "${PIM_CAMERA_OWNER_CREATED_AT:-}" \
+      "if (length == 1)
+          and (.[0] | ($_CR_OWNER_SCHEMA_FILTER)
+               and ($_CR_OWNER_EXPORTED_MATCH_FILTER)
+               and (.boot_id == \$boot)
+               and (.lifecycle == \"ACTIVE\"))
+       then (.[0] | [(.pid|tostring), .proc_start_time] | join(\"\\n\")) else empty end" <<<"$owner"
+}
 _cr_owner_matches_exported_context() {
     local verdict
     verdict=$(jq -r --arg b "${PIM_CAMERA_OWNER_BOOT_ID:-}" --arg iv "${PIM_CAMERA_OWNER_INVOCATION:-}" \
@@ -144,6 +159,19 @@ _cr_owner_matches_exported_context() {
           --arg tk "${PIM_CAMERA_OWNER_TOKEN:-}" --arg ca "${PIM_CAMERA_OWNER_CREATED_AT:-}" \
         "((($_CR_OWNER_SCHEMA_FILTER) and ($_CR_OWNER_EXPORTED_MATCH_FILTER)) | tostring)" <<<"$1") || return 69
     [ "$verdict" = true ] || return 69
+}
+# owner lifecycle 를 같은 프로세스에서 반복 조회하는 monitor 경로용 캐시. 파일이
+# atomic rename 되면 stat identity 가 달라져 다음 호출에서 반드시 다시 파싱한다.
+_CR_LIFECYCLE_KEY=""
+_CR_LIFECYCLE_VAL=""
+_cr_load_owner_lifecycle() {
+    local stamp
+    stamp=$(stat -c '%d:%i:%s:%y' "$(_cr_owner_file)" 2>/dev/null) || stamp=""
+    if [ -n "$stamp" ] && [ "$stamp" = "$_CR_LIFECYCLE_KEY" ]; then
+        return 0
+    fi
+    _CR_LIFECYCLE_VAL=$(jq -r '.lifecycle // empty' "$(_cr_owner_file)" 2>/dev/null) || return 1
+    _CR_LIFECYCLE_KEY=$stamp
 }
 cam_owner_assert() { local owner; owner=$(_cr_owner_json); _cr_owner_snapshot_live "$owner" "${1:-}" "${2:-}"; }
 _cr_owner_lifecycle_in() { local owner; owner=$(_cr_owner_json); _cr_owner_snapshot_live "$owner" || return 69; _cr_owner_snapshot_lifecycle_in "$owner" "$@"; }

@@ -9,6 +9,7 @@ delay=25
 i=0
 # bg_cam_err_streak는 cam_state/streak로 통합됨
 PIM_CAMERA_RUNTIME_JSON="${PIM_CAMERA_RUNTIME_JSON:-/run/pim-camera/config/pim_runtime.json}"
+PIM_CHK_ETH1="${PIM_CHK_ETH1:-/opt/pim/bin/chk_eth1.sh}"
 
 config_invalid() {
     logger -p local0.err "[CHK][$tag:$LINENO] CONFIG_INVALID: $PIM_CAMERA_RUNTIME_JSON" 2>/dev/null
@@ -23,23 +24,45 @@ runtime_json=$(<"$PIM_CAMERA_RUNTIME_JSON") || config_invalid
 #cam_ch2=$(jq '.VHL_CAM.i2c1.ch2.enable' "$FILE_JSON")
 #cam_ch3=$(jq '.VHL_CAM.i2c1.ch3.enable' "$FILE_JSON")
 runtime_values=$(jq -er '
+    def boolean_or($default):
+        (. // $default) | if type == "boolean" then tostring else error("expected boolean") end;
+    def string_or($default):
+        (. // $default) | if type == "string" then . else error("expected string") end;
+    def nonnegative_integer_or($default):
+        (. // $default)
+        | if type == "number" and . >= 0 and floor == .
+          then tostring else error("expected nonnegative integer") end;
     if type != "object" or
        (.VHL_CAM | type) != "object" or
+       (.NETWORK | type) != "object" or
+       (.NETWORK.ETH1 | type) != "object" or
        (.ORD | type) != "object" or
        (.VCM | type) != "object"
     then error("invalid camera runtime")
     else [
-        (.VHL_CAM.i2c2.ch0.enable // false),
-        (.VHL_CAM.i2c2.ch1.enable // false),
-        (.VHL_CAM.i2c1.ch2.enable // false),
-        (.VHL_CAM.i2c1.ch3.enable // false),
-        (.VHL_CAM.vhl_name // "VD3001"),
-        (.VHL_CAM.tmp_path // "/dev/shm"),
-        (.VHL_CAM.muxer // "mp4")
-    ] | @tsv end
+        (.VHL_CAM.i2c2.ch0.enable | boolean_or(false)),
+        (.VHL_CAM.i2c2.ch1.enable | boolean_or(false)),
+        (.VHL_CAM.i2c1.ch2.enable | boolean_or(false)),
+        (.VHL_CAM.i2c1.ch3.enable | boolean_or(false)),
+        (.VHL_CAM.vhl_name | string_or("VD3001")),
+        (.VHL_CAM.tmp_path | string_or("/dev/shm")),
+        (.VHL_CAM.muxer | string_or("mp4")),
+        (.ETC.camera_startup_grace_sec
+            | if . == null then "" else nonnegative_integer_or(0) end),
+        (.ETC.init_cooldown_sec | nonnegative_integer_or(40)),
+        (.NETWORK.ETH1.ping_check_enable | boolean_or(false)),
+        (.NETWORK.ETH1.client_ip_addr | string_or("199.10.100.20")),
+        (.NETWORK.ETH1.ping_max_fail_count | nonnegative_integer_or(2))
+    ]
+    | if any(.[]; contains("\u001f"))
+      then error("runtime value contains field delimiter")
+      else join("\u001f") end
+    end
 ' <<<"$runtime_json") || config_invalid
-IFS=$'\t' read -r \
-    cam_ch0 cam_ch1 cam_ch2 cam_ch3 vhl_name tmp_path muxer <<<"$runtime_values"
+IFS=$'\x1f' read -r \
+    cam_ch0 cam_ch1 cam_ch2 cam_ch3 vhl_name tmp_path muxer \
+    camera_startup_grace_sec init_cooldown_sec \
+    ping_check_enable test_ip max_cnt <<<"$runtime_values"
 unset IFS
 
 if [[ $cam_ch0 == "true" ]]; then
@@ -64,19 +87,11 @@ else
 fi
 cam_ch_bit=$((cam_ch3<<3|cam_ch2<<2|cam_ch1<<1|cam_ch0))
 
-camera_startup_grace_sec=$(jq -r '
-    .ETC.camera_startup_grace_sec as $v
-    | if ($v | type) == "number" then
-          if ($v >= 0) and (($v | floor) == $v) then $v else empty end
-      else empty end
-' <<<"$runtime_json") || config_invalid
 camera_startup_grace_sec=$(cam_policy_nonnegative_or_default \
     "$camera_startup_grace_sec" "$CAMERA_STARTUP_GRACE_SEC_DEFAULT")
 # 기본값 40은 패키지 배포 설정(opt/pim/config/ord_vcm_conf.json)·update_ordvcmconf.sh·
 # chk_cam_operate.sh 와 일치시킨 값이다. 어긋나면 설정 키가 없는 장비에서 두 스크립트가
 # 서로 다른 쿨다운으로 동작한다.
-init_cooldown_sec=$(jq -r '(.ETC.init_cooldown_sec // 40)' \
-    <<<"$runtime_json" 2>/dev/null) || config_invalid
 now_ts() { date +%s; }
 read_ts() { [ -f "$1" ] && cat "$1" 2>/dev/null | tr -d '\n' || echo 0; }
 
@@ -291,7 +306,7 @@ while true; do
     /opt/pim/bin/chk_wifi.sh 2>/dev/null
     #eth0 check
     #echo "eth0"
-    /opt/pim/bin/chk_eth1.sh 2>/dev/null
+    "$PIM_CHK_ETH1" "$ping_check_enable" "$test_ip" "$max_cnt" 2>/dev/null
     #sd mount check
     #echo "sd"
     /opt/pim/bin/chk_sd_mount.sh 2>/dev/null

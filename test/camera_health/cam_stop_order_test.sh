@@ -35,7 +35,7 @@ fake_stat() {
 write_runtime() {
     mkdir -p "$(dirname "$PIM_CAMERA_RUNTIME_JSON")"
     jq -s '
-        .[1] + {VHL_CAM:.[0].VHL_CAM} |
+        .[1] + {VHL_CAM:.[0].VHL_CAM, NETWORK:.[0].NETWORK} |
         .VHL_CAM.capture.enable=false
     ' "$EDGE_TEMPLATE" "$ORD_TEMPLATE" > "$PIM_CAMERA_RUNTIME_JSON"
 }

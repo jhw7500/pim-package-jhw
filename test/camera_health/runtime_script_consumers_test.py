@@ -18,8 +18,24 @@ ROOT = Path(__file__).resolve().parents[2]
 BIN = ROOT / "dist/pim/opt/pim/bin"
 
 
-def runtime_document(**vhl: object) -> dict[str, object]:
-    return {"VHL_CAM": dict(vhl), "ORD": {}, "VCM": {}, "ETC": {}}
+def runtime_document(
+    *, network: Mapping[str, object] | None = None, **vhl: object
+) -> dict[str, object]:
+    if network is None:
+        network = {
+            "ETH1": {
+                "ping_check_enable": False,
+                "client_ip_addr": "199.10.100.20",
+                "ping_max_fail_count": 2,
+            }
+        }
+    return {
+        "VHL_CAM": dict(vhl),
+        "NETWORK": dict(network),
+        "ORD": {},
+        "VCM": {},
+        "ETC": {},
+    }
 
 
 class Tests:
@@ -208,6 +224,10 @@ case "$cmd" in
     cpulimit|i2ctransfer|ncftpput)
         exit 0
         ;;
+    ping)
+        printf '3 packets transmitted, 3 received, 0%% packet loss\n'
+        exit 0
+        ;;
     fuser)
         exit 1
         ;;
@@ -233,6 +253,7 @@ exit 97
             "i2ctransfer",
             "ncftpput",
             "fuser",
+            "ping",
         ):
             (fake_bin / name).symlink_to("dispatcher")
         jq = fake_bin / "jq"
@@ -1261,6 +1282,13 @@ exit 97
             runtime_path = Path(env["PIM_CAMERA_RUNTIME_JSON"])
 
             bg_original = runtime_document(
+                network={
+                    "ETH1": {
+                        "ping_check_enable": True,
+                        "client_ip_addr": "198.51.100.10",
+                        "ping_max_fail_count": 4,
+                    }
+                },
                 i2c2={"ch0": {"enable": True}, "ch1": {"enable": True}},
                 i2c1={"ch2": {"enable": True}, "ch3": {"enable": True}},
                 vhl_name="atomic-a",
@@ -1268,6 +1296,13 @@ exit 97
                 muxer="mp4",
             )
             bg_replacement = runtime_document(
+                network={
+                    "ETH1": {
+                        "ping_check_enable": False,
+                        "client_ip_addr": "203.0.113.20",
+                        "ping_max_fail_count": 9,
+                    }
+                },
                 i2c2={"ch0": {"enable": False}, "ch1": {"enable": False}},
                 i2c1={"ch2": {"enable": False}, "ch3": {"enable": False}},
                 vhl_name="atomic-b",
@@ -1283,9 +1318,12 @@ exit 97
         */cam_state.sh)
             cam_state_init() { :; }
             cam_channel_error() { :; }
+            cam_reset_streak() { :; }
             ;;
         */cam_start_policy.sh)
+            CAMERA_STARTUP_GRACE_SEC_DEFAULT=25
             cam_policy_camera_startup_grace_sec() { printf '25\\n'; }
+            cam_policy_nonnegative_or_default() { printf '%s\\n' "${1:-${2:-25}}"; }
             cam_in_startup_grace() { return 1; }
             ;;
         *) builtin source "$@" ;;
@@ -1300,12 +1338,21 @@ exit 97
                 stub = bg_bin / command
                 stub.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
                 stub.chmod(0o755)
+            eth1_stub = root / "chk_eth1-stub.sh"
+            eth1_stub.write_text(
+                "#!/usr/bin/env bash\n"
+                "printf 'chk_eth1 <%s> <%s> <%s>\\n' \"$1\" \"$2\" \"$3\" "
+                f'>> "{env["PIM_TEST_EVENT_LOG"]}"\n',
+                encoding="utf-8",
+            )
+            eth1_stub.chmod(0o755)
             bg_env.update(
                 {
                     "BASH_ENV": str(bg_env_file),
                     "PATH": f"{bg_bin}:{bg_env['PATH']}",
-                    "PIM_TEST_KILL_PARENT_AFTER_SLEEPS": "2",
+                    "PIM_TEST_KILL_PARENT_AFTER_SLEEPS": "4",
                     "PIM_TEST_SLEEP_COUNT_FILE": str(root / "bg-sleep-count"),
+                    "PIM_CHK_ETH1": str(eth1_stub),
                 }
             )
             self.clear_events(env)
@@ -1314,6 +1361,12 @@ exit 97
                 "BG check loop start(ch0:1, ch1:1, ch2:1, ch3:1)"
                 in self.events(env),
                 "BG checker uses one immutable runtime snapshot across validation and extraction",
+            )
+            self.check(
+                len(self.command_lines(env, "jq")) == 1
+                and self.command_lines(env, "chk_eth1")
+                == ["chk_eth1 <true> <198.51.100.10> <4>"] * 2,
+                "BG checker passes one frozen NETWORK snapshot with zero steady-state jq",
             )
 
             channel_original = runtime_document(
@@ -1517,6 +1570,47 @@ exit 97
                 and unmount_at > stop_at
                 and "writer-active-at-unmount" not in self.events(env),
                 "SD stop cannot change writer ownership after runtime validation",
+            )
+
+    def chk_eth1_test(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="runtime-eth1.") as raw:
+            root = Path(raw)
+            env = self.base_env(root)
+            self.write_json(
+                Path(env["PIM_CAMERA_RUNTIME_JSON"]),
+                runtime_document(
+                    network={
+                        "ETH1": {
+                            "ping_check_enable": True,
+                            "client_ip_addr": "198.51.100.10",
+                            "ping_max_fail_count": 4,
+                        }
+                    }
+                ),
+            )
+
+            result = self.run_script(
+                BIN / "chk_eth1.sh",
+                root,
+                env,
+                ("true", "203.0.113.10", "7"),
+            )
+            self.check(
+                result.returncode == 0
+                and not self.command_lines(env, "jq")
+                and self.command_lines(env, "ping")
+                == ["ping <203.0.113.10> <-c> <3> <-W> <3> <-s> <1000>"],
+                "chk_eth1 accepts frozen values without jq",
+            )
+
+            self.clear_events(env)
+            result = self.run_script(BIN / "chk_eth1.sh", root, env)
+            self.check(
+                result.returncode == 0
+                and len(self.command_lines(env, "jq")) == 1
+                and self.command_lines(env, "ping")
+                == ["ping <198.51.100.10> <-c> <3> <-W> <3> <-s> <1000>"],
+                "standalone chk_eth1 reads only the runtime snapshot once",
             )
 
     def vhl_path_safety_test(self) -> None:
@@ -1841,6 +1935,7 @@ exit 97
             "cpu_limit": self.cpu_limit_test,
             "cam_rotate": self.cam_rotate_test,
             "ncsftp": self.ncsftp_test,
+            "chk_eth1": self.chk_eth1_test,
             "runtime_atomic_swap": self.runtime_atomic_swap_test,
             "vhl_path_safety": self.vhl_path_safety_test,
             "automount": self.automount_test,
