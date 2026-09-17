@@ -251,6 +251,20 @@ expect_rc 0 cam_liveness_tick
 grep -Fqx 'pgrep:-x PIMCAM' "$PIM_CAMERA_CALL_LOG" || fail 'warm runtime app cache hid atomic app replacement'
 ! grep -Fqx 'pgrep:-x gstApp' "$PIM_CAMERA_CALL_LOG" || fail 'warm runtime app cache reused stale app after replacement'
 
+echo '=== injected runtime validator remains nounset-safe ==='
+bash -eu -c '
+    cam_owner_assert() { :; }
+    cam_validate_runtime() { :; }
+    cam_mark_degraded() { :; }
+    source "$PIM_LIB/cam_liveness.sh"
+    _cl_active_guard() { :; }
+    _cl_handle_operation_flags() { :; }
+    _cl_ord_status() { :; }
+    _cl_process_status() { :; }
+    cam_runtime_app() { printf "gstApp\n"; }
+    cam_liveness_tick
+'
+
 echo '=== non-active, stale, quiesced, leased, and invalid guards ==='
 for guard_rc in 69 70 75; do
     reset_case; owner_at ACTIVE

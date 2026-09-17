@@ -257,7 +257,7 @@ _cl_request_gstapp_recovery() {
 _CL_RUNTIME_APP_KEY=""
 _CL_RUNTIME_APP_VAL=""
 cam_liveness_tick() {
-    local rc app
+    local rc app runtime_key
     _cl_active_guard || return $?
     _cl_handle_operation_flags || return 0
 
@@ -281,14 +281,20 @@ cam_liveness_tick() {
         *) return "$rc" ;;
     esac
 
-    if [ -n "$_CAM_RUNTIME_VALIDATED_KEY" ] &&
-       [ "$_CAM_RUNTIME_VALIDATED_KEY" = "$_CL_RUNTIME_APP_KEY" ] &&
+    runtime_key=${_CAM_RUNTIME_VALIDATED_KEY:-}
+    if [ -n "$runtime_key" ] &&
+       [ "$runtime_key" = "$_CL_RUNTIME_APP_KEY" ] &&
        [ -n "$_CL_RUNTIME_APP_VAL" ]; then
         app=$_CL_RUNTIME_APP_VAL
     else
         app=$(cam_runtime_app "$PIM_CAMERA_RUNTIME_JSON") || return $?
-        _CL_RUNTIME_APP_KEY=$_CAM_RUNTIME_VALIDATED_KEY
-        _CL_RUNTIME_APP_VAL=$app
+        if [ -n "$runtime_key" ]; then
+            _CL_RUNTIME_APP_KEY=$runtime_key
+            _CL_RUNTIME_APP_VAL=$app
+        else
+            _CL_RUNTIME_APP_KEY=""
+            _CL_RUNTIME_APP_VAL=""
+        fi
     fi
     rc=0; _cl_process_status "$app" || rc=$?
     [ "$rc" -ne 0 ] || return 0
