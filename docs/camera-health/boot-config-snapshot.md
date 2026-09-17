@@ -15,8 +15,10 @@ guard다. 다음 조건만 확인한다.
 ## 단일 runtime
 
 cam-operate는 시작할 때 `/root/shared_v`의 최신 regular `edgeconf_*.json`과 고정
-`ord_vcm_conf.json`을 다시 읽는다. ord document 전체를 유지하면서 `VHL_CAM`은 선택한
-edgeconf 값으로 교체하고, `VHL_CAM`, `ORD`, `VCM` object를 검증한다. 검증된 결과는
+`ord_vcm_conf.json`을 다시 읽는다. ord document 전체를 유지하면서 `VHL_CAM`과
+`NETWORK.ETH1`의 ping policy 세 필드는 선택한 edgeconf 값으로 교체하고,
+`VHL_CAM`, `NETWORK`, `ORD`, `VCM` object와 실제 consumer가 사용하는 하위 schema를
+검증한다. WLAN 자격정보와 interface 설정은 이 runtime에 복제하지 않는다. 검증된 결과는
 다음 한 파일로 원자 교체한다.
 
 ```text
@@ -38,6 +40,11 @@ source 검색과 runtime 생성은 다음 두 경로에서만 일어난다.
 source를 다시 검색하지 않는다. service restart는 source로 runtime을 다시 만들고 consumer를
 모두 다시 시작하며 최소 module reload를 수행한다. hardware projection 변경 또는 dirty
 상태에서는 hard reset을 수행한다.
+
+`BG_Check_for_pim.sh`는 시작할 때 runtime의 camera, policy, `NETWORK.ETH1` 값을 한 번의
+`jq` 실행으로 고정한다. 반복 루프는 `chk_eth1.sh`에 고정 값을 인자로 전달하므로 runtime이나
+source JSON을 다시 검색하지 않는다. `NETWORK` 변경을 `apply-config`하면 managed gstApp/BG를
+재시작해 새 스냅샷을 적용한다.
 
 ## 실패와 수동 시험
 

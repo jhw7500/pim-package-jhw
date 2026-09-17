@@ -53,7 +53,7 @@ fake_stat() {
 write_runtime() {
     mkdir -p "$(dirname "$PIM_CAMERA_RUNTIME_JSON")" "$PIM_CAMERA_DEVICE_ROOT"
     jq -s '
-        .[1] + {VHL_CAM:.[0].VHL_CAM} |
+        .[1] + {VHL_CAM:.[0].VHL_CAM, NETWORK:.[0].NETWORK} |
         .VHL_CAM.capture.enable=false |
         .VHL_CAM.i2c2.ch0.enable=true |
         .VHL_CAM.i2c2.ch1.enable=false |

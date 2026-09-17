@@ -36,7 +36,7 @@ def edge(name: str, width: int = 1920) -> dict[str, object]:
     vhl["cam_width"] = width
     vhl["cam_height"] = 1080
     vhl["fps"] = 30
-    return {"VHL_CAM": vhl}
+    return {"VHL_CAM": vhl, "NETWORK": document["NETWORK"]}
 
 
 def ord_document() -> dict[str, object]:
@@ -123,8 +123,10 @@ class RuntimeConfigTests(unittest.TestCase):
 
     def test_missing_or_non_object_required_sections_fail_validation(self) -> None:
         document = ord_document()
-        document["VHL_CAM"] = edge("valid")["VHL_CAM"]
-        for key in ("VHL_CAM", "ORD", "VCM"):
+        edge_document = edge("valid")
+        document["VHL_CAM"] = edge_document["VHL_CAM"]
+        document["NETWORK"] = edge_document["NETWORK"]
+        for key in ("VHL_CAM", "NETWORK", "ORD", "VCM"):
             missing = dict(document)
             missing.pop(key)
             with self.subTest(key=key, form="missing"):
@@ -140,6 +142,18 @@ class RuntimeConfigTests(unittest.TestCase):
         self.write_edge("edgeconf_current.json", mtime_ns=100)
         candidate = runtime.merge_source_documents(self.source)
         self.assertEqual("edgeconf_current.json", candidate.document["VHL_CAM"]["vhl_name"])
+        self.assertEqual(
+            "199.10.100.20",
+            candidate.document["NETWORK"]["ETH1"]["client_ip_addr"],
+        )
+        self.assertEqual(
+            {
+                "ping_check_enable",
+                "client_ip_addr",
+                "ping_max_fail_count",
+            },
+            set(candidate.document["NETWORK"]["ETH1"]),
+        )
         self.assertEqual({"keep": True}, candidate.document["SITE_NOTE"])
         self.assertEqual(10007, candidate.document["ORD"]["port_num"])
         self.assertFalse(candidate.document["ORD"]["vib_enable"])
@@ -353,6 +367,7 @@ class RuntimeConfigTests(unittest.TestCase):
         current = self.candidate().document
         changed = json.loads(json.dumps(current))
         changed["VHL_CAM"]["cam_width"] = 3840
+        changed["NETWORK"]["ETH1"]["client_ip_addr"] = "199.10.100.30"
         changed["ORD"]["port_num"] = 10008
         changed["VCM"]["port_num"] = 10010
         changed["ETC"]["camera_startup_grace_sec"] = 41
@@ -360,7 +375,10 @@ class RuntimeConfigTests(unittest.TestCase):
         plan = runtime.classify_change(current, changed)
         self.assertTrue(plan.semantic_change)
         self.assertTrue(plan.hardware_change)
-        self.assertEqual(["VHL_CAM", "ORD", "VCM", "ETC", "SCRIPT"], list(plan.changed_sections))
+        self.assertEqual(
+            ["VHL_CAM", "NETWORK", "ORD", "VCM", "ETC", "SCRIPT"],
+            list(plan.changed_sections),
+        )
         self.assertEqual(["camera_hard_reset", "policy_reload"], list(plan.steps))
 
     def test_non_hardware_vhl_restart_and_section_specific_steps(self) -> None:
@@ -384,6 +402,15 @@ class RuntimeConfigTests(unittest.TestCase):
         plan = runtime.classify_change(current, changed)
         self.assertEqual(["ORD"], list(plan.changed_sections))
         self.assertEqual(["ord_restart"], list(plan.steps))
+
+    def test_network_change_restarts_the_bg_snapshot_owner(self) -> None:
+        current = self.candidate().document
+        changed = json.loads(json.dumps(current))
+        changed["NETWORK"]["ETH1"]["client_ip_addr"] = "199.10.100.30"
+        plan = runtime.classify_change(current, changed)
+        self.assertFalse(plan.hardware_change)
+        self.assertEqual(["NETWORK"], list(plan.changed_sections))
+        self.assertEqual(["gstapp_restart"], list(plan.steps))
 
 
 if __name__ == "__main__":

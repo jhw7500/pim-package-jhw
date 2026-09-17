@@ -18,8 +18,8 @@ from typing import Mapping, Sequence
 
 RUNTIME_NAME = "pim_runtime.json"
 ALIAS_NAMES = ("edgeconf_pim.json", "ord_vcm_conf.json")
-_REQUIRED_SECTIONS = ("VHL_CAM", "ORD", "VCM")
-_SECTION_ORDER = ("VHL_CAM", "ORD", "VCM", "ETC", "SCRIPT")
+_REQUIRED_SECTIONS = ("VHL_CAM", "NETWORK", "ORD", "VCM")
+_SECTION_ORDER = ("VHL_CAM", "NETWORK", "ORD", "VCM", "ETC", "SCRIPT")
 _CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
 _EDGE_SCHEMA_PATH = _CONFIG_DIR / "edgeconf_pim_base.json"
 _ORD_SCHEMA_PATH = _CONFIG_DIR / "ord_vcm_conf.json"
@@ -48,6 +48,7 @@ _STRING_BYTE_LIMITS = {
     ("VHL_CAM", "floor"): 63,
     ("VHL_CAM", "tmp_path"): 255,
     ("VHL_CAM", "muxer"): 31,
+    ("NETWORK", "ETH1", "client_ip_addr"): 255,
     ("ORD", "ip_static"): 63,
     ("VCM", "ip_static"): 63,
 }
@@ -125,8 +126,22 @@ def _validate_json_value(value: object, label: str) -> None:
 def _consumed_schema() -> dict[str, object]:
     edge_document = _load_object(_EDGE_SCHEMA_PATH)
     ord_document = _load_object(_ORD_SCHEMA_PATH)
+    edge_network = edge_document.get("NETWORK")
+    edge_eth1 = edge_network.get("ETH1") if isinstance(edge_network, dict) else None
+    if not isinstance(edge_eth1, dict):
+        raise ConfigError("packaged schema NETWORK.ETH1 must be an object")
     sections = {
         "VHL_CAM": edge_document.get("VHL_CAM"),
+        "NETWORK": {
+            "ETH1": {
+                name: edge_eth1.get(name)
+                for name in (
+                    "ping_check_enable",
+                    "client_ip_addr",
+                    "ping_max_fail_count",
+                )
+            }
+        },
         "ORD": ord_document.get("ORD"),
         "VCM": ord_document.get("VCM"),
     }
@@ -219,8 +234,24 @@ def merge_source_documents(source_root: Path) -> Candidate:
     vhl = edge_document.get("VHL_CAM")
     if not isinstance(vhl, dict):
         raise ConfigError(f"edgeconf VHL_CAM must be an object: {source.path}")
+    network = edge_document.get("NETWORK")
+    if not isinstance(network, dict):
+        raise ConfigError(f"edgeconf NETWORK must be an object: {source.path}")
+    eth1 = network.get("ETH1")
+    if not isinstance(eth1, dict):
+        raise ConfigError(f"edgeconf NETWORK.ETH1 must be an object: {source.path}")
     merged = dict(ord_document)
     merged["VHL_CAM"] = vhl
+    merged["NETWORK"] = {
+        "ETH1": {
+            name: eth1.get(name)
+            for name in (
+                "ping_check_enable",
+                "client_ip_addr",
+                "ping_max_fail_count",
+            )
+        }
+    }
     return Candidate(document=validate_runtime(merged), source=source, ord_path=ord_path)
 
 
@@ -299,6 +330,8 @@ def classify_change(current: Mapping[str, object], candidate: Mapping[str, objec
     else:
         if "VHL_CAM" in changed:
             steps.extend(("gstapp_restart", "ord_restart", "vcm_restart"))
+        if "NETWORK" in changed:
+            steps.append("gstapp_restart")
         if "ORD" in changed:
             steps.append("ord_restart")
         if "VCM" in changed:

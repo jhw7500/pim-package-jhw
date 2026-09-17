@@ -5,26 +5,14 @@ ERR_CNT="ping_err_cnt"
 tag=$(basename "$0")
 success_value=" 0% packet loss"
 timestamp=$(date +"%Y-%m-%d %T,%3N")
-DEFAULT_TEST_IP="199.10.100.20"
 DEFAULT_MAX_CNT=2
 SYSLOG_FAIL_COUNT=5
+PIM_CAMERA_RUNTIME_JSON="${PIM_CAMERA_RUNTIME_JSON:-/run/pim-camera/config/pim_runtime.json}"
 
-find_edgeconf_file() {
-    local latest=""
-    local f
-
-    for f in /root/shared_v/edgeconf_*.json /root/shared_v/backup_edgeconf_*.json; do
-        [ -e "$f" ] || continue
-        if [ -z "$latest" ] || [ "$f" -nt "$latest" ]; then
-            latest="$f"
-        fi
-    done
-
-    if [ -n "$latest" ]; then
-        printf '%s\n' "$latest"
-    else
-        printf '%s\n' "/etc/defaultconf.json"
-    fi
+config_invalid() {
+    logger -p local0.err "[CHK][$tag:$LINENO] CONFIG_INVALID: $PIM_CAMERA_RUNTIME_JSON" 2>/dev/null
+    echo "CONFIG_INVALID: $PIM_CAMERA_RUNTIME_JSON" >&2
+    exit 64
 }
 
 reset_eth1_state() {
@@ -41,15 +29,38 @@ err_count_check() {
     printf '%s\n' "$((old_w_count + 1))" > "${FLAG_PATH}/${ERR_CNT}"
 }
 
-CONFIG_FILE=$(find_edgeconf_file)
-IFS=$'\t' read -r ping_check_enable test_ip max_cnt < <(
-    jq -r '[
-        (if .NETWORK.ETH1 | has("ping_check_enable") then .NETWORK.ETH1.ping_check_enable else true end),
-        (.NETWORK.ETH1.client_ip_addr // "199.10.100.20"),
-        (.NETWORK.ETH1.ping_max_fail_count // 2)
-    ] | @tsv' "$CONFIG_FILE" 2>/dev/null || printf 'true\t%s\t%d\n' "$DEFAULT_TEST_IP" "$DEFAULT_MAX_CNT"
-)
-unset IFS
+if [ "$#" -eq 3 ]; then
+    ping_check_enable=$1
+    test_ip=$2
+    max_cnt=$3
+elif [ "$#" -eq 0 ]; then
+    command -v jq >/dev/null 2>&1 || config_invalid
+    runtime_values=$(jq -er '
+        if type != "object" or
+           (.NETWORK | type) != "object" or
+           (.NETWORK.ETH1 | type) != "object" or
+           (.NETWORK.ETH1.ping_check_enable | type) != "boolean" or
+           (.NETWORK.ETH1.client_ip_addr | type) != "string" or
+           (.NETWORK.ETH1.ping_max_fail_count | type) != "number" or
+           .NETWORK.ETH1.ping_max_fail_count < 0 or
+           (.NETWORK.ETH1.ping_max_fail_count | floor) != .NETWORK.ETH1.ping_max_fail_count
+        then error("invalid ETH1 runtime config")
+        else [
+            (.NETWORK.ETH1.ping_check_enable | tostring),
+            .NETWORK.ETH1.client_ip_addr,
+            (.NETWORK.ETH1.ping_max_fail_count | tostring)
+        ]
+        | if any(.[]; contains("\u001f"))
+          then error("runtime value contains field delimiter")
+          else join("\u001f") end
+        end
+    ' "$PIM_CAMERA_RUNTIME_JSON" 2>/dev/null) || config_invalid
+    IFS=$'\x1f' read -r ping_check_enable test_ip max_cnt <<<"$runtime_values"
+    unset IFS
+else
+    echo "usage: $0 [ping_check_enable test_ip max_cnt]" >&2
+    exit 64
+fi
 
 if [ "$ping_check_enable" != "true" ]; then
     reset_eth1_state

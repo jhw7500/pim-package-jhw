@@ -58,7 +58,7 @@ write_source() {
         .VHL_CAM.cam_height=360 |
         .VHL_CAM.fps=30 |
         .VHL_CAM.label=$marker |
-        {VHL_CAM:.VHL_CAM}
+        {VHL_CAM:.VHL_CAM, NETWORK:.NETWORK}
     ' "$EDGE_TEMPLATE" > "$PIM_CAMERA_SOURCE_ROOT/edgeconf_${marker}.json"
     jq --arg ord "$ord" --arg vcm "$vcm" --arg policy "$policy" '
         .ORD.value=$ord |
