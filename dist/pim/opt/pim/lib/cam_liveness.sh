@@ -52,12 +52,26 @@ cam_liveness_quiesce() {
     _cl_stop_event liveness_quiesced
 }
 
+_CL_GUARD_CACHE_KEY=""
+_CL_GUARD_CACHE_VAL=""
 _cl_active_guard_locked() {
-    local owner
-    owner=$(_cr_owner_json) || return 69
-    _cr_owner_matches_exported_context "$owner" || return 69
-    _cr_owner_snapshot_live "$owner" || return 69
-    _cr_owner_snapshot_lifecycle_in "$owner" ACTIVE || return 69
+    local owner boot stamp key fields pid start actual
+    boot=$(cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null) || return 69
+    stamp=$(stat -c '%d:%i:%s:%y' "$(_cr_owner_file)" 2>/dev/null) || stamp=""
+    key=""
+    [ -z "$stamp" ] || key="$stamp|$boot|${PIM_CAMERA_OWNER_BOOT_ID:-}|${PIM_CAMERA_OWNER_INVOCATION:-}|${PIM_CAMERA_OWNER_PID:-}|${PIM_CAMERA_OWNER_PROC_START_TIME:-}|${PIM_CAMERA_OWNER_TOKEN:-}|${PIM_CAMERA_OWNER_CREATED_AT:-}"
+    if [ -n "$key" ] && [ "$key" = "$_CL_GUARD_CACHE_KEY" ] && [ -n "$_CL_GUARD_CACHE_VAL" ]; then
+        fields=$_CL_GUARD_CACHE_VAL
+    else
+        owner=$(_cr_owner_json) || return 69
+        fields=$(_cr_owner_monitor_snapshot "$owner" "$boot") || return 69
+        [ -n "$fields" ] || return 69
+        _CL_GUARD_CACHE_KEY=$key
+        _CL_GUARD_CACHE_VAL=$fields
+    fi
+    { IFS= read -r pid; IFS= read -r start; } <<<"$fields"
+    actual=$(_cr_proc_start "$pid")
+    [ -n "$actual" ] && [ "$actual" = "$start" ] || return 69
     [ "$PIM_CAMERA_LIVENESS_QUIESCED" != 1 ] || return 69
     [ ! -e "$(_cr_pending_file)" ] && [ ! -e "$(_cr_active_file)" ] || return 75
     cam_validate_runtime "$PIM_CAMERA_RUNTIME_JSON" || return $?
@@ -240,6 +254,8 @@ _cl_request_gstapp_recovery() {
     cam_request_submit "$action" liveness "gstapp process absent" >/dev/null
 }
 
+_CL_RUNTIME_APP_KEY=""
+_CL_RUNTIME_APP_VAL=""
 cam_liveness_tick() {
     local rc app
     _cl_active_guard || return $?
@@ -265,7 +281,15 @@ cam_liveness_tick() {
         *) return "$rc" ;;
     esac
 
-    app=$(cam_runtime_app "$PIM_CAMERA_RUNTIME_JSON") || return $?
+    if [ -n "$_CAM_RUNTIME_VALIDATED_KEY" ] &&
+       [ "$_CAM_RUNTIME_VALIDATED_KEY" = "$_CL_RUNTIME_APP_KEY" ] &&
+       [ -n "$_CL_RUNTIME_APP_VAL" ]; then
+        app=$_CL_RUNTIME_APP_VAL
+    else
+        app=$(cam_runtime_app "$PIM_CAMERA_RUNTIME_JSON") || return $?
+        _CL_RUNTIME_APP_KEY=$_CAM_RUNTIME_VALIDATED_KEY
+        _CL_RUNTIME_APP_VAL=$app
+    fi
     rc=0; _cl_process_status "$app" || rc=$?
     [ "$rc" -ne 0 ] || return 0
     [ "$rc" -eq 1 ] || return "$rc"

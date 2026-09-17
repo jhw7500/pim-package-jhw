@@ -423,7 +423,8 @@ _coc_repair_retryable_liveness_gstapp_locked() {
 
 _coc_repair_retryable_liveness_gstapp() {
     local lifecycle
-    lifecycle=$(jq -r '.lifecycle // empty' "$(_cr_owner_file)" 2>/dev/null) || return 1
+    _cr_load_owner_lifecycle || return 1
+    lifecycle=$_CR_LIFECYCLE_VAL
     [ "$lifecycle" = RECOVERING ] || return 1
     _cr_lock_call _coc_repair_retryable_liveness_gstapp_locked
 }
@@ -579,7 +580,8 @@ cam_monitor_control_iteration() {
         1) ;;
         *) return "$control_rc" ;;
     esac
-    lifecycle=$(jq -r '.lifecycle // empty' "$(_cr_owner_file)" 2>/dev/null) || return 70
+    _cr_load_owner_lifecycle || return 70
+    lifecycle=$_CR_LIFECYCLE_VAL
     if [ "$lifecycle" = STOPPING ]; then
         PIM_CAMERA_MONITOR_STOPPING=1
     elif [ "$lifecycle" = ACTIVE ]; then
