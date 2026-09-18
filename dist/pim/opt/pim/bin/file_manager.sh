@@ -21,6 +21,16 @@ fi
 # and a cached sentinel can never be promoted into KEY.
 VHL_CACHE_EMPTY='@empty@'
 
+# Trust boundary: this script is the only writer of the cache, and in production
+# the cache is a sibling of the runtime JSON inside a 0750 root-owned directory.
+# Write access to that directory is therefore the boundary for the deletion
+# prefix: anyone who can plant a cache record can already rewrite the runtime
+# JSON itself, so a cache hit deliberately does not re-validate the runtime
+# document.  The record is still never trusted for its content - the cached name
+# must pass the same character class as a parsed one, and KEY is re-validated
+# before any glob - only for the fact that the runtime was valid when it was
+# written.  See docs/camera-health/config-consumer-inventory.md section C.
+
 config_invalid() {
     logger -p local0.err "[$tag:$LINENO] CONFIG_INVALID: $PIM_CAMERA_RUNTIME_JSON" 2>/dev/null
     exit 64

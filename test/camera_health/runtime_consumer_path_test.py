@@ -43,6 +43,28 @@ CAMERA_RUNTIME_CONSUMERS = (
     Path("dist/pim/opt/pim/lib/cam_operate_control.sh"),
 )
 
+# The runtime configuration directory belongs to the cam-operate builder; a
+# runtime consumer is read-only there.  file_manager.sh is the one audited
+# exception: it publishes a derived VHL-name cache as a sibling of the runtime
+# JSON.  Any other consumer that derives a sibling path from the runtime JSON is
+# a new, unreviewed writer in that directory and fails this audit.  Removing the
+# exception without removing the writer, or vice versa, also fails.
+RUNTIME_DIRECTORY_WRITERS = {
+    Path("dist/pim/opt/pim/bin/file_manager.sh"): (
+        "derived VHL-name cache published beside the runtime JSON; recorded in "
+        "docs/camera-health/config-consumer-inventory.md"
+    ),
+}
+
+# A sibling artifact is the runtime path (by variable or literal) immediately
+# followed by a path suffix.  The lookahead excludes the closing delimiters of a
+# parameter expansion so that `${PIM_CAMERA_RUNTIME_JSON:-/run/.../x.json}`
+# default values are not mistaken for a derived path.
+RUNTIME_SIBLING_ARTIFACT = re.compile(
+    r"(?:\$\{PIM_CAMERA_RUNTIME_JSON\}|" + re.escape(RUNTIME_PATH) + r")(?=[^\"'\s}),;])"
+)
+
+
 # These files deliberately own or edit source configuration.  They are kept
 # out of broad consumer cleanups and are audited separately as an allowlist.
 CAMERA_SOURCE_READERS = (
@@ -1819,6 +1841,22 @@ def main() -> int:
     check(
         set(RUNTIME_BOUNDARY_MARKERS) == set(CAMERA_RUNTIME_CONSUMERS),
         "every explicit camera consumer has a reviewed runtime boundary",
+        failures,
+    )
+
+    runtime_directory_writers = {
+        relative
+        for relative in CAMERA_RUNTIME_CONSUMERS
+        if RUNTIME_SIBLING_ARTIFACT.search((ROOT / relative).read_text(encoding="utf-8"))
+    }
+    check(
+        runtime_directory_writers <= set(RUNTIME_DIRECTORY_WRITERS),
+        "every writer of a runtime-directory sibling artifact is an audited exception",
+        failures,
+    )
+    check(
+        set(RUNTIME_DIRECTORY_WRITERS) <= runtime_directory_writers,
+        "every audited runtime-directory writer still publishes its artifact",
         failures,
     )
     for relative in CAMERA_RUNTIME_CONSUMERS:
