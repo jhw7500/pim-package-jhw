@@ -73,10 +73,12 @@ command -v jq >/dev/null 2>&1 || config_invalid
 cache_usable=0
 cache_destination_safe && cache_usable=1
 
-runtime_id=$(runtime_identity) || {
-    runtime_path_confirmed_missing && runtime_unavailable
-    config_invalid
-}
+# runtime_identity exists only to key the cache, so its failure disables caching
+# for this invocation instead of terminating retention.  The runtime's own
+# validity is still decided by the jq parse below, which leaves the
+# runtime_unavailable and config_invalid outcomes unchanged.
+runtime_id=$(runtime_identity) || runtime_id=""
+[[ -n "$runtime_id" ]] || cache_usable=0
 
 cached_id=""
 cached_vhl_name=""
@@ -95,7 +97,7 @@ if [[ "$cache_usable" == 1 && -f "$CACHE_PATH" && ! -L "$CACHE_PATH" ]]; then
 fi
 
 cached_hit=0
-if [[ "$cached_id" == "$runtime_id" && -z "$cached_extra" ]]; then
+if [[ -n "$runtime_id" && "$cached_id" == "$runtime_id" && -z "$cached_extra" ]]; then
     if [[ "$cached_vhl_name" == "$VHL_CACHE_EMPTY" ]]; then
         VHL_NAME=""
         cached_hit=1

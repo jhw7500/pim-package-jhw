@@ -869,6 +869,37 @@ exit 97
                 " or stopping retention",
             )
 
+            # runtime_identity() only keys the cache, so a broken stat(1) must
+            # disable caching rather than abort the retention job.
+            stat_failure_bin = root / "stat-failure-bin"
+            stat_failure_bin.mkdir()
+            stat_stub = stat_failure_bin / "stat"
+            stat_stub.write_text("#!/bin/sh\nexit 127\n", encoding="utf-8")
+            stat_stub.chmod(0o755)
+            stat_failure_dir = unsafe_cache_recording("stat-failure-recording")
+            stat_failure_cache = root / "stat-failure.cache"
+            stat_failure_env = {
+                **env,
+                "PATH": f"{stat_failure_bin}:{env['PATH']}",
+                "PIM_FILE_MANAGER_VHL_CACHE": str(stat_failure_cache),
+            }
+            self.clear_events(env)
+            stat_failure_result = self.run_script(
+                BIN / "file_manager.sh",
+                root,
+                stat_failure_env,
+                (str(stat_failure_dir), "2", "100", "caller"),
+            )
+            self.check(
+                stat_failure_result.returncode == 0
+                and len(self.command_lines(env, "jq")) == 1
+                and len(list(stat_failure_dir.glob("runtime_*"))) == 2
+                and not stat_failure_cache.exists()
+                and not list(root.glob("stat-failure.cache.tmp.*")),
+                "cache-identity stat failure disables caching without stopping"
+                " retention",
+            )
+
             cached_candidate = recording / "runtime_3.mp4"
             cached_candidate.write_text("runtime", encoding="utf-8")
             self.clear_events(env)
