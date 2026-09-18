@@ -10,8 +10,10 @@ MAX_SIZE=$((SIZE * 1024 * 1024))
 
 if [[ "${PIM_CAMERA_TEST_MODE:-0}" == "1" ]]; then
     PIM_CAMERA_RUNTIME_JSON="${PIM_CAMERA_RUNTIME_JSON:?PIM_CAMERA_RUNTIME_JSON is required in test mode}"
+    CACHE_PATH="${PIM_FILE_MANAGER_VHL_CACHE:-${PIM_CAMERA_RUNTIME_JSON}.file-manager-vhl.cache}"
 else
     PIM_CAMERA_RUNTIME_JSON="/run/pim-camera/config/pim_runtime.json"
+    CACHE_PATH="${PIM_CAMERA_RUNTIME_JSON}.file-manager-vhl.cache"
 fi
 
 config_invalid() {
@@ -44,10 +46,19 @@ runtime_identity() {
     stat -Lc '%d:%i:%s:%y:%z' -- "$PIM_CAMERA_RUNTIME_JSON" 2>/dev/null
 }
 
+cache_destination_safe() {
+    [[ "$CACHE_PATH" != "$PIM_CAMERA_RUNTIME_JSON" ]] || return 1
+    [[ ! -L "$CACHE_PATH" ]] || return 1
+    [[ ! -e "$CACHE_PATH" || -f "$CACHE_PATH" ]] || return 1
+    if [[ -e "$CACHE_PATH" && "$CACHE_PATH" -ef "$PIM_CAMERA_RUNTIME_JSON" ]]; then
+        return 1
+    fi
+}
+
 runtime_path_confirmed_missing && runtime_unavailable
 
 command -v jq >/dev/null 2>&1 || config_invalid
-CACHE_PATH="${PIM_FILE_MANAGER_VHL_CACHE:-${PIM_CAMERA_RUNTIME_JSON}.file-manager-vhl.cache}"
+cache_destination_safe || config_invalid
 runtime_id=$(runtime_identity) || {
     runtime_path_confirmed_missing && runtime_unavailable
     config_invalid
@@ -91,6 +102,7 @@ else
         if [[ -n "$cache_tmp" ]]; then
             if printf '%s\t%s\n' "$runtime_id" "$VHL_NAME" > "$cache_tmp" &&
                chmod 0600 "$cache_tmp" &&
+               cache_destination_safe &&
                mv -f -- "$cache_tmp" "$CACHE_PATH"; then
                 cache_tmp=""
             fi

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -729,6 +730,114 @@ exit 97
                 and len(list(recording.glob("source_*"))) == 3
                 and unrelated.read_text(encoding="utf-8") == "unrelated",
                 "file manager deletes only the fixed-runtime VHL prefix in a disposable directory",
+            )
+
+            production_runtime = root / "production-runtime.json"
+            self.write_json(
+                production_runtime,
+                runtime_document(vhl_name="production"),
+            )
+            production_recording = root / "production-recording"
+            production_recording.mkdir()
+            production_sentinel = root / "production-override-sentinel"
+            production_sentinel.write_text("sentinel\n", encoding="utf-8")
+            production_script = root / "file-manager-production-fixture.sh"
+            production_source = (BIN / "file_manager.sh").read_text(encoding="utf-8")
+            fixed_runtime_assignment = (
+                'PIM_CAMERA_RUNTIME_JSON="/run/pim-camera/config/pim_runtime.json"'
+            )
+            self.check(
+                production_source.count(fixed_runtime_assignment) == 1,
+                "production file-manager fixture preserves one fixed runtime assignment",
+            )
+            production_script.write_text(
+                production_source.replace(
+                    fixed_runtime_assignment,
+                    f"PIM_CAMERA_RUNTIME_JSON={shlex.quote(str(production_runtime))}",
+                    1,
+                ),
+                encoding="utf-8",
+            )
+            production_script.chmod(0o755)
+            production_env = {
+                **env,
+                "PIM_CAMERA_TEST_MODE": "0",
+                "PIM_FILE_MANAGER_VHL_CACHE": str(production_sentinel),
+            }
+            production_result = self.run_script(
+                production_script,
+                root,
+                production_env,
+                (str(production_recording), "2", "100", "caller"),
+            )
+            production_cache = Path(
+                f"{production_runtime}.file-manager-vhl.cache"
+            )
+            self.check(
+                production_result.returncode == 0
+                and production_sentinel.read_text(encoding="utf-8") == "sentinel\n"
+                and production_cache.is_file()
+                and production_cache.stat().st_mode & 0o777 == 0o600,
+                "production mode ignores a cache override and preserves an unrelated file",
+            )
+
+            cache_alias_before = Path(env["PIM_CAMERA_RUNTIME_JSON"]).read_bytes()
+            cache_alias_parent = root / "cache-alias-parent"
+            cache_alias_parent.mkdir()
+            cache_alias_path = cache_alias_parent / ".." / "runtime.json"
+            cache_alias_env = {
+                **env,
+                "PIM_FILE_MANAGER_VHL_CACHE": str(cache_alias_path),
+            }
+            cache_alias_result = self.run_script(
+                BIN / "file_manager.sh",
+                root,
+                cache_alias_env,
+                (str(recording), "2", "100", "caller"),
+            )
+            self.check(
+                cache_alias_result.returncode == 64
+                and Path(env["PIM_CAMERA_RUNTIME_JSON"]).read_bytes()
+                == cache_alias_before,
+                "cache destination aliasing the runtime JSON fails closed",
+            )
+
+            symlink_cache = root / "symlink-cache"
+            symlink_cache.symlink_to(production_sentinel)
+            symlink_env = {
+                **env,
+                "PIM_FILE_MANAGER_VHL_CACHE": str(symlink_cache),
+            }
+            symlink_result = self.run_script(
+                BIN / "file_manager.sh",
+                root,
+                symlink_env,
+                (str(recording), "2", "100", "caller"),
+            )
+            self.check(
+                symlink_result.returncode == 64
+                and symlink_cache.is_symlink()
+                and production_sentinel.read_text(encoding="utf-8") == "sentinel\n",
+                "symlink cache destination fails closed without touching its target",
+            )
+
+            nonregular_cache = root / "nonregular-cache"
+            nonregular_cache.mkdir()
+            nonregular_env = {
+                **env,
+                "PIM_FILE_MANAGER_VHL_CACHE": str(nonregular_cache),
+            }
+            nonregular_result = self.run_script(
+                BIN / "file_manager.sh",
+                root,
+                nonregular_env,
+                (str(recording), "2", "100", "caller"),
+            )
+            self.check(
+                nonregular_result.returncode == 64
+                and nonregular_cache.is_dir()
+                and not list(nonregular_cache.iterdir()),
+                "non-regular cache destination fails closed without residue",
             )
 
             cached_candidate = recording / "runtime_3.mp4"
