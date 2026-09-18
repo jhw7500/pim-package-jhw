@@ -1148,9 +1148,44 @@ exit 97
                 path = fallback_dir / f"caller_{index}.mp4"
                 path.write_text("caller", encoding="utf-8")
                 os.utime(path, (then + index, then + index))
+            fallback_unrelated = fallback_dir / "unrelated_0.mp4"
+            fallback_unrelated.write_text("unrelated", encoding="utf-8")
+            os.utime(fallback_unrelated, (then, then))
             self.write_json(
                 Path(env["PIM_CAMERA_RUNTIME_JSON"]), runtime_document(vhl_name="")
             )
+            self.clear_events(env)
+            result = self.run_script(
+                BIN / "file_manager.sh",
+                root,
+                env,
+                (str(fallback_dir), "2", "100", "caller"),
+            )
+            fallback_first_jq_count = len(self.command_lines(env, "jq"))
+            fallback_cache = Path(
+                f"{env['PIM_CAMERA_RUNTIME_JSON']}.file-manager-vhl.cache"
+            )
+            fallback_cache_fields = (
+                fallback_cache.read_text(encoding="utf-8").rstrip("\n").split("\t")
+                if fallback_cache.is_file()
+                else []
+            )
+            self.check(
+                result.returncode == 0
+                and fallback_first_jq_count == 1
+                and len(list(fallback_dir.glob("caller_*"))) == 2
+                and fallback_unrelated.is_file()
+                and len(fallback_cache_fields) == 2
+                and fallback_cache_fields[1] == "@empty@"
+                and fallback_cache.stat().st_mode & 0o777 == 0o600,
+                "valid runtime without a usable VHL name retains caller KEY fallback"
+                " and caches an empty sentinel",
+            )
+
+            fallback_replenished = fallback_dir / "caller_3.mp4"
+            fallback_replenished.write_text("caller", encoding="utf-8")
+            os.utime(fallback_replenished, (then + 3, then + 3))
+            self.clear_events(env)
             result = self.run_script(
                 BIN / "file_manager.sh",
                 root,
@@ -1159,8 +1194,10 @@ exit 97
             )
             self.check(
                 result.returncode == 0
-                and len(list(fallback_dir.glob("caller_*"))) == 2,
-                "valid runtime without a usable VHL name retains caller KEY fallback",
+                and not self.command_lines(env, "jq")
+                and len(list(fallback_dir.glob("caller_*"))) == 2
+                and fallback_unrelated.is_file(),
+                "cached empty sentinel retains caller KEY fallback with zero jq",
             )
 
             empty_key_dir = root / "empty-key-recording"

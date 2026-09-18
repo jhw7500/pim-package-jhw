@@ -16,6 +16,11 @@ else
     CACHE_PATH="${PIM_CAMERA_RUNTIME_JSON}.file-manager-vhl.cache"
 fi
 
+# Cached stand-in for a runtime that publishes no usable VHL name.  It contains
+# characters the VHL validation regex rejects, so a real name can never equal it
+# and a cached sentinel can never be promoted into KEY.
+VHL_CACHE_EMPTY='@empty@'
+
 config_invalid() {
     logger -p local0.err "[$tag:$LINENO] CONFIG_INVALID: $PIM_CAMERA_RUNTIME_JSON" 2>/dev/null
     exit 64
@@ -71,12 +76,19 @@ if [[ -f "$CACHE_PATH" && ! -L "$CACHE_PATH" ]]; then
     IFS=$'\t' read -r cached_id cached_vhl_name cached_extra < "$CACHE_PATH" || true
 fi
 
-if [[ "$cached_id" == "$runtime_id" &&
-      -n "$cached_vhl_name" &&
-      "$cached_vhl_name" =~ ^[A-Za-z0-9._-]+$ &&
-      -z "$cached_extra" ]]; then
-    VHL_NAME=$cached_vhl_name
-else
+cached_hit=0
+if [[ "$cached_id" == "$runtime_id" && -z "$cached_extra" ]]; then
+    if [[ "$cached_vhl_name" == "$VHL_CACHE_EMPTY" ]]; then
+        VHL_NAME=""
+        cached_hit=1
+    elif [[ -n "$cached_vhl_name" &&
+            "$cached_vhl_name" =~ ^[A-Za-z0-9._-]+$ ]]; then
+        VHL_NAME=$cached_vhl_name
+        cached_hit=1
+    fi
+fi
+
+if [[ "$cached_hit" == 0 ]]; then
     VHL_NAME=$(jq -ner --slurpfile runtime "$PIM_CAMERA_RUNTIME_JSON" '
         if ($runtime | length) == 1 and
            ($runtime[0] | type) == "object" and
@@ -91,16 +103,22 @@ else
         config_invalid
     }
 
-    # Cache only a validated value from an unchanged runtime inode.  The runtime
+    # Cache only a validated answer from an unchanged runtime inode.  The runtime
     # publisher replaces the JSON atomically; if it changes while jq is reading,
     # this invocation keeps its coherent result but the next invocation reparses.
+    # A runtime that publishes no usable VHL name is a stable answer too, so it
+    # is recorded as an explicit sentinel rather than reparsed every cron tick.
     runtime_id_after=$(runtime_identity || true)
-    if [[ "$runtime_id_after" == "$runtime_id" &&
-          -n "$VHL_NAME" &&
-          "$VHL_NAME" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    cache_value=""
+    if [[ -z "$VHL_NAME" ]]; then
+        cache_value=$VHL_CACHE_EMPTY
+    elif [[ "$VHL_NAME" =~ ^[A-Za-z0-9._-]+$ ]]; then
+        cache_value=$VHL_NAME
+    fi
+    if [[ "$runtime_id_after" == "$runtime_id" && -n "$cache_value" ]]; then
         cache_tmp=$(mktemp "${CACHE_PATH}.tmp.XXXXXX" 2>/dev/null || true)
         if [[ -n "$cache_tmp" ]]; then
-            if printf '%s\t%s\n' "$runtime_id" "$VHL_NAME" > "$cache_tmp" &&
+            if printf '%s\t%s\n' "$runtime_id" "$cache_value" > "$cache_tmp" &&
                chmod 0600 "$cache_tmp" &&
                cache_destination_safe &&
                mv -f -- "$cache_tmp" "$CACHE_PATH"; then
