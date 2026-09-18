@@ -79,9 +79,44 @@ _cl_active_guard_locked() {
 
 _cl_active_guard() { _cr_lock_call _cl_active_guard_locked; }
 
+declare -gA _CL_PROCESS_PID_CACHE=()
+declare -gA _CL_PROCESS_START_CACHE=()
+_cl_process_snapshot() {
+    local name=$1 pid=$2 comm stat tail
+    local -a fields
+    _CL_PROCESS_SNAPSHOT_START=
+    [[ $pid =~ ^[0-9]+$ ]] || return 1
+    IFS= read -r comm < "$PIM_CAMERA_PROC_ROOT/$pid/comm" 2>/dev/null || return 1
+    [ "$comm" = "$name" ] || return 1
+    IFS= read -r stat < "$PIM_CAMERA_PROC_ROOT/$pid/stat" 2>/dev/null || return 1
+    tail=${stat##*) }
+    read -r -a fields <<<"$tail"
+    [ "${#fields[@]}" -ge 20 ] && [[ ${fields[19]} =~ ^[0-9]+$ ]] || return 1
+    _CL_PROCESS_SNAPSHOT_START=${fields[19]}
+}
+
 _cl_process_status() {
-    local name=$1 rc
-    if pgrep -x "$name" >/dev/null 2>&1; then return 0; else rc=$?; fi
+    local name=$1 rc pids pid cached_pid cached_start
+    [ -n "$name" ] || return 64
+    cached_pid=${_CL_PROCESS_PID_CACHE[$name]:-}
+    cached_start=${_CL_PROCESS_START_CACHE[$name]:-}
+    if [ -n "$cached_pid" ] && [ -n "$cached_start" ] &&
+       _cl_process_snapshot "$name" "$cached_pid" &&
+       [ "$_CL_PROCESS_SNAPSHOT_START" = "$cached_start" ]; then
+        return 0
+    fi
+    if pids=$(pgrep -x "$name" 2>/dev/null); then
+        while IFS= read -r pid; do
+            if _cl_process_snapshot "$name" "$pid"; then
+                _CL_PROCESS_PID_CACHE["$name"]=$pid
+                _CL_PROCESS_START_CACHE["$name"]=$_CL_PROCESS_SNAPSHOT_START
+                break
+            fi
+        done <<<"$pids"
+        return 0
+    else
+        rc=$?
+    fi
     [ "$rc" -eq 1 ] && return 1
     return "$rc"
 }
