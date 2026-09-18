@@ -63,7 +63,16 @@ cache_destination_safe() {
 runtime_path_confirmed_missing && runtime_unavailable
 
 command -v jq >/dev/null 2>&1 || config_invalid
-cache_destination_safe || config_invalid
+
+# The cache only avoids one jq spawn per invocation; it is not a precondition
+# for retention.  An unusable destination disables caching for this invocation
+# instead of terminating the job, because this script is the bound on recording
+# and /dev/shm growth and it runs from cron every minute.  Nothing is ever read
+# from or written to an unsafe destination, and exit 64 stays reserved for an
+# unusable runtime config.
+cache_usable=0
+cache_destination_safe && cache_usable=1
+
 runtime_id=$(runtime_identity) || {
     runtime_path_confirmed_missing && runtime_unavailable
     config_invalid
@@ -72,7 +81,7 @@ runtime_id=$(runtime_identity) || {
 cached_id=""
 cached_vhl_name=""
 cached_extra=""
-if [[ -f "$CACHE_PATH" && ! -L "$CACHE_PATH" ]]; then
+if [[ "$cache_usable" == 1 && -f "$CACHE_PATH" && ! -L "$CACHE_PATH" ]]; then
     # A record that is not newline-terminated is a short write, not a usable
     # entry.  read still assigns whatever it parsed before EOF, and a value
     # truncated mid-name stays a strict prefix of the real one, so trusting it
@@ -124,7 +133,7 @@ if [[ "$cached_hit" == 0 ]]; then
     elif [[ "$VHL_NAME" =~ ^[A-Za-z0-9._-]+$ ]]; then
         cache_value=$VHL_NAME
     fi
-    if [[ "$runtime_id_after" == "$runtime_id" && -n "$cache_value" ]]; then
+    if [[ "$cache_usable" == 1 && "$runtime_id_after" == "$runtime_id" && -n "$cache_value" ]]; then
         cache_tmp=$(mktemp "${CACHE_PATH}.tmp.XXXXXX" 2>/dev/null || true)
         if [[ -n "$cache_tmp" ]]; then
             if printf '%s\t%s\n' "$runtime_id" "$cache_value" > "$cache_tmp" &&

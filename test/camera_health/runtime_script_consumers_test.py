@@ -781,7 +781,22 @@ exit 97
                 "production mode ignores a cache override and preserves an unrelated file",
             )
 
+            # An unusable cache destination disables caching for the invocation;
+            # it must not disable retention.  This script is the bound on
+            # recording and /dev/shm growth and runs from cron every minute, so
+            # aborting here would let storage grow without limit on every tick.
+            # The destination itself is still never read from or written to.
+            def unsafe_cache_recording(name: str) -> Path:
+                directory = root / name
+                directory.mkdir()
+                for index in range(5):
+                    path = directory / f"runtime_{index}.mp4"
+                    path.write_text("runtime", encoding="utf-8")
+                    os.utime(path, (then + index, then + index))
+                return directory
+
             cache_alias_before = Path(env["PIM_CAMERA_RUNTIME_JSON"]).read_bytes()
+            cache_alias_dir = unsafe_cache_recording("cache-alias-recording")
             cache_alias_parent = root / "cache-alias-parent"
             cache_alias_parent.mkdir()
             cache_alias_path = cache_alias_parent / ".." / "runtime.json"
@@ -789,55 +804,69 @@ exit 97
                 **env,
                 "PIM_FILE_MANAGER_VHL_CACHE": str(cache_alias_path),
             }
+            self.clear_events(env)
             cache_alias_result = self.run_script(
                 BIN / "file_manager.sh",
                 root,
                 cache_alias_env,
-                (str(recording), "2", "100", "caller"),
+                (str(cache_alias_dir), "2", "100", "caller"),
             )
             self.check(
-                cache_alias_result.returncode == 64
+                cache_alias_result.returncode == 0
+                and len(self.command_lines(env, "jq")) == 1
+                and len(list(cache_alias_dir.glob("runtime_*"))) == 2
                 and Path(env["PIM_CAMERA_RUNTIME_JSON"]).read_bytes()
                 == cache_alias_before,
-                "cache destination aliasing the runtime JSON fails closed",
+                "cache destination aliasing the runtime JSON disables caching"
+                " without mutating it or stopping retention",
             )
 
             symlink_cache = root / "symlink-cache"
             symlink_cache.symlink_to(production_sentinel)
+            symlink_dir = unsafe_cache_recording("symlink-cache-recording")
             symlink_env = {
                 **env,
                 "PIM_FILE_MANAGER_VHL_CACHE": str(symlink_cache),
             }
+            self.clear_events(env)
             symlink_result = self.run_script(
                 BIN / "file_manager.sh",
                 root,
                 symlink_env,
-                (str(recording), "2", "100", "caller"),
+                (str(symlink_dir), "2", "100", "caller"),
             )
             self.check(
-                symlink_result.returncode == 64
+                symlink_result.returncode == 0
+                and len(self.command_lines(env, "jq")) == 1
+                and len(list(symlink_dir.glob("runtime_*"))) == 2
                 and symlink_cache.is_symlink()
                 and production_sentinel.read_text(encoding="utf-8") == "sentinel\n",
-                "symlink cache destination fails closed without touching its target",
+                "symlink cache destination disables caching without touching its"
+                " target or stopping retention",
             )
 
             nonregular_cache = root / "nonregular-cache"
             nonregular_cache.mkdir()
+            nonregular_dir = unsafe_cache_recording("nonregular-cache-recording")
             nonregular_env = {
                 **env,
                 "PIM_FILE_MANAGER_VHL_CACHE": str(nonregular_cache),
             }
+            self.clear_events(env)
             nonregular_result = self.run_script(
                 BIN / "file_manager.sh",
                 root,
                 nonregular_env,
-                (str(recording), "2", "100", "caller"),
+                (str(nonregular_dir), "2", "100", "caller"),
             )
             self.check(
-                nonregular_result.returncode == 64
+                nonregular_result.returncode == 0
+                and len(self.command_lines(env, "jq")) == 1
+                and len(list(nonregular_dir.glob("runtime_*"))) == 2
                 and nonregular_cache.is_dir()
                 and not list(nonregular_cache.iterdir()),
-                "non-regular cache destination fails closed without residue",
+                "non-regular cache destination disables caching without residue"
+                " or stopping retention",
             )
 
             cached_candidate = recording / "runtime_3.mp4"
