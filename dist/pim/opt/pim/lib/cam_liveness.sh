@@ -86,9 +86,9 @@ _cl_process_snapshot() {
     local -a fields
     _CL_PROCESS_SNAPSHOT_START=
     [[ $pid =~ ^[0-9]+$ ]] || return 1
-    IFS= read -r comm < "$PIM_CAMERA_PROC_ROOT/$pid/comm" 2>/dev/null || return 1
+    { IFS= read -r comm < "$PIM_CAMERA_PROC_ROOT/$pid/comm"; } 2>/dev/null || return 1
     [ "$comm" = "$name" ] || return 1
-    IFS= read -r stat < "$PIM_CAMERA_PROC_ROOT/$pid/stat" 2>/dev/null || return 1
+    { IFS= read -r stat < "$PIM_CAMERA_PROC_ROOT/$pid/stat"; } 2>/dev/null || return 1
     tail=${stat##*) }
     read -r -a fields <<<"$tail"
     [ "${#fields[@]}" -ge 20 ] && [[ ${fields[19]} =~ ^[0-9]+$ ]] || return 1

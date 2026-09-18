@@ -284,6 +284,26 @@ expect_rc 0 cam_liveness_tick
 expect_rc 0 cam_liveness_tick
 ! grep -q '^pgrep:' "$PIM_CAMERA_CALL_LOG" || fail 'replacement process identity was not cached'
 
+echo '=== vanished cached process is diagnosed without stderr noise ==='
+reset_case; owner_at ACTIVE; printf 'vcm\ngstApp\n' > "$WORK/procs"
+export PIM_CAMERA_TEST_VCM_PID=5201 PIM_CAMERA_TEST_GSTAPP_PID=5202
+fake_named_process 5201 vcm 511
+fake_named_process 5202 gstApp 512
+expect_rc 0 cam_liveness_tick
+# The monitored process dies: its /proc entry disappears and pgrep stops finding
+# it, while the identity cache still holds the old pid.  The verdict must stay
+# correct and the probe must not reach the real stderr, because this repeats on
+# every monitor tick for as long as the process stays down - exactly the journal
+# an operator would be reading during that incident.
+rm -rf "$PIM_CAMERA_PROC_ROOT/5201"
+printf 'gstApp\n' > "$WORK/procs"
+set +e
+_cl_process_status vcm 2> "$WORK/vanished-stderr"
+vanished_rc=$?
+set -e
+[ "$vanished_rc" -eq 1 ] || fail "vanished cached process returned rc=$vanished_rc, expected 1"
+[ ! -s "$WORK/vanished-stderr" ] || fail "vanished cached process leaked stderr: $(cat "$WORK/vanished-stderr")"
+
 echo '=== injected runtime validator remains nounset-safe ==='
 bash -eu -c '
     cam_owner_assert() { :; }
