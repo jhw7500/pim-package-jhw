@@ -40,22 +40,64 @@ runtime_path_confirmed_missing() {
     [[ "$probe" != "$runtime_path" && -d "$probe" && -x "$probe" ]]
 }
 
+runtime_identity() {
+    stat -Lc '%d:%i:%s:%y:%z' -- "$PIM_CAMERA_RUNTIME_JSON" 2>/dev/null
+}
+
 runtime_path_confirmed_missing && runtime_unavailable
 
 command -v jq >/dev/null 2>&1 || config_invalid
-VHL_NAME=$(jq -ner --slurpfile runtime "$PIM_CAMERA_RUNTIME_JSON" '
-    if ($runtime | length) == 1 and
-       ($runtime[0] | type) == "object" and
-       ($runtime[0].VHL_CAM | type) == "object" and
-       ($runtime[0].ORD | type) == "object" and
-       ($runtime[0].VCM | type) == "object" and
-       (($runtime[0].VHL_CAM.vhl_name // "") | type) == "string"
-    then ($runtime[0].VHL_CAM.vhl_name // "")
-    else error("invalid camera runtime") end
-' 2>/dev/null) || {
+CACHE_PATH="${PIM_FILE_MANAGER_VHL_CACHE:-${PIM_CAMERA_RUNTIME_JSON}.file-manager-vhl.cache}"
+runtime_id=$(runtime_identity) || {
     runtime_path_confirmed_missing && runtime_unavailable
     config_invalid
 }
+
+cached_id=""
+cached_vhl_name=""
+cached_extra=""
+if [[ -f "$CACHE_PATH" && ! -L "$CACHE_PATH" ]]; then
+    IFS=$'\t' read -r cached_id cached_vhl_name cached_extra < "$CACHE_PATH" || true
+fi
+
+if [[ "$cached_id" == "$runtime_id" &&
+      -n "$cached_vhl_name" &&
+      "$cached_vhl_name" =~ ^[A-Za-z0-9._-]+$ &&
+      -z "$cached_extra" ]]; then
+    VHL_NAME=$cached_vhl_name
+else
+    VHL_NAME=$(jq -ner --slurpfile runtime "$PIM_CAMERA_RUNTIME_JSON" '
+        if ($runtime | length) == 1 and
+           ($runtime[0] | type) == "object" and
+           ($runtime[0].VHL_CAM | type) == "object" and
+           ($runtime[0].ORD | type) == "object" and
+           ($runtime[0].VCM | type) == "object" and
+           (($runtime[0].VHL_CAM.vhl_name // "") | type) == "string"
+        then ($runtime[0].VHL_CAM.vhl_name // "")
+        else error("invalid camera runtime") end
+    ' 2>/dev/null) || {
+        runtime_path_confirmed_missing && runtime_unavailable
+        config_invalid
+    }
+
+    # Cache only a validated value from an unchanged runtime inode.  The runtime
+    # publisher replaces the JSON atomically; if it changes while jq is reading,
+    # this invocation keeps its coherent result but the next invocation reparses.
+    runtime_id_after=$(runtime_identity || true)
+    if [[ "$runtime_id_after" == "$runtime_id" &&
+          -n "$VHL_NAME" &&
+          "$VHL_NAME" =~ ^[A-Za-z0-9._-]+$ ]]; then
+        cache_tmp=$(mktemp "${CACHE_PATH}.tmp.XXXXXX" 2>/dev/null || true)
+        if [[ -n "$cache_tmp" ]]; then
+            if printf '%s\t%s\n' "$runtime_id" "$VHL_NAME" > "$cache_tmp" &&
+               chmod 0600 "$cache_tmp" &&
+               mv -f -- "$cache_tmp" "$CACHE_PATH"; then
+                cache_tmp=""
+            fi
+            [[ -z "$cache_tmp" ]] || rm -f -- "$cache_tmp"
+        fi
+    fi
+fi
 if [[ -n "$VHL_NAME" ]]; then
     KEY="$VHL_NAME"
 fi

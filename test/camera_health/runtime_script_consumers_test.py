@@ -731,6 +731,27 @@ exit 97
                 "file manager deletes only the fixed-runtime VHL prefix in a disposable directory",
             )
 
+            cached_candidate = recording / "runtime_3.mp4"
+            cached_candidate.write_text("runtime", encoding="utf-8")
+            self.clear_events(env)
+            result = self.run_script(
+                BIN / "file_manager.sh",
+                root,
+                env,
+                (str(recording), "2", "100", "caller"),
+            )
+            cache_path = Path(
+                f"{env['PIM_CAMERA_RUNTIME_JSON']}.file-manager-vhl.cache"
+            )
+            self.check(
+                result.returncode == 0
+                and len(list(recording.glob("runtime_*"))) == 2
+                and not self.command_lines(env, "jq")
+                and cache_path.is_file()
+                and cache_path.stat().st_mode & 0o777 == 0o600,
+                "unchanged runtime reuses the protected VHL cache with zero jq",
+            )
+
             direct_dir = root / "direct-edit-recording"
             direct_dir.mkdir()
             for index in range(3):
@@ -742,28 +763,51 @@ exit 97
                 Path(env["PIM_CAMERA_RUNTIME_JSON"]),
                 runtime_document(vhl_name="runtime-a"),
             )
+            self.clear_events(env)
             first = self.run_script(
                 BIN / "file_manager.sh",
                 root,
                 env,
                 (str(direct_dir), "2", "100", "caller"),
             )
+            first_jq_count = len(self.command_lines(env, "jq"))
             self.write_json(
                 Path(env["PIM_CAMERA_RUNTIME_JSON"]),
                 runtime_document(vhl_name="runtime-b"),
             )
+            self.clear_events(env)
             second = self.run_script(
                 BIN / "file_manager.sh",
                 root,
                 env,
                 (str(direct_dir), "2", "100", "caller"),
             )
+            second_jq_count = len(self.command_lines(env, "jq"))
             self.check(
                 first.returncode == 0
                 and second.returncode == 0
+                and first_jq_count == 1
+                and second_jq_count == 1
                 and len(list(direct_dir.glob("runtime-a_*"))) == 2
                 and len(list(direct_dir.glob("runtime-b_*"))) == 2,
-                "direct runtime A-to-B edit selects the new prefix on the next invocation",
+                "direct runtime A-to-B edit reparses once and selects the new prefix",
+            )
+
+            (direct_dir / "runtime-b_3.mp4").write_text(
+                "runtime-b", encoding="utf-8"
+            )
+            self.clear_events(env)
+            third = self.run_script(
+                BIN / "file_manager.sh",
+                root,
+                env,
+                (str(direct_dir), "2", "100", "caller"),
+            )
+            self.check(
+                third.returncode == 0
+                and len(list(direct_dir.glob("runtime-b_*"))) == 2
+                and not self.command_lines(env, "jq"),
+                "stable replacement runtime is cached after its first parse",
             )
 
             fallback_dir = root / "fallback-recording"
@@ -1449,11 +1493,45 @@ exit 97
                 file_env,
                 (str(recording), "2", "100", "caller"),
             )
+            cache_path = Path(f"{runtime_path}.file-manager-vhl.cache")
             self.check(
                 result.returncode == 0
                 and len(list(recording.glob("atomic-a_*"))) == 2
-                and len(list(recording.glob("atomic-b_*"))) == 3,
-                "file manager retains one runtime VHL value for the invocation",
+                and len(list(recording.glob("atomic-b_*"))) == 3
+                and not cache_path.exists(),
+                "file manager retains one runtime VHL value and rejects a raced cache publish",
+            )
+
+            self.clear_events(env)
+            second = self.run_script(
+                BIN / "file_manager.sh",
+                root,
+                env,
+                (str(recording), "2", "100", "caller"),
+            )
+            self.check(
+                second.returncode == 0
+                and len(list(recording.glob("atomic-b_*"))) == 2
+                and len(self.command_lines(env, "jq")) == 1
+                and cache_path.is_file(),
+                "next file-manager invocation parses and caches the replacement runtime",
+            )
+
+            (recording / "atomic-b_3.mp4").write_text(
+                "atomic-b", encoding="utf-8"
+            )
+            self.clear_events(env)
+            third = self.run_script(
+                BIN / "file_manager.sh",
+                root,
+                env,
+                (str(recording), "2", "100", "caller"),
+            )
+            self.check(
+                third.returncode == 0
+                and len(list(recording.glob("atomic-b_*"))) == 2
+                and not self.command_lines(env, "jq"),
+                "unchanged replacement runtime uses the cache with zero jq",
             )
 
             self.clear_events(env)
