@@ -7,7 +7,6 @@
 | source authority | `/root/shared_v` | 영구 설정 작성·검증 |
 | cam-operate builder | `/root/shared_v` -> `/run/pim-camera/config/pim_runtime.json` | startup/`apply-config`에서만 선택·병합·검증·원자 교체 |
 | camera runtime consumer | `/run/pim-camera/config/pim_runtime.json` | process 시작 또는 명시적 policy reload 때 읽기 |
-| runtime directory writer | `/run/pim-camera/config/pim_runtime.json.file-manager-vhl.cache` | runtime에서 파생한 cache를 자신이 소유·발행 (감사된 예외, C절) |
 | network source authority | `/root/shared_v` | WLAN 설정 적용처럼 영구 `NETWORK` source를 직접 소유하는 작업 |
 | max9296 kernel driver | JSON 없음 | userspace가 전달한 완전한 control set만 소비 |
 
@@ -49,28 +48,6 @@ restart가 필요하다.
 | compatibility wrapper | runtime을 직접 읽거나 고치지 않고 recovery request만 전달 | executor transaction |
 
 이 목록의 consumer는 source wildcard를 검색하거나 source ord document를 직접 열지 않는다.
-
-## C. runtime directory writer (감사된 예외)
-
-runtime configuration 디렉터리의 writer는 원칙적으로 cam-operate builder 하나다.
-`file_manager.sh`는 그 원칙의 **유일한 감사된 예외**다.
-
-| writer | 발행 artifact | 소유 범위 |
-| --- | --- | --- |
-| `file_manager.sh` | `pim_runtime.json.file-manager-vhl.cache` (+ `.tmp.XXXXXX` 형제) | 자신이 만들고 자신만 읽는 파생 cache |
-
-- 이 cache는 runtime document가 아니라 **runtime에서 파생한 값**이며, builder는 이
-  파일을 읽지도 쓰지도 않는다. `camera_runtime_config.py`의 atomic publish는
-  `pim_runtime.json`과 고정 alias symlink만 다루므로 두 writer는 대상이 겹치지 않는다.
-- cam-operate.service가 `RuntimeDirectory=pim-camera`를 선언하므로 unit 정지 시
-  디렉터리가 사라진다. cache 소멸은 정상 동작이다 — 다음 invocation이 cache 없이
-  동작하고 필요하면 다시 발행한다.
-- **이 cache에 쓸 수 있다는 것은 같은 디렉터리의 runtime JSON에도 쓸 수 있다는 뜻이다.**
-  따라서 디렉터리 쓰기 권한(0750 root)이 `file_manager.sh` 삭제 prefix의 신뢰 경계이며,
-  cache hit 경로는 runtime document를 다시 검증하지 않는다. 이는 수용된 설계다.
-- `runtime_consumer_path_test.py`가 이 예외를 양방향으로 강제한다. runtime JSON의
-  형제 경로를 파생하는 consumer가 새로 생기면 실패하고, 예외 목록만 남고 실제
-  writer가 사라져도 실패한다.
 invalid runtime은 `CONFIG_INVALID`로 실패하며 source repair 또는 hardware escalation을
 시도하지 않는다.
 
