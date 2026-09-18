@@ -810,6 +810,229 @@ exit 97
                 "stable replacement runtime is cached after its first parse",
             )
 
+            concurrent_dir = root / "concurrent-recording"
+            concurrent_dir.mkdir()
+            concurrent_cache = root / "concurrent-vhl.cache"
+            concurrent_barrier = root / "concurrent-jq-barrier"
+            concurrent_barrier.mkdir()
+            race_bin = root / "race-bin"
+            race_bin.mkdir()
+            race_jq = race_bin / "jq"
+            race_jq.write_text(
+                "#!/usr/bin/env bash\n"
+                "set -u\n"
+                "jq_args=(\"$@\")\n"
+                ": > \"$PIM_TEST_JQ_BARRIER_DIR/ready.$$\"\n"
+                "wait_count=0\n"
+                "while :; do\n"
+                "    set -- \"$PIM_TEST_JQ_BARRIER_DIR\"/ready.*\n"
+                "    if [ \"$#\" -ge 2 ]; then break; fi\n"
+                "    wait_count=$((wait_count + 1))\n"
+                "    if [ \"$wait_count\" -ge 200 ]; then exit 98; fi\n"
+                "    /bin/sleep 0.005\n"
+                "done\n"
+                "printf 'jq' >> \"$PIM_TEST_EVENT_LOG\"\n"
+                "for arg in \"${jq_args[@]}\"; do printf ' <%s>' \"$arg\" >> \"$PIM_TEST_EVENT_LOG\"; done\n"
+                "printf '\\n' >> \"$PIM_TEST_EVENT_LOG\"\n"
+                f"exec {self.real_jq} \"${{jq_args[@]}}\"\n",
+                encoding="utf-8",
+            )
+            race_jq.chmod(0o755)
+            self.write_json(
+                Path(env["PIM_CAMERA_RUNTIME_JSON"]),
+                runtime_document(vhl_name="concurrent"),
+            )
+            concurrent_env = {
+                **env,
+                "PATH": f"{race_bin}:{env['PATH']}",
+                "PIM_FILE_MANAGER_VHL_CACHE": str(concurrent_cache),
+                "PIM_TEST_JQ_BARRIER_DIR": str(concurrent_barrier),
+            }
+            self.clear_events(env)
+            concurrent_processes = [
+                subprocess.Popen(
+                    [
+                        str(BIN / "file_manager.sh"),
+                        str(concurrent_dir),
+                        "2",
+                        "100",
+                        "caller",
+                    ],
+                    env=concurrent_env,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                for _ in range(2)
+            ]
+            concurrent_outputs: list[tuple[str, str]] = []
+            concurrent_timed_out = False
+            try:
+                for process in concurrent_processes:
+                    concurrent_outputs.append(process.communicate(timeout=3))
+            except subprocess.TimeoutExpired:
+                concurrent_timed_out = True
+                for process in concurrent_processes:
+                    if process.poll() is None:
+                        process.kill()
+                    process.communicate()
+            cache_fields = (
+                concurrent_cache.read_text(encoding="utf-8").rstrip("\n").split("\t")
+                if concurrent_cache.is_file()
+                else []
+            )
+            self.clear_events(env)
+            concurrent_warm = self.run_script(
+                BIN / "file_manager.sh",
+                root,
+                concurrent_env,
+                (str(concurrent_dir), "2", "100", "caller"),
+            )
+            concurrent_assertions = {
+                "completed": not concurrent_timed_out,
+                "return-codes": all(
+                    process.returncode == 0 for process in concurrent_processes
+                ),
+                "outputs": len(concurrent_outputs) == 2,
+                "barrier": len(list(concurrent_barrier.glob("ready.*"))) == 2,
+                "cache-file": concurrent_cache.is_file(),
+                "cache-mode": concurrent_cache.is_file()
+                and concurrent_cache.stat().st_mode & 0o777 == 0o600,
+                "cache-value": len(cache_fields) == 2
+                and cache_fields[1] == "concurrent",
+                "no-temp-residue": not list(
+                    root.glob("concurrent-vhl.cache.tmp.*")
+                ),
+                "warm-result": concurrent_warm.returncode == 0,
+                "warm-zero-jq": not self.command_lines(env, "jq"),
+            }
+            if not all(concurrent_assertions.values()):
+                failed_assertions = ", ".join(
+                    name for name, passed in concurrent_assertions.items() if not passed
+                )
+                print(
+                    f"  concurrency diagnostics: {failed_assertions}",
+                    file=sys.stderr,
+                )
+                print(
+                    "  concurrency processes: "
+                    f"returncodes={[process.returncode for process in concurrent_processes]!r} "
+                    f"outputs={concurrent_outputs!r} "
+                    f"barrier={[path.name for path in concurrent_barrier.iterdir()]!r} "
+                    f"events={self.events(env)!r}",
+                    file=sys.stderr,
+                )
+            self.check(
+                all(concurrent_assertions.values()),
+                "concurrent file-manager writers publish one valid cache without residue",
+            )
+
+            failure_bin = root / "cache-publication-failure-bin"
+            failure_bin.mkdir()
+            failure_dispatcher = failure_bin / "dispatcher"
+            failure_dispatcher.write_text(
+                "#!/usr/bin/env bash\n"
+                "cmd=${0##*/}\n"
+                "if [ \"$cmd\" = \"${PIM_TEST_FAIL_CACHE_COMMAND:-}\" ]; then\n"
+                "    for arg in \"$@\"; do\n"
+                "        case \"$arg\" in\n"
+                "            \"$PIM_FILE_MANAGER_VHL_CACHE\"|\"$PIM_FILE_MANAGER_VHL_CACHE\".tmp.*) exit 73 ;;\n"
+                "        esac\n"
+                "    done\n"
+                "fi\n"
+                "exec \"/usr/bin/$cmd\" \"$@\"\n",
+                encoding="utf-8",
+            )
+            failure_dispatcher.chmod(0o755)
+            for command in ("chmod", "mv"):
+                (failure_bin / command).symlink_to("dispatcher")
+
+            for command in ("chmod", "mv"):
+                failure_cache = root / f"failure-{command}.cache"
+                self.write_json(
+                    Path(env["PIM_CAMERA_RUNTIME_JSON"]),
+                    runtime_document(vhl_name=f"failure-{command}"),
+                )
+                failure_env = {
+                    **env,
+                    "PATH": f"{failure_bin}:{env['PATH']}",
+                    "PIM_FILE_MANAGER_VHL_CACHE": str(failure_cache),
+                    "PIM_TEST_FAIL_CACHE_COMMAND": command,
+                }
+                self.clear_events(env)
+                failed_publish = self.run_script(
+                    BIN / "file_manager.sh",
+                    root,
+                    failure_env,
+                    (str(concurrent_dir), "2", "100", "caller"),
+                )
+                failed_publish_jq_count = len(self.command_lines(env, "jq"))
+                normal_env = {
+                    **env,
+                    "PIM_FILE_MANAGER_VHL_CACHE": str(failure_cache),
+                }
+                self.clear_events(env)
+                recovered_publish = self.run_script(
+                    BIN / "file_manager.sh",
+                    root,
+                    normal_env,
+                    (str(concurrent_dir), "2", "100", "caller"),
+                )
+                recovered_publish_jq_count = len(self.command_lines(env, "jq"))
+                self.clear_events(env)
+                recovered_warm = self.run_script(
+                    BIN / "file_manager.sh",
+                    root,
+                    normal_env,
+                    (str(concurrent_dir), "2", "100", "caller"),
+                )
+                self.check(
+                    failed_publish.returncode == 0
+                    and failed_publish_jq_count == 1
+                    and recovered_publish.returncode == 0
+                    and recovered_publish_jq_count == 1
+                    and recovered_warm.returncode == 0
+                    and not self.command_lines(env, "jq")
+                    and failure_cache.is_file()
+                    and failure_cache.stat().st_mode & 0o777 == 0o600
+                    and not list(root.glob(f"failure-{command}.cache.tmp.*")),
+                    f"{command} cache publication failure is cleanup-safe and recovers next invocation",
+                )
+
+            unavailable_cache = root / "missing-cache-parent/cache"
+            unavailable_env = {
+                **env,
+                "PIM_FILE_MANAGER_VHL_CACHE": str(unavailable_cache),
+            }
+            self.write_json(
+                Path(env["PIM_CAMERA_RUNTIME_JSON"]),
+                runtime_document(vhl_name="unavailable-cache"),
+            )
+            self.clear_events(env)
+            unavailable_first = self.run_script(
+                BIN / "file_manager.sh",
+                root,
+                unavailable_env,
+                (str(concurrent_dir), "2", "100", "caller"),
+            )
+            unavailable_first_jq_count = len(self.command_lines(env, "jq"))
+            self.clear_events(env)
+            unavailable_second = self.run_script(
+                BIN / "file_manager.sh",
+                root,
+                unavailable_env,
+                (str(concurrent_dir), "2", "100", "caller"),
+            )
+            self.check(
+                unavailable_first.returncode == 0
+                and unavailable_second.returncode == 0
+                and unavailable_first_jq_count == 1
+                and len(self.command_lines(env, "jq")) == 1
+                and not unavailable_cache.exists()
+                and not unavailable_cache.parent.exists(),
+                "unavailable cache directory remains retention-safe without persistent residue",
+            )
+
             fallback_dir = root / "fallback-recording"
             fallback_dir.mkdir()
             for index in range(3):
