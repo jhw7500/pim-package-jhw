@@ -1142,6 +1142,59 @@ exit 97
                 "unavailable cache directory remains retention-safe without persistent residue",
             )
 
+            torn_dir = root / "torn-record-recording"
+            torn_dir.mkdir()
+            for index in range(4):
+                path = torn_dir / f"camera_{index}.mp4"
+                path.write_text("camera", encoding="utf-8")
+                os.utime(path, (then + index, then + index))
+            for index in range(3):
+                path = torn_dir / f"cam_extra_{index}.mp4"
+                path.write_text("extra", encoding="utf-8")
+                os.utime(path, (then + 10 + index, then + 10 + index))
+            torn_cache = root / "torn-record.cache"
+            torn_env = {
+                **env,
+                "PIM_FILE_MANAGER_VHL_CACHE": str(torn_cache),
+            }
+            self.write_json(
+                Path(env["PIM_CAMERA_RUNTIME_JSON"]),
+                runtime_document(vhl_name="camera"),
+            )
+            torn_identity = subprocess.run(
+                ["stat", "-Lc", "%d:%i:%s:%y:%z", "--", env["PIM_CAMERA_RUNTIME_JSON"]],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            # Short write: the identity field still matches the live runtime, but
+            # the value is truncated mid-name and the record has no terminating
+            # newline.  "cam" is a strict prefix of "camera", so trusting it would
+            # also sweep the unrelated cam_extra_* files.
+            torn_cache.write_text(f"{torn_identity}\tcam", encoding="utf-8")
+            torn_cache.chmod(0o600)
+            self.clear_events(env)
+            result = self.run_script(
+                BIN / "file_manager.sh",
+                root,
+                torn_env,
+                (str(torn_dir), "2", "100", "caller"),
+            )
+            torn_after = (
+                torn_cache.read_text(encoding="utf-8") if torn_cache.is_file() else ""
+            )
+            torn_fields = torn_after.rstrip("\n").split("\t") if torn_after else []
+            self.check(
+                result.returncode == 0
+                and len(self.command_lines(env, "jq")) == 1
+                and len(list(torn_dir.glob("camera_*"))) == 2
+                and len(list(torn_dir.glob("cam_extra_*"))) == 3
+                and len(torn_fields) == 2
+                and torn_fields[1] == "camera"
+                and torn_after.endswith("\n"),
+                "unterminated cache record reparses instead of widening the deletion prefix",
+            )
+
             fallback_dir = root / "fallback-recording"
             fallback_dir.mkdir()
             for index in range(3):

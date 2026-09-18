@@ -73,7 +73,16 @@ cached_id=""
 cached_vhl_name=""
 cached_extra=""
 if [[ -f "$CACHE_PATH" && ! -L "$CACHE_PATH" ]]; then
-    IFS=$'\t' read -r cached_id cached_vhl_name cached_extra < "$CACHE_PATH" || true
+    # A record that is not newline-terminated is a short write, not a usable
+    # entry.  read still assigns whatever it parsed before EOF, and a value
+    # truncated mid-name stays a strict prefix of the real one, so trusting it
+    # would widen the deletion glob past what the runtime designated.  Discard
+    # every field unless the record is complete and fall through to jq.
+    IFS=$'\t' read -r cached_id cached_vhl_name cached_extra < "$CACHE_PATH" || {
+        cached_id=""
+        cached_vhl_name=""
+        cached_extra=""
+    }
 fi
 
 cached_hit=0
