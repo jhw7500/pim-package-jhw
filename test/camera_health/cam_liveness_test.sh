@@ -50,6 +50,12 @@ fake_stat() {
     mkdir -p "$PIM_CAMERA_PROC_ROOT/$DAEMON_PID"
     { printf '%s' "$DAEMON_PID (cam-operate) S"; for _ in $(seq 1 18); do printf ' 0'; done; printf ' %s 0 0\n' "$start"; } > "$PIM_CAMERA_PROC_ROOT/$DAEMON_PID/stat"
 }
+fake_named_process() {
+    local pid=$1 name=$2 start=$3
+    mkdir -p "$PIM_CAMERA_PROC_ROOT/$pid"
+    printf '%s\n' "$name" > "$PIM_CAMERA_PROC_ROOT/$pid/comm"
+    { printf '%s (%s) S' "$pid" "$name"; for _ in $(seq 1 18); do printf ' 0'; done; printf ' %s 0 0\n' "$start"; } > "$PIM_CAMERA_PROC_ROOT/$pid/stat"
+}
 write_runtime() {
     mkdir -p "$(dirname "$PIM_CAMERA_RUNTIME_JSON")" "$PIM_CAMERA_DEVICE_ROOT"
     jq -s '
@@ -91,6 +97,7 @@ reset_case() {
     : > "$WORK/procs"
     rm -f "$PIM_CAMERA_BG_FLAG_FILE" "$PIM_CAMERA_INIT_FLAG" "$PIM_CAMERA_RESTART_FLAG"
     export ORD_STATE=active ORD_RESTART_RC=0 PIM_CAMERA_PGREP_ERROR= SUBDEV_RC=0 VCM_START_RC=0
+    unset PIM_CAMERA_TEST_VCM_PID PIM_CAMERA_TEST_GSTAPP_PID
     export PIM_CAMERA_V4L2_CTL=v4l2-ctl PIM_CAMERA_VCM_COMMAND=vcm
     PIM_CAMERA_LIVENESS_QUIESCED=0
     PIM_CAMERA_LIVENESS_GRACE_UNTIL=0
@@ -102,6 +109,8 @@ reset_case() {
     _CL_GUARD_CACHE_VAL=''
     _CL_RUNTIME_APP_KEY=''
     _CL_RUNTIME_APP_VAL=''
+    _CL_PROCESS_PID_CACHE=()
+    _CL_PROCESS_START_CACHE=()
     _CAM_RUNTIME_VALIDATED_KEY=''
     fake_stat
     write_runtime
@@ -144,7 +153,11 @@ target=
 for arg; do target=$arg; done
 printf 'pgrep:%s\n' "$*" >> "$PIM_CAMERA_CALL_LOG"
 [ "$PIM_CAMERA_PGREP_ERROR" = "$target" ] && exit 8
-grep -Fqx "$target" "$WORK/procs" 2>/dev/null
+grep -Fqx "$target" "$WORK/procs" 2>/dev/null || exit $?
+case "$target" in
+  vcm) [ -z "${PIM_CAMERA_TEST_VCM_PID:-}" ] || printf '%s\n' "$PIM_CAMERA_TEST_VCM_PID" ;;
+  gstApp) [ -z "${PIM_CAMERA_TEST_GSTAPP_PID:-}" ] || printf '%s\n' "$PIM_CAMERA_TEST_GSTAPP_PID" ;;
+esac
 SH
 cat > "$WORK/stub/v4l2-ctl" <<'SH'
 #!/bin/sh
@@ -250,6 +263,46 @@ printf 'vcm\nPIMCAM\n' > "$WORK/procs"
 expect_rc 0 cam_liveness_tick
 grep -Fqx 'pgrep:-x PIMCAM' "$PIM_CAMERA_CALL_LOG" || fail 'warm runtime app cache hid atomic app replacement'
 ! grep -Fqx 'pgrep:-x gstApp' "$PIM_CAMERA_CALL_LOG" || fail 'warm runtime app cache reused stale app after replacement'
+
+echo '=== warm process identity cache avoids periodic pgrep and follows replacement ==='
+reset_case; owner_at ACTIVE; printf 'vcm\ngstApp\n' > "$WORK/procs"
+export PIM_CAMERA_TEST_VCM_PID=5001 PIM_CAMERA_TEST_GSTAPP_PID=5002
+fake_named_process 5001 vcm 211
+fake_named_process 5002 gstApp 212
+expect_rc 0 cam_liveness_tick
+[ "$(count_log 'pgrep:-x vcm')" -eq 1 ] || fail 'cold VCM lookup did not use pgrep exactly once'
+[ "$(count_log 'pgrep:-x gstApp')" -eq 1 ] || fail 'cold gstApp lookup did not use pgrep exactly once'
+: > "$PIM_CAMERA_CALL_LOG"
+expect_rc 0 cam_liveness_tick
+! grep -q '^pgrep:' "$PIM_CAMERA_CALL_LOG" || fail 'warm process identity cache repeated pgrep'
+fake_named_process 5002 gstApp 313
+: > "$PIM_CAMERA_CALL_LOG"
+expect_rc 0 cam_liveness_tick
+! grep -Fqx 'pgrep:-x vcm' "$PIM_CAMERA_CALL_LOG" || fail 'unchanged VCM identity repeated pgrep'
+[ "$(count_log 'pgrep:-x gstApp')" -eq 1 ] || fail 'changed gstApp identity was not rediscovered exactly once'
+: > "$PIM_CAMERA_CALL_LOG"
+expect_rc 0 cam_liveness_tick
+! grep -q '^pgrep:' "$PIM_CAMERA_CALL_LOG" || fail 'replacement process identity was not cached'
+
+echo '=== vanished cached process is diagnosed without stderr noise ==='
+reset_case; owner_at ACTIVE; printf 'vcm\ngstApp\n' > "$WORK/procs"
+export PIM_CAMERA_TEST_VCM_PID=5201 PIM_CAMERA_TEST_GSTAPP_PID=5202
+fake_named_process 5201 vcm 511
+fake_named_process 5202 gstApp 512
+expect_rc 0 cam_liveness_tick
+# The monitored process dies: its /proc entry disappears and pgrep stops finding
+# it, while the identity cache still holds the old pid.  The verdict must stay
+# correct and the probe must not reach the real stderr, because this repeats on
+# every monitor tick for as long as the process stays down - exactly the journal
+# an operator would be reading during that incident.
+rm -rf "$PIM_CAMERA_PROC_ROOT/5201"
+printf 'gstApp\n' > "$WORK/procs"
+set +e
+_cl_process_status vcm 2> "$WORK/vanished-stderr"
+vanished_rc=$?
+set -e
+[ "$vanished_rc" -eq 1 ] || fail "vanished cached process returned rc=$vanished_rc, expected 1"
+[ ! -s "$WORK/vanished-stderr" ] || fail "vanished cached process leaked stderr: $(cat "$WORK/vanished-stderr")"
 
 echo '=== injected runtime validator remains nounset-safe ==='
 bash -eu -c '
