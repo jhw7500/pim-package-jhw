@@ -67,11 +67,26 @@ function [() {
     return "$rc"
 }
 # shellcheck disable=SC2329  # invoked by the sourced stat parser
-cat() {
-    if [[ $# == 1 && $1 == "$candidate/stat" && $phase == stat_read_gone ]]; then
-        retire_candidate
+read() {
+    # cam_process_start_time reads the stat file with the builtin, so the
+    # disappearance is injected here instead of around a helper process. The
+    # redirection has already opened the file by the time a function body runs,
+    # so the vanish is expressed the way the parser sees it: nothing is
+    # delivered and the pid directory is gone. The last positional argument is
+    # the target variable, which is how the stat read is told apart from the
+    # argv read in cam_bg_argv_matches.
+    local target
+    if [[ $phase == stat_read_gone && ${!#} == stat ]]; then
+        # The redirection is already open, so the file it points at identifies
+        # whose stat this is - the survivor must be read normally.
+        target=$(command readlink /proc/self/fd/0 2>/dev/null) || target=""
+        if [[ $target == "$candidate/stat" ]]; then
+            retire_candidate
+            return 1
+        fi
     fi
-    command cat "$@"
+    # shellcheck disable=SC2162  # -r is forwarded from the caller's own flags
+    command read "$@"
 }
 
 check_scan() (
@@ -84,6 +99,11 @@ check_scan() (
     [[ $survivor == no ]] || fixture 900 9000 shebang
     case "$phase" in
         malformed_stat) printf 'malformed\n' > "$candidate/stat" ;;
+        newline_comm)
+            # Linux allows a newline in comm and /proc prints it unescaped, so
+            # the stat file has more than one line. That is still a valid start
+            # time, not an inspection error that would poison the scan.
+            { printf '101 (BG\nCheck) S'; for _ in {1..18}; do printf ' 0'; done; printf ' 1001 0\n'; } > "$candidate/stat" ;;
         inspect_error) touch "$PIM_CAMERA_PROCESS_ROOT/.inspect_error" ;;
     esac
     records=$(cam_bg_checker_records "$PIM_CAMERA_BG_CHECKER") || rc=$?
@@ -106,6 +126,7 @@ check_scan() (
 failures=0
 check_scan empty_scan stable 0 '' none no || failures=$((failures + 1))
 check_scan exact_layouts stable 0 $'101 1001\n900 9000' || failures=$((failures + 1))
+check_scan newline_in_comm newline_comm 0 $'101 1001\n900 9000' || failures=$((failures + 1))
 check_scan unrelated_argv stable 0 '900 9000' unrelated || failures=$((failures + 1))
 check_scan trailing_argv stable 0 '900 9000' trailing || failures=$((failures + 1))
 check_scan invalid_direct_delay stable 0 '900 9000' invalid_direct_delay || failures=$((failures + 1))

@@ -16,9 +16,20 @@ PIM_CAMERA_LIVENESS_GRACE_SEC="${PIM_CAMERA_LIVENESS_GRACE_SEC:-12}"
 PIM_CAMERA_LIVENESS_GRACE_BYPASSES="${PIM_CAMERA_LIVENESS_GRACE_BYPASSES:-2}"
 PIM_CAMERA_STOP_WAIT_SEC="${PIM_CAMERA_STOP_WAIT_SEC:-5}"
 PIM_CAMERA_LIVENESS_START_WAIT_SEC="${PIM_CAMERA_LIVENESS_START_WAIT_SEC:-30}"
+PIM_CAMERA_LIVENESS_BG_RESTART_ATTEMPTS="${PIM_CAMERA_LIVENESS_BG_RESTART_ATTEMPTS:-3}"
 PIM_CAMERA_LIVENESS_QUIESCED="${PIM_CAMERA_LIVENESS_QUIESCED:-0}"
 PIM_CAMERA_LIVENESS_GRACE_UNTIL="${PIM_CAMERA_LIVENESS_GRACE_UNTIL:-0}"
 PIM_CAMERA_LIVENESS_GRACE_USES="${PIM_CAMERA_LIVENESS_GRACE_USES:-0}"
+# Consecutive BG restart attempts since BG was last seen present.  0 means BG is
+# not currently known absent; the cap plus one marks "gave up, already said so".
+_CL_BG_ATTEMPTS=0
+# Remembers that the BG candidate scan is uninspectable, so a standing /proc
+# problem is reported once rather than on every tick.
+_CL_BG_SCAN_ERROR=0
+# Remembers that the absence has already been announced.  The attempt counter
+# cannot serve as that flag: a refused launch deliberately leaves it at zero, so
+# gating the warning on it would re-announce the same absence on every tick.
+_CL_BG_ABSENT_LOGGED=0
 
 if ! declare -F cam_owner_assert >/dev/null 2>&1; then
     # shellcheck source=/dev/null
@@ -115,6 +126,99 @@ cam_liveness_restart_vcm() {
     local path
     path=$(command -v "$PIM_CAMERA_VCM_COMMAND") || return 127
     _cr_lock_call _cl_restart_vcm_locked "$path"
+}
+
+# The launch is fire-and-forget: the next tick decides whether it worked, so the
+# recovery lock is held only for the guard checks and the fork, not for a start
+# timeout.  BG absence is not counted toward the camera failure escalation that
+# ORD and VCM feed, because an external kill of BG is not a camera fault.
+_cl_restart_bg_locked() {
+    local bg=$1 delay=$2
+    _cr_test_owner_rollover liveness_bg || return 69
+    _cl_active_guard_locked || return $?
+    # The decision above is the only guarded one, and it is made while this
+    # function holds the recovery lock.  The child re-checks nothing: the parent
+    # releases the lock the moment it returns, so a second _cl_active_guard_locked
+    # in the child would read the lease files with no mutual exclusion and only
+    # look like a guard.  Having the child take the lock itself is worse - every
+    # other holder uses flock -n, so a launching BG would turn concurrent
+    # recovery calls into spurious rc 75.  What remains is the microseconds
+    # between the guarded decision and exec, which is inherent to launching
+    # asynchronously and is the price of not holding the lock for a start wait.
+    ( exec {fd}>&-; exec "$bg" "$delay" >/dev/null 2>&1 ) &
+}
+
+# The delay is resolved here rather than by the tick: cam_runtime_app_delay
+# fails when .VHL_CAM.app_delay is not a bare integer, and the tick must keep
+# detecting a dead camera app whatever that field holds.
+cam_liveness_restart_bg() {
+    local bg info delay
+    bg=$(cam_bg_checker_path) || return $?
+    info=$(cam_runtime_app_delay "$PIM_CAMERA_RUNTIME_JSON") || return $?
+    IFS=$'\t' read -r _ delay <<<"$info"
+    [[ $delay =~ ^[0-9]+$ ]] || return 64
+    _cr_lock_call _cl_restart_bg_locked "$bg" "$delay"
+}
+
+# Reached only on the branch where the camera app is alive.  When the app is
+# down the existing gstapp recovery runs start_cam.sh, which starts whichever of
+# the two is absent, so BG is already covered there; restarting it from here as
+# well would start the app outside cam_liveness_gstapp_gate and bypass its
+# thresholds.
+_cl_bg_tick() {
+    local bg rc cap=${PIM_CAMERA_LIVENESS_BG_RESTART_ATTEMPTS:-3}
+    # Same guard as the start-wait timeout: an unset or non-numeric override
+    # falls back instead of aborting the tick under `set -u`.
+    [[ $cap =~ ^[0-9]+$ ]] || cap=3
+    bg=$(cam_bg_checker_path) || return $?
+    rc=0; cam_bg_checker_present "$bg" || rc=$?
+    if [ "$rc" -eq 0 ]; then
+        [ "$_CL_BG_ABSENT_LOGGED" -eq 0 ] || _cra_log notice "liveness: BG checker is present again"
+        _CL_BG_ATTEMPTS=0
+        _CL_BG_SCAN_ERROR=0
+        _CL_BG_ABSENT_LOGGED=0
+        return 0
+    fi
+    # rc 2 is an inspection error, never an absence - and not a camera fault
+    # either.  Returning it as the tick's own rc makes the monitor log a
+    # liveness failure every two seconds for something only the BG scan saw, so
+    # say it once per transition and leave the tick successful.
+    if [ "$rc" -ne 1 ]; then
+        [ "$_CL_BG_SCAN_ERROR" -eq 1 ] || _cra_log warning "liveness: BG checker scan could not be inspected (rc $rc)"
+        _CL_BG_SCAN_ERROR=1
+        return 0
+    fi
+    _CL_BG_SCAN_ERROR=0
+    # BG_Check_for_pim.sh exits 64 when jq is missing or the runtime is invalid,
+    # so a restart can fail every time.  Retrying unbounded would relaunch on
+    # every tick for the life of the daemon, so stop after the cap and say so
+    # once; the count resets as soon as BG is seen present again.
+    if [ "$_CL_BG_ATTEMPTS" -ge "$cap" ]; then
+        if [ "$_CL_BG_ATTEMPTS" -eq "$cap" ]; then
+            _cra_log warning "liveness: BG checker still absent after $cap restart attempts; not retrying until it reappears"
+            _CL_BG_ATTEMPTS=$((cap + 1))
+        fi
+        return 0
+    fi
+    if [ "$_CL_BG_ABSENT_LOGGED" -eq 0 ]; then
+        _cra_log warning "liveness: BG checker absent while the camera app is alive; restarting"
+        _CL_BG_ABSENT_LOGGED=1
+    fi
+    # Only a refusal that can clear on its own goes uncharged: the recovery lock
+    # held elsewhere (75), or a lease appearing between this tick's guard and
+    # the launch (69).  Everything else is charged, the started launch included.
+    # A refusal that repeats identically every tick would otherwise leave the
+    # budget at zero forever - the runtime validator imposes nothing on
+    # .VHL_CAM.app_delay, so a value no starter accepts passes validation and
+    # fails cam_runtime_app_delay on every call - and the tick runs every two
+    # seconds, so that is a jq and a syslog line each time for the life of the
+    # daemon.
+    rc=0; cam_liveness_restart_bg || rc=$?
+    case "$rc" in
+        75|69) ;;
+        *) _CL_BG_ATTEMPTS=$((_CL_BG_ATTEMPTS + 1)) ;;
+    esac
+    return 0
 }
 
 _cl_wait_named_process() {
@@ -282,6 +386,12 @@ cam_liveness_tick() {
     esac
 
     runtime_key=${_CAM_RUNTIME_VALIDATED_KEY:-}
+    # A replaced runtime document is the other way out of the give-up state: an
+    # invalid runtime is exactly what makes BG exit 64, so a new validated one
+    # re-arms the restart budget instead of leaving BG down for the daemon's life.
+    if [ -n "$runtime_key" ] && [ "$runtime_key" != "$_CL_RUNTIME_APP_KEY" ]; then
+        _CL_BG_ATTEMPTS=0
+    fi
     if [ -n "$runtime_key" ] &&
        [ "$runtime_key" = "$_CL_RUNTIME_APP_KEY" ] &&
        [ -n "$_CL_RUNTIME_APP_VAL" ]; then
@@ -297,7 +407,7 @@ cam_liveness_tick() {
         fi
     fi
     rc=0; _cl_process_status "$app" || rc=$?
-    [ "$rc" -ne 0 ] || return 0
+    [ "$rc" -ne 0 ] || { _cl_bg_tick; return $?; }
     [ "$rc" -eq 1 ] || return "$rc"
     rc=0; cam_liveness_gstapp_gate || rc=$?
     [ "$rc" -eq 0 ] || { [ "$rc" -eq 1 ] && return 0; return "$rc"; }
