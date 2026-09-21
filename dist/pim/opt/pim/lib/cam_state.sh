@@ -123,7 +123,6 @@ cam_state_init() {
         _cs_write last_start_ts 0
         for ch in 0 1 2 3; do
             _cs_write "channels/ch${ch}_error" false
-            _cs_write "channels/ch${ch}_last_ok" 0
         done
         _cs_write recording/start_video_time_actual ""
         _cs_write recording/start_video_time ""
@@ -248,7 +247,6 @@ cam_reset_streak() {
 cam_channel_error() {
     local ch="$1"
     _cs_write "channels/ch${ch}_error" true
-    _cs_write "channels/ch${ch}_last_ok" "$(date +%s)"
 }
 
 cam_channel_clear() {
