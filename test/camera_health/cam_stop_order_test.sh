@@ -343,6 +343,40 @@ event:owner_removed:owner=absent
 EOF
 diff -u "$WORK/expected-order" "$PIM_CAMERA_CALL_LOG" >/dev/null || review_failures="$review_failures external-signal-order"
 
+echo '=== a resident launched consumer does not abort the ordered stop ==='
+# A revived consumer is a job of this shell for as long as it lives, because
+# `exec` replaces the process without ending the job.  While the stop waited on
+# `jobs -pr` that made it return 75 right here (STOP_WAIT_SEC is 0 in this
+# suite) and skip cam_liveness_stop_managed and the owner removal - exactly
+# half a stop, every single time.
+reset_case
+printf '#!/bin/sh\nexec /bin/sleep 30\n' > "$WORK/stub/resident-vcm"
+chmod +x "$WORK/stub/resident-vcm"
+_cl_stop_event() { printf 'event:%s\n' "$1" >> "$PIM_CAMERA_CALL_LOG"; }
+cam_stop_process() { printf 'stop:%s\n' "$2" >> "$PIM_CAMERA_CALL_LOG"; }
+# Go through the production launcher rather than backgrounding a stub here, so
+# the case pins the real launch shape: a subshell that execs its target and
+# stays a job of this shell.  Restoring the jobs -pr wait makes it fail.
+cp "$WORK/stub/resident-vcm" "$WORK/stub/vcm"
+# The launch subshell runs the production guard, which refuses here because
+# this suite is not a stop executor.  Stub it only for the launch: leaving it
+# stubbed would silently disarm the STOPPING gate for every later case in this
+# file, which is what stands between cam_stop_ord and `systemctl stop`.
+stop_order_real_guard=$(declare -f cam_side_effect_guard)
+cam_side_effect_guard() { :; }
+cam_launch_consumer "$PIM_CAMERA_RUNTIME_JSON" vcm
+eval "$stop_order_real_guard"
+resident_pid=$!
+[ -e "/proc/$resident_pid" ] || fail 'the launched consumer did not stay resident; the case would prove nothing'
+: > "$PIM_CAMERA_CALL_LOG"
+expect_rc 0 cam_liveness_wait_for_work
+expect_rc 0 cam_liveness_ordered_stop --external
+grep -Fqx 'event:managed_stopped' "$PIM_CAMERA_CALL_LOG" || fail 'a resident consumer stopped the ordered stop before managed cleanup'
+grep -Fqx 'event:owner_removed' "$PIM_CAMERA_CALL_LOG" || fail 'a resident consumer left the owner lease behind'
+[ ! -e "$PIM_CAMERA_RUN_DIR/owner.json" ] || fail 'owner lease survived the stop'
+kill "$resident_pid" 2>/dev/null || :
+for _ in $(seq 1 100); do [ -e "/proc/$resident_pid" ] || break; /bin/sleep 0.02; done
+
 echo '=== repeated and competing stop paths converge ==='
 before=$(cksum "$PIM_CAMERA_CALL_LOG")
 cam_liveness_ordered_stop --external

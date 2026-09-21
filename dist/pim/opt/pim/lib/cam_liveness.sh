@@ -412,11 +412,19 @@ cam_liveness_wait_for_work() {
         sleep 1
         elapsed=$((elapsed + 1))
     done
-    while [ -n "$(jobs -pr 2>/dev/null)" ]; do
-        [ "$elapsed" -lt "$timeout" ] || return 75
-        sleep 1
-        elapsed=$((elapsed + 1))
-    done
+    # There is deliberately no job-table wait here.  A consumer we revive is
+    # started as a backgrounded subshell that execs its target, and exec does
+    # not end the job, so the consumer stayed a running job of this shell for
+    # its whole resident life.  Waiting on `jobs -pr` therefore waited for vcm
+    # to exit - which it never does - so an ordered stop raised inside this
+    # shell, by the TERM/INT/EXIT traps cam_liveness_install_traps sets, spent
+    # PIM_CAMERA_STOP_WAIT_SEC and then returned 75 from here, before
+    # cam_liveness_stop_managed and before the owner lease was removed.  vcm is
+    # the only consumer that was ever a job of this shell: BG is backgrounded
+    # inside start_cam.sh, which the monitor runs as a separate executable, and
+    # the cam_operate_stop.sh ExecStop path is a fresh process whose job table
+    # is empty.  The work this function must actually wait for is a recovery
+    # request, and that is what the lease files above record.
 }
 
 _cl_stopping_guard() {

@@ -334,6 +334,42 @@ for _ in 1 2 3 4 5; do grep -q '^start:vcm$' "$PIM_CAMERA_CALL_LOG" && break; /b
 grep -q '^start:vcm$' "$PIM_CAMERA_CALL_LOG" || fail 'missing VCM was not started through its exact launcher'
 ! grep -q '^restart:' "$PIM_CAMERA_CALL_LOG" || fail 'VCM restart touched ORD'
 
+echo '=== a revived VCM is not counted as pending work by the ordered stop ==='
+# The shipped vcm stub exits immediately, so it never leaves a job behind and
+# cannot show this.  A real vcm stays running, and `exec` does not end the job,
+# so undisowned it would be a job of this shell for its whole life and
+# cam_liveness_wait_for_work would time out at 75 - aborting the ordered stop
+# before cam_liveness_stop_managed.
+reset_case; owner_at ACTIVE; printf 'gstApp\n' > "$WORK/procs"
+cat > "$WORK/stub/vcm" <<'SH'
+#!/bin/sh
+printf 'start:vcm\n' >> "$PIM_CAMERA_CALL_LOG"
+printf 'vcm\n' >> "$WORK/procs"
+echo $$ > "$WORK/resident-vcm.pid"
+exec /bin/sleep 30
+SH
+chmod +x "$WORK/stub/vcm"
+rm -f "$WORK/resident-vcm.pid"
+cam_liveness_tick
+for _ in $(seq 1 200); do [ -s "$WORK/resident-vcm.pid" ] && break; /bin/sleep 0.02; done
+[ -s "$WORK/resident-vcm.pid" ] || fail 'the resident VCM stub never started; the case would prove nothing'
+resident_vcm=$(cat "$WORK/resident-vcm.pid")
+[ -e "/proc/$resident_vcm" ] || fail 'the resident VCM stub exited; the case would prove nothing'
+vcm_prev_wait=$PIM_CAMERA_STOP_WAIT_SEC
+export PIM_CAMERA_STOP_WAIT_SEC=0
+expect_rc 0 cam_liveness_wait_for_work
+export PIM_CAMERA_STOP_WAIT_SEC=$vcm_prev_wait
+kill "$resident_vcm" 2>/dev/null || :
+for _ in $(seq 1 200); do [ -e "/proc/$resident_vcm" ] || break; /bin/sleep 0.02; done
+cat > "$WORK/stub/vcm" <<'SH'
+#!/bin/sh
+printf 'start:vcm\n' >> "$PIM_CAMERA_CALL_LOG"
+[ "$VCM_START_RC" -eq 0 ] || exit "$VCM_START_RC"
+printf 'vcm\n' >> "$WORK/procs"
+exit 0
+SH
+chmod +x "$WORK/stub/vcm"
+
 echo '=== VCM crosses launch readiness while the parent retains the lock ==='
 reset_case; owner_at ACTIVE; printf 'gstApp\n' > "$WORK/procs"
 rm -f "$WORK/vcm-hook-ready" "$WORK/vcm-hook-release"
