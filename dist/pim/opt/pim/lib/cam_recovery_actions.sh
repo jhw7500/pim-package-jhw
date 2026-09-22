@@ -200,7 +200,18 @@ cam_cleanup_shm_overflow() {
 cam_bg_checker_path() { printf '%s\n' "${PIM_CAMERA_BG_CHECKER:-$PIM_BIN/BG_Check_for_pim.sh}"; }
 cam_process_start_time() {
     local stat tail
-    stat=$(cat "$1" 2>/dev/null) || return 2
+    # A builtin read instead of $(cat ...): this runs inside the periodic monitor
+    # loop for every candidate, so a fork per call is a per-tick cost.  -d ''
+    # reads to EOF rather than to the first newline, because comm may itself
+    # contain one and that would otherwise turn a valid start time into an
+    # inspection error.  read reports failure on the unterminated line /proc
+    # returns after assigning it, so emptiness - not its status - is the test;
+    # an unopenable or empty file is rejected exactly as before.  The explicit
+    # `|| :` matters: with no NUL to find, read always reports failure, which
+    # under `set -e` would kill a caller that invokes this helper directly.
+    stat=
+    { IFS= read -r -d '' stat < "$1"; } 2>/dev/null || :
+    [ -n "$stat" ] || return 2
     tail=${stat##*) }
     set -- $tail
     [ "$#" -ge 20 ] || return 2
