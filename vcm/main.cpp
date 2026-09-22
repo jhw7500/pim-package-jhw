@@ -20,8 +20,25 @@ int main()
 
 	__LOG(LOG_NOTICE, "[CFG][%s:%d] version : %s", _FILE_, __LINE__, SW_VERSION);
 
-	if(server->init() < 0) server->m_flagDestroy = 1;
-	if(ipc->init() < 0) ipc->m_flagDestroy = 1;
+	// A failed start must not look like a clean stop.  The loop below ends in
+	// destroy(), which calls exit(0), so a start failure that fell through to
+	// it reported success; returning here keeps the failure off that path.
+	// LOG_ALERT so mylog() prints regardless of dbg_level.
+	//
+	// The two branches are not alike.  A tcp-server failure at socket, bind or
+	// listen returns before any thread exists, so nothing is abandoned.  Every
+	// later failure - a pthread_create inside either init(), or ipc init(),
+	// which runs only after the server threads are up - leaves running threads
+	// behind for process exit to take down.  That is deliberate: destroy()
+	// joins threads and then exit(0)s, which is the reporting we are avoiding.
+	if(server->init() < 0) {
+		__LOG(LOG_ALERT, "[CFG][%s:%d] startup aborted: tcp server init failed", _FILE_, __LINE__);
+		return EXIT_FAILURE;
+	}
+	if(ipc->init() < 0) {
+		__LOG(LOG_ALERT, "[CFG][%s:%d] startup aborted: ipc init failed", _FILE_, __LINE__);
+		return EXIT_FAILURE;
+	}
 	//int flagBreak = 0 ;
 	//int szChar ;
 
