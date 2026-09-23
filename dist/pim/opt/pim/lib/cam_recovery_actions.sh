@@ -599,15 +599,21 @@ cam_executor_set_context() {
     local active owner
     active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69
     owner=$(_cr_owner_json) || return 69
+    # _cr_owner_export_fields sets exactly these six names from one jq; this
+    # function used to read them field by field, which is six spawns of a
+    # process that measures ~307ms on the board.  cam_owner_create and
+    # _coc_export_owner_context already use the helper for this direction;
+    # cam_executor_assert_context is the read-back direction and uses a
+    # different helper, _cr_owner_executor_snapshot, so it is not the precedent
+    # for this.  The change also tightens the result: the field-by-field
+    # reads never checked jq's exit status, so a malformed owner produced the
+    # string "null" and rc 0 here, and only surfaced later as 69 from the
+    # assert.  The helper validates the schema and returns 70, which this
+    # propagates, so such an owner now fails here instead of downstream.
+    _cr_owner_export_fields "$owner" || return $?
     PIM_CAMERA_EXECUTOR=1
-    PIM_CAMERA_REQUEST_ID=$(jq -r .id <<<"$active")
-    PIM_CAMERA_OWNER_BOOT_ID=$(jq -r .boot_id <<<"$owner")
-    PIM_CAMERA_OWNER_INVOCATION=$(jq -r .invocation_id <<<"$owner")
-    PIM_CAMERA_OWNER_PID=$(jq -r .pid <<<"$owner")
-    PIM_CAMERA_OWNER_PROC_START_TIME=$(jq -r .proc_start_time <<<"$owner")
-    PIM_CAMERA_OWNER_TOKEN=$(jq -r .token <<<"$owner")
-    PIM_CAMERA_OWNER_CREATED_AT=$(jq -r .created_at <<<"$owner")
-    export PIM_CAMERA_EXECUTOR PIM_CAMERA_REQUEST_ID PIM_CAMERA_OWNER_BOOT_ID PIM_CAMERA_OWNER_INVOCATION PIM_CAMERA_OWNER_PID PIM_CAMERA_OWNER_PROC_START_TIME PIM_CAMERA_OWNER_TOKEN PIM_CAMERA_OWNER_CREATED_AT
+    PIM_CAMERA_REQUEST_ID=$(jq -r .id <<<"$active") || return 69
+    export PIM_CAMERA_EXECUTOR PIM_CAMERA_REQUEST_ID
 }
 
 cam_consumers_prequiesced() {
