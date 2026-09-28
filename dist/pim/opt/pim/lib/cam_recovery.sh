@@ -176,12 +176,47 @@ _cr_load_owner_lifecycle() {
 cam_owner_assert() { local owner; owner=$(_cr_owner_json); _cr_owner_snapshot_live "$owner" "${1:-}" "${2:-}"; }
 _cr_owner_lifecycle_in() { local owner; owner=$(_cr_owner_json); _cr_owner_snapshot_live "$owner" || return 69; _cr_owner_snapshot_lifecycle_in "$owner" "$@"; }
 _cr_record_owner_matches() { local saved current; saved=$(jq -c .owner <<<"$1") || return 1; current=$(_cr_owner_json) || return 1; _cr_owner_immutable_equal "$saved" "$current" && _cr_owner_snapshot_live "$current"; }
+# 이 가드는 호출부 31곳을 지난다 (camera_hard_reset 은 25회 부른다). 예전에는
+# .owner 추출 + immutable_equal + snapshot_live + lifecycle_in 으로 jq 를 네 번
+# 띄웠다. 보드에서 jq 한 번이 307ms 이므로 호출마다 1.2초다. 조건은 그대로 두고
+# 프로세스 스폰만 줄인다 — 네 단계가 전부 69 를 돌려주므로 합쳐도 호출자가 보는
+# rc 는 달라지지 않는다. /proc 확인만 jq 가 못 하므로 shell 에 남는다.
+# ei/et 를 빈 문자열로 넘기는 것은 예전 snapshot_live 호출이 인자를 주지 않아
+# 그 두 절이 무조건 참이던 것을 그대로 유지하기 위해서다.
 _cr_record_owner_ready() {
-    local record=$1 saved current
-    shift; saved=$(jq -c .owner <<<"$record") || return 69; current=$(_cr_owner_json) || return 69
-    _cr_owner_immutable_equal "$saved" "$current" || return 69
-    _cr_owner_snapshot_live "$current" || return 69
-    _cr_owner_snapshot_lifecycle_in "$current" "$@"
+    local record=$1 current boot fields pid start actual allowed=[] sep=
+    shift
+    current=$(_cr_owner_json) || return 69
+    boot=$(cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null) || return 69
+    # The allowed lifecycles go in as one --argjson array rather than through
+    # --args.  --args and $ARGS need jq 1.6 and the package declares no jq
+    # floor, and jq's own option parser would still claim any argument starting
+    # with a hyphen, so a caller's value could turn into a jq option.  Values
+    # outside the lifecycle character set are dropped rather than passed on:
+    # the owner schema constrains .lifecycle to six enum names, so such a value
+    # could never have matched in the shell loop this replaces either.
+    allowed='['
+    for pid in "$@"; do
+        case "$pid" in *[!A-Z_]*|'') continue;; esac
+        allowed="$allowed$sep\"$pid\""; sep=,
+    done
+    allowed="$allowed]"
+    pid=
+    # -s is what keeps this a single-document check.  Master bound the owner
+    # with --argjson, which rejects a JSON stream outright; reading it as input
+    # instead would run the filter once per document and accept the record if
+    # any one of them matched, so an owner file holding a stale ACTIVE copy
+    # beside the current STOPPING one would certify a lifecycle the file no
+    # longer holds.  _cr_owner_monitor_snapshot guards the same way.
+    # jq's stderr is not discarded: a jq that cannot run this filter must not
+    # be indistinguishable from an ownership rejection.
+    fields=$(jq -r -s --argjson rec "$record" --arg boot "$boot" --arg ei "" --arg et "" --argjson allowed "$allowed" \
+        "if (length == 1) then .[0] | if ((\$rec.owner | ($_CR_OWNER_SCHEMA_FILTER)) and ($_CR_OWNER_SCHEMA_FILTER) and ($_CR_OWNER_LIVE_MATCH_FILTER) and (\$rec.owner as \$a | . as \$b | $_CR_OWNER_IMMUTABLE_EQ_FILTER) and (.lifecycle as \$l | \$allowed | index(\$l) != null)) then [(.pid|tostring), .proc_start_time] | join(\"\\n\") else empty end else empty end" \
+        <<<"$current") || return 69
+    [ -n "$fields" ] || return 69
+    { IFS= read -r pid; IFS= read -r start; } <<<"$fields"
+    actual=$(_cr_proc_start "$pid")
+    [ -n "$actual" ] && [ "$actual" = "$start" ] || return 69
 }
 _cr_test_owner_rollover() {
     local stage=$1 owner changed field=${PIM_CAMERA_TEST_OWNER_ROLLOVER_FIELD:-created_at}
@@ -205,22 +240,25 @@ _cr_mutation_guard() {
     _cr_record_owner_ready "$record" "$@"
 }
 
+_CR_REQUEST_SCHEMA_FILTER='type=="object" and (.id|type=="string" and test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")) and (.type|type=="string") and (.source|type=="string" and length>0) and (.reason|type=="string" and length>0) and (.status|type=="string") and (.created_at|type=="number" and floor==. and .>0) and (.owner|type=="object") and ((has("source_path")|not) or (.source_path|type=="string" and length>0)) and ((has("source_mtime")|not) or (.source_mtime|type=="number" and floor==. and .>=0))'
 _cr_request_schema() {
     local request=$1 type
-    jq -e '
-      type=="object" and
-      (.id|type=="string" and test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")) and
-      (.type|type=="string") and (.source|type=="string" and length>0) and
-      (.reason|type=="string" and length>0) and
-      (.status|type=="string") and
-      (.created_at|type=="number" and floor==. and .>0) and
-      (.owner|type=="object") and
-      ((has("source_path")|not) or (.source_path|type=="string" and length>0)) and
-      ((has("source_mtime")|not) or (.source_mtime|type=="number" and floor==. and .>=0))
-    ' >/dev/null 2>&1 <<<"$request" || return 1
-    type=$(jq -r .type <<<"$request") || return 1
-    _cr_request_type "$type" || return 1
-    _cr_owner_schema <<<"$(jq -c .owner <<<"$request")"
+    # One jq instead of four.  The request schema, the owner schema applied to
+    # .owner, and the type extraction all read the same document, and each used
+    # to be its own process; a jq spawn measures ~307ms on the board.  The
+    # conditions are unchanged - this reduces spawns, not validation - and every
+    # failure inside this function already returned 1, so folding them cannot
+    # change the code a caller sees.
+    # jq's stderr is not discarded here either: at the merge base three of this
+    # function's four jq calls let diagnostics through, and a jq that cannot run
+    # the filter must not read as "this request is invalid".
+    # -s for the same reason as in _cr_record_owner_ready: master used jq -e,
+    # whose status follows the last value, so a stream whose final document was
+    # invalid was rejected.  Reading a stream as input would accept the request
+    # whenever any document in it validated.
+    type=$(jq -r -s "if (length == 1) then .[0] | if (($_CR_REQUEST_SCHEMA_FILTER)) and (.owner | ($_CR_OWNER_SCHEMA_FILTER)) then .type else empty end else empty end" <<<"$request") || return 1
+    [ -n "$type" ] || return 1
+    _cr_request_type "$type"
 }
 _cr_request_identity_equal() {
     jq -ne --argjson left "$1" --argjson right "$2" '
@@ -997,7 +1035,7 @@ _cr_counter_finish_locked() {
 cam_action_counter_finish() { [ $# -eq 4 ] || return 64; _cr_lock_call _cr_counter_finish_locked "$@"; }
 _cr_finish_locked() {
     local status=$1 rc=$2 active id result terminal history history_request history_next state
-    local result_path history_path write_result=1 write_history=1 now public_count
+    local result_path history_path write_result=1 write_history=1 now public_count terminal_req_valid
     _cr_terminal_valid "$status" "$rc" || return 64; _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69
     active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69; _cr_record_owner_matches "$active" || return 69; id=$(jq -r .id <<<"$active")
     result_path=$(_cr_result_file "$id"); history_path=$(_cr_history_file "$id")
@@ -1006,28 +1044,37 @@ _cr_finish_locked() {
     history_request=$(jq -c .request <<<"$history") || return 70
     _cr_request_schema "$history_request" || return 70
     _cr_request_identity_equal "$active" "$history_request" || return 70
+    # history_request is fixed from here to the end of this function and nothing
+    # between the two branch chains below writes anything, so these predicates
+    # are evaluated once instead of twice.  Each is several jq spawns, and a jq
+    # spawn measures ~307ms on the board.  Neither hoist adds a call on any
+    # path: when a result file exists the first chain skipped the predicate
+    # anyway and the second still ran it, so that branch stays at one.
+    terminal_req_valid=0
+    _cr_terminal_request_valid "$history_request" && terminal_req_valid=1
+    if [ "$terminal_req_valid" -eq 0 ]; then
+        _cr_request_json_equal "$active" "$history_request" || return 70
+    fi
     if [ -e "$result_path" ]; then
         result=$(cat "$result_path" 2>/dev/null) || return 70
         _cr_terminal_result_valid "$result" "$active" || return 70
         [ "$(jq -r .status <<<"$result")" = "$status" ] && [ "$(jq -r .rc <<<"$result")" = "$rc" ] || return 70
         terminal=$(jq -c --argjson result "$result" '.status=$result.status | .rc=$result.rc | .finished_at=$result.finished_at' <<<"$active") || return 70
         write_result=0
-    elif _cr_terminal_request_valid "$history_request"; then
+    elif [ "$terminal_req_valid" -eq 1 ]; then
         [ "$(jq -r .status <<<"$history_request")" = "$status" ] && [ "$(jq -r .rc <<<"$history_request")" = "$rc" ] || return 70
         terminal=$history_request
         result=$(_cr_result_from_terminal "$terminal") || return 70
     else
-        _cr_request_json_equal "$active" "$history_request" || return 70
         now=$(_cr_now) || return 70
         terminal=$(jq -c --arg status "$status" --argjson rc "$rc" --argjson now "$now" '.status=$status | .rc=$rc | .finished_at=$now' <<<"$active") || return 70
         result=$(_cr_result_from_terminal "$terminal") || return 70
     fi
-    if _cr_terminal_request_valid "$history_request"; then
+    if [ "$terminal_req_valid" -eq 1 ]; then
         _cr_terminal_request_result_equal "$history_request" "$result" || return 70
         history_next=$history
         write_history=0
     else
-        _cr_request_json_equal "$active" "$history_request" || return 70
         history_next=$(jq -c --argjson terminal "$terminal" '.request=$terminal' <<<"$history") || return 70
     fi
     _cr_terminal_request_valid "$terminal" || return 70

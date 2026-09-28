@@ -17,6 +17,7 @@ python3 config_expectation_test.py
 python3 runtime_config_test.py
 bash test_cam_state.sh
 bash recovery_protocol_test.sh
+bash recovery_guard_rc_test.sh
 bash ord_single_owner_test.sh
 bash cam_operate_control_test.sh
 bash cam_liveness_test.sh

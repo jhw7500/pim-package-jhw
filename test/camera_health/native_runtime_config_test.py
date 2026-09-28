@@ -287,6 +287,13 @@ class SuiteWiring(unittest.TestCase):
         lines = (ROOT / "test/camera_health/run_all.sh").read_text().splitlines()
         self.assertEqual(sum(line.strip() == "bash test_cam_state.sh" for line in lines), 1)
 
+    def test_runs_recovery_guard_rc_contract_once(self):
+        """The recovery guards' reject codes are only pinned while the runner
+        calls this file; recovery_protocol_test.sh does not cover the lifecycle
+        arm, so dropping the call would silently reopen that gap."""
+        lines = (ROOT / "test/camera_health/run_all.sh").read_text().splitlines()
+        self.assertEqual(sum(line.strip() == "bash recovery_guard_rc_test.sh" for line in lines), 1)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
