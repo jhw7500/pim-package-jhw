@@ -838,8 +838,12 @@ int CTCPServer::init()
 	m_serverSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP) ;
     
 	if(m_serverSocket < 0) {
+		// strerror() has to read the socket() errno, not whatever the LOG_INFO
+		// below leaves behind: at a raised log_level mylog() reaches syslog(),
+		// which is not required to preserve errno.
+		int socketErrno = errno ;
 	__LOG(LOG_INFO, "[TCP][%s:%d] init_queue done", _FILE_, __LINE__);
-		__LOG(LOG_CRIT, "[TCP][%s:%d] cannot create socket", _FILE_, __LINE__) ;
+		__LOG(LOG_ALERT, "[TCP][%s:%d] cannot create socket - %s", _FILE_, __LINE__, strerror(socketErrno)) ;
 		//m_flagDestroy = 1;
 		return m_serverSocket;
 	}
@@ -862,14 +866,16 @@ int CTCPServer::init()
 
 	ret = bind(m_serverSocket, (struct sockaddr*)&serverAddr, sizeof(sockaddr_in)) ;
 	if(ret < 0) {
-		__LOG(LOG_CRIT, "[TCP][%s:%d] Server bind failed", _FILE_, __LINE__) ;
+		__LOG(LOG_ALERT, "[TCP][%s:%d] Server bind failed on %s:%u - %s", _FILE_, __LINE__,
+			inet_ntoa(serverAddr.sin_addr), (unsigned)_TVcmConf.portNum, strerror(errno)) ;
 		//m_flagDestroy = 1;
 		return ret;
 	}
 
 	ret = listen(m_serverSocket, MAXPENDING) ;
 	if(ret < 0 ) {
-		__LOG(LOG_CRIT, "[TCP][%s:%d] Server listen failed", _FILE_, __LINE__) ;
+		__LOG(LOG_ALERT, "[TCP][%s:%d] Server listen failed on %s:%u - %s", _FILE_, __LINE__,
+			inet_ntoa(serverAddr.sin_addr), (unsigned)_TVcmConf.portNum, strerror(errno)) ;
 		//m_flagDestroy = 1;
 		return ret;
 	}
@@ -894,22 +900,31 @@ int CTCPServer::init()
 		return ret;
 	}
 
+	// pthread_create reports failure with a positive error number, not -1 and
+	// not through errno, so the old "< 0" test never fired and the result was
+	// overwritten by the next create.  A vcm without these threads accepts
+	// nothing while still looking alive to pgrep, so treat it as a failed start.
 	ret = pthread_create(&m_threadConnect, NULL, &thread_waitingConnect, NULL);
-	if(ret < 0)
-		__LOG(LOG_CRIT, "[TCP][%s:%d] ret:%d", _FILE_, __LINE__, ret);
+	if(ret != 0) {
+		__LOG(LOG_ALERT, "[TCP][%s:%d] cannot start accept thread - %s", _FILE_, __LINE__, strerror(ret)) ;
+		return -1;
+	}
 
 	// 파일 쓰기 워커 스레드 생성
 	ret = pthread_create(&m_threadFileWriter, NULL, &thread_fileWriter, NULL);
-	if(ret < 0)
-		__LOG(LOG_CRIT, "[WRT][%s:%d] ret:%d", _FILE_, __LINE__, ret);
+	if(ret != 0) {
+		__LOG(LOG_ALERT, "[WRT][%s:%d] cannot start file writer thread - %s", _FILE_, __LINE__, strerror(ret)) ;
+		return -1;
+	}
 
 	// SRT/vib 관련 플래그 중 하나라도 켜져있을 때만 쓰레드 생성
 	if(_TVcmConf.srt_enable || _TVcmConf.srt_test || _TVcmConf.vib_enable || _TVcmConf.vib_test) {
 		ret = pthread_create(&m_threadMakeSRT, NULL, &thread_waitingMakeSRT, NULL);
-		if(ret < 0)
-			__LOG(LOG_CRIT, "[SRT][%s:%d] ret:%d", _FILE_, __LINE__, ret);
-		else
-			m_srtThreadActive = true;
+		if(ret != 0) {
+			__LOG(LOG_ALERT, "[SRT][%s:%d] cannot start srt thread - %s", _FILE_, __LINE__, strerror(ret)) ;
+			return -1;
+		}
+		m_srtThreadActive = true;
 	}
 	else {
 		__LOG(LOG_NOTICE, "[SRT][%s:%d] skip thread (srt/vib flags all off)", _FILE_, __LINE__);
@@ -917,12 +932,15 @@ int CTCPServer::init()
 
 	if(_TVcmConf.ops_enable) {
 		ret = pthread_create(&m_threadGetOPS, NULL, &thread_waitingGetOPS, NULL);
-		if(ret < 0)
-			__LOG(LOG_CRIT, "[TCP][%s:%d] ret:%d", _FILE_, __LINE__, ret);
+		if(ret != 0) {
+			__LOG(LOG_ALERT, "[TCP][%s:%d] cannot start ops thread - %s", _FILE_, __LINE__, strerror(ret)) ;
+			return -1;
+		}
 	}
     //__LOG(LOG_EMERG, "[CFG][%s:%d] conf:%s", _FILE_, __LINE__, _TVhlConf.vhl_name);
 
-	return ret;
+	// Every failure above returns early, so reaching here is a successful init.
+	return 0;
 }
 
 int CTCPServer::destroy()

@@ -39,10 +39,13 @@ int IpcClient::init()
 	}
  #endif
 	ret = pthread_create(&m_threadRecv, NULL, &thread_waitingRecv, NULL);
-    if(ret < 0)
-		__LOG(LOG_CRIT, "[IPC][%s:%d] ret:%d", _FILE_, __LINE__, ret);
+    if(ret != 0) {
+		// Positive error number, so the old "< 0" test never fired.
+		__LOG(LOG_ALERT, "[IPC][%s:%d] cannot start recv thread - %s", _FILE_, __LINE__, strerror(ret));
+		return -1;
+    }
 
-    return ret;
+    return 0;
 }
 
 int IpcClient::destory()
