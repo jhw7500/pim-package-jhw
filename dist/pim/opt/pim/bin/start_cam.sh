@@ -7,8 +7,26 @@ PIM_BIN="${PIM_BIN:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 source "$PIM_LIB/cam_recovery_actions.sh"
 
 if [ "${PIM_CAMERA_EXECUTOR:-}" != 1 ]; then
-    [ $# -le 1 ] || { echo 'usage: start_cam.sh [delay]' >&2; exit 64; }
+    # --no-wait has to be recognised here rather than counted as the positional
+    # delay, which this path accepts and discards.  Unrecognised arguments are
+    # rejected rather than absorbed into that count: a near miss such as --nowait
+    # would otherwise take the blocking path silently, handing back the very wait
+    # the flag exists to skip, and this is the wrapper an operator reaches through
+    # the startcam symlink.  The delay therefore has to look like a delay.
+    no_wait=0 positional=0
+    for arg in "$@"; do
+        case "$arg" in
+            --no-wait) no_wait=1;;
+            -h|--help) echo 'usage: start_cam.sh [delay] [--no-wait]'; exit 0;;
+            *[!0-9]*|'') echo "unknown option: $arg" >&2; exit 64;;
+            *) positional=$((positional + 1));;
+        esac
+    done
+    [ "$positional" -le 1 ] || { echo 'usage: start_cam.sh [delay] [--no-wait]' >&2; exit 64; }
     echo 'DEPRECATED: start_cam.sh forwards one recovery request' >&2
+    if [ "$no_wait" -eq 1 ]; then
+        exec "${PIM_CAMERA_RECOVERYCTL:-/opt/pim/bin/cam-recoveryctl}" request gstapp_restart --source legacy-start-cam --reason legacy-wrapper
+    fi
     exec "${PIM_CAMERA_RECOVERYCTL:-/opt/pim/bin/cam-recoveryctl}" request gstapp_restart --source legacy-start-cam --reason legacy-wrapper --wait 120
 fi
 
