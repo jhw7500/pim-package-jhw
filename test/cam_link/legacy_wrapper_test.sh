@@ -16,7 +16,7 @@ export CALLS
 run() { local script=$1; shift; : > "$CALLS"; set +e; out=$(PIM_CAMERA_RECOVERYCTL="$WORK/bin/cam-recoveryctl" RECOVERY_RC=17 "$ROOT/dist/pim/opt/pim/bin/$script" "$@" 2>&1); rc=$?; set -e; [ "$rc" = 17 ] || { echo "$out" >&2; exit 1; }; printf '%s' "$out" | grep -qi deprecat || { echo "no deprecation warning: $script" >&2; exit 1; }; }
 
 run kill_test.sh -q
-[ "$(cat "$CALLS")" = 'request gstapp_restart --source legacy-kill-test --reason legacy-wrapper --wait 120' ] || exit 1
+[ "$(cat "$CALLS")" = 'request gstapp_stop --source legacy-kill-test --reason legacy-wrapper --wait 120' ] || exit 1
 run init_cam.sh -q
 [ "$(cat "$CALLS")" = 'request module_reload --source legacy-init-cam --reason legacy-wrapper --wait 300' ] || exit 1
 run cam_hard_reset.sh -s -S -q
@@ -38,9 +38,9 @@ set -e
 # fail against a wrapper that has not been changed: there --no-wait is an unknown
 # option and the script exits 64 before reaching the stub at all.
 run kill_test.sh --no-wait
-[ "$(cat "$CALLS")" = 'request gstapp_restart --source legacy-kill-test --reason legacy-wrapper' ] || exit 1
+[ "$(cat "$CALLS")" = 'request gstapp_stop --source legacy-kill-test --reason legacy-wrapper' ] || exit 1
 run kill_test.sh -q --no-wait
-[ "$(cat "$CALLS")" = 'request gstapp_restart --source legacy-kill-test --reason legacy-wrapper' ] || exit 1
+[ "$(cat "$CALLS")" = 'request gstapp_stop --source legacy-kill-test --reason legacy-wrapper' ] || exit 1
 run init_cam.sh --no-wait
 [ "$(cat "$CALLS")" = 'request module_reload --source legacy-init-cam --reason legacy-wrapper' ] || exit 1
 run cam_hard_reset.sh -s -S --no-wait

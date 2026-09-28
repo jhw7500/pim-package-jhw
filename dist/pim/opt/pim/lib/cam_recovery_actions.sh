@@ -359,11 +359,19 @@ cam_stop_process() {
         sleep 1; i=$((i + 1))
     done
 }
-cam_quiesce_gstapp() {
+# 부재 확인.  rc 0 은 PRESENT 이므로 여기서는 실패다 (cam_process_present 규약).
+# cam_quiesce_gstapp 의 마지막 확인과 gstapp_stop 요청의 완료 검증이 같은 조건을
+# 봐야 하므로 한 곳에 둔다.
+cam_verify_gstapp_absent() {
     local runtime=$1 kind rc
+    for kind in app bg; do rc=0; cam_process_present "$runtime" "$kind" || rc=$?; [ "$rc" -eq 1 ] || { [ "$rc" -eq 0 ] && return 1; return "$rc"; }; done
+}
+
+cam_quiesce_gstapp() {
+    local runtime=$1
     cam_stop_process "$runtime" app || return $?
     cam_stop_process "$runtime" bg || return $?
-    for kind in app bg; do rc=0; cam_process_present "$runtime" "$kind" || rc=$?; [ "$rc" -eq 1 ] || { [ "$rc" -eq 0 ] && return 1; return "$rc"; }; done
+    cam_verify_gstapp_absent "$runtime"
 }
 
 cam_quiesce_consumers() {
@@ -638,6 +646,9 @@ cam_execute_recovery_request() {
     cam_executor_set_context || return $?
     case "$type" in
         gstapp_restart) cam_execute_action_step gstapp_restart "$runtime"; rc=$? ;;
+        # 정지는 counter 를 쓰지 않으므로 cam_execute_action_step 을 지나지 않는다.
+        # 이 case 에는 *) 가 없어서, 빠뜨리면 아무 일도 하지 않고 SUCCEEDED 가 된다.
+        gstapp_stop) cam_quiesce_gstapp "$runtime"; rc=$? ;;
         module_reload)
             cam_execute_action_step module_reload "$runtime"; rc=$?
             if [ "$rc" -ne 0 ]; then cam_execute_action_step camera_hard_reset "$runtime"; rc=$?; fi

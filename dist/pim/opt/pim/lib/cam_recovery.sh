@@ -71,7 +71,12 @@ _cr_lock_call_wait() {
         return "$rc"
     fi
 }
-_cr_public_action() { case "$1" in gstapp_restart|module_reload|camera_hard_reset|reboot_fallback) return 0;; esac; return 1; }
+# 요청할 수 있는 action 과 counter 에 기록되는 action 은 같지 않다.  이 목록은 전자이고,
+# 후자는 아래 jq 술어 public_action 과 _cr_state_template 의 네 키다.  gstapp_stop 은
+# 여기에만 있다 — 정지는 escalation 의미가 없고(_cl_gstapp_failures 는 gstapp_restart 만
+# 읽는다), counter 를 주면 state.json 의 키 집합이 바뀌어 이미 배포된 보드의 파일이
+# _cr_state_valid 에서 거부된다.  countered:false 경로는 ord_restart 등이 쓰는 기존 길이다.
+_cr_public_action() { case "$1" in gstapp_restart|gstapp_stop|module_reload|camera_hard_reset|reboot_fallback) return 0;; esac; return 1; }
 _cr_request_type() { _cr_public_action "$1" || [ "$1" = apply_config ]; }
 _cr_owner_json() { cat "$(_cr_owner_file)" 2>/dev/null; }
 
@@ -332,7 +337,8 @@ _cr_terminal_history_actions_valid() {
         .=="gstapp_restart" or .=="module_reload" or
         .=="camera_hard_reset" or .=="reboot_fallback";
       def uncountered_action:
-        .=="ord_restart" or .=="vcm_restart" or .=="policy_reload";
+        .=="ord_restart" or .=="vcm_restart" or .=="policy_reload" or
+        .=="gstapp_stop";
       def positive_integer: type=="number" and floor==. and .>0;
       def terminal_status:
         (.status=="SUCCEEDED" and .rc==0) or
