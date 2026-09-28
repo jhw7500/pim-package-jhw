@@ -172,6 +172,35 @@ mkdir -p "$PIM_CAMERA_PROCESS_ROOT/99"
 printf '%s' '99 (BG_Check_for_pim) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 999 0' > "$PIM_CAMERA_PROCESS_ROOT/99/stat"
 printf '/bin/bash\000%s\0004\000' "$PIM_CAMERA_BG_CHECKER" > "$PIM_CAMERA_PROCESS_ROOT/99/cmdline"
 
+echo "=== cam_execute_recovery_request refuses gstapp_stop without taking a lease ==="
+# That entry point's shared success path sets the owner ACTIVE for every type, so a stop
+# succeeding there would raise a DEGRADED owner and erase the persisted fault - the same
+# hazard the section above pins on the production path.  It refuses the type instead, and
+# the refusal has to come before submit/claim, or a rejected call would strand the lease
+# and a RECOVERING owner.
+: > "$PIM_CAMERA_CALL_LOG"
+owner_active
+expect cam_mark_degraded HARD_RESET_FAILED camera_health true
+refuse_svc=$(cat "$PIM_CAMERA_STATE_DIR/service-state.json")
+expect_rc 64 cam_execute_recovery_request "$PIM_CAMERA_RUNTIME_JSON" gstapp_stop operator "must be refused here"
+[ "$(jq -r .lifecycle "$PIM_CAMERA_RUN_DIR/owner.json")" = DEGRADED ] \
+    || fail 'refused gstapp_stop moved the owner off DEGRADED'
+{ [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] && [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/active.json" ]; } \
+    || fail 'refused gstapp_stop stranded a lease'
+[ "$refuse_svc" = "$(cat "$PIM_CAMERA_STATE_DIR/service-state.json")" ] \
+    || fail 'refused gstapp_stop rewrote service-state.json'
+[ "$(grep -cE '^(pkill|kill) ' "$PIM_CAMERA_CALL_LOG" || true)" -eq 0 ] \
+    || fail 'refused gstapp_stop still signalled a process'
+# 거부가 너무 넓지 않은지: 다른 type 은 이 진입점에서 계속 동작해야 한다
+: > "$PIM_CAMERA_CALL_LOG"
+printf 'gstApp\n%s\n' "$PIM_CAMERA_BG_CHECKER" > "$WORK/procs"
+mkdir -p "$PIM_CAMERA_PROCESS_ROOT/99"
+printf '%s' '99 (BG_Check_for_pim) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 999 0' > "$PIM_CAMERA_PROCESS_ROOT/99/stat"
+printf '/bin/bash\000%s\0004\000' "$PIM_CAMERA_BG_CHECKER" > "$PIM_CAMERA_PROCESS_ROOT/99/cmdline"
+owner_active
+expect cam_execute_recovery_request "$PIM_CAMERA_RUNTIME_JSON" gstapp_restart test "still works"
+grep -q '^start_cam$' "$PIM_CAMERA_CALL_LOG" || fail 'the refusal broke gstapp_restart at this entry point'
+
 echo "=== degraded camera-health apply uses one real full quiesce ==="
 mkdir -p "$PIM_CAMERA_SOURCE_ROOT"
 jq --arg tmp "$WORK/recordings" '
