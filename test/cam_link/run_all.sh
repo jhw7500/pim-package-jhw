@@ -20,6 +20,7 @@ TESTS=(
     bg_process_scan_test.sh
     recovery_launch_safety_test.sh
     legacy_wrapper_test.sh
+    submission_notice_test.sh
     initcam_modprobe_test.sh
     flag_e2e_test.sh
     disconnect_log_test.sh

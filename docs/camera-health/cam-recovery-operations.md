@@ -118,6 +118,22 @@ CAM_RECOVERY_RESULT id=01234567-89ab-cdef-0123-456789abcdef type=module_reload s
 CAM_RECOVERY_RESULT id=01234567-89ab-cdef-0123-456789abcdef type=module_reload status=FAILED rc=70
 ```
 
+`--wait`로 기다리는 호출자는 위 terminal 결과를 받기 전에 stderr로 제출 통지 한 줄을
+먼저 받는다. 진행 상황 보고일 뿐이며 **stdout contract가 아니다** — stdout은 terminal
+`CAM_RECOVERY_RESULT` 한 줄만 갖는다. `--wait` 없이 제출하면 이 줄은 찍히지 않고
+stdout으로 request id만 나온다.
+
+```text
+CAM_RECOVERY_SUBMITTED id=01234567-89ab-cdef-0123-456789abcdef type=gstapp_stop (waiting up to 120s)
+```
+
+제출 자체가 거절되면 이 줄도 terminal 결과도 찍히지 않는다. **stdout은 비어 있고,
+판정은 아래 표의 exit code로만 한다.** 정상 owner 상태에서의 `BUSY`/75 거절은 stderr도
+비어 있지만 그것이 모든 거절 경로의 계약은 아니다 — 예를 들어 owner 문서가 파싱되지
+않으면 rc 69와 함께 jq 진단이, recovery 디렉터리에 쓸 수 없으면 rc 70과 함께 mktemp
+오류가 stderr로 나온다. 거절 시 stderr에 라이브러리 진단이 실려 나올 수 있으므로,
+**stderr가 비었는지로 거절 여부를 판단하지 않는다.**
+
 | exit code | 의미 |
 | ---: | --- |
 | 0 | 요청 접수 또는 기다린 action 성공 |

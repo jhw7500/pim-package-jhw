@@ -12,6 +12,13 @@ bad() { usage; exit 64; }
 wait_for_result() {
     local id=$1 type=$2 seconds=$3 started now result status rc
     [[ $seconds =~ ^[0-9]+$ ]] || return 64
+    # The request is already queued here; the loop below can hold the terminal for
+    # most of a minute on a loaded board, and until now it printed nothing, which
+    # reads as a hang (issue #109 was reported as "almost like it froze").  This
+    # goes to stderr on purpose: the stdout contract is the single
+    # CAM_RECOVERY_RESULT line, and recovery_protocol_test.sh compares that
+    # capture by exact string while redirecting stdout only.
+    printf 'CAM_RECOVERY_SUBMITTED id=%s type=%s (waiting up to %ss)\n' "$id" "$type" "$seconds" >&2
     started=$(date +%s)
     while :; do
         result=$(cam_recovery_status_json "$id" 2>/dev/null); result_rc=$?
