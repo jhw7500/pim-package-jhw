@@ -1,11 +1,22 @@
 [Unit]
 Description=Cantops Setting Program Service
 After=rc-local.service
+# A start that cannot bind now exits non-zero, so Restart=on-failure would retry
+# it forever against a port that stays occupied.  The limit lets systemd latch
+# the unit as failed instead, which is the state an operator can see.  Nothing
+# in this package observes vsd-operate and the tree has no reset-failed, so
+# recovery from a latched failure is manual or a reboot - that visibility is the
+# point of the policy, not automated repair.
+StartLimitIntervalSec=60s
+StartLimitBurst=5
 
 [Service]
+Type=simple
 User=root
 WorkingDirectory=/root
 ExecStart=vsd
+Restart=on-failure
+RestartSec=3s
 
 [Install]
 WantedBy=multi-user.target

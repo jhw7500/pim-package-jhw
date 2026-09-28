@@ -4,6 +4,7 @@
 #include <iostream>
 #include <fstream>
 #include <string.h>
+#include <errno.h>
 #include <unistd.h>
 //#include <sys/socket.h>
 //#include <sys/un.h>
@@ -672,10 +673,9 @@ Tcpsvr::~Tcpsvr() {
 
 bool Tcpsvr::Begin(uint16_t port) {
 
-    unlink(EDGECONF_LOCK);
-
     if ((sock_ = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
-        std::cout << "can't create socket" << std::endl;
+        __LOG(LOG_ALERT, "[TCP][%s:%d] cannot create socket - %s",
+              _FILE_, __LINE__, strerror(errno));
         return false;
     }
 
@@ -690,16 +690,27 @@ bool Tcpsvr::Begin(uint16_t port) {
     int opt = 1;
     setsockopt(sock_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)); 
     if (bind(sock_, (struct sockaddr *)&svr_addr, sizeof(struct sockaddr)) == -1) {
-        std::cout << "bind error" << std::endl;
+        // close() may overwrite errno, so keep bind()'s own value first.
+        int bind_errno = errno;
         close(sock_);
+        __LOG(LOG_ALERT, "[TCP][%s:%d] bind failed on 0.0.0.0:%u - %s",
+              _FILE_, __LINE__, (unsigned)port, strerror(bind_errno));
         return false;
     }
 
     if (listen(sock_, 1) == -1) {
-        std::cout << "listen error" << std::endl;
+        int listen_errno = errno;
         close(sock_);
+        __LOG(LOG_ALERT, "[TCP][%s:%d] listen failed on 0.0.0.0:%u - %s",
+              _FILE_, __LINE__, (unsigned)port, strerror(listen_errno));
         return false;
     }
+
+    // Only a start that will actually serve clears the stale command lock.
+    // This unlink used to run before socket(), so with Restart=on-failure a
+    // start that fails to bind would wipe a live instance's lock up to
+    // StartLimitBurst times within seconds.
+    unlink(EDGECONF_LOCK);
 
     std::cout << "after accept" << std::endl;
 

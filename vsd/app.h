@@ -6,12 +6,15 @@
 
 class App {
 public:
-    App();
+    // Run() carries the startup status out to main().  A constructor cannot,
+    // and that constructor-only shape is what let a failed Begin() fall
+    // through into the command wait loop.
+    int Run(void);
     Config config_;
 
 private:
     Tcpsvr tcpsvr_;
-    void WaitCommand(void);
+    int WaitCommand(void);
 };
 
 #endif
