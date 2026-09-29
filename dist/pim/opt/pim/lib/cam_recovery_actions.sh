@@ -13,6 +13,17 @@ if ! declare -F cam_owner_assert >/dev/null 2>&1; then
     source "$PIM_LIB/cam_recovery.sh"
 fi
 
+# gstApp 재생 지연의 정본은 cam_start_policy.sh 하나다. 이 라이브러리가 직접
+# source 하는 이유는 두 가지다. 첫째, 지연을 실제로 해석하는 경로(아래
+# cam_runtime_app_delay, 그것을 부르는 cam_start_gstapp 과 cam_liveness 틱,
+# start_cam.sh 의 executor 분기)는 어느 것도 정책 파일을 따로 읽지 않는다.
+# 둘째, 값을 환경에서 물려받으면 호출자가 덮어쓸 수 있다 — 정책 파일은 평범한
+# 대입이므로 여기서 source 하면 환경값을 이긴다.
+#
+# 조건부로 감싸지 않는 것도 같은 이유다: 이미 설정돼 있으면 건너뛰는 형태는
+# 환경 오염을 그대로 통과시킨다.
+source "$PIM_LIB/cam_start_policy.sh"
+
 # 복구 액션은 20 단계 가까운 순차 부작용이고, 어느 단계에서 멈췄는지가 곧 원인이다.
 # 이 파일은 지금까지 logger 호출이 하나도 없어서, 실패하면 상위가 남기는
 # "startup transaction failed rc=1" 한 줄만 남았다. 단계 이름을 남긴다.
@@ -125,11 +136,11 @@ cam_effect() {
 # 재조립하면 그런 값이 잘려 allowlist 를 통과한다.
 cam_runtime_app_delay() {
     local runtime=$1 app delay fields
-    fields=$(jq -r '
+    fields=$(jq -r --argjson default_delay "$CAM_APP_PLAY_DELAY_SEC_DEFAULT" '
         (.VHL_CAM.app // "gstApp") as $a
         | ((.VHL_CAM.capture.enable // false) | tostring) as $c
         | (if $c == "true" then "gstApp" elif $a == "streamApp" then "PIMCAM" else $a end) as $app
-        | ((.VHL_CAM.app_delay // 4) | tostring) as $d
+        | ((.VHL_CAM.app_delay // $default_delay) | tostring) as $d
         | [ (if $app == "gstApp" or $app == "PIMCAM" then $app else "" end),
             (if ($d | test("^[0-9]+$")) then $d else "" end) ] | join("\n")' "$runtime") || return 64
     { IFS= read -r app; IFS= read -r delay; } <<<"$fields"

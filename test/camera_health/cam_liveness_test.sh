@@ -40,6 +40,18 @@ fingerprint() { [ -e "$1" ] && cksum "$1" || printf 'absent\n'; }
 reject_effects() {
     ! grep -Eq '^(restart:|start:vcm|start:bg|request:)' "$PIM_CAMERA_CALL_LOG" || { cat "$PIM_CAMERA_CALL_LOG" >&2; fail "$1 performed a liveness effect"; }
 }
+
+# cam_liveness_restart_bg 가 BG 에 넘기는 지연은 cam_start_policy.sh 의 정책값이다.
+# 여기에 숫자를 박아 두면 정책이 바뀌는 순간 이 파일이 조용히 죽는다 — 기동 건수를
+# 세는 단정은 패턴이 안 맞아 0 이 되고, 0 을 기대하는 쪽은 그래서 통과해 버린다.
+# shellcheck source=/dev/null
+source "$PIM_LIB/cam_start_policy.sh"
+BG_START="start:bg $CAM_APP_PLAY_DELAY_SEC_DEFAULT"
+# 케이스 (11) 은 교체된 런타임 문서를 다시 읽었다는 것을 기동 인자로 증명한다.
+# 그러려면 기본값과 달라야 하므로 정책값을 피해서 고르고, 그 조건을 단정해 둔다.
+BG_REARM_DELAY=7
+[ "$BG_REARM_DELAY" != "$CAM_APP_PLAY_DELAY_SEC_DEFAULT" ] \
+    || fail 're-arm 지연이 정책 기본값과 같으면 런타임 재독을 증명하지 못한다'
 force_tick_guard_rc() {
     local forced_rc=$1
     (
@@ -324,7 +336,7 @@ reset_case; owner_at ACTIVE; printf 'vcm\ngstApp\n' > "$WORK/procs"
 # (1) BG running normally: no restart, no log line.
 fake_bg_process 6001
 expect_rc 0 cam_liveness_tick; bg_settle
-[ "$(count_log 'start:bg 4')" -eq 0 ] || fail 'healthy BG was restarted'
+[ "$(count_log "$BG_START")" -eq 0 ] || fail 'healthy BG was restarted'
 [ "$(action_log_count 'BG checker absent')" -eq 0 ] || fail 'healthy BG logged an absence'
 
 # The candidate scan runs on every tick, so it must not exec a helper per
@@ -343,14 +355,14 @@ bg_scan_cats=$(grep -Fc "$PIM_CAMERA_PROCESS_ROOT/" "$WORK/cat-calls" 2>/dev/nul
 rm -rf "${PIM_CAMERA_PROCESS_ROOT:?}/6001"
 : > "$PIM_CAMERA_CALL_LOG"
 expect_rc 0 cam_liveness_tick; bg_settle
-[ "$(count_log 'start:bg 4')" -eq 1 ] || fail 'BG alone-termination was not restarted exactly once'
+[ "$(count_log "$BG_START")" -eq 1 ] || fail 'BG alone-termination was not restarted exactly once'
 [ "$(bg_candidate_count)" -eq 1 ] || fail 'restart did not leave exactly one BG'
 [ "$(action_log_count 'BG checker absent')" -eq 1 ] || fail 'absence transition was not logged once'
 
 # (3) Next tick sees it present, says so once, and stays quiet after that.
 : > "$PIM_CAMERA_CALL_LOG"
 expect_rc 0 cam_liveness_tick; bg_settle
-[ "$(count_log 'start:bg 4')" -eq 0 ] || fail 'present BG was restarted again'
+[ "$(count_log "$BG_START")" -eq 0 ] || fail 'present BG was restarted again'
 [ "$(action_log_count 'present again')" -eq 1 ] || fail 'recovery was not logged once'
 expect_rc 0 cam_liveness_tick; bg_settle
 [ "$(action_log_count 'present again')" -eq 1 ] || fail 'recovery was logged again on a quiet tick'
@@ -364,7 +376,7 @@ export PIM_CAMERA_LIVENESS_BG_RESTART_ATTEMPTS=3
 bg_started=$(date +%s)
 for _ in 1 2 3 4 5; do expect_rc 0 cam_liveness_tick; bg_settle; done
 bg_elapsed=$(( $(date +%s) - bg_started ))
-[ "$(count_log 'start:bg 4')" -eq 3 ] || fail "unbounded BG retry: $(count_log 'start:bg 4') attempts instead of 3"
+[ "$(count_log "$BG_START")" -eq 3 ] || fail "unbounded BG retry: $(count_log "$BG_START") attempts instead of 3"
 [ "$bg_elapsed" -lt 10 ] || fail "five ticks took ${bg_elapsed}s; the tick is stalling on the BG start wait"
 [ "$(action_log_count 'not retrying until it reappears')" -eq 1 ] || fail 'giving up was not reported exactly once'
 [ "$(action_log_count 'BG checker absent')" -eq 1 ] || fail 'sustained absence logged more than once'
@@ -375,7 +387,7 @@ fake_bg_process 6031
 expect_rc 0 cam_liveness_tick; bg_settle
 rm -rf "${PIM_CAMERA_PROCESS_ROOT:?}/6031"
 expect_rc 0 cam_liveness_tick; bg_settle
-[ "$(count_log 'start:bg 4')" -eq 1 ] || fail 'the attempt budget did not reset after BG reappeared'
+[ "$(count_log "$BG_START")" -eq 1 ] || fail 'the attempt budget did not reset after BG reappeared'
 export PIM_CAMERA_BG_CHECKER="$WORK/stub/bg_checker.sh"
 export PIM_CAMERA_LIVENESS_BG_RESTART_ATTEMPTS=3
 
@@ -383,7 +395,7 @@ export PIM_CAMERA_LIVENESS_BG_RESTART_ATTEMPTS=3
 reset_case; owner_at ACTIVE; printf 'vcm\ngstApp\n' > "$WORK/procs"
 : > "$PIM_CAMERA_CALL_LOG"
 PIM_CAMERA_TEST_OWNER_ROLLOVER=liveness_bg expect_rc 0 cam_liveness_tick; bg_settle
-[ "$(count_log 'start:bg 4')" -eq 0 ] || fail 'BG was launched under a rolled-over owner'
+[ "$(count_log "$BG_START")" -eq 0 ] || fail 'BG was launched under a rolled-over owner'
 reject_effects 'bg-owner-rollover'
 
 # (7) Duplicate valid candidates are still one BG: no restart.
@@ -391,7 +403,7 @@ reset_case; owner_at ACTIVE; printf 'vcm\ngstApp\n' > "$WORK/procs"
 fake_bg_process 6011 771
 fake_bg_process 6012 772 4 bare
 expect_rc 0 cam_liveness_tick; bg_settle
-[ "$(count_log 'start:bg 4')" -eq 0 ] || fail 'duplicate BG candidates triggered a restart'
+[ "$(count_log "$BG_START")" -eq 0 ] || fail 'duplicate BG candidates triggered a restart'
 
 # (8) Impostors are not BG: another script under the same shell, and a
 # non-numeric delay.  Both mean BG is absent, so exactly one restart.
@@ -399,7 +411,7 @@ reset_case; owner_at ACTIVE; printf 'vcm\ngstApp\n' > "$WORK/procs"
 fake_bg_process 6021 773 4 other
 fake_bg_process 6022 774 4 nodelay
 expect_rc 0 cam_liveness_tick; bg_settle
-[ "$(count_log 'start:bg 4')" -eq 1 ] || fail 'impostor processes were accepted as a live BG'
+[ "$(count_log "$BG_START")" -eq 1 ] || fail 'impostor processes were accepted as a live BG'
 
 # (9) The delay is only needed to relaunch BG, so a .VHL_CAM.app_delay the
 # runtime validator accepts but cam_runtime_app_delay rejects must not stop the
@@ -427,7 +439,7 @@ for _ in 1 2 3 4 5; do expect_rc 0 cam_liveness_tick; bg_settle; done
 eval "$(declare -f bg_restart_real | sed '1s/bg_restart_real/cam_liveness_restart_bg/')"
 : > "$PIM_CAMERA_CALL_LOG"
 expect_rc 0 cam_liveness_tick; bg_settle
-[ "$(count_log 'start:bg 4')" -eq 1 ] || fail 'the restart budget did not survive the refusals'
+[ "$(count_log "$BG_START")" -eq 1 ] || fail 'the restart budget did not survive the refusals'
 
 # (11) Giving up must not be terminal for the life of the daemon: an invalid
 # runtime is exactly what makes BG exit 64, so a replaced runtime re-arms it.
@@ -435,13 +447,13 @@ reset_case; owner_at ACTIVE; printf 'vcm\ngstApp\n' > "$WORK/procs"
 export PIM_CAMERA_BG_CHECKER="$WORK/stub/bg_dead.sh"
 export PIM_CAMERA_LIVENESS_BG_RESTART_ATTEMPTS=2
 for _ in 1 2 3; do expect_rc 0 cam_liveness_tick; bg_settle; done
-[ "$(count_log 'start:bg 4')" -eq 2 ] || fail "give-up cap ignored: $(count_log 'start:bg 4') attempts instead of 2"
+[ "$(count_log "$BG_START")" -eq 2 ] || fail "give-up cap ignored: $(count_log "$BG_START") attempts instead of 2"
 [ "$(action_log_count 'not retrying until it reappears')" -eq 1 ] || fail 'giving up was not reported exactly once'
 : > "$PIM_CAMERA_CALL_LOG"
-rearmed=$("$PIM_CAMERA_REAL_JQ" -c '.VHL_CAM.app_delay=5' "$PIM_CAMERA_RUNTIME_JSON")
+rearmed=$("$PIM_CAMERA_REAL_JQ" -c --argjson d "$BG_REARM_DELAY" '.VHL_CAM.app_delay=$d' "$PIM_CAMERA_RUNTIME_JSON")
 _cr_atomic_write "$PIM_CAMERA_RUNTIME_JSON" "$rearmed"
 expect_rc 0 cam_liveness_tick; bg_settle
-[ "$(count_log 'start:bg 5')" -eq 1 ] || fail 'a replaced runtime did not re-arm the BG restart budget'
+[ "$(count_log "start:bg $BG_REARM_DELAY")" -eq 1 ] || fail 'a replaced runtime did not re-arm the BG restart budget'
 export PIM_CAMERA_BG_CHECKER="$WORK/stub/bg_checker.sh"
 export PIM_CAMERA_LIVENESS_BG_RESTART_ATTEMPTS=3
 
@@ -466,7 +478,7 @@ bg_jq_40=$(wc -l < "$PIM_CAMERA_JQ_LOG")
 [ "$bg_warn_10" -eq 1 ] || fail "the absence warning was repeated: $bg_warn_10 lines over 10 ticks"
 [ "$(action_log_count 'BG checker absent')" -eq 1 ] || fail "the absence warning came back over the next thirty ticks"
 [ "$(action_log_count 'not retrying until it reappears')" -eq 1 ] || fail 'a permanent refusal never reached the give-up log'
-[ "$(count_log 'start:bg 4')" -eq 0 ] || fail 'BG was launched despite an unresolvable delay'
+[ "$(count_log "$BG_START")" -eq 0 ] || fail 'BG was launched despite an unresolvable delay'
 
 # (13) A BG scan that cannot be inspected is not a camera liveness failure: the
 # monitor turns a non-zero tick rc into an error line on every two-second tick.
