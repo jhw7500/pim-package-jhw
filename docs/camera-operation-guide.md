@@ -88,7 +88,7 @@
 | `chk_voltage.sh` | 전원 전압 확인 |
 | `cam_enable.sh` | 수동 카메라 활성화 (모듈 재로드 + start_cam) |
 | `cam_disable.sh` | 수동 카메라 비활성화 (프로세스 종료 + 모듈 언로드) |
-| `cam_operate_stop.sh` | 빠른 카메라 중지 (killcam + 플래그 정리) |
+| `cam_operate_stop.sh` | 전체 정지 (`cam_liveness_ordered_stop`; killcam 을 부르지 않는다) |
 | `button_cam_reset.sh` | GPIO 131 버튼으로 카메라 on/off 토글 |
 | `cstop.sh` | cam-operate 서비스 + restart_app 강제 종료 |
 | `led_ctrl.sh` | BG_Check 결과에 따른 LED 제어 |

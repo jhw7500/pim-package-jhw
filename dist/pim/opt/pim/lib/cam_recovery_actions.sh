@@ -359,11 +359,19 @@ cam_stop_process() {
         sleep 1; i=$((i + 1))
     done
 }
-cam_quiesce_gstapp() {
+# 부재 확인.  rc 0 은 PRESENT 이므로 여기서는 실패다 (cam_process_present 규약).
+# cam_quiesce_gstapp 의 마지막 확인과 gstapp_stop 요청의 완료 검증이 같은 조건을
+# 봐야 하므로 한 곳에 둔다.
+cam_verify_gstapp_absent() {
     local runtime=$1 kind rc
+    for kind in app bg; do rc=0; cam_process_present "$runtime" "$kind" || rc=$?; [ "$rc" -eq 1 ] || { [ "$rc" -eq 0 ] && return 1; return "$rc"; }; done
+}
+
+cam_quiesce_gstapp() {
+    local runtime=$1
     cam_stop_process "$runtime" app || return $?
     cam_stop_process "$runtime" bg || return $?
-    for kind in app bg; do rc=0; cam_process_present "$runtime" "$kind" || rc=$?; [ "$rc" -eq 1 ] || { [ "$rc" -eq 0 ] && return 1; return "$rc"; }; done
+    cam_verify_gstapp_absent "$runtime"
 }
 
 cam_quiesce_consumers() {
@@ -629,6 +637,14 @@ cam_execute_recovery_request() {
     local runtime=$1 type=$2 source=$3 reason=$4 rc=0
     cam_validate_runtime "$runtime" || return 64
     _cr_request_type "$type" || return 64
+    # 이 진입점은 gstapp_stop 을 지원하지 않는다.  아래 공통 성공 경로가 type 과 무관하게
+    # cam_owner_set_lifecycle ACTIVE 를 하므로, 정지가 성공하면 DEGRADED owner 가 ACTIVE 로
+    # 올라가 지속된 fault 기록이 지워지고 liveness 가 다시 켜진다.  정지는 하드웨어에 대해
+    # 아무것도 증명하지 않으므로 그래서는 안 된다.  운영 경로
+    # _coc_execute_recovery_active 는 진입 lifecycle 을 복원하므로 정지는 그쪽으로 간다.
+    # 거부는 submit/claim 앞에 둔다 — case 안에서 돌려보내면 잡은 lease 와 RECOVERING
+    # owner 가 남는다.
+    [ "$type" != gstapp_stop ] || return 64
     cam_owner_assert || return 69
     cam_request_submit "$type" "$source" "$reason" >/dev/null || return $?
     cam_request_claim || return $?
@@ -638,6 +654,9 @@ cam_execute_recovery_request() {
     cam_executor_set_context || return $?
     case "$type" in
         gstapp_restart) cam_execute_action_step gstapp_restart "$runtime"; rc=$? ;;
+        # gstapp_stop 은 위에서 거부되므로 여기 없다.  _cr_request_type 이 통과시키는
+        # 나머지 type 은 전부 아래에 있으므로 이 case 는 여전히 빠짐없다 — *) 가 없는 것이
+        # 조용한 SUCCEEDED 로 이어지지 않는다.
         module_reload)
             cam_execute_action_step module_reload "$runtime"; rc=$?
             if [ "$rc" -ne 0 ]; then cam_execute_action_step camera_hard_reset "$runtime"; rc=$?; fi

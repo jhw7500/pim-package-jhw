@@ -105,6 +105,118 @@ grep -q '^pkill .*gstApp' "$PIM_CAMERA_CALL_LOG" || { cat "$PIM_CAMERA_CALL_LOG"
 grep -q '^kill -TERM 99$' "$PIM_CAMERA_CALL_LOG" || fail "gstapp restart did not quiesce BG child by exact argv identity"
 grep -q '^start_cam$' "$PIM_CAMERA_CALL_LOG" || fail "gstapp restart did not use internal launcher"
 
+echo "=== gstapp_stop stops the app and leaves the restart to cam-operate ==="
+# The point of this action is that it does NOT relaunch: killcam confirms termination
+# and cam_liveness_tick submits the restart on a later pass (issue #113).  It is also
+# deliberately uncountered - giving it a counter would change the key set of the
+# persistent state.json and make every already-deployed board's file fail
+# _cr_state_valid, so the key-set assertion below is part of the contract.
+: > "$PIM_CAMERA_CALL_LOG"
+printf 'gstApp\n%s\n' "$PIM_CAMERA_BG_CHECKER" > "$WORK/procs"
+rm -f "$PIM_CAMERA_PROCESS_ROOT"/*/cmdline
+mkdir -p "$PIM_CAMERA_PROCESS_ROOT/99"
+printf '%s' '99 (BG_Check_for_pim) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 999 0' > "$PIM_CAMERA_PROCESS_ROOT/99/stat"
+printf '/bin/bash\000%s\0004\000' "$PIM_CAMERA_BG_CHECKER" > "$PIM_CAMERA_PROCESS_ROOT/99/cmdline"
+owner_active
+stop_state_keys=$(jq -c '.actions|keys|sort' "$PIM_CAMERA_STATE_DIR/recovery/state.json")
+expect cam_request_submit gstapp_stop legacy-kill-test legacy-wrapper >/dev/null
+stop_id=$(jq -r .id "$PIM_CAMERA_RUN_DIR/recovery/pending.json")
+expect cam_request_claim
+expect cam_execute_pending_request
+grep -q '^pkill .*gstApp' "$PIM_CAMERA_CALL_LOG" || { cat "$PIM_CAMERA_CALL_LOG" >&2; fail 'gstapp_stop did not quiesce the app'; }
+grep -q '^kill -TERM 99$' "$PIM_CAMERA_CALL_LOG" || fail 'gstapp_stop did not quiesce the BG child by exact argv identity'
+! grep -q '^start_cam$' "$PIM_CAMERA_CALL_LOG" || { cat "$PIM_CAMERA_CALL_LOG" >&2; fail 'gstapp_stop relaunched the app - the restart belongs to cam-operate'; }
+jq -e --arg id "$stop_id" '.type=="gstapp_stop" and .id==$id and .status=="SUCCEEDED" and .rc==0' \
+    "$PIM_CAMERA_RUN_DIR/recovery/results/$stop_id.json" >/dev/null \
+    || fail 'gstapp_stop did not publish a SUCCEEDED terminal result'
+jq -e '[.actions[]|select(.action=="gstapp_stop")] | length==1 and .[0].countered==false' \
+    "$PIM_CAMERA_STATE_DIR/recovery/history/$stop_id.json" >/dev/null \
+    || fail 'gstapp_stop was not recorded as exactly one uncountered history step'
+[ "$stop_state_keys" = "$(jq -c '.actions|keys|sort' "$PIM_CAMERA_STATE_DIR/recovery/state.json")" ] \
+    || fail 'gstapp_stop changed the persistent counter key set'
+[ "$(jq -r .lifecycle "$PIM_CAMERA_RUN_DIR/owner.json")" = ACTIVE ] || fail 'gstapp_stop left the owner non-ACTIVE'
+{ [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] && [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/active.json" ]; } \
+    || fail 'gstapp_stop retained a lease'
+# ACTIVE 진입에서는 후속 재시작을 제출하지 않는다 - 같은 iteration 의 liveness 가 한다.
+# 아래 DEGRADED 절이 제출을 단언하므로 이 줄이 그 대조군이다.
+
+echo "=== gstapp_stop must not clear the degraded record or raise the owner ==="
+# The dangerous shape: a board whose recovery failed is left dirty+DEGRADED with gstApp
+# already gone, so cam_stop_process returns 0 immediately and the request succeeds having
+# done nothing.  If that success reaches _coc_persist_success it rewrites service-state
+# with dirty:false and degraded_reason:null and the next boot is downgraded from
+# camera_hard_reset to module_reload - one operator killcam erasing the record that the
+# hardware was left dirty.  Asserted byte-for-byte, plus the plan it feeds.
+: > "$PIM_CAMERA_CALL_LOG"
+: > "$WORK/procs"
+rm -f "$PIM_CAMERA_PROCESS_ROOT"/*/cmdline
+owner_active
+expect cam_mark_degraded HARD_RESET_FAILED camera_health true
+[ "$(jq -r .lifecycle "$PIM_CAMERA_RUN_DIR/owner.json")" = DEGRADED ] || fail 'degraded setup did not take'
+svc_before=$(cat "$PIM_CAMERA_STATE_DIR/service-state.json")
+plan_before=$(cam_plan_startup_action "$PIM_CAMERA_RUNTIME_JSON" "$svc_before")
+[ "$plan_before" = camera_hard_reset ] || fail "dirty state should plan camera_hard_reset, planned $plan_before"
+expect cam_request_submit gstapp_stop operator "operator killcam after a failed reset" >/dev/null
+expect cam_request_claim
+expect cam_execute_pending_request
+[ "$svc_before" = "$(cat "$PIM_CAMERA_STATE_DIR/service-state.json")" ] \
+    || { diff <(printf '%s\n' "$svc_before") <(cat "$PIM_CAMERA_STATE_DIR/service-state.json") >&2 || true
+         fail 'gstapp_stop rewrote service-state.json'; }
+[ "$plan_before" = "$(cam_plan_startup_action "$PIM_CAMERA_RUNTIME_JSON" "$(cat "$PIM_CAMERA_STATE_DIR/service-state.json")")" ] \
+    || fail 'gstapp_stop changed the next startup plan'
+[ "$(jq -r .lifecycle "$PIM_CAMERA_RUN_DIR/owner.json")" = DEGRADED ] \
+    || fail 'gstapp_stop raised a DEGRADED owner to ACTIVE'
+# ...and the app must not be left down.  Nothing else would restart it here:
+# cam_monitor_control_iteration only ticks liveness for ACTIVE and
+# chk_cam_operate.sh's cam_submit_internal_action also requires ACTIVE, so the stop
+# has to queue the restart itself on this path.  The stop's own lease is gone and the
+# follow-up is pending, not active - it is submitted, not waited on.
+[ ! -e "$PIM_CAMERA_RUN_DIR/recovery/active.json" ] \
+    || fail 'gstapp_stop left its own lease active on the degraded path'
+jq -e '.type=="gstapp_restart" and .source=="gstapp-stop-followup" and .status=="PENDING"' \
+    "$PIM_CAMERA_RUN_DIR/recovery/pending.json" >/dev/null \
+    || { cat "$PIM_CAMERA_RUN_DIR/recovery/pending.json" >&2 2>/dev/null || true
+         fail 'gstapp_stop from DEGRADED did not queue the follow-up restart'; }
+# 후속 요청은 소비해서 다음 절에 넘기지 않는다
+expect cam_request_claim
+expect cam_request_finish SUCCEEDED 0
+# 하네스 복원: _cr_lifecycle_allowed 에 DEGRADED:DEGRADED 가 없으므로 owner 를 DEGRADED 로
+# 남기면 뒤 절의 cam_owner_set_lifecycle DEGRADED 가 rc 64 로 거부된다.  프로세스도 되돌린다.
+owner_active
+printf 'gstApp\n%s\n' "$PIM_CAMERA_BG_CHECKER" > "$WORK/procs"
+mkdir -p "$PIM_CAMERA_PROCESS_ROOT/99"
+printf '%s' '99 (BG_Check_for_pim) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 999 0' > "$PIM_CAMERA_PROCESS_ROOT/99/stat"
+printf '/bin/bash\000%s\0004\000' "$PIM_CAMERA_BG_CHECKER" > "$PIM_CAMERA_PROCESS_ROOT/99/cmdline"
+
+echo "=== cam_execute_recovery_request refuses gstapp_stop without taking a lease ==="
+# That entry point's shared success path sets the owner ACTIVE for every type, so a stop
+# succeeding there would raise a DEGRADED owner and erase the persisted fault - the same
+# hazard the section above pins on the production path.  It refuses the type instead, and
+# the refusal has to come before submit/claim, or a rejected call would strand the lease
+# and a RECOVERING owner.
+: > "$PIM_CAMERA_CALL_LOG"
+owner_active
+expect cam_mark_degraded HARD_RESET_FAILED camera_health true
+refuse_svc=$(cat "$PIM_CAMERA_STATE_DIR/service-state.json")
+expect_rc 64 cam_execute_recovery_request "$PIM_CAMERA_RUNTIME_JSON" gstapp_stop operator "must be refused here"
+[ "$(jq -r .lifecycle "$PIM_CAMERA_RUN_DIR/owner.json")" = DEGRADED ] \
+    || fail 'refused gstapp_stop moved the owner off DEGRADED'
+{ [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] && [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/active.json" ]; } \
+    || fail 'refused gstapp_stop stranded a lease'
+[ "$refuse_svc" = "$(cat "$PIM_CAMERA_STATE_DIR/service-state.json")" ] \
+    || fail 'refused gstapp_stop rewrote service-state.json'
+[ "$(grep -cE '^(pkill|kill) ' "$PIM_CAMERA_CALL_LOG" || true)" -eq 0 ] \
+    || fail 'refused gstapp_stop still signalled a process'
+# 거부가 너무 넓지 않은지: 다른 type 은 이 진입점에서 계속 동작해야 한다
+: > "$PIM_CAMERA_CALL_LOG"
+printf 'gstApp\n%s\n' "$PIM_CAMERA_BG_CHECKER" > "$WORK/procs"
+mkdir -p "$PIM_CAMERA_PROCESS_ROOT/99"
+printf '%s' '99 (BG_Check_for_pim) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 999 0' > "$PIM_CAMERA_PROCESS_ROOT/99/stat"
+printf '/bin/bash\000%s\0004\000' "$PIM_CAMERA_BG_CHECKER" > "$PIM_CAMERA_PROCESS_ROOT/99/cmdline"
+owner_active
+expect cam_execute_recovery_request "$PIM_CAMERA_RUNTIME_JSON" gstapp_restart test "still works"
+grep -q '^start_cam$' "$PIM_CAMERA_CALL_LOG" || fail 'the refusal broke gstapp_restart at this entry point'
+
 echo "=== degraded camera-health apply uses one real full quiesce ==="
 mkdir -p "$PIM_CAMERA_SOURCE_ROOT"
 jq --arg tmp "$WORK/recordings" '
