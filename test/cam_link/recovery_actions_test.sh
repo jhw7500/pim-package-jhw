@@ -137,6 +137,8 @@ jq -e '[.actions[]|select(.action=="gstapp_stop")] | length==1 and .[0].countere
 [ "$(jq -r .lifecycle "$PIM_CAMERA_RUN_DIR/owner.json")" = ACTIVE ] || fail 'gstapp_stop left the owner non-ACTIVE'
 { [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] && [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/active.json" ]; } \
     || fail 'gstapp_stop retained a lease'
+# ACTIVE 진입에서는 후속 재시작을 제출하지 않는다 - 같은 iteration 의 liveness 가 한다.
+# 아래 DEGRADED 절이 제출을 단언하므로 이 줄이 그 대조군이다.
 
 echo "=== gstapp_stop must not clear the degraded record or raise the owner ==="
 # The dangerous shape: a board whose recovery failed is left dirty+DEGRADED with gstApp
@@ -164,6 +166,20 @@ expect cam_execute_pending_request
     || fail 'gstapp_stop changed the next startup plan'
 [ "$(jq -r .lifecycle "$PIM_CAMERA_RUN_DIR/owner.json")" = DEGRADED ] \
     || fail 'gstapp_stop raised a DEGRADED owner to ACTIVE'
+# ...and the app must not be left down.  Nothing else would restart it here:
+# cam_monitor_control_iteration only ticks liveness for ACTIVE and
+# chk_cam_operate.sh's cam_submit_internal_action also requires ACTIVE, so the stop
+# has to queue the restart itself on this path.  The stop's own lease is gone and the
+# follow-up is pending, not active - it is submitted, not waited on.
+[ ! -e "$PIM_CAMERA_RUN_DIR/recovery/active.json" ] \
+    || fail 'gstapp_stop left its own lease active on the degraded path'
+jq -e '.type=="gstapp_restart" and .source=="gstapp-stop-followup" and .status=="PENDING"' \
+    "$PIM_CAMERA_RUN_DIR/recovery/pending.json" >/dev/null \
+    || { cat "$PIM_CAMERA_RUN_DIR/recovery/pending.json" >&2 2>/dev/null || true
+         fail 'gstapp_stop from DEGRADED did not queue the follow-up restart'; }
+# 후속 요청은 소비해서 다음 절에 넘기지 않는다
+expect cam_request_claim
+expect cam_request_finish SUCCEEDED 0
 # 하네스 복원: _cr_lifecycle_allowed 에 DEGRADED:DEGRADED 가 없으므로 owner 를 DEGRADED 로
 # 남기면 뒤 절의 cam_owner_set_lifecycle DEGRADED 가 rc 64 로 거부된다.  프로세스도 되돌린다.
 owner_active

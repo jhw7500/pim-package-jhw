@@ -487,7 +487,7 @@ cam_apply_config_transaction() {
 }
 
 _coc_execute_recovery_active() {
-    local active type reason rc=0 dirty=false target=camera_health projection entry_lifecycle
+    local active type reason rc=0 dirty=false target=camera_health projection entry_lifecycle followup_rc
     active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69
     type=$(jq -r .type <<<"$active") || return 70
     reason=$(jq -r .reason <<<"$active") || return 70
@@ -557,9 +557,32 @@ _coc_execute_recovery_active() {
         # 되돌린다 (_cr_lifecycle_allowed 는 RECOVERING:ACTIVE 와 RECOVERING:DEGRADED
         # 를 허용한다).
         case "$entry_lifecycle" in
-            ACTIVE|DEGRADED) cam_owner_set_lifecycle "$entry_lifecycle"; return $? ;;
+            ACTIVE|DEGRADED) cam_owner_set_lifecycle "$entry_lifecycle" || return $? ;;
             *) return 70 ;;
         esac
+        # DEGRADED 에서는 아무도 재시작하지 않는다.  cam_monitor_control_iteration 은
+        # ACTIVE 에서만 cam_liveness_tick 을 부르고, chk_cam_operate.sh 의
+        # cam_submit_internal_action 도 ACTIVE 만 허용한다.  그러면 정지만 하고 앱이
+        # 내려간 채 남는다 — killcam 을 쓰는 이유가 바로 앱을 다시 띄우는 것이므로
+        # 그것은 정지가 아니라 고장이다.
+        #
+        # 진입 lifecycle 이 ACTIVE 였으면 같은 iteration 의 liveness 가 제출하므로 여기서
+        # 아무것도 하지 않는다 (그 경로는 그대로 둔다).  DEGRADED 였으면 그 구멍만 명시적
+        # 요청으로 메우고, 기다리지는 않는다.  degraded 를 정당하게 해제하는 것은 정지가
+        # 아니라 성공한 재시작이고, 그 재시작은 평소의 완료 경로를 그대로 지나므로
+        # service-state 정리도 거기서 일어난다.  lease 는 위 cam_request_finish 가 이미
+        # 비웠으므로 지금 제출할 수 있다.
+        #
+        # 제출이 실패해도 정지 자체는 성공했고 그 결과는 이미 발행됐으므로 rc 를 바꾸지
+        # 않는다.  대신 조용히 삼키지 않도록 err 로 남긴다.
+        if [ "$entry_lifecycle" = DEGRADED ]; then
+            followup_rc=0
+            cam_request_submit gstapp_restart gstapp-stop-followup \
+                "restart after stop on degraded owner" >/dev/null || followup_rc=$?
+            [ "$followup_rc" -eq 0 ] || logger -p local0.err \
+                "[CAM][cam_operate_control] gstapp_stop follow-up restart submit failed rc=$followup_rc" 2>/dev/null
+        fi
+        return 0
     fi
     _coc_verify_all || { rc=$?; _coc_fail_active "$rc" "$reason" camera_health "$dirty"; return $?; }
     projection=$(_coc_projection "$PIM_CAMERA_RUNTIME_JSON") || { rc=$?; _coc_fail_active "$rc" "$reason" camera_health "$dirty"; return $?; }
