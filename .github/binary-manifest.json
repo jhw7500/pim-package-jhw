@@ -27,18 +27,18 @@
     },
     {
       "path": "dist/pim/opt/pim/driver/max9296.ko",
-      "sha256": "7a16537b704b4655090af4acbd94a7cce7060daeeffdae8f80d98db46799f7f7",
-      "size": 1057320,
+      "sha256": "4a002c3ecfff1b336717b3d1008527cc38d77fe70c93c3d37c3df8f1def832ff",
+      "size": 1100096,
       "mode": "100644",
       "arch": "aarch64",
       "storage": "lfs",
       "module_version": "2.12",
       "source": {
         "repo": "jhw7500/max9296",
-        "commit": "c25f7a682b18521db55a784e9e7caed8a75b21a8",
+        "commit": "f6230c5",
         "build": "./make-for-imx8 clean && ./make-for-imx8 -j4 (Yocto SDK 5.10-hardknott, cortexa53-crypto-poky-linux)"
       },
-      "note": "MAX9296 2.12 clean build다. 1920x1080/3840x1080은 최대 30 FPS, 1280x720/2560x720은 최대 60 FPS, 640x360은 기본 빌드에서 1~120 FPS 요청을 허용한다. mode-valid 31 FPS 이상의 EXP_TIME(0x500c) 수동 쓰기는 frame-period 정보를 경고한 뒤 적용하며, 모드 상한 초과는 -EINVAL로 거부한다. 패키지 기본 edgeconf는 640x360@30을 유지한다. 640x360 KEEP은 AP1302/CSI 출력 context만 바꾸며, 과거 실측 113~115 FPS이므로 정확한 120 FPS 전달을 보장하지 않는다. crop_enable, 공통 1.00x~3.00x dz, 채널별 중심 cache/replay, 듀얼 HINF pair-health 판정, 노출 seed broadcast/replay 보존을 포함한다. module srcversion은 38670DF208FF25E7BC1C29F이고 source commit은 c25f7a682b18521db55a784e9e7caed8a75b21a8이다.",
+      "note": "MAX9296 2.12 clean build다. 1920x1080/3840x1080은 최대 30 FPS, 1280x720/2560x720은 최대 60 FPS, 640x360은 기본 빌드에서 1~120 FPS 요청을 허용한다. mode-valid 31 FPS 이상의 EXP_TIME(0x500c) 수동 쓰기는 frame-period 정보를 경고한 뒤 적용하며, 모드 상한 초과는 -EINVAL로 거부한다. 패키지 기본 edgeconf는 640x360@30을 유지한다. 640x360 KEEP은 AP1302/CSI 출력 context만 바꾸며, 과거 실측 113~115 FPS이므로 정확한 120 FPS 전달을 보장하지 않는다. crop_enable, 공통 1.00x~3.00x dz, 채널별 중심 cache/replay, 듀얼 HINF pair-health 판정, 노출 seed broadcast/replay 보존을 포함한다. module srcversion은 00FEDDF6CFD9B1C1F2F0E6B이고 source commit은 f6230c5다. 직전 배포본(c25f7a68)과의 차이는 드라이버를 바꾼 머지 여섯 개다 — PR #77 preview AE max ET, #81 crop 기본값 seed, #83 fps 를 하드웨어 신원에서 분리, #87 STREAMOFF 와 실패한 STREAMON 이 자기 FSYNC 예약을 돌려줌, #90 V4L2_CID_PIXEL_RATE 를 저장 대신 읽을 때 유도, #93 cancel·lease 만료·remove 생존자 정지가 자기 예약만 해제. 따라서 하나의 프로그램된 등가류 안에서의 cadence 변경은 초기화된 epoch 을 재사용한다. 실기 전달률은 이 빌드에서 측정하지 않았다.",
       "required_strings": [
         "dev_attr_prepare",
         "max9296_prepare_adopt_power_locked",
