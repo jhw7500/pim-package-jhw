@@ -309,6 +309,7 @@ _coc_run_uncountered_step() {
         ord_restart) cam_restart_ord "$PIM_CAMERA_RUNTIME_JSON"; rc=$? ;;
         vcm_restart) cam_restart_vcm "$PIM_CAMERA_RUNTIME_JSON"; rc=$? ;;
         policy_reload) cam_reload_policy; rc=$? ;;
+        gstapp_stop) cam_quiesce_gstapp "$PIM_CAMERA_RUNTIME_JSON"; rc=$? ;;
         *) return 64 ;;
     esac
     if [ "$rc" -eq 0 ]; then _coc_record_step "$action" SUCCEEDED 0 || return $?; else _coc_record_step "$action" FAILED "$rc" || return $?; fi
@@ -486,7 +487,7 @@ cam_apply_config_transaction() {
 }
 
 _coc_execute_recovery_active() {
-    local active type reason rc=0 dirty=false target=camera_health projection
+    local active type reason rc=0 dirty=false target=camera_health projection entry_lifecycle followup_rc
     active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69
     type=$(jq -r .type <<<"$active") || return 70
     reason=$(jq -r .reason <<<"$active") || return 70
@@ -495,6 +496,10 @@ _coc_execute_recovery_active() {
         cam_mark_degraded CONFIG_INVALID config false || return $?
         return 64
     fi
+    # 정지는 성공해도 owner 를 올려서는 안 된다 (아래 참조).  RECOVERING 으로 바꾸기
+    # 전에 진입 시점 lifecycle 을 기억해 둔다.
+    _cr_load_owner_lifecycle || return 70
+    entry_lifecycle=$_CR_LIFECYCLE_VAL
     cam_owner_set_lifecycle RECOVERING || return $?
     cam_request_transition QUIESCING || return $?
     cam_request_transition RUNNING || return $?
@@ -504,10 +509,11 @@ _coc_execute_recovery_active() {
             dirty=true
             _coc_set_dirty true || { rc=$?; _coc_fail_active "$rc" "$reason" state true; return $?; }
             ;;
-        gstapp_restart) target=gstapp ;;
+        gstapp_restart|gstapp_stop) target=gstapp ;;
     esac
     case "$type" in
         gstapp_restart) cam_execute_action_step gstapp_restart "$PIM_CAMERA_RUNTIME_JSON" || rc=$? ;;
+        gstapp_stop) _coc_run_uncountered_step gstapp_stop || rc=$? ;;
         module_reload)
             cam_execute_action_step module_reload "$PIM_CAMERA_RUNTIME_JSON" || rc=$?
             if [ "$rc" -ne 0 ]; then rc=0; cam_execute_action_step camera_hard_reset "$PIM_CAMERA_RUNTIME_JSON" || rc=$?; fi
@@ -530,6 +536,54 @@ _coc_execute_recovery_active() {
         return $?
     fi
     cam_request_transition VERIFYING || return $?
+    # 정지 액션의 성공 기준은 앱이 떠 있음이 아니라 없음이다.  _coc_verify_all 은
+    # cam_wait_process_ready 로 consumer 가 준비되기를 기다리므로(:187) 정지 요청은
+    # 원리적으로 그것을 통과할 수 없다 — 재시작은 cam_liveness_tick 이 나중에 스스로
+    # 제출한다 (이슈 #113).
+    if [ "$type" = gstapp_stop ]; then
+        cam_verify_gstapp_absent "$PIM_CAMERA_RUNTIME_JSON" || { rc=$?; _coc_fail_active "$rc" "$reason" gstapp "$dirty"; return $?; }
+        # 여기서 끝내고 _coc_projection/_coc_persist_success 로 가지 않는다.
+        # _coc_persist_success 는 service-state 문서를 병합이 아니라 통째로 다시 쓰며
+        # dirty:false, degraded_reason:null, degraded_target:null 과 새
+        # last_successful_hardware_projection 을 박는다.  다른 action 은 _coc_verify_all
+        # 이 카메라 정상을 증명한 뒤에만 그 지점에 닿지만, 정지의 성공 조건은 프로세스
+        # 두 개의 부재뿐이다 — 하드웨어에 대해 아무것도 증명하지 않는다.  그대로 두면
+        # 복구가 실패해 dirty 로 남은 보드에서 운영자의 killcam 한 번이 그 기록을 지우고
+        # cam_plan_startup_action 의 다음 부팅 계획을 camera_hard_reset 에서
+        # module_reload 로 강등시킨다.  cam_stop_process 는 프로세스가 이미 없으면 즉시
+        # 0 을 돌려주므로 그 상태가 바로 복구 실패 직후의 정상 모습이다.
+        cam_request_finish SUCCEEDED 0 || return $?
+        # 같은 이유로 DEGRADED 를 ACTIVE 로 올리지 않는다.  진입 시점 lifecycle 로만
+        # 되돌린다 (_cr_lifecycle_allowed 는 RECOVERING:ACTIVE 와 RECOVERING:DEGRADED
+        # 를 허용한다).
+        case "$entry_lifecycle" in
+            ACTIVE|DEGRADED) cam_owner_set_lifecycle "$entry_lifecycle" || return $? ;;
+            *) return 70 ;;
+        esac
+        # DEGRADED 에서는 아무도 재시작하지 않는다.  cam_monitor_control_iteration 은
+        # ACTIVE 에서만 cam_liveness_tick 을 부르고, chk_cam_operate.sh 의
+        # cam_submit_internal_action 도 ACTIVE 만 허용한다.  그러면 정지만 하고 앱이
+        # 내려간 채 남는다 — killcam 을 쓰는 이유가 바로 앱을 다시 띄우는 것이므로
+        # 그것은 정지가 아니라 고장이다.
+        #
+        # 진입 lifecycle 이 ACTIVE 였으면 같은 iteration 의 liveness 가 제출하므로 여기서
+        # 아무것도 하지 않는다 (그 경로는 그대로 둔다).  DEGRADED 였으면 그 구멍만 명시적
+        # 요청으로 메우고, 기다리지는 않는다.  degraded 를 정당하게 해제하는 것은 정지가
+        # 아니라 성공한 재시작이고, 그 재시작은 평소의 완료 경로를 그대로 지나므로
+        # service-state 정리도 거기서 일어난다.  lease 는 위 cam_request_finish 가 이미
+        # 비웠으므로 지금 제출할 수 있다.
+        #
+        # 제출이 실패해도 정지 자체는 성공했고 그 결과는 이미 발행됐으므로 rc 를 바꾸지
+        # 않는다.  대신 조용히 삼키지 않도록 err 로 남긴다.
+        if [ "$entry_lifecycle" = DEGRADED ]; then
+            followup_rc=0
+            cam_request_submit gstapp_restart gstapp-stop-followup \
+                "restart after stop on degraded owner" >/dev/null || followup_rc=$?
+            [ "$followup_rc" -eq 0 ] || logger -p local0.err \
+                "[CAM][cam_operate_control] gstapp_stop follow-up restart submit failed rc=$followup_rc" 2>/dev/null
+        fi
+        return 0
+    fi
     _coc_verify_all || { rc=$?; _coc_fail_active "$rc" "$reason" camera_health "$dirty"; return $?; }
     projection=$(_coc_projection "$PIM_CAMERA_RUNTIME_JSON") || { rc=$?; _coc_fail_active "$rc" "$reason" camera_health "$dirty"; return $?; }
     _coc_persist_success "$projection" || { rc=$?; _coc_fail_active "$rc" "$reason" state true; return $?; }

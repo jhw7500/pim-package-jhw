@@ -281,6 +281,19 @@ class SuiteWiring(unittest.TestCase):
         lines = (ROOT / "test/camera_health/run_all.sh").read_text().splitlines()
         self.assertEqual(sum(line.strip() == "python3 native_runtime_config_test.py" for line in lines), 1)
 
+    def test_runs_cam_state_contract_once(self):
+        """Asserted from here, not from test_cam_state.sh itself: a script that
+        asserts its own wiring says nothing once the runner stops calling it."""
+        lines = (ROOT / "test/camera_health/run_all.sh").read_text().splitlines()
+        self.assertEqual(sum(line.strip() == "bash test_cam_state.sh" for line in lines), 1)
+
+    def test_runs_recovery_guard_rc_contract_once(self):
+        """The recovery guards' reject codes are only pinned while the runner
+        calls this file; recovery_protocol_test.sh does not cover the lifecycle
+        arm, so dropping the call would silently reopen that gap."""
+        lines = (ROOT / "test/camera_health/run_all.sh").read_text().splitlines()
+        self.assertEqual(sum(line.strip() == "bash recovery_guard_rc_test.sh" for line in lines), 1)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

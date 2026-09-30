@@ -69,11 +69,37 @@ candidate publish 뒤 action이 실패하면 새 runtime을 유지하고 `DEGRAD
 
 ## 명시적 recovery와 상태 조회
 
-지원 action은 `gstapp_restart`, `module_reload`, `camera_hard_reset`,
+지원 action은 `gstapp_restart`, `gstapp_stop`, `module_reload`, `camera_hard_reset`,
 `reboot_fallback`이다.
+
+`gstapp_stop`은 gstApp과 BG_Check를 정지시키고 부재를 확인하는 것까지만 한다 —
+SIGTERM 후 `PIM_CAMERA_QUIESCE_TIMEOUT_SEC`까지 대기하고, 남아 있으면 SIGKILL 후 다시
+대기해 부재를 확인한다. 다시 띄우지는 않는다. `cam_liveness_tick`이 이후 순회에서
+gstApp 부재를 보고 `source=liveness`로 `gstapp_restart`를 스스로 제출한다. 따라서 이
+요청의 rc 0은 "확인 시점에 부재"이고 "다시 실행 중"이 아니다. 재기동 결과는 그
+liveness 요청에서 조회한다. 재기동은 무조건이 아니다 — `cam_liveness_gstapp_gate`가
+enable된 채널, disconnect 없음, video 노드, 응답하는 subdev를 요구하므로 게이트가 닫히면
+`chk_cam_operate.sh`의 자체 래더가 뜰 때까지 앱은 내려간 채 남는다 (이슈 #113).
+
+**앱을 내려간 채로 두는 용도가 아니다.** `cam_monitor_control_iteration`은 이 요청을
+끝내고 owner를 진입 시점 lifecycle로 되돌린 뒤, **같은 iteration 안에서** 그 lifecycle을
+다시 읽고 `cam_liveness_tick`을 부른다. 즉 재기동은 정지가 SUCCEEDED를 보고한 바로 그
+iteration에 제출되며 확실히 내려가 있는 구간이 없다. 바이너리 교체처럼 앱이 내려가
+있어야 하는 작업은 `cam_operate_stop.sh`(owner를 STOPPING으로)를 쓴다.
+
+`gstapp_stop`은 escalation counter를 쓰지 않는다. `state.json`의 action 카운터는
+`gstapp_restart`, `module_reload`, `camera_hard_reset`, `reboot_fallback` 네 개로
+유지되며, 정지는 history에 `countered:false`로만 남는다.
+
+정지는 `service-state.json`도 건드리지 않는다. 다른 action은 `_coc_verify_all`이 카메라
+정상을 증명한 뒤 `_coc_persist_success`로 `dirty`·`degraded_reason`·
+`last_successful_hardware_projection`을 다시 쓰지만, 정지의 성공 조건은 프로세스 부재뿐이라
+하드웨어에 대해 아무것도 증명하지 않는다. 따라서 DEGRADED인 owner는 DEGRADED로 남고
+다음 부팅 계획(`cam_plan_startup_action`)도 바뀌지 않는다.
 
 ```sh
 cam-recoveryctl request gstapp_restart --source operator --reason "gstApp test restart" --wait 120
+cam-recoveryctl request gstapp_stop --source operator --reason "stop gstApp before it is relaunched" --wait 120
 cam-recoveryctl request module_reload --source operator --reason "camera module recovery" --wait 300
 cam-recoveryctl request camera_hard_reset --source operator --reason "approved hardware reset" --wait 300
 cam-recoveryctl status --json
@@ -92,11 +118,27 @@ CAM_RECOVERY_RESULT id=01234567-89ab-cdef-0123-456789abcdef type=module_reload s
 CAM_RECOVERY_RESULT id=01234567-89ab-cdef-0123-456789abcdef type=module_reload status=FAILED rc=70
 ```
 
+`--wait`로 기다리는 호출자는 위 terminal 결과를 받기 전에 stderr로 제출 통지 한 줄을
+먼저 받는다. 진행 상황 보고일 뿐이며 **stdout contract가 아니다** — stdout은 terminal
+`CAM_RECOVERY_RESULT` 한 줄만 갖는다. `--wait` 없이 제출하면 이 줄은 찍히지 않고
+stdout으로 request id만 나온다.
+
+```text
+CAM_RECOVERY_SUBMITTED id=01234567-89ab-cdef-0123-456789abcdef type=gstapp_stop (waiting up to 120s)
+```
+
+제출 자체가 거절되면 이 줄도 terminal 결과도 찍히지 않는다. **stdout은 비어 있고,
+판정은 아래 표의 exit code로만 한다.** 정상 owner 상태에서의 `BUSY`/75 거절은 stderr도
+비어 있지만 그것이 모든 거절 경로의 계약은 아니다 — 예를 들어 owner 문서가 파싱되지
+않으면 rc 69와 함께 jq 진단이, recovery 디렉터리에 쓸 수 없으면 rc 70과 함께 mktemp
+오류가 stderr로 나온다. 거절 시 stderr에 라이브러리 진단이 실려 나올 수 있으므로,
+**stderr가 비었는지로 거절 여부를 판단하지 않는다.**
+
 | exit code | 의미 |
 | ---: | --- |
 | 0 | 요청 접수 또는 기다린 action 성공 |
 | 64 | 잘못된 action/argument 또는 runtime syntax/schema 오류 |
-| 69 | daemon/service unavailable |
+| 69 | daemon/service unavailable. 같은 코드가 두 경우 더 쓰인다 — `status --request-id`의 "terminal 결과가 아직 없음", 그리고 owner lifecycle이 제출을 받을 상태가 아닐 때의 제출 거절 |
 | 70 | 내부 state/storage 오류 |
 | 75 | 다른 request가 pending/active인 `BUSY`; queue 없음 |
 | 124 | wait timeout; action은 취소되지 않음 |
@@ -142,16 +184,83 @@ integrity manifest는 build/deploy 검증 자료일 뿐 runtime 선택이나 rec
 
 ## 한 release 호환 명령
 
-아래 wrapper는 deprecated 경고를 출력하고 동기 요청 결과를 그대로 반환한다.
+아래 wrapper는 deprecated 경고를 출력하고, 기본적으로 동기 요청 결과를 그대로 반환한다.
 
-| 기존 명령 | 전달 action |
-| --- | --- |
-| `kill_test.sh` / `/usr/local/bin/killcam` | `gstapp_restart` |
-| `init_cam.sh` | `module_reload` |
-| `cam_hard_reset.sh` | `camera_hard_reset` |
-| `restart_app.sh` | `gstapp_restart` 한 번; 독립 loop 없음 |
+| 기존 명령 | 전달 action | 기본 `--wait` |
+| --- | --- | ---: |
+| `kill_test.sh` / `/usr/local/bin/killcam` | `gstapp_stop` (재기동은 cam-operate) | 120 |
+| `init_cam.sh` | `module_reload` | 300 |
+| `cam_hard_reset.sh` | `camera_hard_reset` | 300 |
+| `restart_app.sh` | `gstapp_restart` 한 번; 독립 loop 없음 | 120 |
+| `start_cam.sh` / `/usr/local/bin/startcam` | `gstapp_restart` | 120 |
 
 wrapper는 source 검색, runtime 수정, 직접 process/reset 동작을 하지 않는다.
+
+### `kill_test.sh`(killcam)의 생산 호출자 두 곳
+
+둘 다 인자 없이, 즉 블로킹으로 부른다.
+
+| 호출자 | liveness 억제 | 반환 rc 0의 의미 |
+| --- | --- | --- |
+| `dist/pim/opt/pim/bin/cam_disable.sh` | 있음 — 호출 전 `touch /tmp/init_cam_flag`로 `_cl_handle_operation_flags`가 tick을 건너뛴다 | 정지 완료이며, 재기동이 끼어들지 않으므로 뒤따르는 `rmmod`가 디바이스를 잡고 있지 않다 |
+| `ord/tcpServer.cpp` (`CAM_RESET_FILE`, `ord/tcpServer.h`) | **없음** | **정지 완료일 뿐 카메라가 돌아왔다는 뜻이 아니다** |
+
+ord 쪽은 `CMD_TIMESETTING_BLACKBOX` 처리 중 `_TOrdConf.rtc_reset`(기본 `true` — struct
+초기화와 배포 `ord_vcm_conf.json` 양쪽)일 때 이 wrapper를 동기 실행하고, nonzero면 핸들러를
+중단한다. wrapper가 `gstapp_restart`를 보내던 동안 그 rc 0은 "gstApp이 다시 떴다"였지만 이제는
+"정지됐다"이다. 재기동은 cam-operate의 liveness가 같은 iteration에 제출하며
+`cam_liveness_gstapp_gate`가 닫혀 있으면 제출되지 않으므로, RTC-set 응답은 **정지 완료를
+근거로** 전송된다. 이슈 #113에서 의도적으로 채택한 동작이다 — ord를 blocking
+`gstapp_restart`로 돌리는 대안은 별도 빌드 산출물인 ord의 외부 프로토콜 의미를 바꾸므로
+이 변경의 범위를 넘는다. `ord_vcm_conf` 설정 문서의 `rtc_reset` 설명 갱신은 이 저장소의
+tribunal 범위 규칙(라운드 1 `initial_paths`) 때문에 이 변경에 담을 수 없어 후속으로 남긴다.
+
+이 문단과 위 표는 **운영자가 직접 부르는 forwarding 경로**에만 해당한다. `start_cam.sh`는
+예외적으로 두 역할을 겸한다 — executor가 `PIM_CAMERA_EXECUTOR=1`로 부르면 forwarding 분기를
+건너뛰고 runtime 문서를 읽어 gstApp과 BG checker를 직접 기동한다. 그 경로는 deprecated 경고도
+출력하지 않고 request 결과도 반환하지 않는다. `test/camera_health/runtime_consumer_path_test.py`가
+이 파일만 다른 boundary(`PIM_CAMERA_RUNTIME_JSON`)로 분류하는 이유다.
+
+### `--no-wait`
+
+다섯 wrapper 모두 `--no-wait`를 받는다. 이 모드에서는 `--wait`를 전달하지 않으므로
+**동기 결과를 반환하지 않는다** — request를 제출한 즉시 request UUID를 출력하고 exit 0
+한다. 따라서 **wrapper의 exit 0은 action 성공을 뜻하지 않으며**, 그 뒤 action이
+`FAILED`로 끝나도 호출자는 알 수 없다. action 결과가 필요하면 `--no-wait` 없이 쓴다.
+
+진행 중 확인은 **인자 없는 `cam-recoveryctl status`**로 한다. `status --request-id <UUID>`는
+terminal 결과 파일만 읽으므로(`cam_recovery.sh`의 `cam_recovery_status_json`), request가
+PENDING/ACTIVE인 동안에는 출력 없이 **69**로 끝난다. 이 69는 위 exit code 표의
+"daemon/service unavailable"이 아니라 **"아직 결과가 없다"**는 뜻이다 — 두 경우가 같은 코드를
+쓴다. action이 도는 내내 그러므로, 이때 cam-operate를 재시작하면 안 된다.
+
+**두 번째 호출은 제출되지 않는다.** 위 "한 pending 또는 active lease" 규칙과 exit code
+표대로 queue는 없고 pending slot은 하나뿐이다. 앞 request가 pending 또는 active인 동안
+`--no-wait`를 다시 부르면 아무것도 제출하지 않는다. 반복 호출하는 운용에서 이 거절은 실패가
+아니라 "앞 요청이 아직 처리 중"이라는 정상 응답이며, **앞 action이 끝날 때까지 계속 그렇다.**
+그 길이는 wrapper의 `--wait` 기본값(120/300초)과 무관하다 — 위에 적힌 대로 wait timeout은
+기다리는 CLI만 124로 종료할 뿐 실행 중 action을 취소하지 않으므로, 거절이 300초를 넘겨
+계속되는 것은 정상이다.
+
+**거절 시 exit code는 owner lifecycle에 따라 갈린다.**
+
+| owner lifecycle | 거절 시 exit code |
+| --- | ---: |
+| `ACTIVE`, `DEGRADED`, `RECOVERING` | **75** (`BUSY`) |
+| 그 외 — 특히 `apply-config` 트랜잭션 중의 `APPLYING_CONFIG` | **69** |
+
+`cam_request_submit`(`cam_recovery.sh`)이 pending/active를 확인한 뒤 lifecycle 검사를 먼저
+통과해야 75를 돌려주기 때문이다. 따라서 **69는 세 가지 뜻을 공유한다** — daemon 부재,
+`status --request-id`의 "아직 결과 없음", 그리고 여기의 "lifecycle이 제출을 받을 상태가
+아님". 어느 경우에도 cam-operate 재시작이 답이 아니다. 무엇인지는 인자 없는
+`cam-recoveryctl status`의 `owner.lifecycle`로 구분한다.
+
+기본 `--wait` 값은 의도적으로 유지한다. 낮추면 정상 성공하는 복구가 timeout(124)으로
+끊긴다 — 근거 측정은 issue #109에 있다.
+
+`start_cam.sh`는 위치 인자 `[delay]`도 받으므로 숫자가 아닌 인자는 rc 64로 거부한다.
+나머지 넷은 각자의 기존 플래그 외의 인자를 rc 64로 거부한다. 어느 쪽도 인식하지 못한
+인자를 조용히 무시하지 않는다.
 
 ## 외부 integration 경계
 

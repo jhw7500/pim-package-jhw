@@ -13,6 +13,26 @@ if ! declare -F cam_owner_assert >/dev/null 2>&1; then
     source "$PIM_LIB/cam_recovery.sh"
 fi
 
+# gstApp 재생 지연의 정본은 cam_start_policy.sh 하나다. 이 라이브러리가 직접
+# source 하는 이유는 두 가지다. 첫째, 지연을 실제로 해석하는 경로(아래
+# cam_runtime_app_delay, 그것을 부르는 cam_start_gstapp 과 cam_liveness 틱,
+# start_cam.sh 의 executor 분기)는 어느 것도 정책 파일을 따로 읽지 않는다.
+#
+# 환경 오염을 막는 것은 바로 아래 unset 이다 — source 가 무조건이라는 사실이 아니다.
+# 정책 파일이 없거나 읽히지 않으면 source 는 치명적이지 않게 실패하고 실행이 계속되므로,
+# 지우지 않으면 환경에서 물려받은 값이 그대로 정책이 되어 rc 0 으로 -d 에 실린다
+# (트리뷰널 A-R1-001 이 파일만 지운 트리에서 delay=777 로 실증했다). 지운 뒤에는 값이
+# 없는 상태가 되고, 아래 cam_runtime_app_delay 가 맨 정수인지 확인해 fail-closed 한다.
+# 그 두 줄이 한 쌍으로 방어를 이룬다.
+#
+# unset 이 앞에 있으므로 source 를 "이미 설정돼 있으면 건너뜀" 으로 감싸도 조건이 참이
+# 될 수 없어 동작은 같다 — A-R1-001 이 그 래퍼만 씌운 사본의 스위트 출력이 원본과
+# 바이트 동일함을 보였다. 감싸지 않은 것은 참이 될 수 없는 조건을 둘 이유가 없어서이고,
+# 방어를 그 무조건성에 걸고 있는 것이 아니다. 한쪽이 잉여로 보여 unset 을 지우는 쪽은
+# 스위트가 잡는다.
+unset CAM_APP_PLAY_DELAY_SEC_DEFAULT
+source "$PIM_LIB/cam_start_policy.sh"
+
 # 복구 액션은 20 단계 가까운 순차 부작용이고, 어느 단계에서 멈췄는지가 곧 원인이다.
 # 이 파일은 지금까지 logger 호출이 하나도 없어서, 실패하면 상위가 남기는
 # "startup transaction failed rc=1" 한 줄만 남았다. 단계 이름을 남긴다.
@@ -125,11 +145,18 @@ cam_effect() {
 # 재조립하면 그런 값이 잘려 allowlist 를 통과한다.
 cam_runtime_app_delay() {
     local runtime=$1 app delay fields
-    fields=$(jq -r '
+    # 정책이 로드되지 않았으면 여기서 닫는다. 빈 값이나 정수가 아닌 값을 --argjson 에
+    # 넘기면 jq 가 usage 텍스트만 남겨 원인이 보이지 않고, 무엇보다 환경에서 온 값을
+    # 정책으로 쓰게 된다. 위 unset 과 이 검사가 한 쌍이다.
+    if [[ ! ${CAM_APP_PLAY_DELAY_SEC_DEFAULT-} =~ ^[0-9]+$ ]]; then
+        _cra_log err "app play delay policy unavailable: cam_start_policy.sh did not define a bare integer"
+        return 64
+    fi
+    fields=$(jq -r --argjson default_delay "$CAM_APP_PLAY_DELAY_SEC_DEFAULT" '
         (.VHL_CAM.app // "gstApp") as $a
         | ((.VHL_CAM.capture.enable // false) | tostring) as $c
         | (if $c == "true" then "gstApp" elif $a == "streamApp" then "PIMCAM" else $a end) as $app
-        | ((.VHL_CAM.app_delay // 4) | tostring) as $d
+        | ((.VHL_CAM.app_delay // $default_delay) | tostring) as $d
         | [ (if $app == "gstApp" or $app == "PIMCAM" then $app else "" end),
             (if ($d | test("^[0-9]+$")) then $d else "" end) ] | join("\n")' "$runtime") || return 64
     { IFS= read -r app; IFS= read -r delay; } <<<"$fields"
@@ -200,7 +227,18 @@ cam_cleanup_shm_overflow() {
 cam_bg_checker_path() { printf '%s\n' "${PIM_CAMERA_BG_CHECKER:-$PIM_BIN/BG_Check_for_pim.sh}"; }
 cam_process_start_time() {
     local stat tail
-    stat=$(cat "$1" 2>/dev/null) || return 2
+    # A builtin read instead of $(cat ...): this runs inside the periodic monitor
+    # loop for every candidate, so a fork per call is a per-tick cost.  -d ''
+    # reads to EOF rather than to the first newline, because comm may itself
+    # contain one and that would otherwise turn a valid start time into an
+    # inspection error.  read reports failure on the unterminated line /proc
+    # returns after assigning it, so emptiness - not its status - is the test;
+    # an unopenable or empty file is rejected exactly as before.  The explicit
+    # `|| :` matters: with no NUL to find, read always reports failure, which
+    # under `set -e` would kill a caller that invokes this helper directly.
+    stat=
+    { IFS= read -r -d '' stat < "$1"; } 2>/dev/null || :
+    [ -n "$stat" ] || return 2
     tail=${stat##*) }
     set -- $tail
     [ "$#" -ge 20 ] || return 2
@@ -348,11 +386,19 @@ cam_stop_process() {
         sleep 1; i=$((i + 1))
     done
 }
-cam_quiesce_gstapp() {
+# 부재 확인.  rc 0 은 PRESENT 이므로 여기서는 실패다 (cam_process_present 규약).
+# cam_quiesce_gstapp 의 마지막 확인과 gstapp_stop 요청의 완료 검증이 같은 조건을
+# 봐야 하므로 한 곳에 둔다.
+cam_verify_gstapp_absent() {
     local runtime=$1 kind rc
+    for kind in app bg; do rc=0; cam_process_present "$runtime" "$kind" || rc=$?; [ "$rc" -eq 1 ] || { [ "$rc" -eq 0 ] && return 1; return "$rc"; }; done
+}
+
+cam_quiesce_gstapp() {
+    local runtime=$1
     cam_stop_process "$runtime" app || return $?
     cam_stop_process "$runtime" bg || return $?
-    for kind in app bg; do rc=0; cam_process_present "$runtime" "$kind" || rc=$?; [ "$rc" -eq 1 ] || { [ "$rc" -eq 0 ] && return 1; return "$rc"; }; done
+    cam_verify_gstapp_absent "$runtime"
 }
 
 cam_quiesce_consumers() {
@@ -588,15 +634,21 @@ cam_executor_set_context() {
     local active owner
     active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69
     owner=$(_cr_owner_json) || return 69
+    # _cr_owner_export_fields sets exactly these six names from one jq; this
+    # function used to read them field by field, which is six spawns of a
+    # process that measures ~307ms on the board.  cam_owner_create and
+    # _coc_export_owner_context already use the helper for this direction;
+    # cam_executor_assert_context is the read-back direction and uses a
+    # different helper, _cr_owner_executor_snapshot, so it is not the precedent
+    # for this.  The change also tightens the result: the field-by-field
+    # reads never checked jq's exit status, so a malformed owner produced the
+    # string "null" and rc 0 here, and only surfaced later as 69 from the
+    # assert.  The helper validates the schema and returns 70, which this
+    # propagates, so such an owner now fails here instead of downstream.
+    _cr_owner_export_fields "$owner" || return $?
     PIM_CAMERA_EXECUTOR=1
-    PIM_CAMERA_REQUEST_ID=$(jq -r .id <<<"$active")
-    PIM_CAMERA_OWNER_BOOT_ID=$(jq -r .boot_id <<<"$owner")
-    PIM_CAMERA_OWNER_INVOCATION=$(jq -r .invocation_id <<<"$owner")
-    PIM_CAMERA_OWNER_PID=$(jq -r .pid <<<"$owner")
-    PIM_CAMERA_OWNER_PROC_START_TIME=$(jq -r .proc_start_time <<<"$owner")
-    PIM_CAMERA_OWNER_TOKEN=$(jq -r .token <<<"$owner")
-    PIM_CAMERA_OWNER_CREATED_AT=$(jq -r .created_at <<<"$owner")
-    export PIM_CAMERA_EXECUTOR PIM_CAMERA_REQUEST_ID PIM_CAMERA_OWNER_BOOT_ID PIM_CAMERA_OWNER_INVOCATION PIM_CAMERA_OWNER_PID PIM_CAMERA_OWNER_PROC_START_TIME PIM_CAMERA_OWNER_TOKEN PIM_CAMERA_OWNER_CREATED_AT
+    PIM_CAMERA_REQUEST_ID=$(jq -r .id <<<"$active") || return 69
+    export PIM_CAMERA_EXECUTOR PIM_CAMERA_REQUEST_ID
 }
 
 cam_consumers_prequiesced() {
@@ -612,6 +664,14 @@ cam_execute_recovery_request() {
     local runtime=$1 type=$2 source=$3 reason=$4 rc=0
     cam_validate_runtime "$runtime" || return 64
     _cr_request_type "$type" || return 64
+    # 이 진입점은 gstapp_stop 을 지원하지 않는다.  아래 공통 성공 경로가 type 과 무관하게
+    # cam_owner_set_lifecycle ACTIVE 를 하므로, 정지가 성공하면 DEGRADED owner 가 ACTIVE 로
+    # 올라가 지속된 fault 기록이 지워지고 liveness 가 다시 켜진다.  정지는 하드웨어에 대해
+    # 아무것도 증명하지 않으므로 그래서는 안 된다.  운영 경로
+    # _coc_execute_recovery_active 는 진입 lifecycle 을 복원하므로 정지는 그쪽으로 간다.
+    # 거부는 submit/claim 앞에 둔다 — case 안에서 돌려보내면 잡은 lease 와 RECOVERING
+    # owner 가 남는다.
+    [ "$type" != gstapp_stop ] || return 64
     cam_owner_assert || return 69
     cam_request_submit "$type" "$source" "$reason" >/dev/null || return $?
     cam_request_claim || return $?
@@ -621,6 +681,9 @@ cam_execute_recovery_request() {
     cam_executor_set_context || return $?
     case "$type" in
         gstapp_restart) cam_execute_action_step gstapp_restart "$runtime"; rc=$? ;;
+        # gstapp_stop 은 위에서 거부되므로 여기 없다.  _cr_request_type 이 통과시키는
+        # 나머지 type 은 전부 아래에 있으므로 이 case 는 여전히 빠짐없다 — *) 가 없는 것이
+        # 조용한 SUCCEEDED 로 이어지지 않는다.
         module_reload)
             cam_execute_action_step module_reload "$runtime"; rc=$?
             if [ "$rc" -ne 0 ]; then cam_execute_action_step camera_hard_reset "$runtime"; rc=$?; fi

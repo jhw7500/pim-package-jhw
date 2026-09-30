@@ -42,5 +42,6 @@ int main(void) {
     //printf("Init : Version : %s\n", SW_VERSION);
     __LOG(LOG_ALERT, "[SYS][%s:%d] version : %s", _FILE_, __LINE__, SW_VERSION);
     App app;
-    return 0;
+
+    return app.Run();
 }

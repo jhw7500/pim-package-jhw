@@ -7,12 +7,34 @@ PIM_BIN="${PIM_BIN:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 source "$PIM_LIB/cam_recovery_actions.sh"
 
 if [ "${PIM_CAMERA_EXECUTOR:-}" != 1 ]; then
-    [ $# -le 1 ] || { echo 'usage: start_cam.sh [delay]' >&2; exit 64; }
+    # --no-wait has to be recognised here rather than counted as the positional
+    # delay, which this path accepts and discards.  Unrecognised arguments are
+    # rejected rather than absorbed into that count: a near miss such as --nowait
+    # would otherwise take the blocking path silently, handing back the very wait
+    # the flag exists to skip, and this is the wrapper an operator reaches through
+    # the startcam symlink.  The delay therefore has to look like a delay.
+    no_wait=0 positional=0
+    for arg in "$@"; do
+        case "$arg" in
+            --no-wait) no_wait=1;;
+            -h|--help) echo 'usage: start_cam.sh [delay] [--no-wait]'; exit 0;;
+            *[!0-9]*|'') echo "unknown option: $arg" >&2; exit 64;;
+            *) positional=$((positional + 1));;
+        esac
+    done
+    [ "$positional" -le 1 ] || { echo 'usage: start_cam.sh [delay] [--no-wait]' >&2; exit 64; }
     echo 'DEPRECATED: start_cam.sh forwards one recovery request' >&2
+    if [ "$no_wait" -eq 1 ]; then
+        exec "${PIM_CAMERA_RECOVERYCTL:-/opt/pim/bin/cam-recoveryctl}" request gstapp_restart --source legacy-start-cam --reason legacy-wrapper
+    fi
     exec "${PIM_CAMERA_RECOVERYCTL:-/opt/pim/bin/cam-recoveryctl}" request gstapp_restart --source legacy-start-cam --reason legacy-wrapper --wait 120
 fi
 
-[ $# -le 1 ] || { echo 'usage: start_cam.sh [delay]' >&2; exit 64; }
+# executor 경로는 해석된 지연을 반드시 인자로 받는다. 기본값을 여기에 두면 정책과
+# 경쟁하는 두 번째 정본이 생기고 (b6b70a9 가 정확히 그렇게 `// 4` 를 심었다), 유일한
+# 호출자인 cam_start_gstapp 이 항상 값을 넘기므로 그 분기는 도달하지 않아 검증도
+# 되지 않는다 — 트리뷰널 B-R1-C005 가 실행하지 못해 unverified 로 남긴 분기다.
+[ $# -eq 1 ] || { echo 'usage: start_cam.sh <delay>' >&2; exit 64; }
 cam_executor_assert_context || exit $?
 cam_validate_runtime "$PIM_CAMERA_RUNTIME_JSON" || exit 64
 # 호출자가 이미 같은 문서에서 읽어 넘겨준 값이 있으면 jq 를 다시 띄우지 않는다.
@@ -31,7 +53,7 @@ cam_validate_runtime "$PIM_CAMERA_RUNTIME_JSON" || exit 64
 app=${PIM_CAMERA_APP:-}
 [ -n "$app" ] || app=$(cam_runtime_app "$PIM_CAMERA_RUNTIME_JSON") || exit 64
 case "$app" in gstApp|PIMCAM) ;; *) exit 64;; esac
-delay=${1:-$(jq -r '.VHL_CAM.app_delay // 4' "$PIM_CAMERA_RUNTIME_JSON")}
+delay=$1
 [[ $delay =~ ^[0-9]+$ ]] || exit 64
 
 cam_side_effect_guard "$PIM_CAMERA_RUNTIME_JSON" || exit $?

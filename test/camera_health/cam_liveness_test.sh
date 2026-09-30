@@ -11,6 +11,9 @@ export PIM_CAMERA_RUN_DIR="$WORK/run"
 export PIM_CAMERA_STATE_DIR="$WORK/state"
 export PIM_CAMERA_BOOT_ID_FILE="$WORK/boot-id"
 export PIM_CAMERA_PROC_ROOT="$WORK/proc"
+export PIM_CAMERA_PROCESS_ROOT="$WORK/procroot"
+export PIM_CAMERA_BG_CHECKER="$WORK/stub/bg_checker.sh"
+export PIM_CAMERA_ACTION_LOG="$WORK/action-log"
 export PIM_CAMERA_RUNTIME_JSON="$PIM_CAMERA_RUN_DIR/config/pim_runtime.json"
 export PIM_CAMERA_RUNTIME_VALIDATOR="$PIM_BIN/camera_runtime_config.py"
 export PIM_CAMERA_DEVICE_ROOT="$WORK/dev"
@@ -27,15 +30,28 @@ EDGE_TEMPLATE="$ROOT/dist/pim/opt/pim/config/edgeconf_pim_base.json"
 ORD_TEMPLATE="$ROOT/dist/pim/opt/pim/config/ord_vcm_conf.json"
 DAEMON_PID=4242
 PIM_CAMERA_REAL_JQ=$(command -v jq)
-export PIM_CAMERA_REAL_JQ PIM_CAMERA_JQ_LOG="$WORK/jq-calls"
+PIM_CAMERA_REAL_CAT=$(command -v cat)
+export PIM_CAMERA_REAL_JQ PIM_CAMERA_REAL_CAT PIM_CAMERA_JQ_LOG="$WORK/jq-calls"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 expect_rc() { local wanted=$1; shift; set +e; "$@"; local got=$?; set -e; [ "$got" -eq "$wanted" ] || fail "expected rc=$wanted got=$got: $*"; }
 count_log() { grep -Fxc "$1" "$PIM_CAMERA_CALL_LOG" 2>/dev/null || true; }
 fingerprint() { [ -e "$1" ] && cksum "$1" || printf 'absent\n'; }
 reject_effects() {
-    ! grep -Eq '^(restart:|start:vcm|request:)' "$PIM_CAMERA_CALL_LOG" || { cat "$PIM_CAMERA_CALL_LOG" >&2; fail "$1 performed a liveness effect"; }
+    ! grep -Eq '^(restart:|start:vcm|start:bg|request:)' "$PIM_CAMERA_CALL_LOG" || { cat "$PIM_CAMERA_CALL_LOG" >&2; fail "$1 performed a liveness effect"; }
 }
+
+# cam_liveness_restart_bg 가 BG 에 넘기는 지연은 cam_start_policy.sh 의 정책값이다.
+# 여기에 숫자를 박아 두면 정책이 바뀌는 순간 이 파일이 조용히 죽는다 — 기동 건수를
+# 세는 단정은 패턴이 안 맞아 0 이 되고, 0 을 기대하는 쪽은 그래서 통과해 버린다.
+# shellcheck source=/dev/null
+source "$PIM_LIB/cam_start_policy.sh"
+BG_START="start:bg $CAM_APP_PLAY_DELAY_SEC_DEFAULT"
+# 케이스 (11) 은 교체된 런타임 문서를 다시 읽었다는 것을 기동 인자로 증명한다.
+# 그러려면 기본값과 달라야 하므로 정책값을 피해서 고르고, 그 조건을 단정해 둔다.
+BG_REARM_DELAY=7
+[ "$BG_REARM_DELAY" != "$CAM_APP_PLAY_DELAY_SEC_DEFAULT" ] \
+    || fail 're-arm 지연이 정책 기본값과 같으면 런타임 재독을 증명하지 못한다'
 force_tick_guard_rc() {
     local forced_rc=$1
     (
@@ -56,6 +72,23 @@ fake_named_process() {
     printf '%s\n' "$name" > "$PIM_CAMERA_PROC_ROOT/$pid/comm"
     { printf '%s (%s) S' "$pid" "$name"; for _ in $(seq 1 18); do printf ' 0'; done; printf ' %s 0 0\n' "$start"; } > "$PIM_CAMERA_PROC_ROOT/$pid/stat"
 }
+# A BG candidate is a /proc entry whose argv is exactly the checker path plus a
+# numeric delay, in either the bare or the /bin/bash form.
+fake_bg_process() {
+    local pid=$1 start=${2:-777} delay=${3:-4} argv=${4:-bash}
+    mkdir -p "$PIM_CAMERA_PROCESS_ROOT/$pid"
+    case "$argv" in
+        bash)  printf '/bin/bash\0%s\0%s\0' "$PIM_CAMERA_BG_CHECKER" "$delay" ;;
+        bare)  printf '%s\0%s\0' "$PIM_CAMERA_BG_CHECKER" "$delay" ;;
+        other) printf '/bin/bash\0%s\0%s\0' "$WORK/stub/not_the_bg.sh" "$delay" ;;
+        nodelay) printf '/bin/bash\0%s\0notanumber\0' "$PIM_CAMERA_BG_CHECKER" ;;
+    esac > "$PIM_CAMERA_PROCESS_ROOT/$pid/cmdline"
+    { printf '%s (bash) S' "$pid"; for _ in $(seq 1 18); do printf ' 0'; done; printf ' %s 0 0\n' "$start"; } \
+        > "$PIM_CAMERA_PROCESS_ROOT/$pid/stat"
+}
+bg_candidate_count() { ls "$PIM_CAMERA_PROCESS_ROOT" 2>/dev/null | wc -l; }
+action_log_count() { grep -Fc "$1" "$PIM_CAMERA_ACTION_LOG" 2>/dev/null || true; }
+
 write_runtime() {
     mkdir -p "$(dirname "$PIM_CAMERA_RUNTIME_JSON")" "$PIM_CAMERA_DEVICE_ROOT"
     jq -s '
@@ -90,8 +123,13 @@ owner_at() {
     export_owner_context
 }
 reset_case() {
-    rm -rf "$PIM_CAMERA_RUN_DIR" "$PIM_CAMERA_STATE_DIR" "$PIM_CAMERA_PROC_ROOT" "$PIM_CAMERA_DEVICE_ROOT"
-    mkdir -p "$PIM_CAMERA_RUN_DIR" "$PIM_CAMERA_STATE_DIR" "$PIM_CAMERA_PROC_ROOT" "$PIM_CAMERA_DEVICE_ROOT"
+    rm -rf "$PIM_CAMERA_RUN_DIR" "$PIM_CAMERA_STATE_DIR" "$PIM_CAMERA_PROC_ROOT" "$PIM_CAMERA_DEVICE_ROOT" "$PIM_CAMERA_PROCESS_ROOT"
+    mkdir -p "$PIM_CAMERA_RUN_DIR" "$PIM_CAMERA_STATE_DIR" "$PIM_CAMERA_PROC_ROOT" "$PIM_CAMERA_DEVICE_ROOT" "$PIM_CAMERA_PROCESS_ROOT"
+    : > "$PIM_CAMERA_ACTION_LOG"
+    _CL_BG_ATTEMPTS=0
+    _CL_BG_SCAN_ERROR=0
+    _CL_BG_ABSENT_LOGGED=0
+    export PIM_CAMERA_BG_CHECKER="$WORK/stub/bg_checker.sh"
     printf 'boot-a\n' > "$PIM_CAMERA_BOOT_ID_FILE"
     : > "$PIM_CAMERA_CALL_LOG"
     : > "$WORK/procs"
@@ -159,6 +197,31 @@ case "$target" in
   gstApp) [ -z "${PIM_CAMERA_TEST_GSTAPP_PID:-}" ] || printf '%s\n' "$PIM_CAMERA_TEST_GSTAPP_PID" ;;
 esac
 SH
+cat > "$WORK/stub/bg_checker.sh" <<'SH'
+#!/bin/sh
+# Stands in for BG_Check_for_pim.sh: records the launch and registers itself as a
+# live candidate in the fake process root, then exits.  Presence is decided by
+# those files, so the stub does not need to stay resident.
+printf 'start:bg %s\n' "$1" >> "$PIM_CAMERA_CALL_LOG"
+pid=$$
+mkdir -p "$PIM_CAMERA_PROCESS_ROOT/$pid"
+printf '/bin/bash\0%s\0%s\0' "$PIM_CAMERA_BG_CHECKER" "$1" > "$PIM_CAMERA_PROCESS_ROOT/$pid/cmdline"
+{ printf '%s (bash) S' "$pid"; i=0; while [ "$i" -lt 18 ]; do printf ' 0'; i=$((i+1)); done; printf ' 777 0 0\n'; } \
+    > "$PIM_CAMERA_PROCESS_ROOT/$pid/stat"
+SH
+chmod +x "$WORK/stub/bg_checker.sh"
+cat > "$WORK/stub/bg_dead.sh" <<'SH'
+#!/bin/sh
+# Stands in for a BG that cannot come up (BG_Check_for_pim.sh exits 64 when jq is
+# missing or the runtime is invalid): records the attempt and never registers.
+printf 'start:bg %s\n' "$1" >> "$PIM_CAMERA_CALL_LOG"
+SH
+chmod +x "$WORK/stub/bg_dead.sh"
+# The launch is backgrounded, so the assertions must synchronise on it rather
+# than race it.
+bg_settle() { wait 2>/dev/null || true; }
+: > "$WORK/stub/not_the_bg.sh"
+
 cat > "$WORK/stub/v4l2-ctl" <<'SH'
 #!/bin/sh
 printf 'v4l2:%s\n' "$*" >> "$PIM_CAMERA_CALL_LOG"
@@ -195,6 +258,17 @@ cat > "$WORK/stub/jq" <<'SH'
 printf 'jq\n' >> "$PIM_CAMERA_JQ_LOG"
 exec "$PIM_CAMERA_REAL_JQ" "$@"
 SH
+# Records every exec of cat, to prove the candidate scan does none.  It lives in
+# its own directory rather than the shared stub dir, and rather than being a
+# shell function named cat, so only the measured window pays for it and the
+# file's own `cat > stub` lines keep resolving to the real binary.
+mkdir -p "$WORK/catstub"
+cat > "$WORK/catstub/cat" <<'SH'
+#!/bin/sh
+printf 'cat %s\n' "$*" >> "$WORK/cat-calls"
+exec "$PIM_CAMERA_REAL_CAT" "$@"
+SH
+chmod +x "$WORK/catstub/cat"
 chmod +x "$WORK/stub"/*
 export WORK PATH="$WORK/stub:$PATH"
 
@@ -220,6 +294,9 @@ cam_request_submit() {
 
 echo '=== warm monitor loop avoids periodic jq and observes owner transition ==='
 reset_case; owner_at ACTIVE; printf 'vcm\ngstApp\n' > "$WORK/procs"
+# BG present: this case measures the steady-state loop, and a BG restart
+# legitimately costs one jq of its own to resolve the delay.
+fake_bg_process 6099
 : > "$PIM_CAMERA_JQ_LOG"
 expect_rc 1 cam_monitor_control_iteration monitor_config_reload
 cold_jq_spawns=$(wc -l < "$PIM_CAMERA_JQ_LOG")
@@ -303,6 +380,168 @@ vanished_rc=$?
 set -e
 [ "$vanished_rc" -eq 1 ] || fail "vanished cached process returned rc=$vanished_rc, expected 1"
 [ ! -s "$WORK/vanished-stderr" ] || fail "vanished cached process leaked stderr: $(cat "$WORK/vanished-stderr")"
+echo '=== BG checker liveness: detect, bound the retry, and reject impostors ==='
+# The camera app stays alive throughout; only BG changes.  Before this branch the
+# tick returned as soon as the app was found alive, so BG was never examined.
+reset_case; owner_at ACTIVE; printf 'vcm\ngstApp\n' > "$WORK/procs"
+
+# (1) BG running normally: no restart, no log line.
+fake_bg_process 6001
+expect_rc 0 cam_liveness_tick; bg_settle
+[ "$(count_log "$BG_START")" -eq 0 ] || fail 'healthy BG was restarted'
+[ "$(action_log_count 'BG checker absent')" -eq 0 ] || fail 'healthy BG logged an absence'
+
+# The candidate scan runs on every tick, so it must not exec a helper per
+# candidate: cam_process_start_time used to pay one cat for each.  Only this
+# scan is asserted - the boot-id and owner-stat cats predate this branch and run
+# whether or not BG is checked.
+bg_cat_path=$PATH
+PATH="$WORK/catstub:$PATH"
+: > "$WORK/cat-calls"
+expect_rc 0 cam_liveness_tick; bg_settle
+PATH=$bg_cat_path
+bg_scan_cats=$(grep -Fc "$PIM_CAMERA_PROCESS_ROOT/" "$WORK/cat-calls" 2>/dev/null || true)
+[ "$bg_scan_cats" -eq 0 ] || fail "the BG candidate scan execs cat $bg_scan_cats time(s) per tick"
+
+# (2) BG killed on its own while the app is alive: restarted exactly once.
+rm -rf "${PIM_CAMERA_PROCESS_ROOT:?}/6001"
+: > "$PIM_CAMERA_CALL_LOG"
+expect_rc 0 cam_liveness_tick; bg_settle
+[ "$(count_log "$BG_START")" -eq 1 ] || fail 'BG alone-termination was not restarted exactly once'
+[ "$(bg_candidate_count)" -eq 1 ] || fail 'restart did not leave exactly one BG'
+[ "$(action_log_count 'BG checker absent')" -eq 1 ] || fail 'absence transition was not logged once'
+
+# (3) Next tick sees it present, says so once, and stays quiet after that.
+: > "$PIM_CAMERA_CALL_LOG"
+expect_rc 0 cam_liveness_tick; bg_settle
+[ "$(count_log "$BG_START")" -eq 0 ] || fail 'present BG was restarted again'
+[ "$(action_log_count 'present again')" -eq 1 ] || fail 'recovery was not logged once'
+expect_rc 0 cam_liveness_tick; bg_settle
+[ "$(action_log_count 'present again')" -eq 1 ] || fail 'recovery was logged again on a quiet tick'
+
+# (4) A BG that can never come up must not be retried forever, and the tick must
+# not stall: the launch is fire-and-forget, so five ticks stay far under the
+# start-wait timeout and stop attempting after the cap.
+reset_case; owner_at ACTIVE; printf 'vcm\ngstApp\n' > "$WORK/procs"
+export PIM_CAMERA_BG_CHECKER="$WORK/stub/bg_dead.sh"
+export PIM_CAMERA_LIVENESS_BG_RESTART_ATTEMPTS=3
+bg_started=$(date +%s)
+for _ in 1 2 3 4 5; do expect_rc 0 cam_liveness_tick; bg_settle; done
+bg_elapsed=$(( $(date +%s) - bg_started ))
+[ "$(count_log "$BG_START")" -eq 3 ] || fail "unbounded BG retry: $(count_log "$BG_START") attempts instead of 3"
+[ "$bg_elapsed" -lt 10 ] || fail "five ticks took ${bg_elapsed}s; the tick is stalling on the BG start wait"
+[ "$(action_log_count 'not retrying until it reappears')" -eq 1 ] || fail 'giving up was not reported exactly once'
+[ "$(action_log_count 'BG checker absent')" -eq 1 ] || fail 'sustained absence logged more than once'
+
+# (5) Once BG comes back the budget resets and recovery is possible again.
+fake_bg_process 6031
+: > "$PIM_CAMERA_CALL_LOG"
+expect_rc 0 cam_liveness_tick; bg_settle
+rm -rf "${PIM_CAMERA_PROCESS_ROOT:?}/6031"
+expect_rc 0 cam_liveness_tick; bg_settle
+[ "$(count_log "$BG_START")" -eq 1 ] || fail 'the attempt budget did not reset after BG reappeared'
+export PIM_CAMERA_BG_CHECKER="$WORK/stub/bg_checker.sh"
+export PIM_CAMERA_LIVENESS_BG_RESTART_ATTEMPTS=3
+
+# (6) The owner guard must refuse the launch, and the suite must notice if it stops.
+reset_case; owner_at ACTIVE; printf 'vcm\ngstApp\n' > "$WORK/procs"
+: > "$PIM_CAMERA_CALL_LOG"
+PIM_CAMERA_TEST_OWNER_ROLLOVER=liveness_bg expect_rc 0 cam_liveness_tick; bg_settle
+[ "$(count_log "$BG_START")" -eq 0 ] || fail 'BG was launched under a rolled-over owner'
+reject_effects 'bg-owner-rollover'
+
+# (7) Duplicate valid candidates are still one BG: no restart.
+reset_case; owner_at ACTIVE; printf 'vcm\ngstApp\n' > "$WORK/procs"
+fake_bg_process 6011 771
+fake_bg_process 6012 772 4 bare
+expect_rc 0 cam_liveness_tick; bg_settle
+[ "$(count_log "$BG_START")" -eq 0 ] || fail 'duplicate BG candidates triggered a restart'
+
+# (8) Impostors are not BG: another script under the same shell, and a
+# non-numeric delay.  Both mean BG is absent, so exactly one restart.
+reset_case; owner_at ACTIVE; printf 'vcm\ngstApp\n' > "$WORK/procs"
+fake_bg_process 6021 773 4 other
+fake_bg_process 6022 774 4 nodelay
+expect_rc 0 cam_liveness_tick; bg_settle
+[ "$(count_log "$BG_START")" -eq 1 ] || fail 'impostor processes were accepted as a live BG'
+
+# (9) The delay is only needed to relaunch BG, so a .VHL_CAM.app_delay the
+# runtime validator accepts but cam_runtime_app_delay rejects must not stop the
+# tick from noticing that the camera app itself is gone.
+reset_case; owner_at ACTIVE; prepare_gst_missing 4
+odd_delay=$("$PIM_CAMERA_REAL_JQ" -c '.VHL_CAM.app_delay="4s"' "$PIM_CAMERA_RUNTIME_JSON")
+_cr_atomic_write "$PIM_CAMERA_RUNTIME_JSON" "$odd_delay"
+: > "$PIM_CAMERA_CALL_LOG"
+expect_rc 0 cam_liveness_tick
+[ "$(count_log request:gstapp_restart)" -eq 1 ] || fail 'a non-integer app_delay suppressed gstApp recovery'
+
+# (10) A refused launch must not spend an attempt. Lock contention and a lease
+# appearing mid-tick are transient, so counting them would retire BG recovery
+# for good over something that never ran.
+reset_case; owner_at ACTIVE; printf 'vcm\ngstApp\n' > "$WORK/procs"
+export PIM_CAMERA_LIVENESS_BG_RESTART_ATTEMPTS=3
+eval "$(declare -f cam_liveness_restart_bg | sed '1s/cam_liveness_restart_bg/bg_restart_real/')"
+cam_liveness_restart_bg() { return 75; }
+for _ in 1 2 3 4 5; do expect_rc 0 cam_liveness_tick; bg_settle; done
+[ "$(action_log_count 'not retrying until it reappears')" -eq 0 ] || fail 'refused launches burned the restart budget'
+# The absence is one transition however many launches were refused: the counter
+# stays at zero on this path, so it cannot double as the already-said-it flag.
+[ "$(action_log_count 'BG checker absent')" -eq 1 ] || fail "five refused ticks announced the absence $(action_log_count 'BG checker absent') times"
+
+eval "$(declare -f bg_restart_real | sed '1s/bg_restart_real/cam_liveness_restart_bg/')"
+: > "$PIM_CAMERA_CALL_LOG"
+expect_rc 0 cam_liveness_tick; bg_settle
+[ "$(count_log "$BG_START")" -eq 1 ] || fail 'the restart budget did not survive the refusals'
+
+# (11) Giving up must not be terminal for the life of the daemon: an invalid
+# runtime is exactly what makes BG exit 64, so a replaced runtime re-arms it.
+reset_case; owner_at ACTIVE; printf 'vcm\ngstApp\n' > "$WORK/procs"
+export PIM_CAMERA_BG_CHECKER="$WORK/stub/bg_dead.sh"
+export PIM_CAMERA_LIVENESS_BG_RESTART_ATTEMPTS=2
+for _ in 1 2 3; do expect_rc 0 cam_liveness_tick; bg_settle; done
+[ "$(count_log "$BG_START")" -eq 2 ] || fail "give-up cap ignored: $(count_log "$BG_START") attempts instead of 2"
+[ "$(action_log_count 'not retrying until it reappears')" -eq 1 ] || fail 'giving up was not reported exactly once'
+: > "$PIM_CAMERA_CALL_LOG"
+rearmed=$("$PIM_CAMERA_REAL_JQ" -c --argjson d "$BG_REARM_DELAY" '.VHL_CAM.app_delay=$d' "$PIM_CAMERA_RUNTIME_JSON")
+_cr_atomic_write "$PIM_CAMERA_RUNTIME_JSON" "$rearmed"
+expect_rc 0 cam_liveness_tick; bg_settle
+[ "$(count_log "start:bg $BG_REARM_DELAY")" -eq 1 ] || fail 'a replaced runtime did not re-arm the BG restart budget'
+export PIM_CAMERA_BG_CHECKER="$WORK/stub/bg_checker.sh"
+export PIM_CAMERA_LIVENESS_BG_RESTART_ATTEMPTS=3
+
+# (12) A refusal that repeats identically every tick must still be bounded.
+# camera_runtime_config.py imposes nothing on .VHL_CAM.app_delay, so a value it
+# accepts can fail cam_runtime_app_delay on every call; the cost must not grow
+# with the tick count, because the monitor loop ticks every two seconds.
+reset_case; owner_at ACTIVE; printf 'vcm\ngstApp\n' > "$WORK/procs"
+export PIM_CAMERA_LIVENESS_BG_RESTART_ATTEMPTS=3
+permanent=$("$PIM_CAMERA_REAL_JQ" -c '.VHL_CAM.app_delay="4s"' "$PIM_CAMERA_RUNTIME_JSON")
+_cr_atomic_write "$PIM_CAMERA_RUNTIME_JSON" "$permanent"
+: > "$PIM_CAMERA_JQ_LOG"
+for _ in $(seq 1 10); do expect_rc 0 cam_liveness_tick; bg_settle; done
+bg_jq_10=$(wc -l < "$PIM_CAMERA_JQ_LOG")
+bg_warn_10=$(action_log_count 'BG checker absent')
+for _ in $(seq 1 30); do expect_rc 0 cam_liveness_tick; bg_settle; done
+bg_jq_40=$(wc -l < "$PIM_CAMERA_JQ_LOG")
+# The cost must not grow with the tick count. Whatever the first ticks spend on
+# resolving the replaced runtime, the next thirty must add nothing.
+[ "$bg_jq_40" -eq "$bg_jq_10" ] || fail "a permanently refused BG restart keeps spending jq: $bg_jq_10 after 10 ticks, $bg_jq_40 after 40"
+[ "$bg_jq_10" -le $((3 + 3)) ] || fail "the first ten ticks spent $bg_jq_10 jq; at most three restart attempts plus the runtime reload were expected"
+[ "$bg_warn_10" -eq 1 ] || fail "the absence warning was repeated: $bg_warn_10 lines over 10 ticks"
+[ "$(action_log_count 'BG checker absent')" -eq 1 ] || fail "the absence warning came back over the next thirty ticks"
+[ "$(action_log_count 'not retrying until it reappears')" -eq 1 ] || fail 'a permanent refusal never reached the give-up log'
+[ "$(count_log "$BG_START")" -eq 0 ] || fail 'BG was launched despite an unresolvable delay'
+
+# (13) A BG scan that cannot be inspected is not a camera liveness failure: the
+# monitor turns a non-zero tick rc into an error line on every two-second tick.
+reset_case; owner_at ACTIVE; printf 'vcm\ngstApp\n' > "$WORK/procs"
+fake_bg_process 6041
+expect_rc 0 cam_liveness_tick; bg_settle
+touch "$PIM_CAMERA_PROCESS_ROOT/.inspect_error"
+for _ in 1 2 3 4 5; do expect_rc 0 cam_liveness_tick; bg_settle; done
+[ "$(action_log_count 'could not be inspected')" -eq 1 ] || fail "the scan error was reported $(action_log_count 'could not be inspected') times over 5 ticks"
+rm -f "$PIM_CAMERA_PROCESS_ROOT/.inspect_error"
+expect_rc 0 cam_liveness_tick; bg_settle
 
 echo '=== injected runtime validator remains nounset-safe ==='
 bash -eu -c '
@@ -315,6 +554,12 @@ bash -eu -c '
     _cl_ord_status() { :; }
     _cl_process_status() { :; }
     cam_runtime_app() { printf "gstApp\n"; }
+    cam_runtime_app_delay() { printf "gstApp\t4\n"; }
+    # The stubbed cam_validate_runtime above suppresses the cam_recovery_actions.sh
+    # source guard, so the BG helpers the tick now reaches must be stubbed too,
+    # exactly as cam_runtime_app and _cl_ord_status already are.
+    cam_bg_checker_path() { printf "%s\n" "$PIM_BIN/BG_Check_for_pim.sh"; }
+    cam_bg_checker_present() { :; }
     cam_liveness_tick
 '
 
@@ -386,6 +631,42 @@ cam_liveness_tick
 for _ in 1 2 3 4 5; do grep -q '^start:vcm$' "$PIM_CAMERA_CALL_LOG" && break; /bin/sleep 0.05; done
 grep -q '^start:vcm$' "$PIM_CAMERA_CALL_LOG" || fail 'missing VCM was not started through its exact launcher'
 ! grep -q '^restart:' "$PIM_CAMERA_CALL_LOG" || fail 'VCM restart touched ORD'
+
+echo '=== a revived VCM is not counted as pending work by the ordered stop ==='
+# The shipped vcm stub exits immediately, so it never leaves a job behind and
+# cannot show this.  A real vcm stays running, and `exec` does not end the job,
+# so undisowned it would be a job of this shell for its whole life and
+# cam_liveness_wait_for_work would time out at 75 - aborting the ordered stop
+# before cam_liveness_stop_managed.
+reset_case; owner_at ACTIVE; printf 'gstApp\n' > "$WORK/procs"
+cat > "$WORK/stub/vcm" <<'SH'
+#!/bin/sh
+printf 'start:vcm\n' >> "$PIM_CAMERA_CALL_LOG"
+printf 'vcm\n' >> "$WORK/procs"
+echo $$ > "$WORK/resident-vcm.pid"
+exec /bin/sleep 30
+SH
+chmod +x "$WORK/stub/vcm"
+rm -f "$WORK/resident-vcm.pid"
+cam_liveness_tick
+for _ in $(seq 1 200); do [ -s "$WORK/resident-vcm.pid" ] && break; /bin/sleep 0.02; done
+[ -s "$WORK/resident-vcm.pid" ] || fail 'the resident VCM stub never started; the case would prove nothing'
+resident_vcm=$(cat "$WORK/resident-vcm.pid")
+[ -e "/proc/$resident_vcm" ] || fail 'the resident VCM stub exited; the case would prove nothing'
+vcm_prev_wait=$PIM_CAMERA_STOP_WAIT_SEC
+export PIM_CAMERA_STOP_WAIT_SEC=0
+expect_rc 0 cam_liveness_wait_for_work
+export PIM_CAMERA_STOP_WAIT_SEC=$vcm_prev_wait
+kill "$resident_vcm" 2>/dev/null || :
+for _ in $(seq 1 200); do [ -e "/proc/$resident_vcm" ] || break; /bin/sleep 0.02; done
+cat > "$WORK/stub/vcm" <<'SH'
+#!/bin/sh
+printf 'start:vcm\n' >> "$PIM_CAMERA_CALL_LOG"
+[ "$VCM_START_RC" -eq 0 ] || exit "$VCM_START_RC"
+printf 'vcm\n' >> "$WORK/procs"
+exit 0
+SH
+chmod +x "$WORK/stub/vcm"
 
 echo '=== VCM crosses launch readiness while the parent retains the lock ==='
 reset_case; owner_at ACTIVE; printf 'gstApp\n' > "$WORK/procs"
