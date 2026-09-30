@@ -1096,11 +1096,19 @@ _RUNNER_REQUIRED_TESTS = {
 
 
 def _runner_entries(text: str) -> List[str]:
-    """러너가 실제로 실행하는 테스트 이름만 뽑는다(주석·산문 제외)."""
+    """러너가 실제로 실행하는 테스트 이름만 뽑는다.
+
+    주석은 반드시 걸러야 한다. `TESTS=()` 안에서 한 줄을 주석 처리하면 bash 는 그 항목을
+    건너뛰지만, 배열 본문을 그대로 split 하면 파일명이 그대로 들어와 이 검사가 통과한다 —
+    막으려던 바로 그 제거 회귀가 빠져나간다. 실측으로 확인했다: cam_link 러너에서
+    legacy_wrapper_test.sh 를 주석 처리하면 실제 실행 수가 16 에서 15 로 줄지만 걸러내기
+    전의 파서는 오류를 내지 않았다.
+    """
     entries = re.findall(r"^(?:bash|python3)[ \t]+(\S+)[ \t]*$", text, re.M)
     array = re.search(r"TESTS=\(([^)]*)\)", text)
     if array:
-        entries.extend(array.group(1).split())
+        for line in array.group(1).splitlines():
+            entries.extend(re.sub(r"(?:^|\s)#.*$", "", line).split())
     return entries
 
 
@@ -1195,6 +1203,21 @@ class SystemdRecoveryContract(unittest.TestCase):
         self.assert_contract(
             "DEBIAN/control", control_errors(read(Path("DEBIAN/control")))
         )
+
+    def test_runner_entry_parser_ignores_commented_out_tests(self) -> None:
+        # 이 파서가 주석을 세면 위 멤버십 검사가 조용히 무력해진다. 배열 안 주석, 앞뒤
+        # 공백이 붙은 주석, 줄 끝 주석을 모두 본다.
+        array = (
+            "TESTS=(\n"
+            "    alpha_test.sh\n"
+            "#    beta_test.sh\n"
+            "    # gamma_test.sh\n"
+            "    delta_test.sh  # 줄 끝 주석\n"
+            ")\n"
+        )
+        self.assertEqual(["alpha_test.sh", "delta_test.sh"], _runner_entries(array))
+        lines = "bash real_test.sh\n# bash commented_test.sh\n"
+        self.assertEqual(["real_test.sh"], _runner_entries(lines))
 
     def test_runners_keep_the_issue_61_condition_tests(self) -> None:
         for relative in sorted(_RUNNER_REQUIRED_TESTS):
