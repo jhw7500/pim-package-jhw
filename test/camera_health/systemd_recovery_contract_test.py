@@ -1116,6 +1116,26 @@ class SystemdRecoveryContract(unittest.TestCase):
     def test_postinst_links_cli_and_orders_service_enablement(self) -> None:
         self.assert_contract("postinst", postinst_errors(read(Path("DEBIAN/postinst"))))
 
+    def test_postinst_masks_the_test_only_imu_consumer(self) -> None:
+        # The board's iim42652 is test-only and nothing reads its IIO buffer, but
+        # iio-sensor-proxy enables that buffer on any D-Bus or udev activation - an SSH
+        # login suffices - and the 1 kHz driver then floods `FIFO full data lost!` until
+        # the kernel ring buffer wraps and the early-boot log is gone (issue #51).
+        # Masking the only consumer is the fix, so the configure path must carry it.
+        #
+        # This lives outside postinst_errors() on purpose: that helper is also fed
+        # synthetic fixtures by the parser self-checks, which assert no errors on
+        # minimal text and would fail on a file-content requirement.
+        commands, errors = maintainer_path_commands(
+            read(Path("DEBIAN/postinst")), "configure", "postinst"
+        )
+        self.assert_contract("postinst", errors)
+        self.assertIn(
+            ["customctl", "mask", "iio-sensor-proxy"],
+            commands,
+            "postinst configure path must mask iio-sensor-proxy",
+        )
+
     def test_preinst_stops_owner_before_shared_storage(self) -> None:
         self.assert_contract("preinst", preinst_errors(read(Path("DEBIAN/preinst"))))
 

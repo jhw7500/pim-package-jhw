@@ -276,6 +276,17 @@ customctl() {
 
   customctl mask systemd-networkd-wait-online
 
+  # The board's IIO IMU (iim42652, 1 kHz ODR) is test-only and has no operational
+  # consumer, but iio-sensor-proxy enables its buffer whenever a D-Bus or udev
+  # activation starts it - an SSH login is enough.  With nothing reading, the driver
+  # then floods `FIFO full data lost!`: one measured boot produced about 3,600 lines
+  # in three minutes, tripped the printk rate limit and wrapped the kernel ring
+  # buffer, which destroys the early-boot log.  Masking the only consumer removes the
+  # flood (issue #51).  iim42652-manual.conf already blocks the modalias autoload, and
+  # an explicit modprobe still loads the driver for testing, so nothing is lost here.
+  # Masking a unit the image does not ship is harmless and pre-empts a later install.
+  customctl mask iio-sensor-proxy
+
   customctl disable hciattach
   customctl disable imx8-isp
   customctl disable fake-hwclock.timer
