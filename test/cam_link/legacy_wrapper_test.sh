@@ -97,6 +97,18 @@ help_out=$("$ROOT/dist/pim/opt/pim/bin/start_cam.sh" --help 2>&1); rc=$?
 set -e
 [ "$rc" = 0 ] || { echo "start_cam --help rc=$rc" >&2; exit 1; }
 printf '%s' "$help_out" | grep -q -- '--no-wait' || { echo 'start_cam --help does not mention --no-wait' >&2; exit 1; }
-PIM_CAMERA_EXECUTOR=1 "$ROOT/dist/pim/opt/pim/bin/start_cam.sh" >/dev/null 2>&1 && { echo 'start_cam accepted missing owner context' >&2; exit 1; }
+# executor 경로는 해석된 지연을 인자로 요구한다(rc 64). 그 검사가 owner 검사보다
+# 앞서므로, 인자를 뺀 호출로 owner 컨텍스트를 단정하면 arg 검사에서 먼저 끊겨
+# 단정이 조용히 무의미해진다 — 그래서 두 rc 를 각각 정확히 못박는다.
+set +e
+PIM_CAMERA_EXECUTOR=1 "$ROOT/dist/pim/opt/pim/bin/start_cam.sh" >/dev/null 2>&1
+rc=$?
+set -e
+[ "$rc" = 64 ] || { echo "start_cam executor accepted a missing delay, rc=$rc" >&2; exit 1; }
+set +e
+PIM_CAMERA_EXECUTOR=1 "$ROOT/dist/pim/opt/pim/bin/start_cam.sh" 5 >/dev/null 2>&1
+rc=$?
+set -e
+[ "$rc" = 69 ] || { echo "start_cam accepted missing owner context, rc=$rc" >&2; exit 1; }
 ! grep -q 'restart_app\.sh\|/root/shared_v\|edgeconf_' "$ROOT/dist/pim/opt/pim/bin/start_cam.sh" || { echo 'start_cam retained legacy launcher/source discovery' >&2; exit 1; }
 echo "legacy wrappers: PASS"

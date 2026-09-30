@@ -30,7 +30,11 @@ if [ "${PIM_CAMERA_EXECUTOR:-}" != 1 ]; then
     exec "${PIM_CAMERA_RECOVERYCTL:-/opt/pim/bin/cam-recoveryctl}" request gstapp_restart --source legacy-start-cam --reason legacy-wrapper --wait 120
 fi
 
-[ $# -le 1 ] || { echo 'usage: start_cam.sh [delay]' >&2; exit 64; }
+# executor 경로는 해석된 지연을 반드시 인자로 받는다. 기본값을 여기에 두면 정책과
+# 경쟁하는 두 번째 정본이 생기고 (b6b70a9 가 정확히 그렇게 `// 4` 를 심었다), 유일한
+# 호출자인 cam_start_gstapp 이 항상 값을 넘기므로 그 분기는 도달하지 않아 검증도
+# 되지 않는다 — 트리뷰널 B-R1-C005 가 실행하지 못해 unverified 로 남긴 분기다.
+[ $# -eq 1 ] || { echo 'usage: start_cam.sh <delay>' >&2; exit 64; }
 cam_executor_assert_context || exit $?
 cam_validate_runtime "$PIM_CAMERA_RUNTIME_JSON" || exit 64
 # 호출자가 이미 같은 문서에서 읽어 넘겨준 값이 있으면 jq 를 다시 띄우지 않는다.
@@ -49,13 +53,7 @@ cam_validate_runtime "$PIM_CAMERA_RUNTIME_JSON" || exit 64
 app=${PIM_CAMERA_APP:-}
 [ -n "$app" ] || app=$(cam_runtime_app "$PIM_CAMERA_RUNTIME_JSON") || exit 64
 case "$app" in gstApp|PIMCAM) ;; *) exit 64;; esac
-# 이 기본값 분기는 현재 트리에서 도달하지 않는다 — executor 경로의 유일한 호출자인
-# cam_start_gstapp 이 항상 해석된 지연을 $1 로 넘기고, 외부 경로는 위에서 이미
-# exec 로 빠져나간다. 그래도 리터럴을 두지 않는 이유는, 여기 남은 숫자가 곧 정책과
-# 경쟁하는 두 번째 정본이 되기 때문이다: 실제로 b6b70a9 가 `// 4` 를 심은 뒤
-# cam_runtime_app_delay 쪽이 그 값을 쓰기 시작했고 정책의 5 는 어디에도 닿지 않았다.
-delay=${1:-$(jq -r --argjson default_delay "$CAM_APP_PLAY_DELAY_SEC_DEFAULT" \
-    '.VHL_CAM.app_delay // $default_delay' "$PIM_CAMERA_RUNTIME_JSON")}
+delay=$1
 [[ $delay =~ ^[0-9]+$ ]] || exit 64
 
 cam_side_effect_guard "$PIM_CAMERA_RUNTIME_JSON" || exit $?

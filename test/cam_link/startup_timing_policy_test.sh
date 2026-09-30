@@ -102,6 +102,30 @@ poisoned=$(CAM_APP_PLAY_DELAY_SEC_DEFAULT=99 PIM_LIB="$PIM_LIB" PIM_BIN="$PIM_BI
              cam_runtime_app_delay "$1"' _ "$WORK/no-app-delay.json")
 t_eq "환경의 가짜 정책값이 라이브러리 해석을 이기지 못한다" "${poisoned#*$'\t'}" 5
 
+# 위 단정은 정책 파일이 로드되는 경우만 본다. source 는 파일이 없으면 치명적이지
+# 않게 실패하고 실행이 계속되므로, 그 조건에서 환경값이 그대로 정책이 될 수 있다 —
+# 트리뷰널 A-R1-001 이 파일만 지운 트리에서 delay=777 로 실증한 경로다. 여기서는
+# 라이브러리 사본에서 정책 파일만 지우고 같은 환경값을 심어, 값이 새지 않고
+# fail-closed 되는지 본다.
+mkdir -p "$WORK/nolib"
+cp -a "$PIM_LIB/." "$WORK/nolib/"
+rm -f "$WORK/nolib/cam_start_policy.sh"
+[ -e "$WORK/nolib/cam_recovery_actions.sh" ] && [ ! -e "$WORK/nolib/cam_start_policy.sh" ] \
+    || t_bad "전제 실패: 사본에 라이브러리는 있고 정책 파일만 없어야 한다"
+: > "$WORK/nolib-action.log"
+nofile_out=$(CAM_APP_PLAY_DELAY_SEC_DEFAULT=777 PIM_LIB="$WORK/nolib" PIM_BIN="$PIM_BIN" \
+    PIM_CAMERA_ACTION_LOG="$WORK/nolib-action.log" \
+    bash -c 'source "$PIM_LIB/cam_recovery_actions.sh" 2>/dev/null
+             cam_runtime_app_delay "$1"' _ "$WORK/no-app-delay.json" 2>/dev/null)
+nofile_rc=$?
+t_eq "정책 파일이 없으면 지연 해석이 fail-closed" "$nofile_rc" 64
+t_eq "그때 환경의 777 이 정책으로 새지 않는다" "${nofile_out:-(없음)}" "(없음)"
+# rc 64 만으로는 부족하다 — unset 만 있고 명시적 검사가 없으면 빈 --argjson 때문에
+# jq 가 실패해 같은 rc 64 가 나온다. 즉 두 단정은 검사 블록의 제거를 구분하지 못한다.
+# 이유가 로그에 남는지까지 봐야 그 블록이 하중을 받는다.
+t_eq "닫힌 이유가 action 로그에 남는다" \
+    "$(grep -c 'app play delay policy unavailable' "$WORK/nolib-action.log")" 1
+
 # 해석된 값이 런처 argv 로 건너가는 한 홉까지 본다. 여기서 끊기면 위 단정이
 # 모두 통과해도 gstApp 은 다른 값을 받는다.
 t_extract_func "$PIM_LIB/cam_recovery_actions.sh" cam_start_gstapp \

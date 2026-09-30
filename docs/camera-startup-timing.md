@@ -108,6 +108,13 @@ reboot monotonic 로그의 주요 시점은 다음과 같다.
     `.VHL_CAM.app_delay`를 읽되 없으면 `CAM_APP_PLAY_DELAY_SEC_DEFAULT`를 쓴다.
   - `cam_start_gstapp`이 그 값을 `start_cam.sh`의 첫 인자로 넘기고,
     `start_cam.sh`가 `gstApp -d <값> -m 4`로 띄운다. **이것이 유일한 자동 기동 경로다.**
+  - source 직전에 `CAM_APP_PLAY_DELAY_SEC_DEFAULT`를 `unset`한다. 정책 파일이 없으면
+    `source`는 치명적이지 않게 실패하므로, 지우지 않으면 환경에서 물려받은 값이 그대로
+    정책이 되어 `-d`에 실린다. 지운 뒤 맨 정수가 아니면 `cam_runtime_app_delay`가
+    rc 64로 닫고 이유를 로그에 남긴다 — 기본값으로 추측하지 않는다.
+  - `start_cam.sh`의 executor 경로는 지연을 **인자로 반드시 받는다**(없으면 rc 64).
+    그 자리에 기본값을 두면 정책과 경쟁하는 두 번째 정본이 생기고, 유일한 호출자가
+    항상 값을 넘기므로 그 분기는 도달하지 않아 검증도 되지 않는다.
 - 아래 스크립트들은 지연을 직접 넘기지 않는다 — 이전 판의 이 문단이 넷을 나열했으나
   실제로는 어느 것도 gstApp 인자를 정하지 않는다.
   - `init_cam.sh`, `cam_enable.sh`, 외부에서 부른 `start_cam.sh`: cam-recoveryctl로
