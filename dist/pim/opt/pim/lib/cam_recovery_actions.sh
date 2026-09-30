@@ -13,6 +13,26 @@ if ! declare -F cam_owner_assert >/dev/null 2>&1; then
     source "$PIM_LIB/cam_recovery.sh"
 fi
 
+# gstApp 재생 지연의 정본은 cam_start_policy.sh 하나다. 이 라이브러리가 직접
+# source 하는 이유는 두 가지다. 첫째, 지연을 실제로 해석하는 경로(아래
+# cam_runtime_app_delay, 그것을 부르는 cam_start_gstapp 과 cam_liveness 틱,
+# start_cam.sh 의 executor 분기)는 어느 것도 정책 파일을 따로 읽지 않는다.
+#
+# 환경 오염을 막는 것은 바로 아래 unset 이다 — source 가 무조건이라는 사실이 아니다.
+# 정책 파일이 없거나 읽히지 않으면 source 는 치명적이지 않게 실패하고 실행이 계속되므로,
+# 지우지 않으면 환경에서 물려받은 값이 그대로 정책이 되어 rc 0 으로 -d 에 실린다
+# (트리뷰널 A-R1-001 이 파일만 지운 트리에서 delay=777 로 실증했다). 지운 뒤에는 값이
+# 없는 상태가 되고, 아래 cam_runtime_app_delay 가 맨 정수인지 확인해 fail-closed 한다.
+# 그 두 줄이 한 쌍으로 방어를 이룬다.
+#
+# unset 이 앞에 있으므로 source 를 "이미 설정돼 있으면 건너뜀" 으로 감싸도 조건이 참이
+# 될 수 없어 동작은 같다 — A-R1-001 이 그 래퍼만 씌운 사본의 스위트 출력이 원본과
+# 바이트 동일함을 보였다. 감싸지 않은 것은 참이 될 수 없는 조건을 둘 이유가 없어서이고,
+# 방어를 그 무조건성에 걸고 있는 것이 아니다. 한쪽이 잉여로 보여 unset 을 지우는 쪽은
+# 스위트가 잡는다.
+unset CAM_APP_PLAY_DELAY_SEC_DEFAULT
+source "$PIM_LIB/cam_start_policy.sh"
+
 # 복구 액션은 20 단계 가까운 순차 부작용이고, 어느 단계에서 멈췄는지가 곧 원인이다.
 # 이 파일은 지금까지 logger 호출이 하나도 없어서, 실패하면 상위가 남기는
 # "startup transaction failed rc=1" 한 줄만 남았다. 단계 이름을 남긴다.
@@ -125,11 +145,18 @@ cam_effect() {
 # 재조립하면 그런 값이 잘려 allowlist 를 통과한다.
 cam_runtime_app_delay() {
     local runtime=$1 app delay fields
-    fields=$(jq -r '
+    # 정책이 로드되지 않았으면 여기서 닫는다. 빈 값이나 정수가 아닌 값을 --argjson 에
+    # 넘기면 jq 가 usage 텍스트만 남겨 원인이 보이지 않고, 무엇보다 환경에서 온 값을
+    # 정책으로 쓰게 된다. 위 unset 과 이 검사가 한 쌍이다.
+    if [[ ! ${CAM_APP_PLAY_DELAY_SEC_DEFAULT-} =~ ^[0-9]+$ ]]; then
+        _cra_log err "app play delay policy unavailable: cam_start_policy.sh did not define a bare integer"
+        return 64
+    fi
+    fields=$(jq -r --argjson default_delay "$CAM_APP_PLAY_DELAY_SEC_DEFAULT" '
         (.VHL_CAM.app // "gstApp") as $a
         | ((.VHL_CAM.capture.enable // false) | tostring) as $c
         | (if $c == "true" then "gstApp" elif $a == "streamApp" then "PIMCAM" else $a end) as $app
-        | ((.VHL_CAM.app_delay // 4) | tostring) as $d
+        | ((.VHL_CAM.app_delay // $default_delay) | tostring) as $d
         | [ (if $app == "gstApp" or $app == "PIMCAM" then $app else "" end),
             (if ($d | test("^[0-9]+$")) then $d else "" end) ] | join("\n")' "$runtime") || return 64
     { IFS= read -r app; IFS= read -r delay; } <<<"$fields"
