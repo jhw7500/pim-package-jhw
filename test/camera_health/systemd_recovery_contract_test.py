@@ -1068,6 +1068,54 @@ def runner_contract_errors(text: str) -> List[str]:
     return errors
 
 
+# 이슈 #61 완료 조건이 걸려 있는 테스트는 러너 목록에서 빠져도 아무것도 실패하지 않았다.
+# runner_contract_errors 는 이 계약 테스트 자신의 1회 호출만 고정하고, 그 함수는 파서
+# 자기검사가 합성 fixture 로도 호출하므로 거기에 파일 내용 요구를 더할 수 없다.
+# 그래서 두 러너의 목록 자체를 여기서 따로 고정한다.
+#
+# 각 항목이 무엇을 지키는지:
+#   recovery_protocol_test.sh   동시 요청 거부 / 카운터 정확성·재시작 생존 / reboot fallback
+#   cam_stop_order_test.sh      데몬 kill·stop 후 잔존 worker 없음 / stop 구간 재기동 0
+#   cam_operate_control_test.sh owner lifecycle ACTIVE 유지 / projection 변경 시 hard reset 선택
+#   cam_liveness_test.sh        BG checker 복구 경계 / restart_app shim 1회 전달
+#   recovery_actions_test.sh    hardware settle 순서·건수 / hard reset 이 서비스를 제어하지 않음
+#   legacy_wrapper_test.sh      호환 wrapper 가 요청만 전달 / -s·-S 무시 고지
+_RUNNER_REQUIRED_TESTS = {
+    "test/camera_health/run_all.sh": (
+        "systemd_recovery_contract_test.py",
+        "recovery_protocol_test.sh",
+        "cam_stop_order_test.sh",
+        "cam_operate_control_test.sh",
+        "cam_liveness_test.sh",
+    ),
+    "test/cam_link/run_all.sh": (
+        "recovery_actions_test.sh",
+        "legacy_wrapper_test.sh",
+    ),
+}
+
+
+def _runner_entries(text: str) -> List[str]:
+    """러너가 실제로 실행하는 테스트 이름만 뽑는다(주석·산문 제외)."""
+    entries = re.findall(r"^(?:bash|python3)[ \t]+(\S+)[ \t]*$", text, re.M)
+    array = re.search(r"TESTS=\(([^)]*)\)", text)
+    if array:
+        entries.extend(array.group(1).split())
+    return entries
+
+
+def runner_membership_errors(relative: str, text: str) -> List[str]:
+    entries = _runner_entries(text)
+    errors: List[str] = []
+    for name in _RUNNER_REQUIRED_TESTS[relative]:
+        found = entries.count(name)
+        if found != 1:
+            errors.append(
+                f"{relative} must run {name} exactly once; found {found}"
+            )
+    return errors
+
+
 class SystemdRecoveryContract(unittest.TestCase):
     def assert_contract(self, name: str, errors: Iterable[str]) -> None:
         found = list(errors)
@@ -1147,6 +1195,11 @@ class SystemdRecoveryContract(unittest.TestCase):
         self.assert_contract(
             "DEBIAN/control", control_errors(read(Path("DEBIAN/control")))
         )
+
+    def test_runners_keep_the_issue_61_condition_tests(self) -> None:
+        for relative in sorted(_RUNNER_REQUIRED_TESTS):
+            text = (ROOT / relative).read_text(encoding="utf-8")
+            self.assert_contract(relative, runner_membership_errors(relative, text))
 
     def test_camera_health_runner_invokes_this_contract_once(self) -> None:
         runner = (ROOT / "test/camera_health/run_all.sh").read_text(encoding="utf-8")
