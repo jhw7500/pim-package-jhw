@@ -172,9 +172,20 @@ source JSON을 별도 변경 절차로 수정해야 한다.
   `/var/lib/pim-camera/recovery/state.json`
 - request/action history: `/var/lib/pim-camera/recovery/history/<request-id>.json`
 
-action의 **소요 시간은 별도 필드로 저장하지 않는다.** history의 action 레코드가
-`started_at`과 `finished_at`을 담으므로 소요 시간은 그 차로 구한다 —
-`jq '[.actions[] | {action, sec: (.finished_at - .started_at)}]' <history-file>`.
+action의 **소요 시간은 별도 필드로 저장하지 않는다.** history의 terminal action 레코드가
+`started_at`과 `finished_at`을 담으므로 소요 시간은 그 차로 구한다:
+
+```
+jq '[.actions[] | {action, status,
+      sec: (if .finished_at then .finished_at - .started_at else null end)}]' <history-file>
+```
+
+`finished_at`을 조건부로 다루는 것이 중요하다. 중단된 이력은 `finished_at`이 **없는** RUNNING
+레코드를 담을 수 있고(`cam_recovery.sh:350`의 `public_running` — 키가
+`["action","request_id","started_at","status"]`뿐이며 `:363`이 interrupted 이력에서 이를 허용한다),
+그 레코드에 뺄셈을 그대로 적용하면 jq가 `null and number cannot be subtracted`로 중단된다.
+즉 조사가 가장 필요한 순간에 아무 값도 못 얻는다. 위 형태는 종료된 action의 초와 진행 중이던
+action의 `null`을 함께 보여 준다.
 `state.json`의 키 집합에 필드를 더하면 이미 배포된 보드의 파일이 `_cr_state_valid`에서
 거부되므로, 파생 가능한 값을 위해 그 위험을 지지 않는다(이슈 #61 요구 4에 대한 결정).
 
