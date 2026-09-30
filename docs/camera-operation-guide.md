@@ -229,6 +229,11 @@ gstApp 녹화 중
 
 > gstApp 비정상 종료 시 `/tmp/gst_err` 파일 생성
 
+> **주의: 아래 그림은 요청 인터페이스 도입 이전의 구조다.** `restart_app.sh`의 감시 루프는
+> 은퇴해 요청 전달 shim만 남았고(`dist/pim/opt/pim/bin/restart_app.sh`), 지금은 모든 복구가
+> `cam-recoveryctl` → `cam_recovery.sh`의 잠금·상태 머신으로 직렬화된다. 현재 경로는
+> `docs/camera-health/cam-recovery-operations.md`를 본다. 이 그림은 이력 참고용으로만 남긴다.
+
 ```
 gstApp 비정상 종료
   |  /tmp/gst_err 생성
@@ -236,7 +241,6 @@ gstApp 비정상 종료
   +-- restart_app.sh 감지 (3초 주기)
   |     +-- start_cam.sh 호출
   |           +-- gst_err 발견 -> /tmp/recover_req_init_cam 생성
-  |           +-- cam_request_recovery("gst_err")
   |
   +-- chk_cam_operate.sh 감지 (최대 5초 내)
   |     +-- init_cooldown(40초) 확인

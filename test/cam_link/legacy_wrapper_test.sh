@@ -21,6 +21,26 @@ run init_cam.sh -q
 [ "$(cat "$CALLS")" = 'request module_reload --source legacy-init-cam --reason legacy-wrapper --wait 300' ] || exit 1
 run cam_hard_reset.sh -s -S -q
 [ "$(cat "$CALLS")" = 'request camera_hard_reset --source legacy-cam-hard-reset --reason legacy-wrapper --wait 300' ] || exit 1
+# -s/-S 는 흡수되지만 조용히 버려지면 안 된다 (이슈 #61 요구 6). `run` 은 stderr 를 합쳐
+# $out 에 담고 deprecation 만 보므로, 무시 사실이 실제로 출력되는지는 여기서 따로 본다.
+# 두 플래그를 각각 확인한다 — 하나만 경고하고 다른 하나를 빠뜨리는 변경을 잡기 위해서다.
+for ignored_flag in -s -S; do
+    set +e
+    ignored_out=$(PIM_CAMERA_RECOVERYCTL="$WORK/bin/cam-recoveryctl" RECOVERY_RC=17 \
+        "$ROOT/dist/pim/opt/pim/bin/cam_hard_reset.sh" "$ignored_flag" 2>&1)
+    set -e
+    printf '%s' "$ignored_out" | grep -q "NOTE: $ignored_flag is accepted but ignored" \
+        || { echo "cam_hard_reset.sh dropped $ignored_flag silently" >&2; exit 1; }
+done
+# -q 는 무시 대상이 아니므로 경고가 붙지 않아야 한다.
+set +e
+quiet_out=$(PIM_CAMERA_RECOVERYCTL="$WORK/bin/cam-recoveryctl" RECOVERY_RC=17 \
+    "$ROOT/dist/pim/opt/pim/bin/cam_hard_reset.sh" -q 2>&1)
+set -e
+if printf '%s' "$quiet_out" | grep -q 'accepted but ignored'; then
+    echo 'cam_hard_reset.sh warned about -q, which it does honour' >&2
+    exit 1
+fi
 run restart_app.sh
 [ "$(cat "$CALLS")" = 'request gstapp_restart --source legacy-restart-app --reason legacy-wrapper --wait 120' ] || exit 1
 ! grep -q 'while[[:space:]]*\[' "$ROOT/dist/pim/opt/pim/bin/restart_app.sh" || { echo "restart loop remains" >&2; exit 1; }

@@ -324,6 +324,13 @@ if [ "$hard_reset_settle" != "$expected_hard_reset_settle" ]; then
     settle_fail=1
 fi
 [ "$settle_fail" -eq 0 ] || fail "hardware settle windows/order changed"
+# 이슈 #61 완료 조건 2번의 "정확히 한 번"은 지금까지 단정이 아니라 코드 독해에만 의존했다.
+# 위 settle 비교는 순서만 고정하고 건수는 못 본다 — awk 가 첫 start_cam 에서 exit 하므로
+# 두 번째 기동이 뒤에 있어도 같은 출력이 나온다. 호출 로그는 :304 에서 비워졌으므로
+# 아래 건수는 이 hard reset 이 낸 것만 센다.
+hard_reset_starts=$(grep -c '^start_cam$' "$PIM_CAMERA_CALL_LOG" || true)
+[ "$hard_reset_starts" -eq 1 ] \
+    || fail "hard reset started gstApp $hard_reset_starts time(s), expected exactly 1"
 
 # Review regressions: cleanup must be session-scoped and never delete unrelated
 # markers; BG identity must use full-command matching; child auto-bind is skipped.
