@@ -37,6 +37,18 @@ cpchk() {
     cp $1 $2
   fi
 }
+
+# glob 을 -f 에 직접 넘기면 2 개 이상 매칭될 때 test 가 판정이 아니라 오류를 낸다 (SC2144).
+# 실측 rc: 0 개 -> 0(리터럴 glob 이므로 -f 거짓), 1 개 -> 1, 2 개 이상 -> 2 와
+# "too many arguments" 를 stderr 로. 결과 자체는 세 경우 모두 바뀌지 않지만, 2 개 이상에서
+# 맞는 쪽으로 가는 것은 우연이고 dpkg 설치 로그에 오류 문구가 남는다. 이 함수는 같은 결과를
+# 판정으로 낸다 - 0 개 copy, 1 개 skip, 2 개 이상 skip (실측).
+globHasFile() {
+  for candidate in "$@"; do
+    [ -f "$candidate" ] && return 0
+  done
+  return 1
+}
   cp /opt/pim/etc/rsyslog.d/50-default.conf /etc/rsyslog.d/
   cpchk /opt/pim/etc/rsyslog.conf /etc/rsyslog.conf
 
@@ -417,14 +429,14 @@ fi
   esac
 
   echo "check edge config"  
-  if [ ! -f  /root/shared_v/edgeconf*.json ]; then
+  if ! globHasFile /root/shared_v/edgeconf*.json; then
     logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp edgeconf_pim.json"
     mkdir -p /root/shared_v
     cp /etc/defaultconf.json /root/shared_v/edgeconf_pim.json
   fi
 
   echo "check ord_vcm config"
-  if [ ! -f  /root/shared_v/ord_vcm*.json ]; then
+  if ! globHasFile /root/shared_v/ord_vcm*.json; then
     logger -s -p local0.notice "[$KEY][$tag:$LINENO] cp ord_vcm_conf.json"
     cp /opt/pim/config/ord_vcm_conf.json /root/shared_v/ord_vcm_conf.json
   fi
