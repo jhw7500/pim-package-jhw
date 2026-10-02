@@ -27,18 +27,18 @@
     },
     {
       "path": "dist/pim/opt/pim/driver/max9296.ko",
-      "sha256": "5f1cf39eadbc7a106a8b52a5448ffb38fe22b7633cc50333df5634e339d8d533",
-      "size": 1100096,
+      "sha256": "e6decd0e0f93ef6d9dfd9bcdeaeb593ebfa13f7e94d64e014320fc9fdacb057c",
+      "size": 1100464,
       "mode": "100644",
       "arch": "aarch64",
       "storage": "lfs",
       "module_version": "2.12",
       "source": {
         "repo": "jhw7500/max9296",
-        "commit": "cf7f867",
+        "commit": "0df95e9",
         "build": "./make-for-imx8 clean && ./make-for-imx8 -j4 (Yocto SDK 5.10-hardknott, cortexa53-crypto-poky-linux)"
       },
-      "note": "MAX9296 2.12 clean build다. 1920x1080/3840x1080은 최대 30 FPS, 1280x720/2560x720은 최대 60 FPS, 640x360은 기본 빌드에서 1~120 FPS 요청을 허용한다. mode-valid 31 FPS 이상의 EXP_TIME(0x500c) 수동 쓰기는 frame-period 정보를 경고한 뒤 적용하며, 모드 상한 초과는 -EINVAL로 거부한다. 패키지 기본 edgeconf는 640x360@30을 유지한다. 640x360 KEEP은 AP1302/CSI 출력 context만 바꾸며, 과거 실측 113~115 FPS이므로 정확한 120 FPS 전달을 보장하지 않는다. crop_enable, 공통 1.00x~3.00x dz, 채널별 중심 cache/replay, 듀얼 HINF pair-health 판정, 노출 seed broadcast/replay 보존을 포함한다. module srcversion은 00FEDDF6CFD9B1C1F2F0E6B이고 source commit은 cf7f867다. 직전 배포본(f6230c5)과의 차이는 PR #95 하나이며 주석·문서 변경뿐이다 — 기능 변화는 없고 srcversion 도 그대로다. 그런데도 .ko sha256 이 4a002c3e…에서 5f1cf39e…로 바뀌었다: 이 드라이버는 __LINE__ 을 printk 인자로 152곳에서 넘기므로 주석이 줄을 밀면 컴파일된 상수가 바뀌는 것이 원인으로 추정된다(격리 실험은 하지 않았다). 그 앞 배포본(c25f7a68)과의 차이는 드라이버를 바꾼 머지 여섯 개다 — PR #77 preview AE max ET, #81 crop 기본값 seed, #83 fps 를 하드웨어 신원에서 분리, #87 STREAMOFF 와 실패한 STREAMON 이 자기 FSYNC 예약을 돌려줌, #90 V4L2_CID_PIXEL_RATE 를 저장 대신 읽을 때 유도, #93 cancel·lease 만료·remove 생존자 정지가 자기 예약만 해제. 따라서 하나의 프로그램된 등가류 안에서의 cadence 변경은 초기화된 epoch 을 재사용한다. 실기 전달률은 이 빌드에서 측정하지 않았다.",
+      "note": "MAX9296 2.12 build다. 1920x1080/3840x1080은 최대 30 FPS, 1280x720/2560x720은 최대 60 FPS, 640x360은 기본 빌드에서 1~120 FPS 요청을 허용한다. mode-valid 31 FPS 이상의 EXP_TIME(0x500c) 수동 쓰기는 frame-period 정보를 경고한 뒤 적용하며, 모드 상한 초과는 -EINVAL로 거부한다. 패키지 기본 edgeconf는 640x360@30을 유지한다. 640x360 KEEP은 AP1302/CSI 출력 context만 바꾸며, 과거 실측 113~115 FPS이므로 정확한 120 FPS 전달을 보장하지 않는다. crop_enable, 공통 1.00x~3.00x dz, 채널별 중심 cache/replay, 듀얼 HINF pair-health 판정, 노출 seed broadcast/replay 보존을 포함한다. 이 배포는 직전 배포본과 달리 기능 변경을 싣는다 (PR #98, 이슈 #96): probe 가 전원을 꺼둔 부품으로 prepare 를 시도하면 첫 i2c 쓰기 전에 -ENODEV 로 거부한다. 실기 영향은 한쪽만 unbind 후 bind 하는 복구 경로가 거부되는 것이고(이전에는 i2c 쓰기 실패가 쏟아지면서 복구도 실패했다), 정상 복구 경로는 모듈 전체 재적재 또는 cam-operate.service 재시작이다. powerdown-gpios 를 선언한 보드에만 적용된다. 보드에서 양쪽 대조로 측정했다 — 정상 prepare 통과(게이트 0회 발동) / 한쪽 rebind errno=-19 와 Error i2c write 0줄(이전엔 수십 줄). module srcversion 은 7F99CB433CAC065390A1E71 이고 source commit 은 0df95e9 다. 직전 배포본(cf7f867)과의 차이는 머지 셋이고 그중 소스를 바꾼 것은 PR #98 하나다 — #97·#99 는 문서와 측정 기록뿐이며 git diff --name-only cf7f867..0df95e9 -- '*.c' '*.h' 로 확인된다. 그래서 srcversion 이 00FEDDF6CFD9B1C1F2F0E6B 에서 바뀌었다. 직전 배포가 주석 변경뿐이라 srcversion 이 그대로였던 것과 대비된다. 다만 .ko sha256 은 소스 내용만의 함수가 아니다. 이 드라이버는 __LINE__ 을 printk 인자로 넘기므로(grep -c '__LINE__' max9296.c) 주석이 줄을 밀면 컴파일된 상수가 바뀌고, 빌드 경로 문자열도 박히므로 바이트 동일한 트리를 다른 경로에서 빌드하면 해시가 달라진다 — 둘 다 max9296 저장소 README 의 '.ko 해시는 소스 내용만의 함수가 아니다' 절에 실측으로 기록돼 있다. 이 배포본은 깨끗한 0df95e9 체크아웃에서 같은 경로로 재빌드해 바이트 동일(cmp)을 확인했으므로 source.commit 결속은 재현으로 뒷받침된다. 실기 전달률은 이 빌드에서 측정하지 않았다.",
       "required_strings": [
         "dev_attr_prepare",
         "max9296_prepare_adopt_power_locked",
