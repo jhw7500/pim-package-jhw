@@ -9,6 +9,7 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -1135,6 +1136,10 @@ def _probe_runner(
     아무 관계가 없으므로, 러너가 `grep -q MARKER "$t"` 나 shebang·줄 수·해시로 분기하면 그
     판정은 보일러플레이트에서 나온다. 내용을 복사하면 실제 테스트가 돌아가 스텁의 존재 이유가
     사라지므로 구조적으로 닫을 수 없다. 지금 두 러너에는 그런 가드가 없다(실측).
+
+    소유자(`[ -O ]`·`[ -G ]`), 확장 속성, 하드링크 수도 같은 부류로 남겨 둔다. 닫으려면 다른
+    UID 로 `chown` 하거나 xattr 를 복사해야 하는데, 셸 테스트 러너가 그것으로 분기하는 일은
+    현실적이지 않다. 지금 두 러너에는 그런 가드가 없다(실측).
     """
     errors: List[str] = []
     with tempfile.TemporaryDirectory() as tmp:
@@ -1172,7 +1177,9 @@ def _probe_runner(
                     "exit 0\n",
                     encoding="utf-8",
                 )
-            stub.chmod(sibling.stat().st_mode & 0o7777)
+            # 모드와 타임스탬프를 함께 옮긴다. 모드가 갈리면 `-x` 가드에서, mtime 이
+            # 갈리면 `[ "$t" -nt stamp ]` 같은 증분 가드에서 과잉 보고가 된다.
+            shutil.copystat(sibling, stub)
         try:
             done = subprocess.run(
                 ["/bin/bash", str(copied)],
@@ -1388,6 +1395,65 @@ class SystemdRecoveryContract(unittest.TestCase):
         if not _tmpdir_can_exec():
             self.skipTest("TMPDIR is mounted noexec; the executable half is unmeasurable")
         self.assertEqual(["a_test.sh"], self._probe_shapes(guarded))
+
+    def _probe_one_sibling(self, body: str, prepare) -> Tuple[List[str], List[str]]:
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            runner = work / "run_all.sh"
+            runner.write_text(body, encoding="utf-8")
+            runner.chmod(0o755)
+            sibling = work / "a_test.sh"
+            prepare(sibling)
+            return _probe_runner(runner, (sibling,))
+
+    def test_runner_probe_refuses_a_sibling_it_cannot_represent(self) -> None:
+        # 고치면 고정한다. 심볼릭 링크와 0 바이트는 스텁으로 표현할 수 없으므로 조용히
+        # 통과하면 안 된다 — 이름이 적힌 오류와 빈 목록이 나와야 하고, 그래야 멤버십 검사가
+        # `found 0` 으로 끊는다.
+        body = (
+            "TESTS=(\n    a_test.sh\n)\n"
+            'for t in "${TESTS[@]}"; do\n    bash "$t"\ndone\n'
+        )
+
+        def as_symlink(sibling: Path) -> None:
+            target = sibling.parent / "a_real.sh"
+            target.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            target.chmod(0o755)
+            sibling.symlink_to(target.name)
+
+        def as_empty(sibling: Path) -> None:
+            sibling.write_text("", encoding="utf-8")
+
+        for label, prepare in (("symlink", as_symlink), ("empty", as_empty)):
+            entries, errors = self._probe_one_sibling(body, prepare)
+            self.assertEqual([], entries, label)
+            self.assertTrue(
+                any("a_test.sh" in e and "stand in for it" in e for e in errors),
+                (label, errors),
+            )
+
+    def test_runner_probe_keeps_the_sibling_timestamp(self) -> None:
+        # 증분 러너가 쓰는 `[ "$t" -nt stamp ]` 가드. 스텁 mtime 이 "지금"이면 러너가 실행
+        # 중에 만드는 stamp 보다 오래되어 건너뛰게 되고, 실제로는 도는 테스트가 누락으로
+        # 보고된다. 원본 mtime 을 옮기면 일치한다. 미래 시각을 쓰는 이유는 stamp 가 스텁보다
+        # 나중에 만들어져, 보존하지 않으면 `-nt` 가 반드시 거짓이 되기 때문이다.
+        body = (
+            "TESTS=(\n    a_test.sh\n)\n"
+            "touch stamp\n"
+            'for t in "${TESTS[@]}"; do\n'
+            '    if [ "$t" -nt stamp ]; then bash "$t"; fi\n'
+            "done\n"
+        )
+
+        def dated(sibling: Path) -> None:
+            sibling.write_text("# placeholder\n", encoding="utf-8")
+            sibling.chmod(0o755)
+            future = time.time() + 86400
+            os.utime(sibling, (future, future))
+
+        entries, errors = self._probe_one_sibling(body, dated)
+        self.assertEqual([], errors)
+        self.assertEqual(["a_test.sh"], entries)
 
     def test_runner_probe_observes_direct_execution(self) -> None:
         # 직접 실행 형식은 지금 두 러너가 쓰지 않지만, 쓰게 되면 관측돼야 한다. 이 모양만
