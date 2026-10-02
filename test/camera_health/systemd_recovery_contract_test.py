@@ -1114,9 +1114,25 @@ def _runner_entries(relative: str, text: str) -> Tuple[List[str], List[str]]:
     않고 스칼라 미끼로도 항목이 생기지 않는다. 주석도 파서가 먼저 걷어낸다. 따라서 별도의
     주석 처리나 대입 개수 고정이 필요하지 않다.
 
-    덮지 못하는 범위: 배열을 도는 `for` 루프 자체를 비활성화하면 이 검사는 통과한다. 루프
-    본문은 제어 본문이라 추출기가 의도적으로 건너뛴다. 보증은 "이름이 무조건 경로에 있다"
-    까지다.
+    보증하는 것은 정확히 하나다: **그 이름이 무조건 경로에 있다.** 무언가가 그것을 실제로
+    호출한다는 것은 보증하지 않는다. 받아들인 맹점 둘을 적어 둔다(둘 다 실측했고 아래
+    test_runner_entry_parser_counts_bare_names_by_design 이 고정한다).
+
+    1. 접두어 없는 맨 `name.sh` / `name.py` 줄은 무조건 경로에 있기만 하면 실행으로 센다.
+       배열 항목인지 아닌지를 이 지점에서는 구별할 수 없다. 현실적인 사고는 누군가
+       `bash recovery_actions_test.sh` 를 `recovery_actions_test.sh` 로 줄여 접두어를 빠뜨리는
+       경우다 — 그러면 bash 는 실행하지 않는데 이 검사는 통과한다.
+    2. `logical_shell_lines` 에는 heredoc 인식이 없다(`<<` 처리 없음). 따라서 heredoc 본문 안의
+       맨 파일명 줄도 같은 모양으로 읽힌다.
+
+    더 좁히려면 `unconditional_shell_commands` 가 줄 번호를 함께 돌려주어 단일 토큰 매칭을
+    `TESTS=(` 와 그 닫는 `)` 사이로 제한해야 한다. 그 함수는 `runner_contract_errors` 와 파서
+    자기검사 fixture 가 공유하므로 시그니처를 바꾸면 그쪽이 깨진다. 이 가드는 이미 누출을
+    쫓는 데 다섯 라운드를 썼고, 두 러너 중 어느 것도 맨 호출이나 heredoc 을 쓰지 않으므로
+    지금은 경계를 명시하는 쪽을 택했다.
+
+    세 번째 맹점: 배열을 도는 `for` 루프 자체를 비활성화하면 이 검사는 통과한다. 루프 본문은
+    제어 본문이라 추출기가 의도적으로 건너뛴다.
     """
     logical, errors = logical_shell_lines(text)
     commands, structure_errors = unconditional_shell_commands(logical, relative)
@@ -1246,6 +1262,16 @@ class SystemdRecoveryContract(unittest.TestCase):
         for decoy in ("TESTS=()", "TESTS=''"):
             hidden = "if false; then\nTESTS=(\n    alpha_test.sh\n)\nfi\n" + decoy + "\n"
             self.assertEqual([], _runner_entries("x", hidden)[0], decoy)
+
+    def test_runner_entry_parser_counts_bare_names_by_design(self) -> None:
+        # 받아들인 맹점을 고정한다. 이 검사의 보증은 "이름이 무조건 경로에 있다" 까지이고
+        # "무언가가 그것을 호출한다" 가 아니다. 아래 두 모양은 bash 가 실행하지 않는데도
+        # 항목으로 세어진다 — 그 사실을 알고 둔 것이며, 동작이 바뀌면 여기서 걸린다.
+        stray = "TESTS=()\nrecovery_actions_test.sh\n"
+        self.assertEqual(["recovery_actions_test.sh"], _runner_entries("x", stray)[0])
+
+        heredoc = "cat <<EOF\nrecovery_actions_test.sh\nEOF\n"
+        self.assertEqual(["recovery_actions_test.sh"], _runner_entries("x", heredoc)[0])
 
     def test_runners_keep_the_issue_61_condition_tests(self) -> None:
         for relative in sorted(_RUNNER_REQUIRED_TESTS):
