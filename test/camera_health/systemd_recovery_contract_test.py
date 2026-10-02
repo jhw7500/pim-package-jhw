@@ -1096,55 +1096,38 @@ _RUNNER_REQUIRED_TESTS = {
 
 
 def _runner_entries(relative: str, text: str) -> Tuple[List[str], List[str]]:
-    """러너가 실제로 실행하는 테스트 이름만 뽑는다.
+    """러너가 실제로 실행하는 테스트 이름만, 이 파일의 구조 파서로만 뽑는다.
 
-    정규식으로 파일명을 긁으면 두 가지가 샌다. 둘 다 트리뷰널·Codex 리뷰에서 실측으로
-    확인했다.
+    정규식으로 파일명을 긁던 앞선 판은 bash 가 실행하지 않는 것을 세어 네 번 샜다. 모두
+    실측으로 확인했다: 배열 안 주석 처리(실제 실행 16→15), 줄 형식을 `if false` 로 감싸기,
+    죽은 분기의 배열 + 무조건 빈 배열 미끼, 죽은 분기의 배열 + 무조건 스칼라 `TESTS=''` 미끼.
+    패치를 쌓는 대신 `unconditional_shell_commands` 하나만 쓰도록 바꿨다 — 정의부와 제어
+    본문을 건너뛰도록 만들어진 장치이고 `runner_contract_errors` 가 쓰는 것과 같다.
 
-    1. 주석. `TESTS=()` 안에서 한 줄을 주석 처리하면 bash 는 건너뛰지만 배열 본문을 그대로
-       split 하면 파일명이 들어온다. cam_link 러너에서 legacy_wrapper_test.sh 를 주석
-       처리하면 실제 실행이 16 에서 15 로 줄었는데도 검사는 통과했다.
-    2. 죽은 제어 흐름. `if false; then bash x; fi` 로 감싸면 bash 는 실행하지 않지만 정규식은
-       그대로 센다. camera_health 러너에서 recovery_protocol_test.sh 를 그렇게 옮기자 검사가
-       통과했다.
+    그 추출기는 두 형식을 모두 노출한다(실측):
 
-    그래서 줄 형식은 이 파일이 이미 가진 `unconditional_shell_commands` 로 뽑는다 — 정의부와
-    제어 본문을 건너뛰도록 만들어진 장치이고 `runner_contract_errors` 가 쓰는 것과 같다.
+        bash x.sh            → ['bash', 'x.sh']
+        TESTS=(\n  a.sh\n)   → ['TESTS='], ['a.sh']
+        TESTS=''             → ['TESTS=']            (항목 없음)
 
-    배열 형식(`TESTS=()`)은 그 추출기가 `['TESTS=']` 로 접어 항목을 주지 않으므로, 대입 자체가
-    무조건 경로에 있는지를 그 추출기로 확인한 뒤 본문을 주석을 걷어내고 split 한다.
+    배열 항목이 단일 토큰 명령으로 나오므로, 배열이 죽은 분기에 있으면 항목이 아예 나오지
+    않고 스칼라 미끼로도 항목이 생기지 않는다. 주석도 파서가 먼저 걷어낸다. 따라서 별도의
+    주석 처리나 대입 개수 고정이 필요하지 않다.
 
-    덮지 못하는 범위: 배열 항목을 도는 `for` 루프 자체를 비활성화하면(예: 루프를 `if false`
-    안으로) 이 검사는 통과한다. 루프 본문은 제어 본문이라 추출기가 의도적으로 건너뛰기
-    때문이다. 대입이 무조건이라는 것까지만 보증한다.
+    덮지 못하는 범위: 배열을 도는 `for` 루프 자체를 비활성화하면 이 검사는 통과한다. 루프
+    본문은 제어 본문이라 추출기가 의도적으로 건너뛴다. 보증은 "이름이 무조건 경로에 있다"
+    까지다.
     """
     logical, errors = logical_shell_lines(text)
     commands, structure_errors = unconditional_shell_commands(logical, relative)
     errors.extend(structure_errors)
 
-    entries = [
-        command[1]
-        for command in commands
-        if len(command) == 2 and command[0] in ("bash", "python3")
-    ]
-
-    arrays = re.findall(r"TESTS=\(([^)]*)\)", text)
-    if arrays:
-        # 대입이 둘 이상이면 어느 것이 실제로 쓰이는지 이 검사로 알 수 없다. 하나는 무조건
-        # 경로에 두고 다른 하나를 죽은 분기에 숨기면 두 조건이 서로 다른 대입으로 만족되어
-        # 검사가 통과한다(실측). 그래서 개수까지 고정한다.
-        unconditional = sum(
-            1 for command in commands if command and command[0].startswith("TESTS=")
-        )
-        if len(arrays) != 1 or unconditional != 1:
-            errors.append(
-                f"{relative}: expected exactly one TESTS array assignment on the "
-                f"unconditional path; found {len(arrays)} literal(s) and "
-                f"{unconditional} unconditional assignment(s)"
-            )
-        else:
-            for line in arrays[0].splitlines():
-                entries.extend(re.sub(r"(?:^|\s)#.*$", "", line).split())
+    entries: List[str] = []
+    for command in commands:
+        if len(command) == 2 and command[0] in ("bash", "python3"):
+            entries.append(command[1])
+        elif len(command) == 1 and command[0].endswith((".sh", ".py")):
+            entries.append(command[0])
     return entries, errors
 
 
@@ -1238,8 +1221,8 @@ class SystemdRecoveryContract(unittest.TestCase):
         )
 
     def test_runner_entry_parser_ignores_unreachable_tests(self) -> None:
-        # 이 파서가 주석이나 죽은 분기를 세면 아래 멤버십 검사가 조용히 무력해진다.
-        # 두 누출 경로를 각각 고정한다.
+        # bash 가 실행하지 않는 것을 세면 아래 멤버십 검사가 조용히 무력해진다. 실측으로
+        # 확인된 네 누출 경로를 각각 고정한다.
         array = (
             "TESTS=(\n"
             "    alpha_test.sh\n"
@@ -1247,28 +1230,22 @@ class SystemdRecoveryContract(unittest.TestCase):
             "    # gamma_test.sh\n"
             "    delta_test.sh  # 줄 끝 주석\n"
             ")\n"
-            'for t in "${TESTS[@]}"; do bash "$t"; done\n'
         )
-        entries, errors = _runner_entries("test/cam_link/run_all.sh", array)
+        entries, errors = _runner_entries("x", array)
         self.assertEqual([], errors)
         self.assertEqual(["alpha_test.sh", "delta_test.sh"], entries)
 
         lines = "bash real_test.sh\n# bash commented_test.sh\n"
         self.assertEqual(["real_test.sh"], _runner_entries("x", lines)[0])
 
-        dead = "bash real_test.sh\nif false; then\nbash disabled_test.sh\nfi\n"
-        self.assertEqual(["real_test.sh"], _runner_entries("x", dead)[0])
+        dead_line = "bash real_test.sh\nif false; then\nbash disabled_test.sh\nfi\n"
+        self.assertEqual(["real_test.sh"], _runner_entries("x", dead_line)[0])
 
-        # 배열 대입 자체가 도달 불가하면 항목을 신뢰할 수 없으므로 오류로 낸다.
-        hidden = (
-            "if false; then\nTESTS=(\n    alpha_test.sh\n)\nfi\n"
-            "TESTS=()\n"
-        )
-        hidden_entries, hidden_errors = _runner_entries("test/cam_link/run_all.sh", hidden)
-        self.assertEqual([], hidden_entries)
-        self.assertTrue(
-            any("unconditional path" in e for e in hidden_errors), hidden_errors
-        )
+        # 배열을 죽은 분기에 숨기고 무조건 경로에 미끼를 두는 두 형태. 빈 배열 미끼든
+        # 스칼라 미끼든 항목이 생기지 않아야 한다.
+        for decoy in ("TESTS=()", "TESTS=''"):
+            hidden = "if false; then\nTESTS=(\n    alpha_test.sh\n)\nfi\n" + decoy + "\n"
+            self.assertEqual([], _runner_entries("x", hidden)[0], decoy)
 
     def test_runners_keep_the_issue_61_condition_tests(self) -> None:
         for relative in sorted(_RUNNER_REQUIRED_TESTS):
