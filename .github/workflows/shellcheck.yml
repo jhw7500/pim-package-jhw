@@ -63,8 +63,16 @@ jobs:
                 # 첫 줄만, 그것도 앞 200 바이트까지만 본다. 명령치환이 아니라 파이프로
                 # 넘기는 이유는 추적 파일에 바이너리(.ko 등)가 섞여 있어 치환이면 NUL
                 # 경고를 쏟기 때문이다. 바이너리는 이 패턴에 걸리지 않는다.
+                # sed 는 GNU env 의 split-string 옵션을 공백으로 되돌린다. `-Sbash` 나
+                # `--split-string=bash` 는 인터프리터 앞이 공백도 `/` 도 아니어서 아래
+                # 패턴에 안 걸리고, 그러면 셸 스크립트가 조용히 게이트 밖으로 빠진다 -
+                # 이 PR 이 닫으려는 실패와 같은 모양이다(실측). 공백만 끼워 넣으므로
+                # `-S` 뒤가 셸 이름이 아니면 포함 판정이 바뀌지 않는다.
+                # 이름 뒤 `[0-9.]*` 는 `ksh93`·`bash5` 처럼 버전이 붙는 변형을 받는다.
                 head -c 200 -- "$f" 2>/dev/null | head -n 1 \
-                  | LC_ALL=C grep -Eq '^#!.*[[:space:]/](sh|bash|dash|ksh|zsh)([[:space:]]|$)' \
+                  | LC_ALL=C sed -E 's/(^|[[:space:]])(-S|--split-string=)/\1 /g' \
+                  | LC_ALL=C grep -Eq \
+                    '^#!.*[[:space:]/](sh|bash|dash|ksh|zsh)[0-9.]*([[:space:]]|$)' \
                   || continue
                 ;;
             esac
