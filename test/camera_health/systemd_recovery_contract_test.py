@@ -1120,10 +1120,13 @@ def _probe_runner(
     정적 판에서 거짓 실패였던 두 모양(한 줄 배열 `TESTS=( a.sh )`, 배열 주석 안의 `)`)이
     정상 통과한다 — bash 가 그것들을 실제로 실행하기 때문이다.
 
-    스텁은 원본 파일의 **모드를 그대로** 받는다. 전부 0755 로 두면 과잉 보고가 된다 — 러너가
-    `if [ -x "$t" ]; then ./"$t"; fi` 처럼 가드하면 실제로는 건너뛰는 0644 테스트가 "실행됨"으로
-    기록되어 조용히 통과한다. 저장소에 0644 테스트가 실제로 있다(`cam_liveness_test.sh`,
-    `cam_stop_order_test.sh`). 실측으로 확인했고 `test_runner_probe_honours_the_exec_bit` 가 고정한다.
+    스텁은 원본 파일의 **모드와 타임스탬프를 그대로** 받는다(`copystat`). 전부 0755 에 "지금"
+    시각으로 두면 과잉 보고가 된다 — 러너가 `if [ -x "$t" ]; then ./"$t"; fi` 로 가드하면 실제로는
+    건너뛰는 0644 테스트가 "실행됨"으로 기록되고, `[ "$t" -nt stamp ]` 로 가드하면 반대로 실제로는
+    도는 테스트가 누락으로 보고된다(스텁이 러너가 실행 중에 만드는 stamp 보다 오래되므로). 저장소에
+    0644 테스트가 실제로 있다(`cam_liveness_test.sh`, `cam_stop_order_test.sh`). 둘 다 실측으로
+    확인했고 `test_runner_probe_honours_the_exec_bit` 와
+    `test_runner_probe_keeps_the_sibling_timestamp` 가 각각 고정한다.
 
     경계: 러너가 `./x.sh` 처럼 직접 실행해도 그 스텁이 돌아 기록된다(실측). 러너가 여기 없는
     이름이나 `../other/x.sh` 를 부르면 스텁이 없어 기록되지 않고 멤버십 검사가 "못 찾았다"로
