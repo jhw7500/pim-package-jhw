@@ -69,6 +69,19 @@ jobs:
                 # 이 PR 이 닫으려는 실패와 같은 모양이다(실측). 공백만 끼워 넣으므로
                 # `-S` 뒤가 셸 이름이 아니면 포함 판정이 바뀌지 않는다.
                 # 이름 뒤 `[0-9.]*` 는 `ksh93`·`bash5` 처럼 버전이 붙는 변형을 받는다.
+                #
+                # 여기서 멈추는 경계는 shellcheck 자신이 정한다 - 게이트가 검사기보다
+                # 정밀할 수 없다. v0.9.0 에 같은 shebang 들을 직접 물어본 결과:
+                #   -Sbash / --split-string=bash / ksh93  -> 셸로 인식 (위 판정과 일치)
+                #   -S'bash' / -S\ bash                   -> SC1008 error, 못 읽는다
+                #   env python3 / /usr/bin/python3        -> SC1071, 비셸로 정확히 식별
+                #   -S -u bash python3                    -> 셸로 인식 (shellcheck 도 틀린다)
+                # 그래서 인용·이스케이프된 split-string 은 **일부러** 받지 않는다. 받으면
+                # shellcheck 가 SC1008 로 거부해, 분석할 수 없는 파일 때문에 게이트가
+                # 빨개진다. `-S -u bash python3` 처럼 셸 이름이 다른 옵션의 피연산자인
+                # 형태는 과포획으로 남는다 - 위임할 오라클이 없고(shellcheck 도 같은 맹점),
+                # 결과가 조용한 통과가 아니라 시끄러운 실패라서 그대로 둔다. 이 저장소에는
+                # 두 형태 모두 없다(실측).
                 head -c 200 -- "$f" 2>/dev/null | head -n 1 \
                   | LC_ALL=C sed -E 's/(^|[[:space:]])(-S|--split-string=)/\1 /g' \
                   | LC_ALL=C grep -Eq \
