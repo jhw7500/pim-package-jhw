@@ -1130,6 +1130,11 @@ def _probe_runner(
     않는다. 단 하나 열린 경계는 러너가 체크아웃 **절대 경로**를 박아 넣는 경우다. 그러면 사본이
     아니라 실제 파일이 돌아간다. 지금 두 러너는 `cd "$(dirname "$0")"` 뒤 같은 디렉터리의 맨
     파일명만 부르므로 도달하지 않는다.
+
+    닫지 못하는 축은 **내용 기반 가드** 하나다. 스텁 본문은 고정 보일러플레이트라 실제 파일과
+    아무 관계가 없으므로, 러너가 `grep -q MARKER "$t"` 나 shebang·줄 수·해시로 분기하면 그
+    판정은 보일러플레이트에서 나온다. 내용을 복사하면 실제 테스트가 돌아가 스텁의 존재 이유가
+    사라지므로 구조적으로 닫을 수 없다. 지금 두 러너에는 그런 가드가 없다(실측).
     """
     errors: List[str] = []
     with tempfile.TemporaryDirectory() as tmp:
@@ -1141,6 +1146,16 @@ def _probe_runner(
         shutil.copy2(runner, copied)
         for sibling in siblings:
             if sibling.name == runner.name:
+                continue
+            # 스텁으로 **표현할 수 없는** 형제는 조용한 통과의 씨앗이다. 심볼릭 링크는 평범한
+            # 파일로밖에 쓸 수 없고(링크로 만들면 실제 테스트가 돌아간다), 0 바이트 파일은
+            # 기록 코드를 담는 순간 0 바이트가 아니게 된다. 러너가 `[ -L ]`·`[ -s ]` 로
+            # 가드하면 탐침과 실제가 갈린다. 지금 둘 다 없으므로(실측), 생기면 조용히 틀리는
+            # 대신 스텁을 만들지 않고 큰 소리로 실패하게 둔다.
+            if sibling.is_symlink() or sibling.stat().st_size == 0:
+                errors.append(
+                    f"{sibling.name} is a symlink or empty; a stub cannot stand in for it"
+                )
                 continue
             stub = work / sibling.name
             if sibling.suffix == ".py":
