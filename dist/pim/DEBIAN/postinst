@@ -39,10 +39,18 @@ cpchk() {
 }
 
 # glob 을 -f 에 직접 넘기면 2 개 이상 매칭될 때 test 가 판정이 아니라 오류를 낸다 (SC2144).
-# 실측 rc: 0 개 -> 0(리터럴 glob 이므로 -f 거짓), 1 개 -> 1, 2 개 이상 -> 2 와
-# "too many arguments" 를 stderr 로. 결과 자체는 세 경우 모두 바뀌지 않지만, 2 개 이상에서
-# 맞는 쪽으로 가는 것은 우연이고 dpkg 설치 로그에 오류 문구가 남는다. 이 함수는 같은 결과를
-# 판정으로 낸다 - 0 개 copy, 1 개 skip, 2 개 이상 skip (실측).
+# 실측 rc 와 stderr:
+#   0 개 -> rc 0, 침묵 (리터럴 glob 이므로 -f 가 거짓)
+#   1 개 -> rc 1, 침묵
+#   2 개 -> rc 2, `[: <경로>: binary operator expected`
+#   3 개 이상 -> rc 2, `[: too many arguments`
+# 분기 결과는 네 경우 모두 바뀌지 않지만(0 개 copy, 나머지 skip), 2 개 이상에서 맞는 쪽으로
+# 가는 것은 우연이고 dpkg 설치 로그에 오류 문구가 남는다. 이 함수는 같은 결과를 판정으로 낸다.
+#
+# 문구가 매칭 수에 따라 갈리므로 로그로 확인할 때 `too many arguments` 만 찾으면 2 개인 경우를
+# 놓친다. `grep -E 'binary operator expected|too many arguments'` 를 쓴다. 그리고 1 개 이하면
+# 구버전도 침묵하므로, 그 조건에서 "오류 문구 없음" 은 이 수정의 근거가 되지 못한다 - 먼저
+# `ls -1 /root/shared_v/edgeconf*.json | wc -l` 로 전제를 확인한다.
 globHasFile() {
   for candidate in "$@"; do
     [ -f "$candidate" ] && return 0
