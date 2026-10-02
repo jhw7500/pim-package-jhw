@@ -3,9 +3,12 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shlex
+import shutil
 import subprocess
+import tempfile
 import unittest
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -1095,78 +1098,80 @@ _RUNNER_REQUIRED_TESTS = {
 }
 
 
-def _tests_array_names(text: str) -> set:
-    """`TESTS=( ... )` 리터럴에 적힌 이름 집합. **출처 판정에만** 쓴다.
+def _probe_runner(runner: Path, siblings: Sequence[str]) -> Tuple[List[str], List[str]]:
+    """러너가 실제로 실행하는 테스트 파일명. 정적 파싱이 아니라 **돌려 보고 관측**한다.
 
-    도달 가능성은 여기서 판단하지 않는다 — 그건 `unconditional_shell_commands` 가 한다.
-    이 함수는 "그 이름이 러너가 실제로 도는 배열에 적혀 있는가" 만 답한다. 둘을 교집합하면
-    주석·죽은 분기(도달 불가)와 다른 배열·맨 줄·heredoc·여러 줄 `$( )`(출처 불일치)가 모두
-    빠진다.
+    러너를 빈 디렉터리에 복사하고 그 옆에 형제 테스트들과 **같은 이름의 기록 스텁**만 둔 뒤
+    bash 로 한 번 돌린다. 스텁은 자기 이름을 로그에 적고 즉시 0 으로 끝나므로 실제 테스트는
+    하나도 돌지 않고, 로그가 곧 "bash 가 실행한 목록"이다. 이 파일 자신도 스텁으로 대체되니
+    재귀는 구조적으로 불가능하다.
+
+    정적 파싱을 버린 이유: 같은 질문("러너가 무엇을 실행하는가")을 정규식과 구조 추출기로
+    답하는 동안 리뷰어가 **여섯 번** 서로 다른 모양으로 뚫었다 — 배열 안 주석, 줄 형식을 죽은
+    분기로, 죽은 분기의 배열 + 빈/스칼라 미끼, `ARCHIVED_TESTS=( )` 로 이동, 리터럴 뒤의
+    `TESTS=()` 와 `unset TESTS`. 셸 의미론을 정적으로 다시 구현하는 일이라 모양을 다 셀 수
+    없고, 못 세는 것은 규칙으로 막을 수 없다. 실행은 그 열거를 아예 필요 없게 만든다.
+
+    실측으로 11개 모양을 확인했다(`test_runner_probe_observes_what_bash_executes`). 위 여섯
+    누출이 모두 닫히고, 정적 판이 **영구 맹점으로 적어 두었던 `for` 루프 비활성화까지** 잡히며,
+    정적 판에서 거짓 실패였던 두 모양(한 줄 배열 `TESTS=( a.sh )`, 배열 주석 안의 `)`)이
+    정상 통과한다 — bash 가 그것들을 실제로 실행하기 때문이다.
+
+    경계: 러너가 `./x.sh` 처럼 직접 실행해도 그 스텁이 돌아 기록된다(실측). 러너가 여기 없는
+    이름을 부르면 스텁이 없어 기록되지 않고 멤버십 검사가 "못 찾았다"로 실패한다(fail-closed).
     """
-    names: set = set()
-    # 좌측 경계가 없으면 `ARCHIVED_TESTS=(` 처럼 `TESTS=` 로 끝나는 다른 이름까지 매치된다
-    # (실측으로 걸렸다). 줄 시작과 들여쓰기만 허용한다.
-    for body in re.findall(r"^[ \t]*TESTS=\(([^)]*)\)", text, re.M):
-        for line in body.splitlines():
-            names.update(re.sub(r"(?:^|\s)#.*$", "", line).split())
-    return names
+    errors: List[str] = []
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        log = work / "invoked.log"
+        log.touch()
+        copied = work / runner.name
+        shutil.copyfile(runner, copied)
+        copied.chmod(0o755)
+        for name in siblings:
+            if name == runner.name:
+                continue
+            stub = work / name
+            if name.endswith(".py"):
+                stub.write_text(
+                    "import os, sys\n"
+                    "open(os.environ['PIM_PROBE_LOG'], 'a').write("
+                    "os.path.basename(sys.argv[0]) + '\\n')\n",
+                    encoding="utf-8",
+                )
+            else:
+                stub.write_text(
+                    "#!/bin/sh\n"
+                    'printf "%s\\n" "$(basename "$0")" >> "$PIM_PROBE_LOG"\n'
+                    "exit 0\n",
+                    encoding="utf-8",
+                )
+            stub.chmod(0o755)
+        try:
+            done = subprocess.run(
+                ["/bin/bash", str(copied)],
+                cwd=str(work),
+                env=dict(os.environ, PIM_PROBE_LOG=str(log)),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=60,
+            )
+        except subprocess.TimeoutExpired:
+            return [], [f"{runner.name} probe timed out; it did not stop on stubs"]
+        if done.returncode != 0:
+            tail = done.stdout.decode("utf-8", "replace").strip()[-200:]
+            errors.append(f"{runner.name} probe exited {done.returncode}: {tail}")
+        return log.read_text(encoding="utf-8").split(), errors
 
 
-def _runner_entries(relative: str, text: str) -> Tuple[List[str], List[str]]:
-    """러너가 실제로 실행하는 테스트 이름만, 이 파일의 구조 파서로만 뽑는다.
-
-    정규식으로 파일명을 긁던 앞선 판은 bash 가 실행하지 않는 것을 세어 네 번 샜다. 모두
-    실측으로 확인했다: 배열 안 주석 처리(실제 실행 16→15), 줄 형식을 `if false` 로 감싸기,
-    죽은 분기의 배열 + 무조건 빈 배열 미끼, 죽은 분기의 배열 + 무조건 스칼라 `TESTS=''` 미끼.
-    패치를 쌓는 대신 `unconditional_shell_commands` 하나만 쓰도록 바꿨다 — 정의부와 제어
-    본문을 건너뛰도록 만들어진 장치이고 `runner_contract_errors` 가 쓰는 것과 같다.
-
-    그 추출기는 두 형식을 모두 노출한다(실측):
-
-        bash x.sh            → ['bash', 'x.sh']
-        TESTS=(\n  a.sh\n)   → ['TESTS='], ['a.sh']
-        TESTS=''             → ['TESTS=']            (항목 없음)
-
-    배열 항목이 단일 토큰 명령으로 나오므로, 배열이 죽은 분기에 있으면 항목이 아예 나오지
-    않고 스칼라 미끼로도 항목이 생기지 않는다. 주석도 파서가 먼저 걷어낸다. 따라서 별도의
-    주석 처리나 대입 개수 고정이 필요하지 않다.
-
-    두 축을 교집합한다. **도달 가능성**은 `unconditional_shell_commands` 가(주석·죽은 분기를
-    건너뜀), **출처**는 `_tests_array_names` 가(러너가 실제로 도는 `TESTS=( )` 리터럴에 적혀
-    있는가) 판단한다. 어느 한쪽만으로는 샌다 — 실측으로 확인한 것들:
-
-    | 모양 | 한쪽만 볼 때 | 교집합 |
-    | --- | --- | --- |
-    | 배열 안 주석 | 출처만 보면 통과 | 제외 |
-    | 죽은 분기의 배열 | 출처만 보면 통과 | 제외 |
-    | `ARCHIVED_TESTS=( )` 로 이동 | 도달성만 보면 통과 | 제외 |
-    | 맨 `name.sh` 줄 | 도달성만 보면 통과 | 제외 |
-    | heredoc 본문의 파일명 | 도달성만 보면 통과 | 제외 |
-    | 여러 줄 `$( )` 안의 파일명 | 도달성만 보면 통과 | 제외 |
-
-    `_tests_array_names` 의 정규식에는 좌측 경계가 필요하다 — 없으면 `ARCHIVED_TESTS=(` 처럼
-    `TESTS=` 로 끝나는 다른 이름까지 매치된다(실측으로 걸렸다).
-
-    남는 맹점 하나: 배열을 도는 `for` 루프 자체를 비활성화하면 이 검사는 통과한다. 루프 본문은
-    제어 본문이라 추출기가 의도적으로 건너뛴다. 보증은 "이름이 러너의 `TESTS` 배열에 적혀 있고
-    그 배열이 무조건 경로에 있다" 까지다.
-    """
-    logical, errors = logical_shell_lines(text)
-    commands, structure_errors = unconditional_shell_commands(logical, relative)
-    errors.extend(structure_errors)
-
-    array_names = _tests_array_names(text)
-    entries: List[str] = []
-    for command in commands:
-        if len(command) == 2 and command[0] in ("bash", "python3"):
-            entries.append(command[1])
-        elif len(command) == 1 and command[0] in array_names:
-            entries.append(command[0])
-    return entries, errors
-
-
-def runner_membership_errors(relative: str, text: str) -> List[str]:
-    entries, errors = _runner_entries(relative, text)
+def runner_membership_errors(relative: str) -> List[str]:
+    runner = ROOT / relative
+    siblings = sorted(
+        entry.name
+        for entry in runner.parent.iterdir()
+        if entry.is_file() and entry.suffix in (".sh", ".py")
+    )
+    entries, errors = _probe_runner(runner, siblings)
     for name in _RUNNER_REQUIRED_TESTS[relative]:
         found = entries.count(name)
         if found != 1:
@@ -1254,60 +1259,69 @@ class SystemdRecoveryContract(unittest.TestCase):
             "DEBIAN/control", control_errors(read(Path("DEBIAN/control")))
         )
 
-    def test_runner_entry_parser_ignores_unreachable_tests(self) -> None:
-        # bash 가 실행하지 않는 것을 세면 아래 멤버십 검사가 조용히 무력해진다. 실측으로
-        # 확인된 네 누출 경로를 각각 고정한다.
-        array = (
-            "TESTS=(\n"
-            "    alpha_test.sh\n"
-            "#    beta_test.sh\n"
-            "    # gamma_test.sh\n"
-            "    delta_test.sh  # 줄 끝 주석\n"
-            ")\n"
-        )
-        entries, errors = _runner_entries("x", array)
-        self.assertEqual([], errors)
-        self.assertEqual(["alpha_test.sh", "delta_test.sh"], entries)
+    def _probe_shapes(self, body: str, clean_exit: bool = True) -> List[str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = Path(tmp) / "run_all.sh"
+            runner.write_text(body, encoding="utf-8")
+            entries, errors = _probe_runner(
+                runner, ("a_test.sh", "b_test.sh", "c_test.py")
+            )
+            # bash 가 돌리기를 거부하는 모양은 종료코드가 0 이 아닐 수 있다(스칼라 미끼는
+            # `bash ""` 를 실행해 127 이 된다). 그 진단은 실제 러너용으로 남겨 두고 여기서는
+            # 면제하되, 타임아웃은 어느 모양에서도 허용하지 않는다 — 그건 스텁이 듣지 않아
+            # 진짜 테스트가 돌았다는 뜻이고, 목록 자체를 신뢰할 수 없게 만든다.
+            if clean_exit:
+                self.assertEqual([], errors, body)
+            else:
+                self.assertEqual([], [e for e in errors if "timed out" in e], body)
+            return entries
 
-        lines = "bash real_test.sh\n# bash commented_test.sh\n"
-        self.assertEqual(["real_test.sh"], _runner_entries("x", lines)[0])
+    def test_runner_probe_observes_what_bash_executes(self) -> None:
+        # 이 검사가 고정하는 것은 파서의 내부 규칙이 아니라 **bash 의 실제 동작과의 일치**다.
+        # 아래 모양은 전부 실측으로 확인했다. 음성만 고정하면 공회전하므로 양성 대조를 같이 둔다.
+        loop = 'for t in "${TESTS[@]}"; do\n    bash "$t"\ndone\n'
+        array = "TESTS=(\n    a_test.sh\n)\n"
 
-        dead_line = "bash real_test.sh\nif false; then\nbash disabled_test.sh\nfi\n"
-        self.assertEqual(["real_test.sh"], _runner_entries("x", dead_line)[0])
-
-        # 배열을 죽은 분기에 숨기고 무조건 경로에 미끼를 두는 두 형태. 빈 배열 미끼든
-        # 스칼라 미끼든 항목이 생기지 않아야 한다.
-        for decoy in ("TESTS=()", "TESTS=''"):
-            hidden = "if false; then\nTESTS=(\n    alpha_test.sh\n)\nfi\n" + decoy + "\n"
-            self.assertEqual([], _runner_entries("x", hidden)[0], decoy)
-
-    def test_runner_entry_parser_requires_reachable_and_sourced(self) -> None:
-        # 도달 가능성과 출처를 교집합한다. 아래 여섯 모양은 모두 bash 가 그 테스트를 돌리지
-        # 않으므로 항목이 하나도 나오지 않아야 한다. 각각 실측으로 확인된 누출 경로다.
-        leaks = {
-            "배열 안 주석": "TESTS=(\n#    a_test.sh\n)\n",
-            "죽은 분기의 배열": "if false; then\nTESTS=(\n    a_test.sh\n)\nfi\n",
-            "다른 배열로 이동": "TESTS=()\nARCHIVED_TESTS=(\n    a_test.sh\n)\n",
-            "맨 파일명 줄": "TESTS=()\na_test.sh\n",
-            "heredoc 본문": "TESTS=()\ncat <<EOF\na_test.sh\nEOF\n",
-            "여러 줄 명령치환": "TESTS=()\n$(\na_test.sh\n)\n",
+        # bash 가 돌리지 않는 모양 — 항목이 나오면 안 된다. 각각 리뷰어가 정적 판을 뚫은 경로다.
+        unrun = {
+            "배열 안 주석": "TESTS=(\n#    a_test.sh\n)\n" + loop,
+            "죽은 분기의 배열 + 스칼라 미끼": (
+                "TESTS=''\nif false; then\n" + array + "fi\n" + loop
+            ),
+            "다른 배열로 이동": (
+                "TESTS=()\nARCHIVED_TESTS=(\n    a_test.sh\n)\n" + loop
+            ),
+            "리터럴 뒤 빈 배열 재대입": array + "TESTS=()\n" + loop,
+            "리터럴 뒤 unset": array + "unset TESTS\n" + loop,
+            "루프 자체를 비활성화": array + "if false; then\n" + loop + "fi\n",
+            "맨 파일명 줄": "TESTS=()\na_test.sh\n" + loop,
+            "heredoc 본문": "TESTS=()\ncat <<EOF >/dev/null\na_test.sh\nEOF\n" + loop,
+            "여러 줄 명령치환": "TESTS=()\nx=$(\n  a_test.sh\n)\n" + loop,
         }
-        for label, text in leaks.items():
-            self.assertEqual([], _runner_entries("x", text)[0], label)
+        for label, body in unrun.items():
+            self.assertEqual([], self._probe_shapes(body, clean_exit=False), label)
 
-        # 반대로 실제로 도는 두 형식은 잡아야 한다(음성만 고정하면 공회전한다).
-        self.assertEqual(
-            ["a_test.sh"], _runner_entries("x", "TESTS=(\n    a_test.sh\n)\n")[0]
-        )
-        self.assertEqual(
-            ["a_test.sh"], _runner_entries("x", "  TESTS=(\n    a_test.sh\n  )\n")[0]
-        )
-        self.assertEqual(["a_test.sh"], _runner_entries("x", "bash a_test.sh\n")[0])
+        # bash 가 실제로 돌리는 모양 — 반드시 잡혀야 한다. 앞의 두 개는 정적 판에서 거짓
+        # 실패였고(한 줄 배열, 배열 주석 안의 `)`), 세 번째는 직접 실행 형식이다.
+        run = {
+            "한 줄 배열": ("TESTS=( a_test.sh )\n" + loop, ["a_test.sh"]),
+            "배열 주석 안의 닫는 괄호": (
+                "TESTS=(\n    a_test.sh  # 복구 (주의)\n    b_test.sh\n)\n" + loop,
+                ["a_test.sh", "b_test.sh"],
+            ),
+            "직접 실행": (
+                array + 'for t in "${TESTS[@]}"; do\n    ./"$t"\ndone\n',
+                ["a_test.sh"],
+            ),
+            "여러 줄 배열": (array + loop, ["a_test.sh"]),
+            "python3 직접 호출": ("python3 c_test.py\n", ["c_test.py"]),
+        }
+        for label, (body, expected) in run.items():
+            self.assertEqual(expected, self._probe_shapes(body), label)
 
     def test_runners_keep_the_issue_61_condition_tests(self) -> None:
         for relative in sorted(_RUNNER_REQUIRED_TESTS):
-            text = (ROOT / relative).read_text(encoding="utf-8")
-            self.assert_contract(relative, runner_membership_errors(relative, text))
+            self.assert_contract(relative, runner_membership_errors(relative))
 
     def test_camera_health_runner_invokes_this_contract_once(self) -> None:
         runner = (ROOT / "test/camera_health/run_all.sh").read_text(encoding="utf-8")
