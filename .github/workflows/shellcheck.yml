@@ -76,6 +76,9 @@ jobs:
                 #   -S'bash' / -S\ bash                   -> SC1008 error, 못 읽는다
                 #   env python3 / /usr/bin/python3        -> SC1071, 비셸로 정확히 식별
                 #   -S -u bash python3                    -> 셸로 인식 (shellcheck 도 틀린다)
+                #   /bin/zsh                              -> SC1071, `-s zsh` 는 Unknown shell
+                # 그래서 zsh 는 받지 않는다 - 받으면 분석 불가 파일로 게이트가 빨개진다.
+                # `ksh`·`dash`·`sh` 는 지원되므로 남긴다.
                 # 그래서 인용·이스케이프된 split-string 은 **일부러** 받지 않는다. 받으면
                 # shellcheck 가 SC1008 로 거부해, 분석할 수 없는 파일 때문에 게이트가
                 # 빨개진다. `-S -u bash python3` 처럼 셸 이름이 다른 옵션의 피연산자인
@@ -85,7 +88,7 @@ jobs:
                 head -c 200 -- "$f" 2>/dev/null | head -n 1 \
                   | LC_ALL=C sed -E 's/(^|[[:space:]])(-S|--split-string=)/\1 /g' \
                   | LC_ALL=C grep -Eq \
-                    '^#!.*[[:space:]/](sh|bash|dash|ksh|zsh)[0-9.]*([[:space:]]|$)' \
+                    '^#!.*[[:space:]/](sh|bash|dash|ksh)[0-9.]*([[:space:]]|$)' \
                   || continue
                 ;;
             esac
@@ -97,7 +100,16 @@ jobs:
           done < <(git ls-files -z)
 
           echo "Checking ${#files[@]} files (excluded ${#exclude[@]})..."
-          shellcheck -x -s bash -S error -f gcc "${files[@]}"
+          # `-s bash` 를 주지 않는다. 그러면 shellcheck 가 각 파일의 shebang 대로
+          # 검사한다. 강제하면 `#!/bin/sh` 4 개가 bash 로 검사되어 dialect 가 어긋난다
+          # (그중 3 개는 이 변경 전에도 검사 대상이었다).
+          # 다만 **이 게이트 임계에서 검출 결과는 바뀌지 않는다** - POSIX 위반 지적
+          # (SC3010/SC3030/SC3046/SC3051/SC3054/SC3059)은 전부 warning 등급이라
+          # `-S error` 에서 걸러진다. 실측: 같은 `#!/bin/sh` 미끼 파일이 임계 없이는
+          # 추론에서만 6 건, `-S error` 에서는 양쪽 모두 0 건. 220 개 전체도 양쪽 0 건.
+          # 그래도 되돌리지 않는 이유는 공짜이고 앞으로 들어오는 sh 스크립트에
+          # 올바른 dialect 가 적용되기 때문이다.
+          shellcheck -x -S error -f gcc "${files[@]}"
 
       - name: Summary
         if: always()
