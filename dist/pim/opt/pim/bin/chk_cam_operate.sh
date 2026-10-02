@@ -1437,17 +1437,14 @@ do
         drv_disc_now=$(read_driver_disconnect)
         if (( cam_disconnect_flag == 0 )) && (( drv_disc_now == 0 )); then
             rm -f "$RECOVER_REQ_INIT_CAM"
-            cam_clear_recovery
         elif [ "$drv_disc_now" -ne 0 ]; then
             logger -p local0.notice "[$KEY][$tag:$LINENO] skip recover_req init_cam: driver disconnect(0x$(printf '%x' $drv_disc_now))"
             rm -f "$RECOVER_REQ_INIT_CAM"
-            cam_clear_recovery
         elif in_init_cooldown || cam_in_init_cooldown "$init_cooldown_sec"; then
             :
         else
             logger -p local0.error "[$KEY][$tag:$LINENO] request module_reload because recover request"
             rm -f "$RECOVER_REQ_INIT_CAM"
-            cam_clear_recovery
             cam_submit_internal_action module_reload "legacy recover request"
             timer=0
             sleep 5
@@ -1465,7 +1462,6 @@ do
             retry_total=$(($retry+$retry_boot))
             if [ "$retry_total" -le 5 ]; then
                 logger -p local0.error "[$KEY][$tag:$LINENO] request module_reload because driver load fail (retry=$retry boot=$retry_boot total=$retry_total)"
-                cam_request_recovery "driver_load_fail"
                 cam_submit_internal_action module_reload "driver load failure"
             else
                 logger -p local0.error "[$KEY][$tag:$LINENO] retry_total $retry_total is over (driver load fail)"
@@ -1654,7 +1650,6 @@ do
                         cam_submit_internal_action gstapp_restart "file check failure"
                     elif [ "$retry_total" -le 5 ]; then
                         logger -p local0.error  "[$KEY][$tag:$LINENO] request module_reload (retry=$retry boot=$retry_boot total=$retry_total, next: reboot fallback at total>5 if file_chk_reboot=$file_chk_reboot)"
-                        cam_request_recovery "file_check_fail"
                         cam_submit_internal_action module_reload "file check failure"
                     else
                         logger -p local0.error "[$KEY][$tag:$LINENO] retry total $retry_total is over"
@@ -1728,7 +1723,6 @@ do
                     cam_submit_internal_action gstapp_restart "gstapp start marker missing"
                 elif [ "$retry_total" -le 4 ]; then
                     logger -p local0.error  "[$KEY][$tag:$LINENO] request module_reload (retry=$retry boot=$retry_boot total=$retry_total, next: reboot fallback at total>4 if file_chk_reboot=$file_chk_reboot)"
-                    cam_request_recovery "startup_fail"
                     cam_submit_internal_action module_reload "gstapp start marker missing"
                 else
                     logger -p local0.error "[$KEY][$tag:$LINENO] retry_total $retry_total is over"

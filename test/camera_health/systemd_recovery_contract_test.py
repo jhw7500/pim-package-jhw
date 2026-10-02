@@ -3,9 +3,13 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shlex
+import shutil
 import subprocess
+import tempfile
+import time
 import unittest
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -1068,6 +1072,171 @@ def runner_contract_errors(text: str) -> List[str]:
     return errors
 
 
+# 이슈 #61 완료 조건이 걸려 있는 테스트는 러너 목록에서 빠져도 아무것도 실패하지 않았다.
+# runner_contract_errors 는 이 계약 테스트 자신의 1회 호출만 고정하고, 그 함수는 파서
+# 자기검사가 합성 fixture 로도 호출하므로 거기에 파일 내용 요구를 더할 수 없다.
+# 그래서 두 러너의 목록 자체를 여기서 따로 고정한다.
+#
+# 각 항목이 무엇을 지키는지:
+#   recovery_protocol_test.sh   동시 요청 거부 / 카운터 정확성·재시작 생존 / reboot fallback
+#   cam_stop_order_test.sh      데몬 kill·stop 후 잔존 worker 없음 / stop 구간 재기동 0
+#   cam_operate_control_test.sh owner lifecycle ACTIVE 유지 / projection 변경 시 hard reset 선택
+#   cam_liveness_test.sh        BG checker 복구 경계 / restart_app shim 1회 전달
+#   recovery_actions_test.sh    hardware settle 순서·건수 / hard reset 이 서비스를 제어하지 않음
+#   legacy_wrapper_test.sh      호환 wrapper 가 요청만 전달 / -s·-S 무시 고지
+_RUNNER_REQUIRED_TESTS = {
+    "test/camera_health/run_all.sh": (
+        "systemd_recovery_contract_test.py",
+        "recovery_protocol_test.sh",
+        "cam_stop_order_test.sh",
+        "cam_operate_control_test.sh",
+        "cam_liveness_test.sh",
+    ),
+    "test/cam_link/run_all.sh": (
+        "recovery_actions_test.sh",
+        "legacy_wrapper_test.sh",
+    ),
+}
+
+
+def _probe_runner(
+    runner: Path, siblings: Sequence[Path]
+) -> Tuple[List[str], List[str]]:
+    """러너가 실제로 실행하는 테스트 파일명. 정적 파싱이 아니라 **돌려 보고 관측**한다.
+
+    러너를 빈 디렉터리에 복사하고 그 옆에 형제 테스트들과 **같은 이름의 기록 스텁**만 둔 뒤
+    bash 로 한 번 돌린다. 스텁은 자기 이름을 로그에 적고 즉시 0 으로 끝나므로 실제 테스트는
+    하나도 돌지 않고, 로그가 곧 "bash 가 실행한 목록"이다. 이 파일 자신도 스텁으로 대체되니
+    재귀는 구조적으로 불가능하다.
+
+    정적 파싱을 버린 이유: 같은 질문("러너가 무엇을 실행하는가")을 정규식과 구조 추출기로
+    답하는 동안 리뷰어가 **여섯 번** 서로 다른 모양으로 뚫었다 — 배열 안 주석, 줄 형식을 죽은
+    분기로, 죽은 분기의 배열 + 빈/스칼라 미끼, `ARCHIVED_TESTS=( )` 로 이동, 리터럴 뒤의
+    `TESTS=()` 와 `unset TESTS`. 셸 의미론을 정적으로 다시 구현하는 일이라 모양을 다 셀 수
+    없고, 못 세는 것은 규칙으로 막을 수 없다. 실행은 그 열거를 아예 필요 없게 만든다.
+
+    실측으로 11개 모양을 확인했다(`test_runner_probe_observes_what_bash_executes`). 위 여섯
+    누출이 모두 닫히고, 정적 판이 **영구 맹점으로 적어 두었던 `for` 루프 비활성화까지** 잡히며,
+    정적 판에서 거짓 실패였던 두 모양(한 줄 배열 `TESTS=( a.sh )`, 배열 주석 안의 `)`)이
+    정상 통과한다 — bash 가 그것들을 실제로 실행하기 때문이다.
+
+    스텁은 원본 파일의 **모드와 타임스탬프를 그대로** 받는다(`copystat`). 전부 0755 에 "지금"
+    시각으로 두면 과잉 보고가 된다 — 러너가 `if [ -x "$t" ]; then ./"$t"; fi` 로 가드하면 실제로는
+    건너뛰는 0644 테스트가 "실행됨"으로 기록되고, `[ "$t" -nt stamp ]` 로 가드하면 반대로 실제로는
+    도는 테스트가 누락으로 보고된다(스텁이 러너가 실행 중에 만드는 stamp 보다 오래되므로). 저장소에
+    0644 테스트가 실제로 있다(`cam_liveness_test.sh`, `cam_stop_order_test.sh`). 둘 다 실측으로
+    확인했고 `test_runner_probe_honours_the_exec_bit` 와
+    `test_runner_probe_keeps_the_sibling_timestamp` 가 각각 고정한다.
+
+    경계: 러너가 `./x.sh` 처럼 직접 실행해도 그 스텁이 돌아 기록된다(실측). 러너가 여기 없는
+    이름이나 `../other/x.sh` 를 부르면 스텁이 없어 기록되지 않고 멤버십 검사가 "못 찾았다"로
+    실패한다(fail-closed) — 임시 디렉터리는 저장소 트리와 무관해서 `..` 가 저장소로 돌아가지
+    않는다. 단 하나 열린 경계는 러너가 체크아웃 **절대 경로**를 박아 넣는 경우다. 그러면 사본이
+    아니라 실제 파일이 돌아간다. 지금 두 러너는 `cd "$(dirname "$0")"` 뒤 같은 디렉터리의 맨
+    파일명만 부르므로 도달하지 않는다.
+
+    닫지 못하는 축은 **내용 기반 가드** 하나다. 스텁 본문은 고정 보일러플레이트라 실제 파일과
+    아무 관계가 없으므로, 러너가 `grep -q MARKER "$t"` 나 shebang·줄 수·해시로 분기하면 그
+    판정은 보일러플레이트에서 나온다. 내용을 복사하면 실제 테스트가 돌아가 스텁의 존재 이유가
+    사라지므로 구조적으로 닫을 수 없다. 지금 두 러너에는 그런 가드가 없다(실측).
+
+    소유자(`[ -O ]`·`[ -G ]`), 확장 속성, 하드링크 수도 같은 부류로 남겨 둔다. 닫으려면 다른
+    UID 로 `chown` 하거나 xattr 를 복사해야 하는데, 셸 테스트 러너가 그것으로 분기하는 일은
+    현실적이지 않다. 지금 두 러너에는 그런 가드가 없다(실측).
+    """
+    errors: List[str] = []
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        log = work / "invoked.log"
+        log.touch()
+        copied = work / runner.name
+        # copy2 는 모드까지 옮긴다. 러너는 `/bin/bash <경로>` 로 부르므로 실행 비트가 필요 없다.
+        shutil.copy2(runner, copied)
+        for sibling in siblings:
+            if sibling.name == runner.name:
+                continue
+            # 스텁으로 **표현할 수 없는** 형제는 조용한 통과의 씨앗이다. 심볼릭 링크는 평범한
+            # 파일로밖에 쓸 수 없고(링크로 만들면 실제 테스트가 돌아간다), 0 바이트 파일은
+            # 기록 코드를 담는 순간 0 바이트가 아니게 된다. 러너가 `[ -L ]`·`[ -s ]` 로
+            # 가드하면 탐침과 실제가 갈린다. 지금 둘 다 없으므로(실측), 생기면 조용히 틀리는
+            # 대신 스텁을 만들지 않고 큰 소리로 실패하게 둔다.
+            if sibling.is_symlink() or sibling.stat().st_size == 0:
+                errors.append(
+                    f"{sibling.name} is a symlink or empty; a stub cannot stand in for it"
+                )
+                continue
+            stub = work / sibling.name
+            if sibling.suffix == ".py":
+                stub.write_text(
+                    "import os, sys\n"
+                    "open(os.environ['PIM_PROBE_LOG'], 'a').write("
+                    "os.path.basename(sys.argv[0]) + '\\n')\n",
+                    encoding="utf-8",
+                )
+            else:
+                stub.write_text(
+                    "#!/bin/sh\n"
+                    'printf "%s\\n" "$(basename "$0")" >> "$PIM_PROBE_LOG"\n'
+                    "exit 0\n",
+                    encoding="utf-8",
+                )
+            # 모드와 타임스탬프를 함께 옮긴다. 모드가 갈리면 `-x` 가드에서, mtime 이
+            # 갈리면 `[ "$t" -nt stamp ]` 같은 증분 가드에서 과잉 보고가 된다.
+            shutil.copystat(sibling, stub)
+        try:
+            done = subprocess.run(
+                ["/bin/bash", str(copied)],
+                cwd=str(work),
+                env=dict(os.environ, PIM_PROBE_LOG=str(log)),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=60,
+            )
+        except subprocess.TimeoutExpired:
+            return [], [f"{runner.name} probe timed out; it did not stop on stubs"]
+        if done.returncode != 0:
+            tail = done.stdout.decode("utf-8", "replace").strip()[-200:]
+            errors.append(f"{runner.name} probe exited {done.returncode}: {tail}")
+        return log.read_text(encoding="utf-8").split(), errors
+
+
+def _tmpdir_can_exec() -> bool:
+    """임시 디렉터리에서 실행 비트가 듣는지 본다. `noexec` 마운트면 듣지 않는다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        probe = Path(tmp) / "exec_probe.sh"
+        probe.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        probe.chmod(0o755)
+        try:
+            return (
+                subprocess.run(
+                    [str(probe)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                ).returncode
+                == 0
+            )
+        except OSError:
+            return False
+
+
+def runner_membership_errors(relative: str) -> List[str]:
+    runner = ROOT / relative
+    siblings = sorted(
+        (
+            entry
+            for entry in runner.parent.iterdir()
+            if entry.is_file() and entry.suffix in (".sh", ".py")
+        ),
+        key=lambda entry: entry.name,
+    )
+    entries, errors = _probe_runner(runner, siblings)
+    for name in _RUNNER_REQUIRED_TESTS[relative]:
+        found = entries.count(name)
+        if found != 1:
+            errors.append(f"{relative} must run {name} exactly once; found {found}")
+    return errors
+
+
 class SystemdRecoveryContract(unittest.TestCase):
     def assert_contract(self, name: str, errors: Iterable[str]) -> None:
         found = list(errors)
@@ -1147,6 +1316,164 @@ class SystemdRecoveryContract(unittest.TestCase):
         self.assert_contract(
             "DEBIAN/control", control_errors(read(Path("DEBIAN/control")))
         )
+
+    def _probe_shapes(
+        self, body: str, clean_exit: bool = True, modes: Dict[str, int] = None
+    ) -> List[str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = Path(tmp) / "run_all.sh"
+            runner.write_text(body, encoding="utf-8")
+            runner.chmod(0o755)
+            siblings = []
+            for name in ("a_test.sh", "b_test.sh", "c_test.py"):
+                sibling = Path(tmp) / name
+                sibling.write_text("# placeholder\n", encoding="utf-8")
+                sibling.chmod((modes or {}).get(name, 0o755))
+                siblings.append(sibling)
+            entries, errors = _probe_runner(runner, siblings)
+            # bash 가 돌리기를 거부하는 모양은 종료코드가 0 이 아닐 수 있다(스칼라 미끼는
+            # `bash ""` 를 실행해 127 이 된다). 그 진단은 실제 러너용으로 남겨 두고 여기서는
+            # 면제하되, 타임아웃은 어느 모양에서도 허용하지 않는다 — 그건 스텁이 듣지 않아
+            # 진짜 테스트가 돌았다는 뜻이고, 목록 자체를 신뢰할 수 없게 만든다.
+            if clean_exit:
+                self.assertEqual([], errors, body)
+            else:
+                self.assertEqual([], [e for e in errors if "timed out" in e], body)
+            return entries
+
+    def test_runner_probe_observes_what_bash_executes(self) -> None:
+        # 이 검사가 고정하는 것은 파서의 내부 규칙이 아니라 **bash 의 실제 동작과의 일치**다.
+        # 아래 모양은 전부 실측으로 확인했다. 음성만 고정하면 공회전하므로 양성 대조를 같이 둔다.
+        loop = 'for t in "${TESTS[@]}"; do\n    bash "$t"\ndone\n'
+        array = "TESTS=(\n    a_test.sh\n)\n"
+
+        # bash 가 돌리지 않는 모양 — 항목이 나오면 안 된다. 각각 리뷰어가 정적 판을 뚫은 경로다.
+        unrun = {
+            "배열 안 주석": "TESTS=(\n#    a_test.sh\n)\n" + loop,
+            "죽은 분기의 배열 + 스칼라 미끼": (
+                "TESTS=''\nif false; then\n" + array + "fi\n" + loop
+            ),
+            "다른 배열로 이동": (
+                "TESTS=()\nARCHIVED_TESTS=(\n    a_test.sh\n)\n" + loop
+            ),
+            "리터럴 뒤 빈 배열 재대입": array + "TESTS=()\n" + loop,
+            "리터럴 뒤 unset": array + "unset TESTS\n" + loop,
+            "루프 자체를 비활성화": array + "if false; then\n" + loop + "fi\n",
+            "맨 파일명 줄": "TESTS=()\na_test.sh\n" + loop,
+            "heredoc 본문": "TESTS=()\ncat <<EOF >/dev/null\na_test.sh\nEOF\n" + loop,
+            "여러 줄 명령치환": "TESTS=()\nx=$(\n  a_test.sh\n)\n" + loop,
+            # 사본 디렉터리 밖을 가리키면 스텁이 없으니 기록되지 않는다. 임시 디렉터리는
+            # 저장소 트리와 무관해서 `..` 가 저장소로 돌아가지도 않는다(fail-closed).
+            "상위 디렉터리 탈출": "TESTS=(\n    ../a_test.sh\n)\n" + loop,
+        }
+        for label, body in unrun.items():
+            self.assertEqual([], self._probe_shapes(body, clean_exit=False), label)
+
+        # bash 가 실제로 돌리는 모양 — 반드시 잡혀야 한다. 앞의 두 개는 정적 판에서 거짓
+        # 실패였고(한 줄 배열, 배열 주석 안의 `)`), 세 번째는 직접 실행 형식이다.
+        run = {
+            "한 줄 배열": ("TESTS=( a_test.sh )\n" + loop, ["a_test.sh"]),
+            "배열 주석 안의 닫는 괄호": (
+                "TESTS=(\n    a_test.sh  # 복구 (주의)\n    b_test.sh\n)\n" + loop,
+                ["a_test.sh", "b_test.sh"],
+            ),
+            "여러 줄 배열": (array + loop, ["a_test.sh"]),
+            "python3 직접 호출": ("python3 c_test.py\n", ["c_test.py"]),
+        }
+        for label, (body, expected) in run.items():
+            self.assertEqual(expected, self._probe_shapes(body), label)
+
+    def test_runner_probe_honours_the_exec_bit(self) -> None:
+        # 스텁을 전부 0755 로 두면 **과잉 보고**가 된다. `-x` 로 가드하는 러너는 비실행 테스트를
+        # 건너뛰는데, 스텁이 실행 가능하면 "실행됨"으로 기록되어 조용히 통과한다. 저장소에
+        # 0644 테스트가 실제로 있어서(`cam_liveness_test.sh`, `cam_stop_order_test.sh`) 가상의
+        # 모양이 아니다. 누락은 fail-closed 지만 과잉은 조용한 통과이므로 이 방향을 못박는다.
+        guarded = (
+            "TESTS=(\n    a_test.sh\n)\n"
+            'for t in "${TESTS[@]}"; do\n    if [ -x "$t" ]; then ./"$t"; fi\ndone\n'
+        )
+        self.assertEqual(
+            [], self._probe_shapes(guarded, modes={"a_test.sh": 0o644})
+        )
+        if not _tmpdir_can_exec():
+            self.skipTest("TMPDIR is mounted noexec; the executable half is unmeasurable")
+        self.assertEqual(["a_test.sh"], self._probe_shapes(guarded))
+
+    def _probe_one_sibling(self, body: str, prepare) -> Tuple[List[str], List[str]]:
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            runner = work / "run_all.sh"
+            runner.write_text(body, encoding="utf-8")
+            runner.chmod(0o755)
+            sibling = work / "a_test.sh"
+            prepare(sibling)
+            return _probe_runner(runner, (sibling,))
+
+    def test_runner_probe_refuses_a_sibling_it_cannot_represent(self) -> None:
+        # 고치면 고정한다. 심볼릭 링크와 0 바이트는 스텁으로 표현할 수 없으므로 조용히
+        # 통과하면 안 된다 — 이름이 적힌 오류와 빈 목록이 나와야 하고, 그래야 멤버십 검사가
+        # `found 0` 으로 끊는다.
+        body = (
+            "TESTS=(\n    a_test.sh\n)\n"
+            'for t in "${TESTS[@]}"; do\n    bash "$t"\ndone\n'
+        )
+
+        def as_symlink(sibling: Path) -> None:
+            target = sibling.parent / "a_real.sh"
+            target.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            target.chmod(0o755)
+            sibling.symlink_to(target.name)
+
+        def as_empty(sibling: Path) -> None:
+            sibling.write_text("", encoding="utf-8")
+
+        for label, prepare in (("symlink", as_symlink), ("empty", as_empty)):
+            entries, errors = self._probe_one_sibling(body, prepare)
+            self.assertEqual([], entries, label)
+            self.assertTrue(
+                any("a_test.sh" in e and "stand in for it" in e for e in errors),
+                (label, errors),
+            )
+
+    def test_runner_probe_keeps_the_sibling_timestamp(self) -> None:
+        # 증분 러너가 쓰는 `[ "$t" -nt stamp ]` 가드. 스텁 mtime 이 "지금"이면 러너가 실행
+        # 중에 만드는 stamp 보다 오래되어 건너뛰게 되고, 실제로는 도는 테스트가 누락으로
+        # 보고된다. 원본 mtime 을 옮기면 일치한다. 미래 시각을 쓰는 이유는 stamp 가 스텁보다
+        # 나중에 만들어져, 보존하지 않으면 `-nt` 가 반드시 거짓이 되기 때문이다.
+        body = (
+            "TESTS=(\n    a_test.sh\n)\n"
+            "touch stamp\n"
+            'for t in "${TESTS[@]}"; do\n'
+            '    if [ "$t" -nt stamp ]; then bash "$t"; fi\n'
+            "done\n"
+        )
+
+        def dated(sibling: Path) -> None:
+            sibling.write_text("# placeholder\n", encoding="utf-8")
+            sibling.chmod(0o755)
+            future = time.time() + 86400
+            os.utime(sibling, (future, future))
+
+        entries, errors = self._probe_one_sibling(body, dated)
+        self.assertEqual([], errors)
+        self.assertEqual(["a_test.sh"], entries)
+
+    def test_runner_probe_observes_direct_execution(self) -> None:
+        # 직접 실행 형식은 지금 두 러너가 쓰지 않지만, 쓰게 되면 관측돼야 한다. 이 모양만
+        # 실행 비트에 의존하므로 별도 메서드로 둔다 — `noexec` 환경에서 열 모양과 함께
+        # 뭉개져 "탐침이 깨졌다"로 읽히지 않게 하려는 것이다. 핵심 가드는 `bash "$t"` 라
+        # 읽기 권한만 있으면 되고 실행 비트와 무관하다.
+        if not _tmpdir_can_exec():
+            self.skipTest("TMPDIR is mounted noexec; direct execution is unmeasurable")
+        body = (
+            "TESTS=(\n    a_test.sh\n)\n"
+            'for t in "${TESTS[@]}"; do\n    ./"$t"\ndone\n'
+        )
+        self.assertEqual(["a_test.sh"], self._probe_shapes(body))
+
+    def test_runners_keep_the_issue_61_condition_tests(self) -> None:
+        for relative in sorted(_RUNNER_REQUIRED_TESTS):
+            self.assert_contract(relative, runner_membership_errors(relative))
 
     def test_camera_health_runner_invokes_this_contract_once(self) -> None:
         runner = (ROOT / "test/camera_health/run_all.sh").read_text(encoding="utf-8")

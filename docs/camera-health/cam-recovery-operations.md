@@ -172,6 +172,28 @@ source JSON을 별도 변경 절차로 수정해야 한다.
   `/var/lib/pim-camera/recovery/state.json`
 - request/action history: `/var/lib/pim-camera/recovery/history/<request-id>.json`
 
+action의 **소요 시간은 별도 필드로 저장하지 않는다.** history의 terminal action 레코드가
+`started_at`과 `finished_at`을 담으므로 소요 시간은 그 차로 구한다:
+
+```
+jq '[.actions[] | {action, status,
+      sec: (if .finished_at then .finished_at - .started_at else null end)}]' <history-file>
+```
+
+`finished_at`을 조건부로 다루는 것이 중요하다. 중단된 이력은 `finished_at`이 **없는** RUNNING
+레코드를 담을 수 있고(`cam_recovery.sh:350`의 `public_running` — 키가
+`["action","request_id","started_at","status"]`뿐이며 `:363`이 interrupted 이력에서 이를 허용한다),
+그 레코드에 뺄셈을 그대로 적용하면 jq가 `null and number cannot be subtracted`로 중단된다.
+즉 조사가 가장 필요한 순간에 아무 값도 못 얻는다. 위 형태는 종료된 action의 초와 진행 중이던
+action의 `null`을 함께 보여 준다.
+`state.json`의 키 집합에 필드를 더하면 이미 배포된 보드의 파일이 `_cr_state_valid`에서
+거부되므로, 파생 가능한 값을 위해 그 위험을 지지 않는다(이슈 #61 요구 4에 대한 결정).
+
+`errno`는 어디에도 수집하지 않는다. 실패는 action의 `rc`와 journal의 실패 단계 이름
+(`action FAILED: <action> rc=<rc> step=<step>`)으로 판정한다. 드라이버 수준 `errno`
+(예: `MAX9296_PREPARE -ESTALE`)가 필요하면 커널 로그를 직접 본다 — 단, 링버퍼는
+wrap 되므로(실측 약 38분) 사후 조회로는 놓칠 수 있다.
+
 성공한 recovery는 owner PID/invocation을 바꾸지 않고 lifecycle을 `ACTIVE`로 복귀시킨다.
 terminal action 실패, post-publish readiness 실패, 또는 복구 불가능한 state 오류는 진단과
 history를 남기고 `DEGRADED`로 전이한다. `DEGRADED`에서는 임의 liveness restart가 금지되며
