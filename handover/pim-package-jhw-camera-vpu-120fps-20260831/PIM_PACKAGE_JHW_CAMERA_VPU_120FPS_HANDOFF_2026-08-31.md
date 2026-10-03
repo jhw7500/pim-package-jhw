@@ -127,29 +127,15 @@ dpkg-query -W -f='${Package} ${Version} ${Architecture}\n' pim-mp
 > 수행했다. **최신 패키지가 깔린 보드에서는 그 플래그가 받되 무시되어 서비스를 되살리지
 > 않는다.** 그 보드에서는 `systemctl start cam-operate.service` 로 직접 올린다.
 >
-> **그 명령은 startup 복구가 끝나기 전에 돌아온다.** 기동이 스스로 `module_reload` 를
-> 예약하므로, 바로 이어서 이 문서의 리셋 명령을 돌리면 그 요청과 충돌해 **75** 로 끊기고
-> `set -e` 아래에서는 시험이 중단된다. 아래가 통과한 뒤에 계속한다(대개 10초 안).
->
-> ```bash
-> # 핀된 페이로드 보드에는 이 CLI 가 없다. 그때는 건너뛰고 계속한다 —
-> # 그 보드의 cam_hard_reset.sh 가 서비스 제어를 직접 하므로 대기가 필요 없다.
-> if [ -x /opt/pim/bin/cam-recoveryctl ]; then
->   while :; do
->     s=$(/opt/pim/bin/cam-recoveryctl status) || { echo 'status 조회 실패' >&2; break; }
->     lc=$(printf '%s' "$s" | jq -r '.owner.lifecycle')
->     idle=$(printf '%s' "$s" | jq -r '[.pending, .active] | map(. == null) | all')
->     case "$lc" in ACTIVE|DEGRADED) [ "$idle" = true ] && break;; esac
->     sleep 2
->   done
-> else
->   echo 'skip: 핀된 페이로드 보드 — cam_hard_reset.sh 가 직접 처리한다'
-> fi
-> ```
+> **올린 직후 바로 이 문서의 리셋 명령으로 넘어가면 안 된다.** `systemctl start` 는 startup
+> 복구가 끝나기 전에 돌아오고(기동이 스스로 `module_reload` 를 예약한다), 그 요청과 충돌하면
+> **75** 로 끊기며 `set -e` 아래에서는 시험이 중단된다. 준비된 상태는
+> `/opt/pim/bin/cam-recoveryctl status` 의 `.owner.lifecycle` 이 `ACTIVE` 또는 `DEGRADED` 이고
+> `.pending` 과 `.active` 가 둘 다 비었을 때다. 대개 10초 안에 그렇게 된다.
 >
 > 복구·리셋 절차 전체는 `pim-package-jhw` 저장소의
 > `docs/camera-health/cam-recovery-operations.md` 가 정본이며 **이 전달물에는 들어 있지
-> 않다** — 위 두 단계는 정본에 도달할 수 없는 수신자를 위해 여기에만 중복해 둔 것이다.
+> 않다** — 위 조건만 정본에 도달할 수 없는 수신자를 위해 여기에 적어 둔 것이다.
 
 ```bash
 set -e
