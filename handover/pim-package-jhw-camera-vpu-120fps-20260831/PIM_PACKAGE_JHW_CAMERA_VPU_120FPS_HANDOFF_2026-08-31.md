@@ -122,19 +122,10 @@ dpkg-query -W -f='${Package} ${Version} ${Architecture}\n' pim-mp
 
 ## 7. 설치
 
-> **버전 불일치 경고 (2026-10-03 추가).** 이 문서의 `cam_hard_reset.sh -s -S` 는 **이 문서가
-> 핀한 페이로드 기준**이다. 그 패키지의 스크립트는 `-s`/`-S` 를 `--stop-service`/
-> `--start-service` 로 해석해 `systemctl stop` → `rmmod` → CSI2/ISI unbind/bind → `modprobe`
-> → `systemctl start` 을 직접 수행했고, 그것이 설치 직후 **새 모듈을 적재하고 서비스를
-> 되살리는** 부분이다. 그 페이로드를 설치하는 절차에서는 빼면 안 된다.
->
-> **최신 패키지가 깔린 보드에서는 이 문서를 절차로 쓰지 않는다.** 지금
-> `cam_hard_reset.sh` 는 전달 래퍼이고 `-s`/`-S` 는 **받되 무시**되므로, 서비스를 내린 뒤
-> 되살려 주지 않는다. 그 보드의 복구·리셋은 **정본 문서**를 본다 —
-> `docs/camera-health/cam-recovery-operations.md`. 요청 명령, `CAM_RECOVERY_RESULT` 판정,
-> owner lifecycle 과 종료코드(69·70·75)의 의미가 거기에 있고 코드와 함께 갱신된다.
-> 여기에 같은 내용을 옮겨 적지 않는 이유는, 두 곳에 두면 한쪽이 바뀔 때 다른 쪽이 조용히
-> 거짓이 되기 때문이다 — 이 경고가 생긴 경위가 바로 그것이다.
+> **버전 불일치 경고 (2026-10-03).** 이 문서의 `cam_hard_reset.sh -s -S` 는 이 문서가 핀한
+> 페이로드 기준이다 — 그 패키지의 스크립트는 `-s`/`-S` 를 서비스 정지·기동으로 해석해 직접
+> 수행했다. **최신 패키지가 깔린 보드에서는 그 플래그가 받되 무시되어 서비스를 되살리지
+> 않는다.** 그 보드의 복구·리셋은 `docs/camera-health/cam-recovery-operations.md` 를 본다.
 
 ```bash
 set -e

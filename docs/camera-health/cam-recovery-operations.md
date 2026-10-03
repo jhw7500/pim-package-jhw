@@ -51,10 +51,10 @@ hardware 문제로 오진하기 쉽다.
 ```
 
 **대개는 기다릴 필요조차 없다** — 같은 boot의 restart는 4단계에서 최소 `module_reload`를
-스스로 수행하므로(`cam_operate_control.sh`의 `cam_startup_request_reserve`), 별도 요청이
-불필요하다. 2026-10-03 보드 설치 실측: `systemctl start` 직후 `is-active`는 `active`인데
-owner는 `RECOVERING`이고 `active`에 `type=module_reload source=startup`이 올라 있었다.
-그 요청이 끝나며 적재 모듈이 교체되고(srcversion이 바뀜) 약 10초 뒤 `ACTIVE`로 수렴했다.
+스스로 수행하므로(`cam_operate_control.sh`의 `cam_startup_request_reserve`) 별도 요청이
+불필요하다. 2026-10-03 설치 실측: `start` 직후 unit은 `active`, owner는 `RECOVERING`,
+`active`에 `type=module_reload source=startup`. 그 요청이 적재 모듈을 교체하고 약 10초 뒤
+`ACTIVE`로 수렴했다.
 
 따라서 `systemctl restart cam-operate.service`는 새 invocation이다. 기존 runtime의
 수동 편집값을 입력이나 fallback으로 사용하지 않고 source를 다시 검색해 덮어쓰며,
