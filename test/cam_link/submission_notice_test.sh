@@ -258,4 +258,121 @@ if grep -q 'CAM_APP_PLAY_DELAY_SEC_DEFAULT' "$CE"; then
     fail 'cam_enable.sh still reads a delay it cannot forward'
 fi
 
-echo 'submission notice, cam_enable delay: PASS'
+# --- 3: request 의 ACTION 별칭이 정규명으로 바뀌어 전달된다 ---
+# 별칭은 CLI 진입점에서만 해석된다.  아래로는 정규명만 흐르므로 lib 의 _cr_request_type,
+# 에스컬레이션 case, cam_execute_recovery_request 의 거부 목록은 바뀌지 않았다.
+#
+# 추출한 함수를 부르지 않고 실제 프로그램을 돌린다 — 매핑 표가 맞아도 호출부가 그 결과를
+# 쓰지 않으면 함수 본문만 읽는 검사는 통과한다.  스터브 lib 의 _cr_request_type 은 정규명만
+# 받으므로, 정규화를 없애면 별칭 호출이 exit 64 로 떨어져 여기서 실패한다.
+ALIAS_LIB="$WORK/alias-lib"
+mkdir -p "$ALIAS_LIB"
+cat > "$ALIAS_LIB/cam_recovery.sh" <<'SH'
+_cr_request_type() {
+    case "$1" in
+        gstapp_restart|gstapp_stop|module_reload|camera_hard_reset|reboot_fallback|apply_config) return 0;;
+    esac
+    return 1
+}
+cam_request_submit() {
+    printf '%s\n' "$1" >> "$ALIAS_SEEN"
+    printf '%s\n' "$ALIAS_ID"
+}
+SH
+export ALIAS_SEEN="$WORK/alias.seen" ALIAS_ID='11111111-2222-3333-4444-555555555555'
+RCTL="$ROOT/dist/pim/opt/pim/bin/cam-recoveryctl"
+
+alias_case() {
+    local given=$1 want=$2 out rc
+    : > "$ALIAS_SEEN"
+    set +e
+    out=$(PIM_LIB="$ALIAS_LIB" "$RCTL" request "$given" \
+        --source alias-test --reason alias-test 2>/dev/null)
+    rc=$?
+    set -e
+    [ "$rc" -eq 0 ] || fail "request $given exited $rc; the alias never reached submit"
+    [ "$out" = "$ALIAS_ID" ] || fail "request $given printed [$out], want the request id"
+    [ "$(cat "$ALIAS_SEEN")" = "$want" ] \
+        || fail "request $given submitted [$(cat "$ALIAS_SEEN")], want $want"
+}
+
+alias_case restart gstapp_restart
+alias_case stop    gstapp_stop
+alias_case module  module_reload
+alias_case hard    camera_hard_reset
+alias_case reboot  reboot_fallback
+
+# 전체 이름도 그대로 통해야 한다 — 기존 래퍼 다섯이 전체 이름을 보내고
+# legacy_wrapper_test.sh 가 그 문자열을 정확히 고정한다.
+alias_case gstapp_restart    gstapp_restart
+alias_case gstapp_stop       gstapp_stop
+alias_case module_reload     module_reload
+alias_case camera_hard_reset camera_hard_reset
+alias_case reboot_fallback   reboot_fallback
+
+# 별칭도 정규명도 아닌 토큰은 거부된다.  오타를 흡수해 다른 action 으로 보내면 안 된다.
+for bogus in bogus_action restar rebooot stopp ''; do
+    : > "$ALIAS_SEEN"
+    set +e
+    PIM_LIB="$ALIAS_LIB" "$RCTL" request "$bogus" \
+        --source alias-test --reason alias-test >/dev/null 2>&1
+    rc=$?
+    set -e
+    [ "$rc" -eq 64 ] || fail "request '$bogus' exited $rc instead of 64"
+    [ ! -s "$ALIAS_SEEN" ] || fail "request '$bogus' submitted [$(cat "$ALIAS_SEEN")]"
+done
+
+# 후행 개행이 붙은 토큰은 정규화를 거쳐도 거부돼야 한다.  정규화 결과를 $(...) 로 받으면
+# 명령 치환이 그 개행을 깎아서, 전에는 _cr_request_type 이 거부했던 $'reboot_fallback\n' 이
+# 정규명으로 통과해 재부팅을 제출한다.  인자는 $'...' 로 만든다 — $(printf ...) 로 만들면
+# 개행이 스크립트에 닿기 전에 깎여 이 검사가 조용히 무의미해진다.
+for nl_token in $'reboot_fallback\n' $'camera_hard_reset\n' $'reboot\n' $'hard\n'; do
+    : > "$ALIAS_SEEN"
+    set +e
+    PIM_LIB="$ALIAS_LIB" "$RCTL" request "$nl_token" \
+        --source alias-test --reason alias-test >/dev/null 2>&1
+    rc=$?
+    set -e
+    [ "$rc" -eq 64 ] || fail "a token with a trailing newline exited $rc instead of 64"
+    [ ! -s "$ALIAS_SEEN" ] \
+        || fail "a token with a trailing newline submitted [$(cat "$ALIAS_SEEN")]"
+done
+
+# apply_config 는 request 로 보낼 수 없고 별칭도 두지 않았다.
+: > "$ALIAS_SEEN"
+set +e
+PIM_LIB="$ALIAS_LIB" "$RCTL" request apply_config \
+    --source alias-test --reason alias-test >/dev/null 2>&1
+rc=$?
+set -e
+[ "$rc" -eq 64 ] || fail "request apply_config exited $rc instead of 64"
+[ ! -s "$ALIAS_SEEN" ] || fail 'request apply_config reached submit'
+
+# usage 가 다섯 별칭을 전부 적어야 한다.  적지 않으면 호출자는 알 수 없다.
+alias_usage=$(PIM_LIB="$ALIAS_LIB" "$RCTL" 2>&1 >/dev/null || true)
+for a in restart stop module hard reboot; do
+    printf '%s' "$alias_usage" | grep -q "($a)" || fail "usage does not document the $a alias"
+done
+# 에스컬레이션이 usage 에 남아 있어야 한다 — 이것이 없으면 module 요청자가 재부팅을
+# 예상할 수 없다.
+printf '%s' "$alias_usage" | grep -q 'camera_hard_reset -> reboot_fallback' \
+    || fail 'usage does not state the module_reload escalation'
+
+# 수용 집합 드리프트(ACTION 이 _cr_public_action 에 추가됐는데 usage 가 안 따라오는 것)를
+# 잡는 검사는 두 구현을 시도한 끝에 제거했다. 리뷰 5 라운드에서 지적 6 건이 나왔고 전부
+# 그 검사 자신의 결함이었다 — 실제 드리프트를 잡은 적은 없다.
+#
+# 구조적 이유: 집합을 usage 산문에서 읽으면 포맷 변경에 거짓 실패하고(숫자 든 이름, 두 칸
+# 들여쓴 설명줄, 탭 구분자), 함수에서 읽으면 어느 함수를 어디까지 보느냐로 양쪽에 걸린다.
+# declare -f 전체 비교는 동작이 같은 리팩터(패턴 재배열, *) return 1;; 로 이동)에 거짓
+# 실패하고, 그렇다고 _cr_public_action 만 보면 CLI 가 실제로 쓰는 _cr_request_type 에
+# 예외가 붙는 경로를 놓친다(둘 다 실측 확인). 조이면 거짓 실패, 풀면 거짓 통과다.
+#
+# Codex 는 집합을 프로덕션에 기계가 읽을 선언으로 두자고 제안했는데, 이 파일 머리말의
+# "테스트를 위한 프로덕션 seam 을 더하지 않는다"와 어긋나므로 택하지 않았다.
+#
+# 드리프트는 리뷰가 잡는다 — action 을 더하면 _cr_public_action, 에스컬레이션 case,
+# cam_execute_recovery_request 세 곳을 동시에 건드려야 하고, 그 diff 를 보는 리뷰어는
+# usage 도 본다. 이 PR 자체가 그 증거다.
+
+echo 'submission notice, cam_enable delay, action aliases: PASS'

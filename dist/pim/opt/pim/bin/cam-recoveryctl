@@ -7,7 +7,47 @@ if [ -z "${PIM_LIB:-}" ]; then
 fi
 source "$PIM_LIB/cam_recovery.sh"
 
-usage() { echo 'usage: cam-recoveryctl request ACTION --source NAME --reason TEXT [--wait SEC] | apply-config --source NAME --reason TEXT [--wait SEC] | status [--request-id UUID] [--json]' >&2; }
+# ACTION 을 적지 않으면 호출자가 _cr_public_action 을 읽어야 알 수 있었고, 에스컬레이션은
+# 어디에도 안 적혀 있었다 — module_reload 를 요청한 사람이 실패가 이어지면 재부팅을 받는다.
+# 목록의 출처는 _cr_public_action 하나다(cam_recovery.sh). 거기에 action 을 더하면 여기도 더한다.
+usage() { cat >&2 <<'USAGE'
+usage: cam-recoveryctl request ACTION --source NAME --reason TEXT [--wait SEC]
+     | apply-config --source NAME --reason TEXT [--wait SEC]
+     | status [--request-id UUID] [--json]
+
+ACTION (괄호는 별칭) 과 실패 시 에스컬레이션:
+  gstapp_restart    (restart)  gstApp 만 재시작. 에스컬레이션 없음
+  module_reload     (module)   소비자 정지 후 모듈 재적재. 실패하면
+                               camera_hard_reset -> reboot_fallback
+  camera_hard_reset (hard)     모듈 내리고 CSI/ISI unbind/bind 후 재적재.
+                               실패하면 reboot_fallback
+  reboot_fallback   (reboot)   보드 재부팅. 최종 폴백이고 직접 요청도 받는다
+  gstapp_stop       (stop)     gstApp 정지만. 에스컬레이션 체인에 없다
+
+별칭은 request 인자에서만 쓴다 — 요청 기록과 CAM_RECOVERY_RESULT 의 type= 은 정규명이다.
+apply_config 는 request 가 아니라 apply-config 서브커맨드로 보낸다.
+USAGE
+}
+
+# 별칭은 여기서만 정규명으로 바꾼다.  아래로는 정규명만 흐르므로 _cr_request_type, 에스컬레이션
+# case, cam_execute_recovery_request 의 거부 목록은 손대지 않는다.  요청 기록과
+# CAM_RECOVERY_RESULT 의 type= 도 정규명이다 — recovery_protocol_test.sh 가 그 줄을 정확
+# 문자열로 비교한다.  모르는 토큰은 바이트 그대로 넘겨 _cr_request_type 이 거부하게 둔다.
+#
+# 결과를 출력하고 $(...) 로 받으면 안 된다.  명령 치환이 후행 개행을 깎으므로 정규화 전에는
+# _cr_request_type 이 거부했던 $'"'"'reboot_fallback\n'"'"' 같은 토큰이 정규명으로 통과해 재부팅을
+# 제출한다 (실측: 전 rc 64 / 제출 0 -> 후 rc 0 / reboot_fallback 제출).  그래서 $type 에
+# 직접 넣는다.
+canonicalize_action() {
+    case "$1" in
+        restart) type=gstapp_restart;;
+        stop)    type=gstapp_stop;;
+        module)  type=module_reload;;
+        hard)    type=camera_hard_reset;;
+        reboot)  type=reboot_fallback;;
+        *)       type=$1;;
+    esac
+}
 bad() { usage; exit 64; }
 wait_for_result() {
     local id=$1 type=$2 seconds=$3 started now result status rc
@@ -45,7 +85,7 @@ request() {
     if [ -n "$wait" ]; then wait_for_result "$id" "$type" "$wait"; else printf '%s\n' "$id"; fi
 }
 case "${1:-}" in
-    request) [ $# -ge 2 ] || bad; type=$2; shift 2; [ "$type" != apply_config ] || bad; request "$type" "$@"; exit $?;;
+    request) [ $# -ge 2 ] || bad; canonicalize_action "$2"; shift 2; [ "$type" != apply_config ] || bad; request "$type" "$@"; exit $?;;
     apply-config) shift; request apply_config "$@"; exit $?;;
     status)
         shift; id=; json=0

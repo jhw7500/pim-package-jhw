@@ -92,6 +92,10 @@ candidate publish 뒤 action이 실패하면 새 runtime을 유지하고 `DEGRAD
 지원 action은 `gstapp_restart`, `gstapp_stop`, `module_reload`, `camera_hard_reset`,
 `reboot_fallback`이다.
 
+`request` 인자에는 짧은 별칭도 받는다. 목록과 매핑은 여기에 옮겨 적지 않는다 — 인자 없이
+`cam-recoveryctl`을 실행해 usage에서 본다. 별칭은 CLI 진입점에서만 해석되므로 요청 기록과
+`CAM_RECOVERY_RESULT`의 `type=`은 항상 위 정규명이다.
+
 `gstapp_stop`은 gstApp과 BG_Check를 정지시키고 부재를 확인하는 것까지만 한다 —
 SIGTERM 후 `PIM_CAMERA_QUIESCE_TIMEOUT_SEC`까지 대기하고, 남아 있으면 SIGKILL 후 다시
 대기해 부재를 확인한다. 다시 띄우지는 않는다. `cam_liveness_tick`이 이후 순회에서
@@ -106,6 +110,13 @@ enable된 채널, disconnect 없음, video 노드, 응답하는 subdev를 요구
 다시 읽고 `cam_liveness_tick`을 부른다. 즉 재기동은 정지가 SUCCEEDED를 보고한 바로 그
 iteration에 제출되며 확실히 내려가 있는 구간이 없다. 바이너리 교체처럼 앱이 내려가
 있어야 하는 작업은 `cam_operate_stop.sh`(owner를 STOPPING으로)를 쓴다.
+
+단 위 두 문단은 **진입 lifecycle이 `ACTIVE`인 경우**다. `DEGRADED`에서는
+`cam_liveness_tick`이 돌지 않는다 — `cam_monitor_control_iteration`은 `ACTIVE`에서만
+그것을 부른다(`cam_operate_control.sh:641-642`). 대신 진입 lifecycle이 `DEGRADED`였으면
+`_coc_execute_recovery_active`가 `source=gstapp-stop-followup`으로 `gstapp_restart`를
+무조건 제출하고 기다리지 않는다(`cam_operate_control.sh:578-583`). 즉 재기동을 제출하는
+주체가 두 경로에서 다르므로, `source`로 어느 경로였는지 구분한다.
 
 `gstapp_stop`은 escalation counter를 쓰지 않는다. `state.json`의 action 카운터는
 `gstapp_restart`, `module_reload`, `camera_hard_reset`, `reboot_fallback` 네 개로
