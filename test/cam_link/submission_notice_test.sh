@@ -152,12 +152,15 @@ command -v script >/dev/null 2>&1 \
     || fail 'script(1) is required to drive the notice with stderr on a terminal'
 export SNT_ARGV=''
 SNT_ROWS=0
+SNT_DRIVEN=''
 
 # fd 3, not stdin: script(1) inside the body reads stdin, and on stdin this heredoc is
 # drained after the first row - a measured 1 of 6 rows ran before this was fixed.
 while read -r sub act secs src <&3; do
     [ -n "$sub" ] || continue
     SNT_ROWS=$((SNT_ROWS + 1))
+    SNT_DRIVEN="$SNT_DRIVEN$sub $act $secs $src
+"
     if [ "$sub" = apply-config ]; then
         SNT_ARGV="apply-config --source $src --reason legacy-wrapper --wait $secs"
     else
@@ -203,6 +206,49 @@ while read -r sub act secs src <&3; do
         grep -qF "$want_result" "$WORK/pty.txt" \
             || { echo "FAIL: $cell tty: no result line on the terminal" >&2
                  sed 's/^/  /' "$WORK/pty.txt" >&2; exit 1; }
+
+        # 혼합 스트림: 두 셀 다 '양쪽이 같은 종류'가 아니다.  위 두 셀은 둘 다 파일이거나
+        # 둘 다 pty 여서, **stderr 만 터미널**일 때(또는 그 반대) 알림을 숨기는 가드가
+        # 살아남는다 (PR #115 advisory, reviewer B, MEDIUM).  운영자가 파이프로 거르는
+        # `cam-recoveryctl ... 2>&1 | tee` 류가 정확히 이 모양이다.
+        #
+        # script(1) 안에서 한쪽만 리다이렉트하면 나머지는 pty 에 남는다.
+        # A: stdout 은 파일, stderr 는 터미널 -> 알림은 pty, 결과줄은 파일
+        : > "$WORK/mixA.out"
+        if [ "$envmode" = bare ]; then
+            script -qec 'env -i PATH="$PATH" PIM_LIB="$SNT_LIB" WORK="$WORK" "$SNT_CTL" $SNT_ARGV > "$WORK/mixA.out"' \
+                /dev/null > "$WORK/mixA.raw" 2>&1 || true
+        else
+            script -qec 'PIM_LIB="$SNT_LIB" "$SNT_CTL" $SNT_ARGV > "$WORK/mixA.out"' \
+                /dev/null > "$WORK/mixA.raw" 2>&1 || true
+        fi
+        tr -d '\r' < "$WORK/mixA.raw" > "$WORK/mixA.tty"
+        grep -qF "$want_notice" "$WORK/mixA.tty" \
+            || { echo "FAIL: $cell mixed(out=file,err=tty): no notice on the terminal" >&2
+                 sed 's/^/  /' "$WORK/mixA.tty" >&2; exit 1; }
+        [ "$(tr -d '\r' < "$WORK/mixA.out")" = "$want_result" ] \
+            || fail "$cell mixed(out=file,err=tty): stdout was $(tr -d '\r' < "$WORK/mixA.out")"
+
+        # B: stderr 는 파일, stdout 은 터미널 -> 알림은 파일, 결과줄은 pty
+        : > "$WORK/mixB.err"
+        if [ "$envmode" = bare ]; then
+            script -qec 'env -i PATH="$PATH" PIM_LIB="$SNT_LIB" WORK="$WORK" "$SNT_CTL" $SNT_ARGV 2> "$WORK/mixB.err"' \
+                /dev/null > "$WORK/mixB.raw" 2>&1 || true
+        else
+            script -qec 'PIM_LIB="$SNT_LIB" "$SNT_CTL" $SNT_ARGV 2> "$WORK/mixB.err"' \
+                /dev/null > "$WORK/mixB.raw" 2>&1 || true
+        fi
+        tr -d '\r' < "$WORK/mixB.raw" > "$WORK/mixB.tty"
+        mixb_notices=$(tr -d '\r' < "$WORK/mixB.err" | grep -c '^CAM_RECOVERY_SUBMITTED ' || true)
+        [ "$mixb_notices" -eq 1 ] \
+            || { echo "FAIL: $cell mixed(out=tty,err=file): expected one notice, saw $mixb_notices" >&2
+                 sed 's/^/  /' "$WORK/mixB.err" >&2; exit 1; }
+        grep -qF "$want_notice" "$WORK/mixB.err" \
+            || { echo "FAIL: $cell mixed(out=tty,err=file): wrong or missing notice" >&2
+                 sed 's/^/  /' "$WORK/mixB.err" >&2; exit 1; }
+        grep -qF "$want_result" "$WORK/mixB.tty" \
+            || { echo "FAIL: $cell mixed(out=tty,err=file): no result line on the terminal" >&2
+                 sed 's/^/  /' "$WORK/mixB.tty" >&2; exit 1; }
     done
 done 3<<'SHAPES'
 request gstapp_stop 120 legacy-kill-test
@@ -211,6 +257,7 @@ request gstapp_restart 120 legacy-restart-app
 request module_reload 300 legacy-init-cam
 request camera_hard_reset 300 legacy-cam-hard-reset
 apply-config apply_config 300 operator-runbook-example
+request camera_hard_reset 300 operator
 SHAPES
 
 # The rows above carry the coverage this change leans on hardest, and nothing in a
@@ -218,8 +265,27 @@ SHAPES
 # would delete every wrapper-shape assertion and still print PASS.  That has already
 # happened here once - script(1) in the body read the heredoc off stdin, so only the
 # first row ran - so the count is asserted rather than assumed.
-[ "$SNT_ROWS" -eq 6 ] \
-    || fail "the production-shape table should drive 6 rows, drove $SNT_ROWS"
+[ "$SNT_ROWS" -eq 7 ] \
+    || fail "the production-shape table should drive 7 rows, drove $SNT_ROWS"
+
+# 행 수만 고정하면 내용은 자유롭다 — action, wait, source 중 무엇을 바꿔도 7 은 7 이다
+# (PR #115 advisory, reviewer B, LOW).  그 세 값이 바로 가드가 키로 쓸 수 있는 값이므로
+# 구동한 shape 집합을 그대로 못박는다.  마지막 줄은 런북이 운영자에게 실제로 안내하는
+# `--source operator` 다 (cam-recovery-operations.md) — 앞의 여섯은 dist/ 의 래퍼 모양,
+# 그 하나는 운영자 모양이고 둘은 다른 값이라 따로 구동해야 한다 (reviewer A, LOW).
+SNT_EXPECTED='apply-config apply_config 300 operator-runbook-example
+request camera_hard_reset 300 legacy-cam-hard-reset
+request camera_hard_reset 300 operator
+request gstapp_restart 120 legacy-restart-app
+request gstapp_restart 120 legacy-start-cam
+request gstapp_stop 120 legacy-kill-test
+request module_reload 300 legacy-init-cam'
+SNT_GOT=$(printf '%s' "$SNT_DRIVEN" | LC_ALL=C sort)
+[ "$SNT_GOT" = "$SNT_EXPECTED" ] || {
+    echo 'FAIL: the production-shape table changed content' >&2
+    diff <(printf '%s\n' "$SNT_EXPECTED") <(printf '%s\n' "$SNT_GOT") | sed 's/^/  /' >&2
+    exit 1
+}
 
 # --- 1d: no --wait at all ---
 # The runbook says a submission without --wait prints no notice and only the request id
