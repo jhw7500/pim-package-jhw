@@ -358,32 +358,21 @@ done
 printf '%s' "$alias_usage" | grep -q 'camera_hard_reset -> reboot_fallback' \
     || fail 'usage does not state the module_reload escalation'
 
-# 수용 집합이 바뀌면 여기서 실패한다.  이 PR 의 출발점이 ACTION 목록이 세 곳에 흩어져
-# 서로 어긋나 있었다는 것이고, 위 검사들은 다섯을 테스트 안에 따로 하드코딩하므로 집합이
-# 바뀌어도 아무것도 깨지지 않았다.
+# 수용 집합 드리프트(ACTION 이 _cr_public_action 에 추가됐는데 usage 가 안 따라오는 것)를
+# 잡는 검사는 두 구현을 시도한 끝에 제거했다. 리뷰 5 라운드에서 지적 6 건이 나왔고 전부
+# 그 검사 자신의 결함이었다 — 실제 드리프트를 잡은 적은 없다.
 #
-# 집합을 '뽑지' 않는다.  Codex 가 네 라운드에 걸쳐 파싱의 네 구멍을 실증했다 — 숫자가 든
-# 이름, 두 칸 들여쓴 설명줄, 탭 구분자, 그리고 별도 arm(`vpu_reset) return 0;;`)으로
-# 추가하면 첫 arm 줄만 읽는 비교가 통과하는 것.  넓히면 거짓 실패, 좁히면 거짓 통과였다.
-# 그래서 줄을 고르지 않고 declare -f 출력 전체를 공백만 눌러 비교한다.  새 arm, 패턴 추가,
-# 이름 변경, 반환값 변경이 모두 걸리고, 소스 포맷과 unparser 들여쓰기 차이에는 면역이다
-# (실측: 소스를 여러 줄로 바꾼 사본의 정규화 결과가 기준과 바이트 동일).
+# 구조적 이유: 집합을 usage 산문에서 읽으면 포맷 변경에 거짓 실패하고(숫자 든 이름, 두 칸
+# 들여쓴 설명줄, 탭 구분자), 함수에서 읽으면 어느 함수를 어디까지 보느냐로 양쪽에 걸린다.
+# declare -f 전체 비교는 동작이 같은 리팩터(패턴 재배열, *) return 1;; 로 이동)에 거짓
+# 실패하고, 그렇다고 _cr_public_action 만 보면 CLI 가 실제로 쓰는 _cr_request_type 에
+# 예외가 붙는 경로를 놓친다(둘 다 실측 확인). 조이면 거짓 실패, 풀면 거짓 통과다.
 #
-# source 가 실패하거나 함수가 없으면 빈 문자열이 되어 비교가 실패한다 — fail-closed 다.
-# `|| got_fn=''` 가 필요하다: set -e 아래에서는 대입이 실패하면 아래 메시지에 닿기 전에
-# 그 종료코드로 스크립트가 죽어, 원인을 설명하지 않고 조용히 끝난다 (실측: lib 경로를
-# 없는 곳으로 주면 rc 70 으로 죽고 FAIL 줄이 안 나왔다).
-expected_fn='_cr_public_action () { case "$1" in gstapp_restart | gstapp_stop | module_reload | camera_hard_reset | reboot_fallback) return 0 ;; esac; return 1 }'
-got_fn=$(PIM_LIB="${ACCEPTED_SET_LIB:-$ROOT/dist/pim/opt/pim/lib}" bash -c '
-    source "$PIM_LIB/cam_recovery.sh" >/dev/null 2>&1 || exit 70
-    declare -f _cr_public_action' 2>/dev/null | tr -s ' \t\n' ' ' | sed 's/^ //; s/ $//') || got_fn=''
-if [ "$got_fn" != "$expected_fn" ]; then
-    echo 'FAIL: _cr_public_action 이 바뀌었다 (요청 가능한 ACTION 집합)' >&2
-    echo "  want: $expected_fn" >&2
-    echo "  got:  $got_fn" >&2
-    echo '  cam-recoveryctl usage, canonicalize_action 의 별칭 표,' >&2
-    echo '  docs/camera-health/cam-recovery-operations.md 를 같이 갱신하고 이 기대값도 고친다.' >&2
-    exit 1
-fi
+# Codex 는 집합을 프로덕션에 기계가 읽을 선언으로 두자고 제안했는데, 이 파일 머리말의
+# "테스트를 위한 프로덕션 seam 을 더하지 않는다"와 어긋나므로 택하지 않았다.
+#
+# 드리프트는 리뷰가 잡는다 — action 을 더하면 _cr_public_action, 에스컬레이션 case,
+# cam_execute_recovery_request 세 곳을 동시에 건드려야 하고, 그 diff 를 보는 리뷰어는
+# usage 도 본다. 이 PR 자체가 그 증거다.
 
 echo 'submission notice, cam_enable delay, action aliases: PASS'
