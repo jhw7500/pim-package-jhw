@@ -388,7 +388,11 @@ printf '%s\n' "$accepted" | grep -qx gstapp_restart \
 
 # usage 가 적은 정규명.  usage 는 내가 쓰는 포맷이라 안정적이고, 설명 연속줄은 들여쓰기가
 # 더 깊어 이 패턴에 걸리지 않는다 (실측 확인).
-usage_actions=$(printf '%s\n' "$alias_usage" | sed -n 's/^  \([a-z_][a-z_]*\) .*/\1/p')
+#
+# 토큰 문법은 위 수용 집합 검증과 같아야 한다.  한쪽이 [a-z_] 이고 다른 쪽이 [a-z0-9_] 면
+# vpu2_reset 처럼 숫자가 든 이름이 usage 에 올바로 적혀 있어도 이쪽에서 누락돼, 문서화된
+# action 을 미문서화로 거짓 보고한다 (Codex 지적).
+usage_actions=$(printf '%s\n' "$alias_usage" | sed -n 's/^  \([a-z0-9_][a-z0-9_]*\) .*/\1/p')
 [ -n "$usage_actions" ] || fail 'could not read the action list out of usage'
 
 # 양방향으로 본다.  한 방향만 보면 추가는 잡고 제거/개명은 놓친다 — 제거하면 usage 가
