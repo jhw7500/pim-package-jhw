@@ -159,7 +159,7 @@ CAM_RECOVERY_SUBMITTED id=01234567-89ab-cdef-0123-456789abcdef type=gstapp_stop 
 | 0 | 요청 접수 또는 기다린 action 성공 |
 | 64 | 잘못된 action/argument 또는 runtime syntax/schema 오류 |
 | 69 | daemon/service unavailable. 같은 코드가 두 경우 더 쓰인다 — `status --request-id`의 "terminal 결과가 아직 없음", 그리고 owner lifecycle이 제출을 받을 상태가 아닐 때의 제출 거절 |
-| 70 | 내부 state/storage 오류 |
+| 70 | 내부 state/storage 오류. **owner-stale 종결도 같은 코드를 쓴다** — `status=FAILED rc=70` 만으로는 둘을 구분할 수 없고, stale 판정에는 요청 이력의 `interrupted=true` 와 `interrupted_reason="owner_stale"` 이 필요하다. `CAM_RECOVERY_RESULT` 한 줄은 그 두 필드를 담지 않는다 |
 | 75 | 다른 request가 pending/active인 `BUSY`; queue 없음 |
 | 124 | wait timeout; action은 취소되지 않음 |
 

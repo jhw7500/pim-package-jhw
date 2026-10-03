@@ -125,7 +125,10 @@ dpkg-query -W -f='${Package} ${Version} ${Architecture}\n' pim-mp
 > **버전 불일치 경고 (2026-10-03).** 이 문서의 `cam_hard_reset.sh -s -S` 는 이 문서가 핀한
 > 페이로드 기준이다 — 그 패키지의 스크립트는 `-s`/`-S` 를 서비스 정지·기동으로 해석해 직접
 > 수행했다. **최신 패키지가 깔린 보드에서는 그 플래그가 받되 무시되어 서비스를 되살리지
-> 않는다.** 그 보드의 복구·리셋은 `docs/camera-health/cam-recovery-operations.md` 를 본다.
+> 않는다.** 그 보드에서는 `systemctl start cam-operate.service` 로 직접 올린다.
+> 복구·리셋 절차 전체는 `pim-package-jhw` 저장소의
+> `docs/camera-health/cam-recovery-operations.md` 가 정본이며 **이 전달물에는 들어 있지
+> 않다** — 필요하면 배포자에게 요청한다.
 
 ```bash
 set -e
