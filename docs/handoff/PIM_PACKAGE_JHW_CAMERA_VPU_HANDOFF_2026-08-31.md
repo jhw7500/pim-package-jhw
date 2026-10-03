@@ -208,19 +208,28 @@ jq empty "$BACKUP/ord_vcm_conf.json"
 > 빼면 안 된다.
 >
 > **이미 최신 패키지가 깔린 보드에서는 그렇지 않다.** 지금 `cam_hard_reset.sh` 는 전달
-> 래퍼이고 `-s`/`-S` 는 **받되 무시**된다 — 서비스를 올려 주지 않고, 위 완료 문구도 출력하지
-> 않는다. 종료코드만 보면 성공으로 읽히지만 보드는 그대로 내려가 있다(실측 사례 있음).
-> 그 보드에서는 다음을 쓴다:
+> 래퍼이고 `-s`/`-S` 는 **받되 무시**된다 — 서비스를 올려 주지 않고 위 완료 문구도 출력하지
+> 않는다. 그 보드에서는 다음을 쓴다.
 >
-> - 서비스 기동: `systemctl start cam-operate.service` 뒤 `systemctl is-active cam-operate.service`
-> - 하드 리셋: `/opt/pim/bin/cam-recoveryctl request camera_hard_reset --source operator --reason '<사유>' --wait 300`
->   (`--source`·`--reason` 은 **필수**이며 빠지면 64 로 끊긴다). 판정은 stdout 한 줄
+> - 서비스 기동만으로 복구가 된다. `cam-operate` 기동은 같은 부팅 안의 재시작에 대해
+>   startup 액션을 스스로 예약한다(`cam_operate_control.sh` 의 `cam_startup_request_reserve`).
+>   그래서 보통은 별도 하드 리셋 요청이 필요하지 않다.
+> - 하드 리셋을 **따로** 요청해야 하면 owner 가 준비될 때까지 기다린다. `systemctl is-active`
+>   로는 부족하다 — 유닛의 `ExecStartPost` 는 런타임 JSON 검증만 기다리고, 그 시점 owner 는
+>   아직 `STARTING`/`RECOVERING` 일 수 있다. 요청 수락은 `ACTIVE`/`DEGRADED` 에서만 된다:
+>   `/opt/pim/bin/cam-recoveryctl status | jq -r '.owner.lifecycle'` 가 `ACTIVE` 이고
+>   `.pending`·`.active` 가 비었는지 본다.
+> - 그 뒤 `/opt/pim/bin/cam-recoveryctl request camera_hard_reset --source operator --reason '<사유>' --wait 300`
+>   (`--source`·`--reason` 은 **필수**이며 빠지면 64). 판정은 stdout 한 줄
 >   `CAM_RECOVERY_RESULT ... status=SUCCEEDED rc=0` 이다.
-> - `status=FAILED rc=70` 은 **일반 소프트웨어 실패**다. owner stale 로 단정하지 않는다 —
->   그 판정에는 요청 이력의 `interrupted=true` 와 `interrupted_reason="owner_stale"` 이
->   필요하고, 그 두 필드는 위 한 줄에 들어 있지 않다.
+> - **서비스가 내려가 있으면 이 요청은 69 로 실패한다**(다른 복구가 진행 중이면 75). 즉 그
+>   상태에서 래퍼가 0 을 돌려주는 일은 없다. 위험은 종료코드가 아니라, 래퍼가 옛 명령과 같아
+>   보이는데 **서비스를 올려 주지 않는다**는 점이다.
+> - `status=FAILED rc=70` 은 **일반 소프트웨어 실패**다. lock 획득 실패·요청 스키마 검증 실패·
+>   owner 종결이 모두 70 을 쓰므로 owner stale 로 단정하지 않는다 — 그 판정에는 요청 이력의
+>   `interrupted=true` 와 `interrupted_reason="owner_stale"` 이 필요하고, 두 필드는 위 한 줄에
+>   들어 있지 않다.
 >
-> `cam-recoveryctl` 은 2026-09-01 에 추가되었으므로 이 문서가 핀한 페이로드에는 **없다.**
 > 어느 쪽 보드인지 먼저 확인한다. **1 차 신호는 `test -x /opt/pim/bin/cam-recoveryctl`** 이다 —
 > 실제로 중요한 사실(그 CLI 를 호출할 수 있는가)을 직접 재기 때문이다. `dpkg-query -W
 > -f='${Version}\n' pim-mp` 는 보조로 본다: 두 파일은 같은 `dist/pim` 페이로드로 한 `dpkg -i`
