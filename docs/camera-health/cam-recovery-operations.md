@@ -111,6 +111,13 @@ enable된 채널, disconnect 없음, video 노드, 응답하는 subdev를 요구
 iteration에 제출되며 확실히 내려가 있는 구간이 없다. 바이너리 교체처럼 앱이 내려가
 있어야 하는 작업은 `cam_operate_stop.sh`(owner를 STOPPING으로)를 쓴다.
 
+단 위 두 문단은 **진입 lifecycle이 `ACTIVE`인 경우**다. `DEGRADED`에서는
+`cam_liveness_tick`이 돌지 않는다 — `cam_monitor_control_iteration`은 `ACTIVE`에서만
+그것을 부른다(`cam_operate_control.sh:641-642`). 대신 진입 lifecycle이 `DEGRADED`였으면
+`_coc_execute_recovery_active`가 `source=gstapp-stop-followup`으로 `gstapp_restart`를
+무조건 제출하고 기다리지 않는다(`cam_operate_control.sh:578-583`). 즉 재기동을 제출하는
+주체가 두 경로에서 다르므로, `source`로 어느 경로였는지 구분한다.
+
 `gstapp_stop`은 escalation counter를 쓰지 않는다. `state.json`의 action 카운터는
 `gstapp_restart`, `module_reload`, `camera_hard_reset`, `reboot_fallback` 네 개로
 유지되며, 정지는 history에 `countered:false`로만 남는다.

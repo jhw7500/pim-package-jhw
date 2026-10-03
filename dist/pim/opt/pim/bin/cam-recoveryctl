@@ -22,7 +22,7 @@ ACTION (괄호는 별칭) 과 실패 시 에스컬레이션:
   camera_hard_reset (hard)     모듈 내리고 CSI/ISI unbind/bind 후 재적재.
                                실패하면 reboot_fallback
   reboot_fallback   (reboot)   보드 재부팅. 최종 폴백이고 직접 요청도 받는다
-  gstapp_stop       (stop)     gstApp 정지만. 에스컬레이션 없고 재기동은 liveness 가 판단
+  gstapp_stop       (stop)     gstApp 정지만. 에스컬레이션 체인에 없다
 
 별칭은 request 인자에서만 쓴다 — 요청 기록과 CAM_RECOVERY_RESULT 의 type= 은 정규명이다.
 apply_config 는 request 가 아니라 apply-config 서브커맨드로 보낸다.
