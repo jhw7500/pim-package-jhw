@@ -192,13 +192,20 @@ while read -r sub act secs src <&3; do
             || fail "$cell file: stdout was $(cat "$WORK/cli.out")"
 
         # stderr on a terminal: both streams land on the pty, so check both lines there.
+        # script -e 는 자식의 종료코드를 그대로 돌려준다.  `|| true` 로 버리면 두 줄을
+        # 다 찍고 nonzero 로 끝나는 tty 전용 회귀가 이 셀을 통과한다 (Codex 지적).
+        # 파일 셀이 이미 rc 0 을 어서트하므로 tty 셀도 같은 수준으로 맞춘다.
+        set +e
         if [ "$envmode" = bare ]; then
             script -qec 'env -i PATH="$PATH" PIM_LIB="$SNT_LIB" "$SNT_CTL" $SNT_ARGV' \
-                /dev/null > "$WORK/pty.raw" 2>&1 || true
+                /dev/null > "$WORK/pty.raw" 2>&1
         else
             script -qec 'PIM_LIB="$SNT_LIB" "$SNT_CTL" $SNT_ARGV' \
-                /dev/null > "$WORK/pty.raw" 2>&1 || true
+                /dev/null > "$WORK/pty.raw" 2>&1
         fi
+        pty_rc=$?
+        set -e
+        [ "$pty_rc" -eq 0 ] || fail "$cell tty: expected rc 0, got $pty_rc"
         tr -d '\r' < "$WORK/pty.raw" > "$WORK/pty.txt"
         grep -qF "$want_notice" "$WORK/pty.txt" \
             || { echo "FAIL: $cell tty: no submission notice on the terminal" >&2
@@ -215,13 +222,18 @@ while read -r sub act secs src <&3; do
         # script(1) 안에서 한쪽만 리다이렉트하면 나머지는 pty 에 남는다.
         # A: stdout 은 파일, stderr 는 터미널 -> 알림은 pty, 결과줄은 파일
         : > "$WORK/mixA.out"
+        set +e
         if [ "$envmode" = bare ]; then
             script -qec 'env -i PATH="$PATH" PIM_LIB="$SNT_LIB" WORK="$WORK" "$SNT_CTL" $SNT_ARGV > "$WORK/mixA.out"' \
-                /dev/null > "$WORK/mixA.raw" 2>&1 || true
+                /dev/null > "$WORK/mixA.raw" 2>&1
         else
             script -qec 'PIM_LIB="$SNT_LIB" "$SNT_CTL" $SNT_ARGV > "$WORK/mixA.out"' \
-                /dev/null > "$WORK/mixA.raw" 2>&1 || true
+                /dev/null > "$WORK/mixA.raw" 2>&1
         fi
+        mixa_rc=$?
+        set -e
+        [ "$mixa_rc" -eq 0 ] \
+            || fail "$cell mixed(out=file,err=tty): expected rc 0, got $mixa_rc"
         tr -d '\r' < "$WORK/mixA.raw" > "$WORK/mixA.tty"
         grep -qF "$want_notice" "$WORK/mixA.tty" \
             || { echo "FAIL: $cell mixed(out=file,err=tty): no notice on the terminal" >&2
@@ -231,13 +243,18 @@ while read -r sub act secs src <&3; do
 
         # B: stderr 는 파일, stdout 은 터미널 -> 알림은 파일, 결과줄은 pty
         : > "$WORK/mixB.err"
+        set +e
         if [ "$envmode" = bare ]; then
             script -qec 'env -i PATH="$PATH" PIM_LIB="$SNT_LIB" WORK="$WORK" "$SNT_CTL" $SNT_ARGV 2> "$WORK/mixB.err"' \
-                /dev/null > "$WORK/mixB.raw" 2>&1 || true
+                /dev/null > "$WORK/mixB.raw" 2>&1
         else
             script -qec 'PIM_LIB="$SNT_LIB" "$SNT_CTL" $SNT_ARGV 2> "$WORK/mixB.err"' \
-                /dev/null > "$WORK/mixB.raw" 2>&1 || true
+                /dev/null > "$WORK/mixB.raw" 2>&1
         fi
+        mixb_rc=$?
+        set -e
+        [ "$mixb_rc" -eq 0 ] \
+            || fail "$cell mixed(out=tty,err=file): expected rc 0, got $mixb_rc"
         tr -d '\r' < "$WORK/mixB.raw" > "$WORK/mixB.tty"
         mixb_notices=$(tr -d '\r' < "$WORK/mixB.err" | grep -c '^CAM_RECOVERY_SUBMITTED ' || true)
         [ "$mixb_notices" -eq 1 ] \
@@ -256,8 +273,12 @@ request gstapp_restart 120 legacy-start-cam
 request gstapp_restart 120 legacy-restart-app
 request module_reload 300 legacy-init-cam
 request camera_hard_reset 300 legacy-cam-hard-reset
-apply-config apply_config 300 operator-runbook-example
+apply-config apply_config 300 operator
+request gstapp_restart 120 operator
+request gstapp_stop 120 operator
+request module_reload 300 operator
 request camera_hard_reset 300 operator
+request gstapp_restart 120 operator-manual-test
 SHAPES
 
 # The rows above carry the coverage this change leans on hardest, and nothing in a
@@ -265,21 +286,30 @@ SHAPES
 # would delete every wrapper-shape assertion and still print PASS.  That has already
 # happened here once - script(1) in the body read the heredoc off stdin, so only the
 # first row ran - so the count is asserted rather than assumed.
-[ "$SNT_ROWS" -eq 7 ] \
-    || fail "the production-shape table should drive 7 rows, drove $SNT_ROWS"
+[ "$SNT_ROWS" -eq 11 ] \
+    || fail "the production-shape table should drive 11 rows, drove $SNT_ROWS"
 
-# 행 수만 고정하면 내용은 자유롭다 — action, wait, source 중 무엇을 바꿔도 7 은 7 이다
+# 행 수만 고정하면 내용은 자유롭다 — action, wait, source 중 무엇을 바꿔도 11 은 11 이다
 # (PR #115 advisory, reviewer B, LOW).  그 세 값이 바로 가드가 키로 쓸 수 있는 값이므로
-# 구동한 shape 집합을 그대로 못박는다.  마지막 줄은 런북이 운영자에게 실제로 안내하는
-# `--source operator` 다 (cam-recovery-operations.md) — 앞의 여섯은 dist/ 의 래퍼 모양,
-# 그 하나는 운영자 모양이고 둘은 다른 값이라 따로 구동해야 한다 (reviewer A, LOW).
-SNT_EXPECTED='apply-config apply_config 300 operator-runbook-example
+# 구동한 shape 집합을 그대로 못박는다.
+#
+# 앞 다섯은 dist/ 래퍼 모양이고, 뒤 여섯은 런북이 운영자에게 **실제로 타라고 적은** 명령
+# 전부다 (cam-recovery-operations.md 의 apply-config + request 네 개, 그리고 수동 runtime
+# 편집 절차의 operator-manual-test).  운영자 모양을 하나만 두면
+# `apply_config`/`operator` 나 `gstapp_stop`/`operator` 같은 조합에 키를 둔 억제가 모든
+# 스트림 모드에서 통과한다 — 문서화된 production 명령인데도 그렇다 (Codex 지적).
+# 합성값 operator-runbook-example 은 문서에 없는 값이어서 실제 operator 로 바꿨다.
+SNT_EXPECTED='apply-config apply_config 300 operator
 request camera_hard_reset 300 legacy-cam-hard-reset
 request camera_hard_reset 300 operator
 request gstapp_restart 120 legacy-restart-app
 request gstapp_restart 120 legacy-start-cam
+request gstapp_restart 120 operator
+request gstapp_restart 120 operator-manual-test
 request gstapp_stop 120 legacy-kill-test
-request module_reload 300 legacy-init-cam'
+request gstapp_stop 120 operator
+request module_reload 300 legacy-init-cam
+request module_reload 300 operator'
 SNT_GOT=$(printf '%s' "$SNT_DRIVEN" | LC_ALL=C sort)
 [ "$SNT_GOT" = "$SNT_EXPECTED" ] || {
     echo 'FAIL: the production-shape table changed content' >&2
