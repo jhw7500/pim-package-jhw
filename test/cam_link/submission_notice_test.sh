@@ -358,4 +358,34 @@ done
 printf '%s' "$alias_usage" | grep -q 'camera_hard_reset -> reboot_fallback' \
     || fail 'usage does not state the module_reload escalation'
 
+# 수용 집합이 늘 때 usage 가 같이 늘지 않으면 실패한다.  이 PR 의 출발점이 ACTION 목록이
+# 세 곳에 흩어져 서로 어긋나 있었다는 것이고, 위 검사들은 다섯을 테스트 안에 따로
+# 하드코딩하므로 여섯째가 추가돼도 아무것도 깨지지 않는다 — 그 간극을 여기서 닫는다.
+#
+# 집합은 소스 텍스트를 grep 하지 않고 bash 가 정규화한 declare -f 에서 읽는다.  소스를
+# 정확 문자열로 고정하면 줄바꿈이나 공백만 바뀌어도 거짓 실패가 나는데, declare -f 는
+# `tok | tok | ...)` 로 일정하게 다시 찍어 주므로 포맷에 면역이다.
+accepted=$(PIM_LIB="${ACCEPTED_SET_LIB:-$ROOT/dist/pim/opt/pim/lib}" bash -c '
+    source "$PIM_LIB/cam_recovery.sh" >/dev/null 2>&1 || exit 70
+    declare -f _cr_public_action' 2>/dev/null \
+    | sed -n '/case "\$1" in/{n;p;}' \
+    | sed 's/)[[:space:]]*$//' | tr '|' '\n' | tr -d ' \t\\' | grep -v '^$')
+
+# 양성 대조: 파싱이 깨지면 집합이 비고 아래 루프가 공허하게 통과한다.  알려진 하나를
+# 실제로 잡는지와 개수 하한을 먼저 못박아, 빈 결과를 "어긋남 없음"으로 읽지 않게 한다.
+[ -n "$accepted" ] || fail 'could not read the accepted action set from _cr_public_action'
+printf '%s\n' "$accepted" | grep -qx gstapp_restart \
+    || fail "accepted-set parse did not find gstapp_restart; got [$(printf '%s' "$accepted" | tr '\n' ' ')]"
+n_accepted=$(printf '%s\n' "$accepted" | grep -c .)
+[ "$n_accepted" -ge 5 ] \
+    || fail "accepted-set parse yielded only $n_accepted entries; the parse is wrong"
+
+while read -r act; do
+    [ -n "$act" ] || continue
+    printf '%s' "$alias_usage" | grep -q -- "$act" \
+        || fail "_cr_public_action accepts $act but usage never mentions it"
+done <<ACCEPTED
+$accepted
+ACCEPTED
+
 echo 'submission notice, cam_enable delay, action aliases: PASS'
