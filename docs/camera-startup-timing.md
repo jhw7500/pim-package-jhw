@@ -157,10 +157,10 @@ error가 복구를 유발하지 않는지, 25초 이후 정상 프레임과 녹�
 >
 > - 서비스 기동만으로 복구가 된다. `cam-operate` 기동은 같은 부팅 안의 재시작에 대해 startup
 >   액션을 스스로 예약한다(`cam_operate_control.sh` 의 `cam_startup_request_reserve`).
-> - 하드 리셋을 **따로** 요청해야 하면 owner 가 `ACTIVE` 가 될 때까지 기다린다 —
+> - 하드 리셋을 **따로** 요청해야 하면 owner 가 `ACTIVE`(또는 `DEGRADED`)가 될 때까지 기다린다 —
 >   `systemctl is-active` 로는 부족하다(유닛의 `ExecStartPost` 는 런타임 JSON 검증만 기다린다).
->   `/opt/pim/bin/cam-recoveryctl status | jq -r '.owner.lifecycle'` 가 `ACTIVE` 이고
->   `.pending`·`.active` 가 비었는지 본 뒤
+>   `/opt/pim/bin/cam-recoveryctl status | jq -r '.owner.lifecycle'` 가 **`ACTIVE` 또는
+>   `DEGRADED`** 이고(수락 조건이 그 둘이다) `.pending`·`.active` 가 비었는지 본 뒤
 >   `/opt/pim/bin/cam-recoveryctl request camera_hard_reset --source operator --reason '<사유>' --wait 300`
 >   (`--source`·`--reason` 필수, 빠지면 64). 판정은 stdout 한 줄
 >   `CAM_RECOVERY_RESULT ... status=SUCCEEDED rc=0` 이다.

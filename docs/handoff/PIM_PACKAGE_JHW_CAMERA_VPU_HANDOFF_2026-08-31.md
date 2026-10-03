@@ -217,8 +217,9 @@ jq empty "$BACKUP/ord_vcm_conf.json"
 > - 하드 리셋을 **따로** 요청해야 하면 owner 가 준비될 때까지 기다린다. `systemctl is-active`
 >   로는 부족하다 — 유닛의 `ExecStartPost` 는 런타임 JSON 검증만 기다리고, 그 시점 owner 는
 >   아직 `STARTING`/`RECOVERING` 일 수 있다. 요청 수락은 `ACTIVE`/`DEGRADED` 에서만 된다:
->   `/opt/pim/bin/cam-recoveryctl status | jq -r '.owner.lifecycle'` 가 `ACTIVE` 이고
->   `.pending`·`.active` 가 비었는지 본다.
+>   `/opt/pim/bin/cam-recoveryctl status | jq -r '.owner.lifecycle'` 가 **`ACTIVE` 또는
+>   `DEGRADED`** 이고 `.pending`·`.active` 가 비었는지 본다 — 수락 조건이 그 둘이므로
+>   `ACTIVE` 만 기다리면 DEGRADED 보드에서 영원히 기다리게 된다.
 > - 그 뒤 `/opt/pim/bin/cam-recoveryctl request camera_hard_reset --source operator --reason '<사유>' --wait 300`
 >   (`--source`·`--reason` 은 **필수**이며 빠지면 64). 판정은 stdout 한 줄
 >   `CAM_RECOVERY_RESULT ... status=SUCCEEDED rc=0` 이다.
