@@ -92,6 +92,10 @@ candidate publish 뒤 action이 실패하면 새 runtime을 유지하고 `DEGRAD
 지원 action은 `gstapp_restart`, `gstapp_stop`, `module_reload`, `camera_hard_reset`,
 `reboot_fallback`이다.
 
+`request` 인자에는 짧은 별칭도 받는다. 목록과 매핑은 여기에 옮겨 적지 않는다 — 인자 없이
+`cam-recoveryctl`을 실행해 usage에서 본다. 별칭은 CLI 진입점에서만 해석되므로 요청 기록과
+`CAM_RECOVERY_RESULT`의 `type=`은 항상 위 정규명이다.
+
 `gstapp_stop`은 gstApp과 BG_Check를 정지시키고 부재를 확인하는 것까지만 한다 —
 SIGTERM 후 `PIM_CAMERA_QUIESCE_TIMEOUT_SEC`까지 대기하고, 남아 있으면 SIGKILL 후 다시
 대기해 부재를 확인한다. 다시 띄우지는 않는다. `cam_liveness_tick`이 이후 순회에서
