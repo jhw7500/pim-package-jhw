@@ -244,8 +244,8 @@ jq empty "$BACKUP/ord_vcm_conf.json"
 > **설치 전에 판별해 최신 경로를 고르면 틀린다**: 존재하지 않는 CLI 를 부르거나, 반대로 꼭
 > 필요한 구형 리셋을 건너뛰게 된다.
 >
-> 분기 기준은 **리셋을 실행하는 그 시점의 `test -x /opt/pim/bin/cam-recoveryctl` 결과
-> 하나뿐**이다. 절을 실행했는지로 판단하지 않는다 — §6 설치를 건너뛴 것이 보드가 최신
+> 분기 기준은 **리셋을 실행하는 그 시점에 재는 아래 두 검사의 조합**이다 — 래퍼가 서비스를
+> 직접 제어하는지, 그리고 최신 CLI 를 호출할 수 있는지. 절을 실행했는지로 판단하지 않는다 — §6 설치를 건너뛴 것이 보드가 최신
 > 패키지를 들고 있다는 뜻은 **아니다**(이미 핀된 페이로드가 깔린 보드에서 검증만 다시
 > 돌리는 경우가 그렇다). 거꾸로 설치 전에 CLI 가 있었다는 사실도 설치 후에는 유효하지
 > 않다 — `dpkg -i` 가 `/opt/pim/bin` 을 핀된 페이로드로 되돌리기 때문이다.
@@ -256,11 +256,21 @@ jq empty "$BACKUP/ord_vcm_conf.json"
 > 제어하지 않으므로**, 서비스를 내린 뒤라면 계속 내려가 있다.
 >
 > ```bash
-> # 1) 래퍼가 서비스를 직접 제어하는가 (구형 페이로드의 표식)
-> grep -qE 'systemctl (stop|start) cam-operate' /opt/pim/bin/cam_hard_reset.sh && echo old || echo fwd
+> # 1) 래퍼가 서비스를 직접 제어하는가 — stop 과 start 가 **둘 다** 있어야 old 다.
+> #    하나만 남은 래퍼를 old 로 보면 -s -S 를 돌리고도 서비스가 올라오지 않는다.
+> #    주석은 먼저 걷어낸다(주석 속 문자열이 실행문으로 세어지면 안 된다).
+> body=$(sed 's/#.*//' /opt/pim/bin/cam_hard_reset.sh)
+> printf '%s\n' "$body" | grep -q 'systemctl stop cam-operate'  && hs=1 || hs=0
+> printf '%s\n' "$body" | grep -q 'systemctl start cam-operate' && ha=1 || ha=0
+> [ "$hs$ha" = 11 ] && echo old || echo fwd
 > # 2) 최신 CLI 를 호출할 수 있는가
 > test -x /opt/pim/bin/cam-recoveryctl && echo cli || echo nocli
 > ```
+>
+> 판정을 `old` 로 내리는 쪽을 엄격하게 둔 것은 의도적이다 — `fwd` 로 잘못 보면 CLI 가 있을 때
+> 최신 경로를 쓰고 없으면 멈추지만, `old` 로 잘못 보면 복구되지 않은 채 진행한다.
+> 실측: 핀된 래퍼 → `old`, 현재 전달 래퍼 → `fwd`, `stop` 만 남은 래퍼 → `fwd`,
+> 두 호출이 주석에만 있는 래퍼 → `fwd`.
 >
 > - `old` → 본문 명령이 **그대로 맞다**. 최신 경로를 쓰지 않는다(CLI 유무와 무관).
 > - `fwd` + `cli` → 위의 최신 경로를 쓴다.
