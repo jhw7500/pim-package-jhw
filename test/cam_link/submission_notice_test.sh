@@ -371,21 +371,41 @@ accepted=$(PIM_LIB="${ACCEPTED_SET_LIB:-$ROOT/dist/pim/opt/pim/lib}" bash -c '
     | sed -n '/case "\$1" in/{n;p;}' \
     | sed 's/)[[:space:]]*$//' | tr '|' '\n' | tr -d ' \t\\' | grep -v '^$')
 
-# 양성 대조: 파싱이 깨지면 집합이 비고 아래 루프가 공허하게 통과한다.  알려진 하나를
-# 실제로 잡는지와 개수 하한을 먼저 못박아, 빈 결과를 "어긋남 없음"으로 읽지 않게 한다.
+# 양성 대조: 파싱이 깨지면 집합이 비거나 셸 구두점이 섞이고, 그러면 아래 비교가 공허하게
+# 통과한다.  개수 하한은 쓰지 않는다 — action 을 의도적으로 줄인 변경이 "파싱이 깨졌다"로
+# 잘못 보고되는 것을 실측으로 확인했다.  대신 토큰 모양과 항상 존재하는 하나를 본다.
 [ -n "$accepted" ] || fail 'could not read the accepted action set from _cr_public_action'
+while read -r act; do
+    case "$act" in
+        '') continue;;
+        *[!a-z0-9_]*) fail "accepted-set parse produced a non-action token [$act]";;
+    esac
+done <<TOKENS
+$accepted
+TOKENS
 printf '%s\n' "$accepted" | grep -qx gstapp_restart \
     || fail "accepted-set parse did not find gstapp_restart; got [$(printf '%s' "$accepted" | tr '\n' ' ')]"
-n_accepted=$(printf '%s\n' "$accepted" | grep -c .)
-[ "$n_accepted" -ge 5 ] \
-    || fail "accepted-set parse yielded only $n_accepted entries; the parse is wrong"
 
+# usage 가 적은 정규명.  usage 는 내가 쓰는 포맷이라 안정적이고, 설명 연속줄은 들여쓰기가
+# 더 깊어 이 패턴에 걸리지 않는다 (실측 확인).
+usage_actions=$(printf '%s\n' "$alias_usage" | sed -n 's/^  \([a-z_][a-z_]*\) .*/\1/p')
+[ -n "$usage_actions" ] || fail 'could not read the action list out of usage'
+
+# 양방향으로 본다.  한 방향만 보면 추가는 잡고 제거/개명은 놓친다 — 제거하면 usage 가
+# 존재하지 않는 action 을 계속 광고하고, 그것을 치면 exit 64 가 난다.
 while read -r act; do
     [ -n "$act" ] || continue
-    printf '%s' "$alias_usage" | grep -q -- "$act" \
-        || fail "_cr_public_action accepts $act but usage never mentions it"
+    printf '%s\n' "$usage_actions" | grep -qx -- "$act" \
+        || fail "_cr_public_action accepts $act but usage never lists it"
 done <<ACCEPTED
 $accepted
 ACCEPTED
+while read -r act; do
+    [ -n "$act" ] || continue
+    printf '%s\n' "$accepted" | grep -qx -- "$act" \
+        || fail "usage lists $act but _cr_public_action does not accept it"
+done <<LISTED
+$usage_actions
+LISTED
 
 echo 'submission notice, cam_enable delay, action aliases: PASS'
