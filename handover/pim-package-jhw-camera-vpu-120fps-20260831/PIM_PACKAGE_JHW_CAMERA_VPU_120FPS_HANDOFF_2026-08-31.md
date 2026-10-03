@@ -122,6 +122,36 @@ dpkg-query -W -f='${Package} ${Version} ${Architecture}\n' pim-mp
 
 ## 7. 설치
 
+> **버전 불일치 경고 (2026-10-03 추가).** 이 문서의 `cam_hard_reset.sh -s -S` 는 **같은
+> 디렉터리에 들어 있는 `pim-mp_0.6.3+jhw.camera3_arm64.deb` 기준**이다. 그 패키지의 스크립트는
+> `-s`/`-S` 를 `--stop-service`/`--start-service` 로 해석해 `systemctl stop` → `rmmod` →
+> CSI2/ISI unbind/bind → `modprobe` → `systemctl start` 을 직접 수행했다. 이 절이 서비스를
+> 내려 두고 시작하므로(`systemctl stop cam-operate.service`), 그 동작이 설치 직후 **새 모듈을
+> 실제로 적재하고 서비스를 되살리는** 부분이다. 빼면 안 된다.
+>
+> **이미 최신 패키지가 깔린 보드에서는 그렇지 않다.** 지금 `cam_hard_reset.sh` 는 전달 래퍼이고
+> `-s`/`-S` 는 **받되 무시**된다 — 서비스를 올려 주지 않고 CSI2/ISI unbind/bind 도 직접 하지
+> 않는다. 그 보드에서는 다음을 쓴다.
+>
+> - 서비스 기동만으로 복구가 된다. `cam-operate` 기동은 같은 부팅 안의 재시작에 대해 startup
+>   액션을 스스로 예약한다(`cam_operate_control.sh` 의 `cam_startup_request_reserve`).
+> - 하드 리셋을 **따로** 요청해야 하면 owner 가 준비될 때까지 기다린다. `systemctl is-active`
+>   로는 부족하다 — 유닛의 `ExecStartPost` 는 런타임 JSON 검증만 기다리고 그 시점 owner 는
+>   아직 `STARTING`/`RECOVERING` 일 수 있다.
+>   `/opt/pim/bin/cam-recoveryctl status | jq -r '.owner.lifecycle'` 가 **`ACTIVE` 또는
+>   `DEGRADED`** 이고(수락 조건이 그 둘이다) `.pending`·`.active` 가 비었는지 본 뒤
+>   `/opt/pim/bin/cam-recoveryctl request camera_hard_reset --source operator --reason '<사유>' --wait 300`
+>   (`--source`·`--reason` 은 **필수**이며 빠지면 64). 판정은 stdout 한 줄
+>   `CAM_RECOVERY_RESULT ... status=SUCCEEDED rc=0` 이다.
+> - **서비스가 내려가 있으면 그 요청은 69 로 실패한다**(다른 복구 진행 중이면 75).
+> - `status=FAILED rc=70` 은 **일반 소프트웨어 실패**다 — lock 획득 실패·요청 스키마 검증 실패·
+>   owner 종결이 모두 70 을 쓴다. owner stale 판정에는 요청 이력의 `interrupted=true` 와
+>   `interrupted_reason="owner_stale"` 이 필요하고 두 필드는 위 한 줄에 없다.
+>
+> 어느 쪽 보드인지 먼저 확인한다. **1 차 신호는 `test -x /opt/pim/bin/cam-recoveryctl`** 이다 —
+> 그 CLI 를 호출할 수 있는가를 직접 재기 때문이다(2026-09-01 에 추가되었으므로 이 문서가 핀한
+> 페이로드에는 **없다**). `dpkg-query -W -f='${Version}\n' pim-mp` 는 보조로 본다.
+
 ```bash
 set -e
 WORK=/root/camtest/handoff-camera3-20260831
