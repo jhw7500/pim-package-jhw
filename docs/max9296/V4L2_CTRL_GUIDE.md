@@ -83,29 +83,24 @@ V4L2 컨트롤은 기본적으로 정수값으로 노출된다. 대부분은 레
 
 ## 3) 컨트롤 ↔ 레지스터 매핑 (요약)
 
-> **버전 불일치 경고 (2026-10-03 추가).** 이 절차의 `cam_hard_reset.sh -s -S` 는 **이 문서가
-> 핀한 페이로드 기준**이다. 그 패키지의 스크립트는 `-s`/`-S` 를 `--stop-service`/
-> `--start-service` 로 해석해 `systemctl stop` → `rmmod` → CSI2/ISI unbind/bind → `modprobe`
-> → `systemctl start` 을 직접 수행했고, 그래서 `하드 리셋 완료 (CSI2 + ISI 재바인드 포함)` 이
-> 나왔다. 그 동작이 설치 직후 **새 모듈을 실제로 적재**하게 만드는 부분이므로 이 절차에서
-> 빼면 안 된다.
+> **`cam_hard_reset.sh -s -S` 는 더 이상 서비스를 제어하지 않는다 (2026-10-03).** 이 가이드는
+> 특정 패키지에 묶이지 않은 현행 레퍼런스이고 `/opt/pim/docs/` 로 배포되므로, 지금 동작을
+> 적는다. 그 스크립트는 전달 래퍼가 되었고 `-s`/`-S` 는 **받되 무시**된다 — 예전처럼
+> `systemctl stop`/`start` 를 해 주지 않고 `하드 리셋 완료` 류의 완료 문구도 출력하지 않는다.
+> 종료코드만 보면 성공으로 읽히지만 서비스는 내려간 채로 남는다(실측 사례 있음).
 >
-> **이미 최신 패키지가 깔린 보드에서는 그렇지 않다.** 지금 `cam_hard_reset.sh` 는 전달
-> 래퍼이고 `-s`/`-S` 는 **받되 무시**된다 — 서비스를 올려 주지 않고, 위 완료 문구도 출력하지
-> 않는다. 종료코드만 보면 성공으로 읽히지만 보드는 그대로 내려가 있다(실측 사례 있음).
-> 그 보드에서는 다음을 쓴다:
+> 아래 본문에 `cam_hard_reset.sh -s -S` 가 남아 있는 곳은 다음으로 읽는다.
 >
 > - 서비스 기동: `systemctl start cam-operate.service` 뒤 `systemctl is-active cam-operate.service`
 > - 하드 리셋: `/opt/pim/bin/cam-recoveryctl request camera_hard_reset --source operator --reason '<사유>' --wait 300`
 >   (`--source`·`--reason` 은 **필수**이며 빠지면 64 로 끊긴다). 판정은 stdout 한 줄
 >   `CAM_RECOVERY_RESULT ... status=SUCCEEDED rc=0` 이다.
-> - `status=FAILED rc=70` 은 **일반 소프트웨어 실패**다. owner stale 로 단정하지 않는다 —
->   그 판정에는 요청 이력의 `interrupted=true` 와 `interrupted_reason="owner_stale"` 이
->   필요하고, 그 두 필드는 위 한 줄에 들어 있지 않다.
+> - `status=FAILED rc=70` 은 **일반 소프트웨어 실패**다. lock 획득 실패·요청 스키마 검증 실패·
+>   owner 종결이 모두 70 을 쓰므로 owner stale 로 단정하지 않는다 — 그 판정에는 요청 이력의
+>   `interrupted=true` 와 `interrupted_reason="owner_stale"` 이 필요하고, 두 필드는 위 한 줄에
+>   들어 있지 않다.
 >
-> `cam-recoveryctl` 은 2026-09-01 에 추가되었으므로 이 문서가 핀한 페이로드에는 **없다.**
-> 어느 쪽 보드인지 먼저 확인한다: `dpkg-query -W -f='${Version}\n' pim-mp` 와
-> `test -x /opt/pim/bin/cam-recoveryctl`.
+> 이 CLI 가 없는 구형 보드라면 본문 명령이 그대로 맞다. 확인: `test -x /opt/pim/bin/cam-recoveryctl`.
 
 드라이버 소스 기준: `projects/max9296/max9296.c`
 

@@ -104,8 +104,12 @@ edgeconf의 해상도/FPS/crop 값은 바꾸지 않는다.
 >   필요하고, 그 두 필드는 위 한 줄에 들어 있지 않다.
 >
 > `cam-recoveryctl` 은 2026-09-01 에 추가되었으므로 이 문서가 핀한 페이로드에는 **없다.**
-> 어느 쪽 보드인지 먼저 확인한다: `dpkg-query -W -f='${Version}\n' pim-mp` 와
-> `test -x /opt/pim/bin/cam-recoveryctl`.
+> 어느 쪽 보드인지 먼저 확인한다. **1 차 신호는 `test -x /opt/pim/bin/cam-recoveryctl`** 이다 —
+> 실제로 중요한 사실(그 CLI 를 호출할 수 있는가)을 직접 재기 때문이다. `dpkg-query -W
+> -f='${Version}\n' pim-mp` 는 보조로 본다: 두 파일은 같은 `dist/pim` 페이로드로 한 `dpkg -i`
+> 트랜잭션에 묶여 정상 경로에서는 갈라지지 않지만, unpack 이 중단된 `half-installed` 상태나
+> `/opt/pim/bin` 을 패키지 밖에서 손으로 교체한 경우에는 버전 문자열과 실제 파일이 어긋날 수
+> 있다. `rc=70` 은 lock 획득 실패·요청 스키마 검증 실패·owner 종결에 모두 쓰인다.
 
 ### 5.1 일반 서비스 재시작
 
