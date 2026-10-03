@@ -78,6 +78,10 @@ jobs:
           for tool in jq git flock; do
             command -v "$tool" >/dev/null || missing+=("$tool")
           done
+          # script(1): submission_notice_test.sh 가 stderr 를 터미널에 올려 구동하는
+          # 하드 의존이다. 도구 이름과 패키지 이름이 달라(bsdutils 가 제공한다) 위
+          # 루프에 넣으면 apt 가 존재하지 않는 'script' 패키지를 찾는다.
+          command -v script >/dev/null || missing+=(bsdutils)
           if [ ${#missing[@]} -gt 0 ]; then
             echo "installing: ${missing[*]}"
             sudo apt-get update
@@ -87,6 +91,7 @@ jobs:
           echo "jq:      $(jq --version)"
           echo "git:     $(git --version)"
           echo "flock:   $(flock --version | head -1)"
+          echo "script:  $(script --version | head -1)"
 
       # 두 스위트 모두 카메라 보드 없이 동작한다. 실제 I2C/V4L2 장치를 열지 않고
       # DMA helper 와 /proc/uptime 원본을 환경변수로 주입한다.
