@@ -227,6 +227,16 @@ while read -r sub act secs src <&3; do
         grep -qF "$want_notice" "$WORK/pty.txt" \
             || { echo "FAIL: $cell tty: no submission notice on the terminal" >&2
                  sed 's/^/  /' "$WORK/pty.txt" >&2; exit 1; }
+        # 결과줄도 같은 보호가 필요하다.  결과줄이 **파일**로 가는 두 셀(file, mixed-A)은
+        # 전체 내용 정확 비교라 중복이 자동으로 걸리지만, **pty** 로 가는 두 셀(여기와
+        # mixed-B)은 grep -qF 존재 확인뿐이었다.  그래서 stdout 이 터미널일 때만 결과줄을
+        # 중복하는 회귀가 통과한다 — stdout 계약은 한 줄인데도 (Codex 재현 확인).
+        # pty 캡처는 에코 등 다른 바이트가 섞여 전체 일치를 쓸 수 없으므로 알림과 같은
+        # 카운트 방식을 쓴다.
+        pty_results=$(grep -c '^CAM_RECOVERY_RESULT ' "$WORK/pty.txt" || true)
+        [ "$pty_results" -eq 1 ] \
+            || { echo "FAIL: $cell tty: expected one result line, saw $pty_results" >&2
+                 sed 's/^/  /' "$WORK/pty.txt" >&2; exit 1; }
         grep -qF "$want_result" "$WORK/pty.txt" \
             || { echo "FAIL: $cell tty: no result line on the terminal" >&2
                  sed 's/^/  /' "$WORK/pty.txt" >&2; exit 1; }
@@ -284,6 +294,10 @@ while read -r sub act secs src <&3; do
         grep -qF "$want_notice" "$WORK/mixB.err" \
             || { echo "FAIL: $cell mixed(out=tty,err=file): wrong or missing notice" >&2
                  sed 's/^/  /' "$WORK/mixB.err" >&2; exit 1; }
+        mixb_results=$(grep -c '^CAM_RECOVERY_RESULT ' "$WORK/mixB.tty" || true)
+        [ "$mixb_results" -eq 1 ] \
+            || { echo "FAIL: $cell mixed(out=tty,err=file): expected one result line, saw $mixb_results" >&2
+                 sed 's/^/  /' "$WORK/mixB.tty" >&2; exit 1; }
         grep -qF "$want_result" "$WORK/mixB.tty" \
             || { echo "FAIL: $cell mixed(out=tty,err=file): no result line on the terminal" >&2
                  sed 's/^/  /' "$WORK/mixB.tty" >&2; exit 1; }
