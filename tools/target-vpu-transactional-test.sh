@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# bare `test` 어서션은 set -e 로 죽을 때 아무것도 찍지 않는다 — 운영자는 "스크립트가
+# 그냥 죽었다"만 본다 (세 파일 합쳐 27개 중 21개가 메시지 없음).  ERR 트랩 한 줄이면
+# 어느 줄의 무슨 명령이 실패했는지 나온다.  ERR 은 set -e 가 종료시키는 바로 그 조건에서만
+# 발동하므로(if 조건, ||/&& 의 비최종 항, ! 뒤는 제외) 거짓 소음이 없고, EXIT 트랩과는
+# 별개라 기존 `trap restore EXIT INT TERM HUP` 와 공존한다 (@claude 지적, 실측 확인).
+trap 'echo "FAILED rc=$? line=$LINENO: $BASH_COMMAND" >&2' ERR
 
 target="root@192.168.214.4"
 ssh_opts=(-o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new)
@@ -22,6 +28,7 @@ ssh "${ssh_opts[@]}" "$target" bash -s -- \
   "$remote_dir" "$expected_plugin" "$expected_wrapper" <<'REMOTE'
 set -euo pipefail
 umask 077
+trap 'echo "FAILED rc=$? line=$LINENO: $BASH_COMMAND" >&2' ERR
 
 work=$1
 expected_plugin=$2
@@ -166,12 +173,37 @@ stat -c 'start_video_time=%y size=%s' /tmp/start_video_time
 # 창 시작 시각을 파일 mtime 으로 박아 둔다.  아래에서 "그 시각 이후 수정된 조각"을
 # 요구하는 기준이 된다.
 window_ref=$(mktemp)
+# 창 전 각 유닛의 기동 시각을 잡는다.  창 후의 `is-active` 는 **창 끝 스냅샷**이라, 창
+# 동안 유닛이 죽고 systemd 가 다시 띄워도 "active" 로 읽힌다 (@claude 지적).
+# gstApp 은 아래 `pid1 = pid2` 가 같은 프로세스임을 증명하므로 덮이지만, ord/sd-mount/
+# vsd 의 재기동은 그 검사로도 안 잡힌다.  ActiveEnterTimestampMonotonic 이 바뀌지 않았음을
+# 요구하면 "창 내내 같은 기동이었다"를 직접 증명한다.
+units="cam-operate.service ord-operate.service sd-mount.service vsd-operate.service"
+before_enter=$(mktemp)
+for u in $units; do
+    ts=$(systemctl show -p ActiveEnterTimestampMonotonic --value "$u")
+    # 한 번도 active 가 아니었거나 유닛이 없으면 이 속성은 빈 값이 아니라 **0** 이다
+    # (실측: 존재하지 않는 유닛에 0 이 나온다).  그러면 전후가 0 = 0 으로 공허하게
+    # 통과하므로 0 도 거부한다.
+    test -n "$ts"
+    test "$ts" != 0
+    printf '%s %s\n' "$u" "$ts" >> "$before_enter"
+done
 echo "stability window"
 sleep 20
 pid2=$(pgrep -xo gstApp)
 test "$pid1" = "$pid2"
-systemctl is-active cam-operate.service ord-operate.service sd-mount.service vsd-operate.service
+systemctl is-active $units
 ps -o pid=,etimes=,stat=,cmd= -p "$pid2"
+while read -r u ts; do
+    now=$(systemctl show -p ActiveEnterTimestampMonotonic --value "$u")
+    if [ "$now" != "$ts" ]; then
+        echo "unit restarted during the stability window: $u ($ts -> $now)" >&2
+        rm -f "$before_enter" "$window_ref"
+        exit 1
+    fi
+done < "$before_enter"
+rm -f "$before_enter"
 # 존재가 아니라 **전진**을 요구한다.  `-mmin -2` 창은 sleep 20 보다 넓으므로, 인코딩이
 # 창 동안 멈춰도 직전 조각이 그 창에 그대로 남고 크기도 0 보다 커서 "존재 + 크기>0" 검사는
 # 새 바이트 없이 통과한다 — 멈춘 VPU 파이프라인이 TEST pass 를 받는다 (Codex 지적, P1).

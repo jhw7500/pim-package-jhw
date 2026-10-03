@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# bare `test` 어서션은 set -e 로 죽을 때 아무것도 찍지 않는다 — 운영자는 "스크립트가
+# 그냥 죽었다"만 본다 (세 파일 합쳐 27개 중 21개가 메시지 없음).  ERR 트랩 한 줄이면
+# 어느 줄의 무슨 명령이 실패했는지 나온다.  ERR 은 set -e 가 종료시키는 바로 그 조건에서만
+# 발동하므로(if 조건, ||/&& 의 비최종 항, ! 뒤는 제외) 거짓 소음이 없고, EXIT 트랩과는
+# 별개라 기존 `trap restore EXIT INT TERM HUP` 와 공존한다 (@claude 지적, 실측 확인).
+trap 'echo "FAILED rc=$? line=$LINENO: $BASH_COMMAND" >&2' ERR
 
 host=root@192.168.214.4
 ssh_opts=(-o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new)
@@ -31,6 +37,7 @@ test "$ready" -eq 1
 
 ssh "${ssh_opts[@]}" "$host" bash -s <<'REMOTE'
 set -euo pipefail
+trap 'echo "FAILED rc=$? line=$LINENO: $BASH_COMMAND" >&2' ERR
 
 echo package
 dpkg-query -W pim-mp
