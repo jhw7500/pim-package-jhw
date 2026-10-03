@@ -122,6 +122,21 @@ dpkg-query -W -f='${Package} ${Version} ${Architecture}\n' pim-mp
 
 ## 7. 설치
 
+> **버전 불일치 경고 (2026-10-03).** 이 문서의 `cam_hard_reset.sh -s -S` 는 이 문서가 핀한
+> 페이로드 기준이다 — 그 패키지의 스크립트는 `-s`/`-S` 를 서비스 정지·기동으로 해석해 직접
+> 수행했다. **최신 패키지가 깔린 보드에서는 그 플래그가 받되 무시되어 서비스를 되살리지
+> 않는다.** 그 보드에서는 `systemctl start cam-operate.service` 로 직접 올린다.
+>
+> **올린 직후 바로 이 문서의 리셋 명령으로 넘어가면 안 된다.** `systemctl start` 는 startup
+> 복구가 끝나기 전에 돌아오고(기동이 스스로 `module_reload` 를 예약한다), 그 요청과 충돌하면
+> **75** 로 끊기며 `set -e` 아래에서는 시험이 중단된다. 준비된 상태는
+> `/opt/pim/bin/cam-recoveryctl status` 의 `.owner.lifecycle` 이 `ACTIVE` 또는 `DEGRADED` 이고
+> `.pending` 과 `.active` 가 둘 다 비었을 때다. 대개 10초 안에 그렇게 된다.
+>
+> 복구·리셋 절차 전체는 `pim-package-jhw` 저장소의
+> `docs/camera-health/cam-recovery-operations.md` 가 정본이며 **이 전달물에는 들어 있지
+> 않다** — 위 조건만 정본에 도달할 수 없는 수신자를 위해 여기에 적어 둔 것이다.
+
 ```bash
 set -e
 WORK=/root/camtest/handoff-camera3-20260831

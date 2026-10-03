@@ -36,6 +36,26 @@ guard다. runtime을 만들거나 소유하지 않는다. 이어서 systemd가
    projection이 바뀌었거나 없거나 dirty이면 `camera_hard_reset`을 수행한다.
 5. readiness 검증 뒤 `ACTIVE`로 전이한다.
 
+**`systemctl is-active`가 `active`인 것은 5단계가 끝났다는 뜻이 아니다.** 유닛의
+`ExecStartPost`는 runtime JSON이 validate되기까지만 기다리므로, 그 시점 owner는 아직
+`STARTING`이거나 4단계의 `module_reload`를 돌고 있어 `RECOVERING`일 수 있다. 제출은
+`ACTIVE`/`DEGRADED`에서만 받으므로 기동 직후 바로 요청하면 69 또는 75로 거절된다 — 그것을
+hardware 문제로 오진하기 쉽다.
+
+따라서 `systemctl start`/`restart` 뒤에 명시적 recovery를 요청해야 하면 먼저 owner가 받을
+상태인지 확인한다.
+
+```bash
+/opt/pim/bin/cam-recoveryctl status | jq -r '.owner.lifecycle'   # ACTIVE 또는 DEGRADED
+/opt/pim/bin/cam-recoveryctl status | jq -c '.pending, .active'  # 둘 다 null
+```
+
+**대개는 기다릴 필요조차 없다** — 같은 boot의 restart는 4단계에서 최소 `module_reload`를
+스스로 수행하므로(`cam_operate_control.sh`의 `cam_startup_request_reserve`) 별도 요청이
+불필요하다. 2026-10-03 설치 실측: `start` 직후 unit은 `active`, owner는 `RECOVERING`,
+`active`에 `type=module_reload source=startup`. 그 요청이 적재 모듈을 교체하고 약 10초 뒤
+`ACTIVE`로 수렴했다.
+
 따라서 `systemctl restart cam-operate.service`는 새 invocation이다. 기존 runtime의
 수동 편집값을 입력이나 fallback으로 사용하지 않고 source를 다시 검색해 덮어쓰며,
 consumer를 다시 시작하고 위 reset 정책을 적용한다. source가 없거나 최신 source가
@@ -139,7 +159,7 @@ CAM_RECOVERY_SUBMITTED id=01234567-89ab-cdef-0123-456789abcdef type=gstapp_stop 
 | 0 | 요청 접수 또는 기다린 action 성공 |
 | 64 | 잘못된 action/argument 또는 runtime syntax/schema 오류 |
 | 69 | daemon/service unavailable. 같은 코드가 두 경우 더 쓰인다 — `status --request-id`의 "terminal 결과가 아직 없음", 그리고 owner lifecycle이 제출을 받을 상태가 아닐 때의 제출 거절 |
-| 70 | 내부 state/storage 오류 |
+| 70 | 내부 state/storage 오류. **owner-stale 종결도 같은 코드를 쓴다** — `status=FAILED rc=70` 만으로는 둘을 구분할 수 없고, stale 판정에는 요청 이력의 `interrupted=true` 와 `interrupted_reason="owner_stale"` 이 필요하다. `CAM_RECOVERY_RESULT` 한 줄은 그 두 필드를 담지 않는다 |
 | 75 | 다른 request가 pending/active인 `BUSY`; queue 없음 |
 | 124 | wait timeout; action은 취소되지 않음 |
 
