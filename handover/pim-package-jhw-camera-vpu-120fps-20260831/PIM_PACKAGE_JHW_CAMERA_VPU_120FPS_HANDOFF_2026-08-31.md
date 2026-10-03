@@ -122,76 +122,19 @@ dpkg-query -W -f='${Package} ${Version} ${Architecture}\n' pim-mp
 
 ## 7. 설치
 
-> **버전 불일치 경고 (2026-10-03 추가).** 이 문서의 `cam_hard_reset.sh -s -S` 는 **같은
-> 디렉터리에 들어 있는 `pim-mp_0.6.3+jhw.camera3_arm64.deb` 기준**이다. 그 패키지의 스크립트는
-> `-s`/`-S` 를 `--stop-service`/`--start-service` 로 해석해 `systemctl stop` → `rmmod` →
-> CSI2/ISI unbind/bind → `modprobe` → `systemctl start` 을 직접 수행했다. 이 절이 서비스를
-> 내려 두고 시작하므로(`systemctl stop cam-operate.service`), 그 동작이 설치 직후 **새 모듈을
-> 실제로 적재하고 서비스를 되살리는** 부분이다. 빼면 안 된다.
+> **버전 불일치 경고 (2026-10-03 추가).** 이 문서의 `cam_hard_reset.sh -s -S` 는 **이 문서가
+> 핀한 페이로드 기준**이다. 그 패키지의 스크립트는 `-s`/`-S` 를 `--stop-service`/
+> `--start-service` 로 해석해 `systemctl stop` → `rmmod` → CSI2/ISI unbind/bind → `modprobe`
+> → `systemctl start` 을 직접 수행했고, 그것이 설치 직후 **새 모듈을 적재하고 서비스를
+> 되살리는** 부분이다. 그 페이로드를 설치하는 절차에서는 빼면 안 된다.
 >
-> **이미 최신 패키지가 깔린 보드에서는 그렇지 않다.** 지금 `cam_hard_reset.sh` 는 전달 래퍼이고
-> `-s`/`-S` 는 **받되 무시**된다 — 서비스를 올려 주지 않고 CSI2/ISI unbind/bind 도 직접 하지
-> 않는다. 그 보드에서는 다음을 쓴다.
->
-> - 서비스 기동만으로 복구가 된다. `cam-operate` 기동은 같은 부팅 안의 재시작에 대해 startup
->   액션을 스스로 예약한다(`cam_operate_control.sh` 의 `cam_startup_request_reserve`).
-> - 하드 리셋을 **따로** 요청해야 하면 owner 가 준비될 때까지 기다린다. `systemctl is-active`
->   로는 부족하다 — 유닛의 `ExecStartPost` 는 런타임 JSON 검증만 기다리고 그 시점 owner 는
->   아직 `STARTING`/`RECOVERING` 일 수 있다.
->   `/opt/pim/bin/cam-recoveryctl status | jq -r '.owner.lifecycle'` 가 **`ACTIVE` 또는
->   `DEGRADED`** 이고(수락 조건이 그 둘이다) `.pending`·`.active` 가 비었는지 본 뒤
->   `/opt/pim/bin/cam-recoveryctl request camera_hard_reset --source operator --reason '<사유>' --wait 300`
->   (`--source`·`--reason` 은 **필수**이며 빠지면 64). 판정은 stdout 한 줄
->   `CAM_RECOVERY_RESULT ... status=SUCCEEDED rc=0` 이다.
-> - **서비스가 내려가 있으면 그 요청은 69 로 실패한다**(다른 복구 진행 중이면 75).
-> - `status=FAILED rc=70` 은 **일반 소프트웨어 실패**다 — lock 획득 실패·요청 스키마 검증 실패·
->   owner 종결이 모두 70 을 쓴다. owner stale 판정에는 요청 이력의 `interrupted=true` 와
->   `interrupted_reason="owner_stale"` 이 필요하고 두 필드는 위 한 줄에 없다.
->
-> 어느 쪽 보드인지 먼저 확인한다. **1 차 신호는 `test -x /opt/pim/bin/cam-recoveryctl`** 이다 —
-> 그 CLI 를 호출할 수 있는가를 직접 재기 때문이다(2026-09-01 에 추가되었으므로 이 문서가 핀한
-> 페이로드에는 **없다**). `dpkg-query -W -f='${Version}\n' pim-mp` 는 보조로 본다.
->
-> **판별 시점이 중요하다.** 이 절이 설치하는 것은 **핀된 페이로드**이므로, `dpkg -i` 가
-> `/opt/pim/bin` 을 그 페이로드로 되돌린다 — 지금 보드에 `cam-recoveryctl` 이 있어도 **설치
-> 직후에는 사라지고** 구형 `cam_hard_reset.sh`(서비스 제어를 직접 하는 쪽)가 복원된다. 그래서
-> **설치 전에 판별해 최신 경로를 고르면 틀린다**: 존재하지 않는 CLI 를 부르거나, 반대로 꼭
-> 필요한 구형 리셋을 건너뛰게 된다.
->
-> 분기 기준은 **리셋을 실행하는 그 시점에 재는 아래 두 검사의 조합**이다 — 래퍼가 서비스를
-> 직접 제어하는지, 그리고 최신 CLI 를 호출할 수 있는지. 절을 실행했는지로 판단하지 않는다 — §7 설치를 건너뛴 것이 보드가 최신
-> 패키지를 들고 있다는 뜻은 **아니다**(이미 핀된 페이로드가 깔린 보드에서 검증만 다시
-> 돌리는 경우가 그렇다). 거꾸로 설치 전에 CLI 가 있었다는 사실도 설치 후에는 유효하지
-> 않다 — `dpkg -i` 가 `/opt/pim/bin` 을 핀된 페이로드로 되돌리기 때문이다.
->
-> **두 가지를 다 재고, 어긋나면 멈춘다.** CLI 부재를 구형 동작의 증거로 쓰면 안 된다 —
-> 최신 설치에서 `cam-recoveryctl` 만 지워졌거나 실행 비트를 잃은 상태, unpack 이 중단돼
-> 최신 래퍼만 남은 상태가 그렇다. 그때 본문 명령은 **쓸 수 없는 CLI 로 전달만 하고 서비스를
-> 제어하지 않으므로**, 서비스를 내린 뒤라면 계속 내려가 있다.
->
-> ```bash
-> # 1) 래퍼가 서비스를 직접 제어하는가 — stop 과 start 가 **둘 다** 있어야 old 다.
-> #    하나만 남은 래퍼를 old 로 보면 -s -S 를 돌리고도 서비스가 올라오지 않는다.
-> #    주석은 먼저 걷어낸다(주석 속 문자열이 실행문으로 세어지면 안 된다).
-> body=$(sed 's/#.*//' /opt/pim/bin/cam_hard_reset.sh)
-> printf '%s\n' "$body" | grep -q 'systemctl stop cam-operate'  && hs=1 || hs=0
-> printf '%s\n' "$body" | grep -q 'systemctl start cam-operate' && ha=1 || ha=0
-> [ "$hs$ha" = 11 ] && echo old || echo fwd
-> # 2) 최신 CLI 를 호출할 수 있는가
-> test -x /opt/pim/bin/cam-recoveryctl && echo cli || echo nocli
-> ```
->
-> 판정을 `old` 로 내리는 쪽을 엄격하게 둔 것은 의도적이다 — `fwd` 로 잘못 보면 CLI 가 있을 때
-> 최신 경로를 쓰고 없으면 멈추지만, `old` 로 잘못 보면 복구되지 않은 채 진행한다.
-> 실측: 핀된 래퍼 → `old`, 현재 전달 래퍼 → `fwd`, `stop` 만 남은 래퍼 → `fwd`,
-> 두 호출이 주석에만 있는 래퍼 → `fwd`.
->
-> - `old` → 본문 명령이 **그대로 맞다**. 최신 경로를 쓰지 않는다(CLI 유무와 무관).
-> - `fwd` + `cli` → 위의 최신 경로를 쓴다.
-> - **`fwd` + `nocli` → 멈춘다.** 래퍼는 전달만 하고 CLI 가 없으니 어느 경로도 복구하지
->   못한다. 설치를 일관된 상태로 되돌린 뒤에 계속한다.
-> - 위 **두 검사 모두 리셋을 실행하는 바로 그 시점에** 돌린다. `dpkg -i` 가 `/opt/pim/bin` 을
->   핀된 페이로드로 되돌리므로, 설치 앞에서 본 결과는 그 뒤에 유효하지 않다.
+> **최신 패키지가 깔린 보드에서는 이 문서를 절차로 쓰지 않는다.** 지금
+> `cam_hard_reset.sh` 는 전달 래퍼이고 `-s`/`-S` 는 **받되 무시**되므로, 서비스를 내린 뒤
+> 되살려 주지 않는다. 그 보드의 복구·리셋은 **정본 문서**를 본다 —
+> `docs/camera-health/cam-recovery-operations.md`. 요청 명령, `CAM_RECOVERY_RESULT` 판정,
+> owner lifecycle 과 종료코드(69·70·75)의 의미가 거기에 있고 코드와 함께 갱신된다.
+> 여기에 같은 내용을 옮겨 적지 않는 이유는, 두 곳에 두면 한쪽이 바뀔 때 다른 쪽이 조용히
+> 거짓이 되기 때문이다 — 이 경고가 생긴 경위가 바로 그것이다.
 
 ```bash
 set -e
