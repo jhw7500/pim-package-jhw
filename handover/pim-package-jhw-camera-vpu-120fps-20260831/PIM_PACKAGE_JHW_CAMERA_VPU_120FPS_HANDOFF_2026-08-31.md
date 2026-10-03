@@ -132,13 +132,19 @@ dpkg-query -W -f='${Package} ${Version} ${Architecture}\n' pim-mp
 > `set -e` 아래에서는 시험이 중단된다. 아래가 통과한 뒤에 계속한다(대개 10초 안).
 >
 > ```bash
-> while :; do
->   s=$(/opt/pim/bin/cam-recoveryctl status) || exit 1
->   lc=$(printf '%s' "$s" | jq -r '.owner.lifecycle')
->   idle=$(printf '%s' "$s" | jq -r '[.pending, .active] | map(. == null) | all')
->   case "$lc" in ACTIVE|DEGRADED) [ "$idle" = true ] && break;; esac
->   sleep 2
-> done
+> # 핀된 페이로드 보드에는 이 CLI 가 없다. 그때는 건너뛰고 계속한다 —
+> # 그 보드의 cam_hard_reset.sh 가 서비스 제어를 직접 하므로 대기가 필요 없다.
+> if [ -x /opt/pim/bin/cam-recoveryctl ]; then
+>   while :; do
+>     s=$(/opt/pim/bin/cam-recoveryctl status) || { echo 'status 조회 실패' >&2; break; }
+>     lc=$(printf '%s' "$s" | jq -r '.owner.lifecycle')
+>     idle=$(printf '%s' "$s" | jq -r '[.pending, .active] | map(. == null) | all')
+>     case "$lc" in ACTIVE|DEGRADED) [ "$idle" = true ] && break;; esac
+>     sleep 2
+>   done
+> else
+>   echo 'skip: 핀된 페이로드 보드 — cam_hard_reset.sh 가 직접 처리한다'
+> fi
 > ```
 >
 > 복구·리셋 절차 전체는 `pim-package-jhw` 저장소의
