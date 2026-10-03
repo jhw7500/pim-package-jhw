@@ -111,7 +111,8 @@ CSI2 29.7~29.8, ISI 29.6~29.8 FPS였고 최대 손실은 0.9%였다.
 ### 5.3 CSI2/ISI 포함 하드 리셋
 
 ```bash
-timeout 45 /opt/pim/bin/cam_hard_reset.sh -s -S
+timeout 45 /opt/pim/bin/cam-recoveryctl request camera_hard_reset \
+  --source operator --reason 'handoff procedure' --wait 300
 systemctl is-active cam-operate.service
 pgrep -a gstApp
 ```
@@ -152,7 +153,8 @@ v4l2-ctl -d /dev/video4 \
 /opt/pim/bin/rgb565_frame_check.py \
   --width 1280 --height 360 --bytesperline 2560 \
   /root/camtest/camera4-1280x360.rgb565
-timeout 45 /opt/pim/bin/cam_hard_reset.sh -s -S
+timeout 45 /opt/pim/bin/cam-recoveryctl request camera_hard_reset \
+  --source operator --reason 'handoff procedure' --wait 300
 ```
 
 필수 결과는 실제 크기 921600 bytes, `constant=0`, `mostly_green=0`, `pass=1`이다.
@@ -179,5 +181,8 @@ systemctl daemon-reload
 systemctl start cam-operate.service
 ```
 
-모듈 refcount가 음수이거나 `cam_hard_reset.sh`가 종료코드 2이면 반복 실행하지 않고
-재부팅한다.
+모듈 refcount가 음수이거나 복구 요청이 `status=FAILED` 로 끝나면 반복 실행하지 않고
+재부팅한다. 종료코드만으로 판정하지 않는다 — `cam_hard_reset.sh` 는 이제 전달 래퍼이고,
+`-s`/`-S` 는 받되 무시되므로 서비스를 올려 주지 않는다. stdout 의 `CAM_RECOVERY_RESULT`
+한 줄에서 `status=SUCCEEDED rc=0` 을 보고, `systemctl is-active cam-operate.service` 로
+상태를 함께 확인한다.

@@ -126,7 +126,7 @@ V4L2 컨트롤은 기본적으로 정수값으로 노출된다. 대부분은 레
 `0x118c`, `0x118e` I2C 쓰기를 발행하지 않는다. true에서는 STREAMOFF 상태에서
 enable한 뒤 공통 배율과 활성 채널 중심을 런타임 변경할 수 있다. 스트리밍 중
 enable 전환은 `-EBUSY`이며 같은 값의 no-op은 성공한다. true에서 false로 바꾼 뒤
-기존 하드웨어 crop을 제거하려면 `cam_hard_reset.sh -s -S` 또는 `init_cam.sh`로
+기존 하드웨어 crop을 제거하려면 `cam-recoveryctl request camera_hard_reset` 또는 `init_cam.sh`로
 firmware를 다시 로드한다. gstApp 재시작만으로는 하드웨어 epoch가 바뀌지 않는다.
 
 ### 3.3 노출 쓰기 검증·경고 정책
@@ -409,7 +409,7 @@ jq -e . "$CONF.360p.tmp"
 ```
 
 원본을 백업한 뒤 같은 파일시스템에서 원자 교체하고
-`cam_hard_reset.sh -s -S` 또는 `init_cam.sh`를 실행한다. FHD는
+`cam-recoveryctl request camera_hard_reset` 또는 `init_cam.sh`를 실행한다. FHD는
 `cam_width=1920, cam_height=1080`, HD는 `1280,720`, 360p는 `640,360`으로
 선택하며 crop 키는 어느 해상도에서도 독립적으로 쓸 수 있다. 운영 FPS 상한은
 FHD/HD 30, 360p 120이다. 패키지 기본값은 30이며 120 FPS 시험 시 같은 모듈에서
@@ -425,7 +425,8 @@ jq --slurpfile patch "$FRAGMENT" \
 jq -e . "$TMP"
 install -m 0640 "$TMP" "$CONF"
 rm -f "$TMP"
-/opt/pim/bin/cam_hard_reset.sh -s -S
+/opt/pim/bin/cam-recoveryctl request camera_hard_reset \
+  --source operator --reason 'handoff procedure' --wait 300
 ```
 
 이 fragment는 채널 enable, bitrate와 장비별 경로는 보존하고 640x360@120,
