@@ -148,6 +148,15 @@ drive_cli "$STUB_HARD" request gstapp_stop --source test --reason probe --wait 5
 # environment *and* the action, silenced real operator commands: init_cam.sh and
 # cam_hard_reset.sh both wait 300, and a guard naming either went unnoticed.  The product
 # is small and enumerable, so it is driven rather than argued about.
+#
+# 이 네 셀이 다루는 축은 **isatty(1) 과 isatty(2) 의 불리언 조합**뿐이다.  TERM 값,
+# 창 크기(TIOCGWINSZ), job control 처럼 pty 의 다른 성질에 키를 둔 가드는 네 셀로도
+# 못 잡는다 — script(1) 이 실제 pty 를 주므로 isatty 는 참이지만 그 pty 가 운영자
+# 세션과 같게 보이는지는 별개다.  지금 cam-recoveryctl 에는 터미널 검사가 아예 없어서
+# (grep -E '-t [0-9]|isatty|TIOCGWINSZ|SIGWINCH' 가 0건) 이 셀들은 현재 가드의 검증이
+# 아니라 미래 가드에 대한 회귀 방지다.  범위를 넓히는 것은 지금 과잉이고, 이 경계를
+# 적어 두는 것은 다음 사람이 네 셀을 "완전한 터미널 시뮬레이션"으로 읽지 않게 하려는
+# 것이다.
 command -v script >/dev/null 2>&1 \
     || fail 'script(1) is required to drive the notice with stderr on a terminal'
 export SNT_ARGV=''
@@ -207,6 +216,14 @@ while read -r sub act secs src <&3; do
         set -e
         [ "$pty_rc" -eq 0 ] || fail "$cell tty: expected rc 0, got $pty_rc"
         tr -d '\r' < "$WORK/pty.raw" > "$WORK/pty.txt"
+        # grep -qF 만 보면 **stderr 가 터미널일 때만** 알림을 한 번 더 찍는 회귀가
+        # 통과한다 — 파일 셀의 개수는 1 로 남기 때문이다 (Codex 지적, 실측: 변이본이
+        # tty 2회 / file 1회인데 이 스위트가 rc 0 으로 통과했다).  mixed-B 가 이미
+        # 개수를 세므로 터미널이 받는 나머지 두 셀도 같은 수준으로 맞춘다.
+        pty_notices=$(grep -c '^CAM_RECOVERY_SUBMITTED ' "$WORK/pty.txt" || true)
+        [ "$pty_notices" -eq 1 ] \
+            || { echo "FAIL: $cell tty: expected one notice, saw $pty_notices" >&2
+                 sed 's/^/  /' "$WORK/pty.txt" >&2; exit 1; }
         grep -qF "$want_notice" "$WORK/pty.txt" \
             || { echo "FAIL: $cell tty: no submission notice on the terminal" >&2
                  sed 's/^/  /' "$WORK/pty.txt" >&2; exit 1; }
@@ -235,6 +252,10 @@ while read -r sub act secs src <&3; do
         [ "$mixa_rc" -eq 0 ] \
             || fail "$cell mixed(out=file,err=tty): expected rc 0, got $mixa_rc"
         tr -d '\r' < "$WORK/mixA.raw" > "$WORK/mixA.tty"
+        mixa_notices=$(grep -c '^CAM_RECOVERY_SUBMITTED ' "$WORK/mixA.tty" || true)
+        [ "$mixa_notices" -eq 1 ] \
+            || { echo "FAIL: $cell mixed(out=file,err=tty): expected one notice, saw $mixa_notices" >&2
+                 sed 's/^/  /' "$WORK/mixA.tty" >&2; exit 1; }
         grep -qF "$want_notice" "$WORK/mixA.tty" \
             || { echo "FAIL: $cell mixed(out=file,err=tty): no notice on the terminal" >&2
                  sed 's/^/  /' "$WORK/mixA.tty" >&2; exit 1; }
@@ -273,6 +294,7 @@ request gstapp_restart 120 legacy-start-cam
 request gstapp_restart 120 legacy-restart-app
 request module_reload 300 legacy-init-cam
 request camera_hard_reset 300 legacy-cam-hard-reset
+
 apply-config apply_config 300 operator
 request gstapp_restart 120 operator
 request gstapp_stop 120 operator
