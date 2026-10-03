@@ -7,7 +7,24 @@ if [ -z "${PIM_LIB:-}" ]; then
 fi
 source "$PIM_LIB/cam_recovery.sh"
 
-usage() { echo 'usage: cam-recoveryctl request ACTION --source NAME --reason TEXT [--wait SEC] | apply-config --source NAME --reason TEXT [--wait SEC] | status [--request-id UUID] [--json]' >&2; }
+# ACTION 을 적지 않으면 호출자가 _cr_public_action 을 읽어야 알 수 있었고, 에스컬레이션은
+# 어디에도 안 적혀 있었다 — module_reload 를 요청한 사람이 실패가 이어지면 재부팅을 받는다.
+# 목록의 출처는 _cr_public_action 하나다(cam_recovery.sh). 거기에 action 을 더하면 여기도 더한다.
+usage() { cat >&2 <<'USAGE'
+usage: cam-recoveryctl request ACTION --source NAME --reason TEXT [--wait SEC]
+     | apply-config --source NAME --reason TEXT [--wait SEC]
+     | status [--request-id UUID] [--json]
+
+ACTION 과 실패 시 에스컬레이션:
+  gstapp_restart     gstApp 만 재시작. 커널을 건드리지 않고 에스컬레이션도 없다
+  module_reload      소비자 정지 후 모듈 재적재. 실패하면 camera_hard_reset -> reboot_fallback
+  camera_hard_reset  모듈 내리고 CSI/ISI 를 unbind/bind 한 뒤 재적재. 실패하면 reboot_fallback
+  reboot_fallback    보드 재부팅. 위 두 단의 최종 폴백이고 직접 요청도 받는다
+  gstapp_stop        gstApp 정지만. 체인에 자리가 없고 executor 진입점이 거부한다
+
+apply_config 는 request 가 아니라 apply-config 서브커맨드로 보낸다.
+USAGE
+}
 bad() { usage; exit 64; }
 wait_for_result() {
     local id=$1 type=$2 seconds=$3 started now result status rc
