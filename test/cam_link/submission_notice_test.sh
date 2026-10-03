@@ -358,55 +358,31 @@ done
 printf '%s' "$alias_usage" | grep -q 'camera_hard_reset -> reboot_fallback' \
     || fail 'usage does not state the module_reload escalation'
 
-# 수용 집합이 늘 때 usage 가 같이 늘지 않으면 실패한다.  이 PR 의 출발점이 ACTION 목록이
-# 세 곳에 흩어져 서로 어긋나 있었다는 것이고, 위 검사들은 다섯을 테스트 안에 따로
-# 하드코딩하므로 여섯째가 추가돼도 아무것도 깨지지 않는다 — 그 간극을 여기서 닫는다.
+# 수용 집합이 바뀌면 여기서 실패한다.  이 PR 의 출발점이 ACTION 목록이 세 곳에 흩어져
+# 서로 어긋나 있었다는 것이고, 위 검사들은 다섯을 테스트 안에 따로 하드코딩하므로 집합이
+# 바뀌어도 아무것도 깨지지 않았다.
 #
-# 집합은 소스 텍스트를 grep 하지 않고 bash 가 정규화한 declare -f 에서 읽는다.  소스를
-# 정확 문자열로 고정하면 줄바꿈이나 공백만 바뀌어도 거짓 실패가 나는데, declare -f 는
-# `tok | tok | ...)` 로 일정하게 다시 찍어 주므로 포맷에 면역이다.
-accepted=$(PIM_LIB="${ACCEPTED_SET_LIB:-$ROOT/dist/pim/opt/pim/lib}" bash -c '
+# 집합을 '뽑지' 않는다.  Codex 가 네 라운드에 걸쳐 파싱의 네 구멍을 실증했다 — 숫자가 든
+# 이름, 두 칸 들여쓴 설명줄, 탭 구분자, 그리고 별도 arm(`vpu_reset) return 0;;`)으로
+# 추가하면 첫 arm 줄만 읽는 비교가 통과하는 것.  넓히면 거짓 실패, 좁히면 거짓 통과였다.
+# 그래서 줄을 고르지 않고 declare -f 출력 전체를 공백만 눌러 비교한다.  새 arm, 패턴 추가,
+# 이름 변경, 반환값 변경이 모두 걸리고, 소스 포맷과 unparser 들여쓰기 차이에는 면역이다
+# (실측: 소스를 여러 줄로 바꾼 사본의 정규화 결과가 기준과 바이트 동일).
+#
+# source 가 실패하거나 함수가 없으면 빈 문자열이 되어 비교가 실패한다 — fail-closed 다.
+# `|| got_fn=''` 가 필요하다: set -e 아래에서는 대입이 실패하면 아래 메시지에 닿기 전에
+# 그 종료코드로 스크립트가 죽어, 원인을 설명하지 않고 조용히 끝난다 (실측: lib 경로를
+# 없는 곳으로 주면 rc 70 으로 죽고 FAIL 줄이 안 나왔다).
+expected_fn='_cr_public_action () { case "$1" in gstapp_restart | gstapp_stop | module_reload | camera_hard_reset | reboot_fallback) return 0 ;; esac; return 1 }'
+got_fn=$(PIM_LIB="${ACCEPTED_SET_LIB:-$ROOT/dist/pim/opt/pim/lib}" bash -c '
     source "$PIM_LIB/cam_recovery.sh" >/dev/null 2>&1 || exit 70
-    declare -f _cr_public_action' 2>/dev/null \
-    | sed -n '/case "\$1" in/{n;p;}' \
-    | sed 's/)[[:space:]]*$//' | tr '|' '\n' | tr -d ' \t\\' | grep -v '^$')
-
-# 양성 대조: 파싱이 깨지면 집합이 비거나 셸 구두점이 섞이고, 그러면 아래 비교가 공허하게
-# 통과한다.  개수 하한은 쓰지 않는다 — action 을 의도적으로 줄인 변경이 "파싱이 깨졌다"로
-# 잘못 보고되는 것을 실측으로 확인했다.  대신 토큰 모양과 항상 존재하는 하나를 본다.
-[ -n "$accepted" ] || fail 'could not read the accepted action set from _cr_public_action'
-while read -r act; do
-    case "$act" in
-        '') continue;;
-        *[!a-z0-9_]*) fail "accepted-set parse produced a non-action token [$act]";;
-    esac
-done <<TOKENS
-$accepted
-TOKENS
-printf '%s\n' "$accepted" | grep -qx gstapp_restart \
-    || fail "accepted-set parse did not find gstapp_restart; got [$(printf '%s' "$accepted" | tr '\n' ' ')]"
-
-# 집합이 바뀌는 **사건**만 잡는다.  usage 텍스트는 파싱하지 않는다 — 내 산문을 정규식으로
-# 읽는 검사는 문서화된 집합이 그대로인데도 거짓 실패한다.  Codex 가 세 라운드에 걸쳐 세
-# 경로를 보였다: 숫자가 든 이름(`[a-z_]` vs `[a-z0-9_]`), 두 칸 들여쓴 설명줄이 action 으로
-# 뽑히는 것, 칸 구분자를 탭으로 바꾸면 실제 행이 사라지는 것.  셋 다 파서를 넓히거나
-# 좁히는 방향이어서 고칠 때마다 반대쪽 구멍이 열렸다.  이 저장소는 그런 취약한 패턴
-# 매칭을 runner-membership 가드에서 한 번 제거한 전례가 있다.
-#
-# 그래서 집합 자체를 정확히 못박고, 바뀌면 usage·별칭 표·정본을 같이 보라고 알린다.
-# 집합을 바꾸는 변경은 어차피 리뷰에서 그 세 곳을 함께 봐야 하는 변경이다.
-expected_actions='camera_hard_reset
-gstapp_restart
-gstapp_stop
-module_reload
-reboot_fallback'
-got_actions=$(printf '%s\n' "$accepted" | LC_ALL=C sort)
-if [ "$got_actions" != "$expected_actions" ]; then
-    echo 'FAIL: _cr_public_action 의 수용 집합이 바뀌었다' >&2
-    echo "  want: $(printf '%s' "$expected_actions" | tr '\n' ' ')" >&2
-    echo "  got:  $(printf '%s' "$got_actions" | tr '\n' ' ')" >&2
-    echo '  cam-recoveryctl usage, 별칭 표, docs/camera-health/cam-recovery-operations.md' >&2
-    echo '  를 같이 갱신하고 이 목록도 고친다.' >&2
+    declare -f _cr_public_action' 2>/dev/null | tr -s ' \t\n' ' ' | sed 's/^ //; s/ $//') || got_fn=''
+if [ "$got_fn" != "$expected_fn" ]; then
+    echo 'FAIL: _cr_public_action 이 바뀌었다 (요청 가능한 ACTION 집합)' >&2
+    echo "  want: $expected_fn" >&2
+    echo "  got:  $got_fn" >&2
+    echo '  cam-recoveryctl usage, canonicalize_action 의 별칭 표,' >&2
+    echo '  docs/camera-health/cam-recovery-operations.md 를 같이 갱신하고 이 기대값도 고친다.' >&2
     exit 1
 fi
 
