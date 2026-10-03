@@ -83,6 +83,30 @@ V4L2 컨트롤은 기본적으로 정수값으로 노출된다. 대부분은 레
 
 ## 3) 컨트롤 ↔ 레지스터 매핑 (요약)
 
+> **버전 불일치 경고 (2026-10-03 추가).** 이 절차의 `cam_hard_reset.sh -s -S` 는 **이 문서가
+> 핀한 페이로드 기준**이다. 그 패키지의 스크립트는 `-s`/`-S` 를 `--stop-service`/
+> `--start-service` 로 해석해 `systemctl stop` → `rmmod` → CSI2/ISI unbind/bind → `modprobe`
+> → `systemctl start` 을 직접 수행했고, 그래서 `하드 리셋 완료 (CSI2 + ISI 재바인드 포함)` 이
+> 나왔다. 그 동작이 설치 직후 **새 모듈을 실제로 적재**하게 만드는 부분이므로 이 절차에서
+> 빼면 안 된다.
+>
+> **이미 최신 패키지가 깔린 보드에서는 그렇지 않다.** 지금 `cam_hard_reset.sh` 는 전달
+> 래퍼이고 `-s`/`-S` 는 **받되 무시**된다 — 서비스를 올려 주지 않고, 위 완료 문구도 출력하지
+> 않는다. 종료코드만 보면 성공으로 읽히지만 보드는 그대로 내려가 있다(실측 사례 있음).
+> 그 보드에서는 다음을 쓴다:
+>
+> - 서비스 기동: `systemctl start cam-operate.service` 뒤 `systemctl is-active cam-operate.service`
+> - 하드 리셋: `/opt/pim/bin/cam-recoveryctl request camera_hard_reset --source operator --reason '<사유>' --wait 300`
+>   (`--source`·`--reason` 은 **필수**이며 빠지면 64 로 끊긴다). 판정은 stdout 한 줄
+>   `CAM_RECOVERY_RESULT ... status=SUCCEEDED rc=0` 이다.
+> - `status=FAILED rc=70` 은 **일반 소프트웨어 실패**다. owner stale 로 단정하지 않는다 —
+>   그 판정에는 요청 이력의 `interrupted=true` 와 `interrupted_reason="owner_stale"` 이
+>   필요하고, 그 두 필드는 위 한 줄에 들어 있지 않다.
+>
+> `cam-recoveryctl` 은 2026-09-01 에 추가되었으므로 이 문서가 핀한 페이로드에는 **없다.**
+> 어느 쪽 보드인지 먼저 확인한다: `dpkg-query -W -f='${Version}\n' pim-mp` 와
+> `test -x /opt/pim/bin/cam-recoveryctl`.
+
 드라이버 소스 기준: `projects/max9296/max9296.c`
 
 ### 3.1 공통 컨트롤
@@ -126,7 +150,7 @@ V4L2 컨트롤은 기본적으로 정수값으로 노출된다. 대부분은 레
 `0x118c`, `0x118e` I2C 쓰기를 발행하지 않는다. true에서는 STREAMOFF 상태에서
 enable한 뒤 공통 배율과 활성 채널 중심을 런타임 변경할 수 있다. 스트리밍 중
 enable 전환은 `-EBUSY`이며 같은 값의 no-op은 성공한다. true에서 false로 바꾼 뒤
-기존 하드웨어 crop을 제거하려면 `cam-recoveryctl request camera_hard_reset` 또는 `init_cam.sh`로
+기존 하드웨어 crop을 제거하려면 `cam_hard_reset.sh -s -S` 또는 `init_cam.sh`로
 firmware를 다시 로드한다. gstApp 재시작만으로는 하드웨어 epoch가 바뀌지 않는다.
 
 ### 3.3 노출 쓰기 검증·경고 정책
@@ -409,7 +433,7 @@ jq -e . "$CONF.360p.tmp"
 ```
 
 원본을 백업한 뒤 같은 파일시스템에서 원자 교체하고
-`cam-recoveryctl request camera_hard_reset` 또는 `init_cam.sh`를 실행한다. FHD는
+`cam_hard_reset.sh -s -S` 또는 `init_cam.sh`를 실행한다. FHD는
 `cam_width=1920, cam_height=1080`, HD는 `1280,720`, 360p는 `640,360`으로
 선택하며 crop 키는 어느 해상도에서도 독립적으로 쓸 수 있다. 운영 FPS 상한은
 FHD/HD 30, 360p 120이다. 패키지 기본값은 30이며 120 FPS 시험 시 같은 모듈에서
@@ -425,8 +449,7 @@ jq --slurpfile patch "$FRAGMENT" \
 jq -e . "$TMP"
 install -m 0640 "$TMP" "$CONF"
 rm -f "$TMP"
-/opt/pim/bin/cam-recoveryctl request camera_hard_reset \
-  --source operator --reason 'handoff procedure' --wait 300
+/opt/pim/bin/cam_hard_reset.sh -s -S
 ```
 
 이 fragment는 채널 enable, bitrate와 장비별 경로는 보존하고 640x360@120,

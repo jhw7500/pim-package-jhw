@@ -83,6 +83,30 @@ edgeconf의 해상도/FPS/crop 값은 바꾸지 않는다.
 
 ## 5. 시험
 
+> **버전 불일치 경고 (2026-10-03 추가).** 이 절차의 `cam_hard_reset.sh -s -S` 는 **이 문서가
+> 핀한 페이로드 기준**이다. 그 패키지의 스크립트는 `-s`/`-S` 를 `--stop-service`/
+> `--start-service` 로 해석해 `systemctl stop` → `rmmod` → CSI2/ISI unbind/bind → `modprobe`
+> → `systemctl start` 을 직접 수행했고, 그래서 `하드 리셋 완료 (CSI2 + ISI 재바인드 포함)` 이
+> 나왔다. 그 동작이 설치 직후 **새 모듈을 실제로 적재**하게 만드는 부분이므로 이 절차에서
+> 빼면 안 된다.
+>
+> **이미 최신 패키지가 깔린 보드에서는 그렇지 않다.** 지금 `cam_hard_reset.sh` 는 전달
+> 래퍼이고 `-s`/`-S` 는 **받되 무시**된다 — 서비스를 올려 주지 않고, 위 완료 문구도 출력하지
+> 않는다. 종료코드만 보면 성공으로 읽히지만 보드는 그대로 내려가 있다(실측 사례 있음).
+> 그 보드에서는 다음을 쓴다:
+>
+> - 서비스 기동: `systemctl start cam-operate.service` 뒤 `systemctl is-active cam-operate.service`
+> - 하드 리셋: `/opt/pim/bin/cam-recoveryctl request camera_hard_reset --source operator --reason '<사유>' --wait 300`
+>   (`--source`·`--reason` 은 **필수**이며 빠지면 64 로 끊긴다). 판정은 stdout 한 줄
+>   `CAM_RECOVERY_RESULT ... status=SUCCEEDED rc=0` 이다.
+> - `status=FAILED rc=70` 은 **일반 소프트웨어 실패**다. owner stale 로 단정하지 않는다 —
+>   그 판정에는 요청 이력의 `interrupted=true` 와 `interrupted_reason="owner_stale"` 이
+>   필요하고, 그 두 필드는 위 한 줄에 들어 있지 않다.
+>
+> `cam-recoveryctl` 은 2026-09-01 에 추가되었으므로 이 문서가 핀한 페이로드에는 **없다.**
+> 어느 쪽 보드인지 먼저 확인한다: `dpkg-query -W -f='${Version}\n' pim-mp` 와
+> `test -x /opt/pim/bin/cam-recoveryctl`.
+
 ### 5.1 일반 서비스 재시작
 
 ```bash
@@ -111,8 +135,7 @@ CSI2 29.7~29.8, ISI 29.6~29.8 FPS였고 최대 손실은 0.9%였다.
 ### 5.3 CSI2/ISI 포함 하드 리셋
 
 ```bash
-timeout 45 /opt/pim/bin/cam-recoveryctl request camera_hard_reset \
-  --source operator --reason 'handoff procedure' --wait 300
+timeout 45 /opt/pim/bin/cam_hard_reset.sh -s -S
 systemctl is-active cam-operate.service
 pgrep -a gstApp
 ```
@@ -153,8 +176,7 @@ v4l2-ctl -d /dev/video4 \
 /opt/pim/bin/rgb565_frame_check.py \
   --width 1280 --height 360 --bytesperline 2560 \
   /root/camtest/camera4-1280x360.rgb565
-timeout 45 /opt/pim/bin/cam-recoveryctl request camera_hard_reset \
-  --source operator --reason 'handoff procedure' --wait 300
+timeout 45 /opt/pim/bin/cam_hard_reset.sh -s -S
 ```
 
 필수 결과는 실제 크기 921600 bytes, `constant=0`, `mostly_green=0`, `pass=1`이다.
@@ -181,8 +203,5 @@ systemctl daemon-reload
 systemctl start cam-operate.service
 ```
 
-모듈 refcount가 음수이거나 복구 요청이 `status=FAILED` 로 끝나면 반복 실행하지 않고
-재부팅한다. 종료코드만으로 판정하지 않는다 — `cam_hard_reset.sh` 는 이제 전달 래퍼이고,
-`-s`/`-S` 는 받되 무시되므로 서비스를 올려 주지 않는다. stdout 의 `CAM_RECOVERY_RESULT`
-한 줄에서 `status=SUCCEEDED rc=0` 을 보고, `systemctl is-active cam-operate.service` 로
-상태를 함께 확인한다.
+모듈 refcount가 음수이거나 `cam_hard_reset.sh`가 종료코드 2이면 반복 실행하지 않고
+재부팅한다.

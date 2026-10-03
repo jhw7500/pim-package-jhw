@@ -108,7 +108,7 @@ sensor readout window가 항상 고정된다는 뜻은 아니다. 공급자 보�
 `crop_enable=false`에서는 `0x1010`, `0x1012`, `0x118c`, `0x118e` 쓰기를
 발행하지 않는다. crop-enabled 상태로 prepare한 뒤에는 `dz`, `dz_x_chX`,
 `dz_y_chX`를 런타임 변경할 수 있다. 스트리밍 중 `crop_enable` 전환은
-`-EBUSY`이며, enable을 바꾼 뒤에는 `cam-recoveryctl request camera_hard_reset` 또는
+`-EBUSY`이며, enable을 바꾼 뒤에는 `cam_hard_reset.sh -s -S` 또는
 `init_cam.sh`로 firmware를 다시 prepare한다. gstApp 재시작만으로는 충분하지 않다.
 
 ### 4.3 노출 안전
@@ -200,6 +200,30 @@ jq empty "$BACKUP/ord_vcm_conf.json"
 
 ## 6. 설치
 
+> **버전 불일치 경고 (2026-10-03 추가).** 이 절차의 `cam_hard_reset.sh -s -S` 는 **이 문서가
+> 핀한 페이로드 기준**이다. 그 패키지의 스크립트는 `-s`/`-S` 를 `--stop-service`/
+> `--start-service` 로 해석해 `systemctl stop` → `rmmod` → CSI2/ISI unbind/bind → `modprobe`
+> → `systemctl start` 을 직접 수행했고, 그래서 `하드 리셋 완료 (CSI2 + ISI 재바인드 포함)` 이
+> 나왔다. 그 동작이 설치 직후 **새 모듈을 실제로 적재**하게 만드는 부분이므로 이 절차에서
+> 빼면 안 된다.
+>
+> **이미 최신 패키지가 깔린 보드에서는 그렇지 않다.** 지금 `cam_hard_reset.sh` 는 전달
+> 래퍼이고 `-s`/`-S` 는 **받되 무시**된다 — 서비스를 올려 주지 않고, 위 완료 문구도 출력하지
+> 않는다. 종료코드만 보면 성공으로 읽히지만 보드는 그대로 내려가 있다(실측 사례 있음).
+> 그 보드에서는 다음을 쓴다:
+>
+> - 서비스 기동: `systemctl start cam-operate.service` 뒤 `systemctl is-active cam-operate.service`
+> - 하드 리셋: `/opt/pim/bin/cam-recoveryctl request camera_hard_reset --source operator --reason '<사유>' --wait 300`
+>   (`--source`·`--reason` 은 **필수**이며 빠지면 64 로 끊긴다). 판정은 stdout 한 줄
+>   `CAM_RECOVERY_RESULT ... status=SUCCEEDED rc=0` 이다.
+> - `status=FAILED rc=70` 은 **일반 소프트웨어 실패**다. owner stale 로 단정하지 않는다 —
+>   그 판정에는 요청 이력의 `interrupted=true` 와 `interrupted_reason="owner_stale"` 이
+>   필요하고, 그 두 필드는 위 한 줄에 들어 있지 않다.
+>
+> `cam-recoveryctl` 은 2026-09-01 에 추가되었으므로 이 문서가 핀한 페이로드에는 **없다.**
+> 어느 쪽 보드인지 먼저 확인한다: `dpkg-query -W -f='${Version}\n' pim-mp` 와
+> `test -x /opt/pim/bin/cam-recoveryctl`.
+
 ```bash
 set -e
 WORK=/root/camtest/handoff-camera1-20260831
@@ -216,8 +240,8 @@ ldconfig
 
 dpkg-query -W -f='${Package} ${Version} ${Architecture}\n' pim-mp
 modinfo -F vermagic max9296
-systemctl start cam-operate.service
-systemctl is-active cam-operate.service
+/opt/pim/bin/cam_hard_reset.sh -s -S \
+  2>&1 | tee ./postinstall-hard-reset.log
 ```
 
 필수 결과:
@@ -225,22 +249,8 @@ systemctl is-active cam-operate.service
 ```text
 pim-mp 0.6.3+jhw.camera1 arm64
 5.10.35-lts-5.10.y+g2fce14defc04 ...
-active
+하드 리셋 완료 (CSI2 + ISI 재바인드 포함)
 ```
-
-> **2026-10-03 정정.** 이 단계는 예전에 `cam_hard_reset.sh -s -S` 로 끝났고 필수 결과가
-> `하드 리셋 완료 (CSI2 + ISI 재바인드 포함)` 이었다. 둘 다 더는 성립하지 않는다.
-> `-s`/`-S` 는 원래 `--stop-service`/`--start-service` 였는데 지금은 **받되 무시**되고,
-> 스크립트는 `cam-recoveryctl request camera_hard_reset` 으로 전달만 한다. 그 문구를
-> 출력하는 스크립트도 더는 없다(실측: `dist/` 안 0 곳). 이 절이 서비스를 내려 둔 채
-> 시작하므로, 옛 절차를 그대로 따르면 **요청에 살아 있는 owner 가 없어 복구가 되지 않는데
-> 종료코드만 보고 성공으로 읽게 된다.** 그래서 서비스 기동을 명시 단계로 올리고 판정을
-> 종료코드가 아니라 상태(`systemctl is-active`)로 바꿨다.
->
-> 설치 후 하드 리셋이 **따로** 필요하면 서비스가 올라온 뒤에 요청한다:
-> `/opt/pim/bin/cam-recoveryctl request camera_hard_reset --source operator --reason '<사유>' --wait 300`.
-> 성공 판정은 stdout 한 줄 `CAM_RECOVERY_RESULT ... status=SUCCEEDED rc=0` 이다
-> (`--source`·`--reason` 은 필수이며 빠지면 64 로 끊긴다).
 
 설치 스크립트는 기존 edgeconf에 누락된 crop/VPU 키를 backfill한다. 대부분의 기존
 non-null 값은 보존한다. camera3부터 `led_flash.flash_delay`도 명시값을 보존하고,
@@ -305,8 +315,7 @@ ldd /usr/local/bin/gstApp | grep -E 'not found|fslvpu|gst' || true
 각 case 적용 뒤에는 다음을 실행한다.
 
 ```bash
-/opt/pim/bin/cam-recoveryctl request camera_hard_reset \
-  --source operator --reason 'handoff procedure' --wait 300
+/opt/pim/bin/cam_hard_reset.sh -s -S
 pgrep -a gstApp
 media-ctl -p
 ```
@@ -347,8 +356,7 @@ jq '
 jq empty "$TMP"
 install -m 0640 "$TMP" "$EDGE"
 rm -f "$TMP"
-/opt/pim/bin/cam-recoveryctl request camera_hard_reset \
-  --source operator --reason 'handoff procedure' --wait 300
+/opt/pim/bin/cam_hard_reset.sh -s -S
 ```
 
 예상 capture 크기: `640x360`.
@@ -380,8 +388,7 @@ jq '
 jq empty "$TMP"
 install -m 0640 "$TMP" "$EDGE"
 rm -f "$TMP"
-/opt/pim/bin/cam-recoveryctl request camera_hard_reset \
-  --source operator --reason 'handoff procedure' --wait 300
+/opt/pim/bin/cam_hard_reset.sh -s -S
 ```
 
 예상 capture 크기: dual-wide `1280x360`.
@@ -398,8 +405,7 @@ jq empty /root/shared_v/edgeconf_pim.json.handoff.tmp
 install -m 0640 /root/shared_v/edgeconf_pim.json.handoff.tmp \
   /root/shared_v/edgeconf_pim.json
 rm -f /root/shared_v/edgeconf_pim.json.handoff.tmp
-/opt/pim/bin/cam-recoveryctl request camera_hard_reset \
-  --source operator --reason 'handoff procedure' --wait 300
+/opt/pim/bin/cam_hard_reset.sh -s -S
 
 # FHD: 카메라당 1920x1080, dual-wide 3840x1080
 jq '.VHL_CAM.cam_width=1920 | .VHL_CAM.cam_height=1080' \
@@ -408,8 +414,7 @@ jq empty /root/shared_v/edgeconf_pim.json.handoff.tmp
 install -m 0640 /root/shared_v/edgeconf_pim.json.handoff.tmp \
   /root/shared_v/edgeconf_pim.json
 rm -f /root/shared_v/edgeconf_pim.json.handoff.tmp
-/opt/pim/bin/cam-recoveryctl request camera_hard_reset \
-  --source operator --reason 'handoff procedure' --wait 300
+/opt/pim/bin/cam_hard_reset.sh -s -S
 ```
 
 ### 8.4 Case E: HD@30, crop 1.5x
@@ -438,8 +443,7 @@ jq '
 jq empty "$TMP"
 install -m 0640 "$TMP" "$EDGE"
 rm -f "$TMP"
-/opt/pim/bin/cam-recoveryctl request camera_hard_reset \
-  --source operator --reason 'handoff procedure' --wait 300
+/opt/pim/bin/cam_hard_reset.sh -s -S
 ```
 
 출력 크기는 dual-wide `2560x720`으로 유지되고 시야만 1.5배 확대돼야 한다.
@@ -485,8 +489,7 @@ jq '
 jq empty "$TMP"
 install -m 0640 "$TMP" "$EDGE"
 rm -f "$TMP"
-/opt/pim/bin/cam-recoveryctl request camera_hard_reset \
-  --source operator --reason 'handoff procedure' --wait 300
+/opt/pim/bin/cam_hard_reset.sh -s -S
 journalctl -u cam-operate.service -b --since '-2 min' --no-pager | \
   grep -E 'bps|gop|profile|quant|qp_|encoder'
 ```
@@ -569,8 +572,7 @@ v4l2-ctl -d /dev/video4 \
 /opt/pim/bin/rgb565_frame_check.py \
   --width 1280 --height 360 --bytesperline 2560 \
   /root/camtest/handoff-camera1-20260831/evidence/dual-1280x360.rgb565
-/opt/pim/bin/cam-recoveryctl request camera_hard_reset \
-  --source operator --reason 'handoff procedure' --wait 300
+/opt/pim/bin/cam_hard_reset.sh -s -S
 ```
 
 필수 결과는 `constant=0`, `mostly_green=0`, `pass=1`이다. `--get-fmt-video`의
@@ -625,8 +627,7 @@ jq '
 jq empty "$TMP"
 install -m 0640 "$TMP" "$EDGE"
 rm -f "$TMP"
-/opt/pim/bin/cam-recoveryctl request camera_hard_reset \
-  --source operator --reason 'handoff procedure' --wait 300
+/opt/pim/bin/cam_hard_reset.sh -s -S
 media-ctl -p | grep -E 'max9296 2-0048|1280x360@1/30'
 /opt/pim/bin/cam_fps_stack.sh -c ch01 -d 20 -i 2 -D -L FINAL_640X360_30 -R 30
 pgrep -a gstApp
@@ -653,8 +654,7 @@ jq empty /root/shared_v/edgeconf_pim.json
 jq empty /root/shared_v/ord_vcm_conf.json
 depmod -a
 ldconfig
-/opt/pim/bin/cam-recoveryctl request camera_hard_reset \
-  --source operator --reason 'handoff procedure' --wait 300
+/opt/pim/bin/cam_hard_reset.sh -s -S
 
 dpkg-query -W -f='${Package} ${Version} ${Architecture}\n' pim-mp
 sha256sum /root/shared_v/edgeconf_pim.json \
@@ -662,11 +662,8 @@ sha256sum /root/shared_v/edgeconf_pim.json \
 pgrep -a gstApp
 ```
 
-모듈 refcount가 음수이거나 복구 요청이 `status=FAILED` 로 끝나면 반복 실행하지 말고
-재부팅한다. 종료코드만으로 판정하지 않는다 — `cam_hard_reset.sh` 는 이제 전달 래퍼이고,
-살아 있는 owner 가 없으면 요청 자체가 성립하지 않는다. stdout 의 `CAM_RECOVERY_RESULT`
-한 줄에서 `status=SUCCEEDED rc=0` 을 보고, `systemctl is-active cam-operate.service` 로
-상태를 함께 확인한다. `status=FAILED rc=70` 은 owner 가 stale 하다는 뜻이다.
+모듈 refcount가 음수이거나 `cam_hard_reset.sh`가 종료코드 2를 반환하면 반복 실행하지
+말고 재부팅한다.
 
 ## 12. 결과 회신 양식
 
