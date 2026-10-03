@@ -1,5 +1,31 @@
 # PIM Package Changelog
 
+## 최신 변경사항 (2026-10-03) — camera8 / 전달 버전 분리
+
+- 전달 패키지를 `pim-mp 0.6.3+jhw.camera8`로 올렸다. `camera7`은 2026-09-09
+  `aee7782` 이후의 `dist/` 변경 95커밋을 같은 문자열로 담고 있었고 그 안에
+  드라이버 교체와 postinst 동작 변경이 들어 있다. 설치본을 `dpkg -l`로 구분할
+  수 없는 상태였으므로 버전을 분리했다.
+- MAX9296 드라이버를 source `0df95e9` 빌드로 갱신했다(srcversion
+  `7F99CB433CAC065390A1E71`). 전원이 꺼진 부품에 prepare 를 시도하면 첫 i2c
+  쓰기 전에 `-ENODEV`로 거부한다. 한쪽만 unbind 후 bind 하는 복구 경로가
+  거부되고, 지원되는 복구 경로는 모듈 전체 재적재 또는 `cam-operate.service`
+  재시작이다. `powerdown-gpios`를 선언한 보드에만 적용된다.
+- gstApp(`40467e7`)과 imx-vpu 바이너리 `libgstvpu.so`,
+  `libfslvpuwrap.so.3.0.0`(`758b3b1`)를 각 저장소 빌드로 갱신했다.
+- ORD 재시작 경로를 `ord-operate.service` 단일 소유권으로 통일했고(#89), VSD는
+  기동 실패 시 active 로 남지 않고 non-zero 로 종료한다.
+- 레거시 래퍼 `kill_test.sh`, `init_cam.sh`, `cam_hard_reset.sh`,
+  `restart_app.sh`, `start_cam.sh`는 `cam-recoveryctl request` 위임만 남겼다.
+  죽은 복구 호출을 제거했고 `--no-wait`를 받는다(이슈 #61).
+- `postinst`는 `iio-sensor-proxy`를 mask 하고(#51), 설정 glob 이 2개 이상
+  일치할 때 `[` 가 오류를 내던 두 지점을 `globHasFile` 로 대체했다(#122).
+- 같은 페이로드를 2026-10-03 `pim-camera-v016`에 설치해 검증했다 —
+  `iio-sensor-proxy` masked, 적재된 `srcversion` 이 `00FEDDF6…`에서
+  `7F99CB43…`로 이동, owner 가 10초에 `ACTIVE`, gstApp 1 / video node 5 /
+  `CSI output enabled` 4, 새 ENODEV 게이트 0회 발동, `Error i2c write` 0줄.
+  그 설치는 `camera7` 라벨로 나갔고, 이 버전 분리가 필요했던 이유가 그것이다.
+
 ## 최신 변경사항 (2026-09-10) — #89 ORD 단일 systemd 소유권
 
 - recovery, apply-config, startup, liveness의 ORD 재시작 경로를 모두
