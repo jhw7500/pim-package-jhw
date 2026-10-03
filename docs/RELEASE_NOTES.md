@@ -1,6 +1,28 @@
 # PIM Package Release Notes
 
-## Unreleased (2026-09-10)
+## Unreleased (2026-10-03)
+
+### camera8 delivery version separation
+
+- Package version is `0.6.3+jhw.camera8`. `camera7` had accumulated 95 `dist/`
+  commits since `aee7782` (2026-09-09), including a driver replacement and
+  postinst behaviour changes, so materially different payloads shared one
+  version string and `dpkg -l` could not tell them apart.
+- The MAX9296 driver is the `0df95e9` build (srcversion
+  `7F99CB433CAC065390A1E71`). `prepare` against a powered-down part is rejected
+  with `-ENODEV` before the first i2c write, so single-side unbind/bind recovery
+  is refused; a full module reload or a `cam-operate.service` restart remains
+  the supported path. This applies only to boards declaring `powerdown-gpios`.
+- gstApp (`40467e7`) and the imx-vpu libraries `libgstvpu.so` and
+  `libfslvpuwrap.so.3.0.0` (`758b3b1`) are refreshed from their own builds.
+- Every package-managed ORD restart path uses `ord-operate.service` (#89). VSD
+  exits non-zero on startup failure instead of staying active.
+- Legacy wrappers delegate to `cam-recoveryctl request` only: the dead recovery
+  calls are gone and `--no-wait` is accepted (issue #61).
+- `postinst` masks `iio-sensor-proxy` (#51) and replaces the two `[` tests that
+  errored on multi-match config globs with `globHasFile` (#122).
+- This payload was installed and verified on `pim-camera-v016` on 2026-10-03
+  under the `camera7` label; that install is what made the separation necessary.
 
 ### #89 ORD single-owner startup contract
 
