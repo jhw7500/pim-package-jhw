@@ -126,9 +126,24 @@ dpkg-query -W -f='${Package} ${Version} ${Architecture}\n' pim-mp
 > 페이로드 기준이다 — 그 패키지의 스크립트는 `-s`/`-S` 를 서비스 정지·기동으로 해석해 직접
 > 수행했다. **최신 패키지가 깔린 보드에서는 그 플래그가 받되 무시되어 서비스를 되살리지
 > 않는다.** 그 보드에서는 `systemctl start cam-operate.service` 로 직접 올린다.
+>
+> **그 명령은 startup 복구가 끝나기 전에 돌아온다.** 기동이 스스로 `module_reload` 를
+> 예약하므로, 바로 이어서 이 문서의 리셋 명령을 돌리면 그 요청과 충돌해 **75** 로 끊기고
+> `set -e` 아래에서는 시험이 중단된다. 아래가 통과한 뒤에 계속한다(대개 10초 안).
+>
+> ```bash
+> while :; do
+>   s=$(/opt/pim/bin/cam-recoveryctl status) || exit 1
+>   lc=$(printf '%s' "$s" | jq -r '.owner.lifecycle')
+>   idle=$(printf '%s' "$s" | jq -r '[.pending, .active] | map(. == null) | all')
+>   case "$lc" in ACTIVE|DEGRADED) [ "$idle" = true ] && break;; esac
+>   sleep 2
+> done
+> ```
+>
 > 복구·리셋 절차 전체는 `pim-package-jhw` 저장소의
 > `docs/camera-health/cam-recovery-operations.md` 가 정본이며 **이 전달물에는 들어 있지
-> 않다** — 필요하면 배포자에게 요청한다.
+> 않다** — 위 두 단계는 정본에 도달할 수 없는 수신자를 위해 여기에만 중복해 둔 것이다.
 
 ```bash
 set -e
