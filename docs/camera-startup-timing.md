@@ -149,6 +149,28 @@ error가 복구를 유발하지 않는지, 25초 이후 정상 프레임과 녹�
 
 ### 2. 전체 카메라 하드 리셋
 
+> **`cam_hard_reset.sh -s -S` 는 더 이상 서비스를 제어하지 않는다 (2026-10-03).** 이 문서는
+> `/opt/pim/docs/` 로 배포되는 현행 레퍼런스이므로 지금 동작을 적는다. 아래 블록의 종료코드
+> 기준(`0` 확인 / `2` 면 재부팅)과 gstApp 재기동 확인은 **구형 패키지 기준**이다. 지금
+> 스크립트는 전달 래퍼이고 `-s`/`-S` 는 받되 무시되며, CSI2/ISI unbind/bind 를 직접 하지
+> 않는다.
+>
+> - 서비스 기동만으로 복구가 된다. `cam-operate` 기동은 같은 부팅 안의 재시작에 대해 startup
+>   액션을 스스로 예약한다(`cam_operate_control.sh` 의 `cam_startup_request_reserve`).
+> - 하드 리셋을 **따로** 요청해야 하면 owner 가 `ACTIVE`(또는 `DEGRADED`)가 될 때까지 기다린다 —
+>   `systemctl is-active` 로는 부족하다(유닛의 `ExecStartPost` 는 런타임 JSON 검증만 기다린다).
+>   `/opt/pim/bin/cam-recoveryctl status | jq -r '.owner.lifecycle'` 가 **`ACTIVE` 또는
+>   `DEGRADED`** 이고(수락 조건이 그 둘이다) `.pending`·`.active` 가 비었는지 본 뒤
+>   `/opt/pim/bin/cam-recoveryctl request camera_hard_reset --source operator --reason '<사유>' --wait 300`
+>   (`--source`·`--reason` 필수, 빠지면 64). 판정은 stdout 한 줄
+>   `CAM_RECOVERY_RESULT ... status=SUCCEEDED rc=0` 이다.
+> - 서비스가 내려가 있으면 그 요청은 **69** 로 실패한다(다른 복구 진행 중이면 75).
+> - `status=FAILED rc=70` 은 **일반 소프트웨어 실패**다 — lock 획득 실패·요청 스키마 검증 실패·
+>   owner 종결이 모두 70 을 쓴다. owner stale 판정에는 요청 이력의 `interrupted=true` 와
+>   `interrupted_reason="owner_stale"` 이 필요하고 두 필드는 위 한 줄에 없다.
+>
+> 이 CLI 가 없는 구형 보드라면 아래 본문이 그대로 맞다. 확인: `test -x /opt/pim/bin/cam-recoveryctl`.
+
 ```bash
 timeout 45 /opt/pim/bin/cam_hard_reset.sh -s -S
 journalctl -k -b --since '-2 min' --no-pager | grep -E 'max9296|AP1302|CSI|STREAM'

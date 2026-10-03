@@ -200,6 +200,44 @@ jq empty "$BACKUP/ord_vcm_conf.json"
 
 ## 6. 설치
 
+> **버전 불일치 경고 (2026-10-03 추가).** 이 절차의 `cam_hard_reset.sh -s -S` 는 **이 문서가
+> 핀한 페이로드 기준**이다. 그 패키지의 스크립트는 `-s`/`-S` 를 `--stop-service`/
+> `--start-service` 로 해석해 `systemctl stop` → `rmmod` → CSI2/ISI unbind/bind → `modprobe`
+> → `systemctl start` 을 직접 수행했고, 그래서 `하드 리셋 완료 (CSI2 + ISI 재바인드 포함)` 이
+> 나왔다. 그 동작이 설치 직후 **새 모듈을 실제로 적재**하게 만드는 부분이므로 이 절차에서
+> 빼면 안 된다.
+>
+> **이미 최신 패키지가 깔린 보드에서는 그렇지 않다.** 지금 `cam_hard_reset.sh` 는 전달
+> 래퍼이고 `-s`/`-S` 는 **받되 무시**된다 — 서비스를 올려 주지 않고 위 완료 문구도 출력하지
+> 않는다. 그 보드에서는 다음을 쓴다.
+>
+> - 서비스 기동만으로 복구가 된다. `cam-operate` 기동은 같은 부팅 안의 재시작에 대해
+>   startup 액션을 스스로 예약한다(`cam_operate_control.sh` 의 `cam_startup_request_reserve`).
+>   그래서 보통은 별도 하드 리셋 요청이 필요하지 않다.
+> - 하드 리셋을 **따로** 요청해야 하면 owner 가 준비될 때까지 기다린다. `systemctl is-active`
+>   로는 부족하다 — 유닛의 `ExecStartPost` 는 런타임 JSON 검증만 기다리고, 그 시점 owner 는
+>   아직 `STARTING`/`RECOVERING` 일 수 있다. 요청 수락은 `ACTIVE`/`DEGRADED` 에서만 된다:
+>   `/opt/pim/bin/cam-recoveryctl status | jq -r '.owner.lifecycle'` 가 **`ACTIVE` 또는
+>   `DEGRADED`** 이고 `.pending`·`.active` 가 비었는지 본다 — 수락 조건이 그 둘이므로
+>   `ACTIVE` 만 기다리면 DEGRADED 보드에서 영원히 기다리게 된다.
+> - 그 뒤 `/opt/pim/bin/cam-recoveryctl request camera_hard_reset --source operator --reason '<사유>' --wait 300`
+>   (`--source`·`--reason` 은 **필수**이며 빠지면 64). 판정은 stdout 한 줄
+>   `CAM_RECOVERY_RESULT ... status=SUCCEEDED rc=0` 이다.
+> - **서비스가 내려가 있으면 이 요청은 69 로 실패한다**(다른 복구가 진행 중이면 75). 즉 그
+>   상태에서 래퍼가 0 을 돌려주는 일은 없다. 위험은 종료코드가 아니라, 래퍼가 옛 명령과 같아
+>   보이는데 **서비스를 올려 주지 않는다**는 점이다.
+> - `status=FAILED rc=70` 은 **일반 소프트웨어 실패**다. lock 획득 실패·요청 스키마 검증 실패·
+>   owner 종결이 모두 70 을 쓰므로 owner stale 로 단정하지 않는다 — 그 판정에는 요청 이력의
+>   `interrupted=true` 와 `interrupted_reason="owner_stale"` 이 필요하고, 두 필드는 위 한 줄에
+>   들어 있지 않다.
+>
+> 어느 쪽 보드인지 먼저 확인한다. **1 차 신호는 `test -x /opt/pim/bin/cam-recoveryctl`** 이다 —
+> 실제로 중요한 사실(그 CLI 를 호출할 수 있는가)을 직접 재기 때문이다. `dpkg-query -W
+> -f='${Version}\n' pim-mp` 는 보조로 본다: 두 파일은 같은 `dist/pim` 페이로드로 한 `dpkg -i`
+> 트랜잭션에 묶여 정상 경로에서는 갈라지지 않지만, unpack 이 중단된 `half-installed` 상태나
+> `/opt/pim/bin` 을 패키지 밖에서 손으로 교체한 경우에는 버전 문자열과 실제 파일이 어긋날 수
+> 있다. `rc=70` 은 lock 획득 실패·요청 스키마 검증 실패·owner 종결에 모두 쓰인다.
+
 ```bash
 set -e
 WORK=/root/camtest/handoff-camera1-20260831
