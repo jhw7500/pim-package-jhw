@@ -386,30 +386,28 @@ TOKENS
 printf '%s\n' "$accepted" | grep -qx gstapp_restart \
     || fail "accepted-set parse did not find gstapp_restart; got [$(printf '%s' "$accepted" | tr '\n' ' ')]"
 
-# usage 가 적은 정규명.  usage 는 내가 쓰는 포맷이라 안정적이고, 설명 연속줄은 들여쓰기가
-# 더 깊어 이 패턴에 걸리지 않는다 (실측 확인).
+# 집합이 바뀌는 **사건**만 잡는다.  usage 텍스트는 파싱하지 않는다 — 내 산문을 정규식으로
+# 읽는 검사는 문서화된 집합이 그대로인데도 거짓 실패한다.  Codex 가 세 라운드에 걸쳐 세
+# 경로를 보였다: 숫자가 든 이름(`[a-z_]` vs `[a-z0-9_]`), 두 칸 들여쓴 설명줄이 action 으로
+# 뽑히는 것, 칸 구분자를 탭으로 바꾸면 실제 행이 사라지는 것.  셋 다 파서를 넓히거나
+# 좁히는 방향이어서 고칠 때마다 반대쪽 구멍이 열렸다.  이 저장소는 그런 취약한 패턴
+# 매칭을 runner-membership 가드에서 한 번 제거한 전례가 있다.
 #
-# 토큰 문법은 위 수용 집합 검증과 같아야 한다.  한쪽이 [a-z_] 이고 다른 쪽이 [a-z0-9_] 면
-# vpu2_reset 처럼 숫자가 든 이름이 usage 에 올바로 적혀 있어도 이쪽에서 누락돼, 문서화된
-# action 을 미문서화로 거짓 보고한다 (Codex 지적).
-usage_actions=$(printf '%s\n' "$alias_usage" | sed -n 's/^  \([a-z0-9_][a-z0-9_]*\) .*/\1/p')
-[ -n "$usage_actions" ] || fail 'could not read the action list out of usage'
-
-# 양방향으로 본다.  한 방향만 보면 추가는 잡고 제거/개명은 놓친다 — 제거하면 usage 가
-# 존재하지 않는 action 을 계속 광고하고, 그것을 치면 exit 64 가 난다.
-while read -r act; do
-    [ -n "$act" ] || continue
-    printf '%s\n' "$usage_actions" | grep -qx -- "$act" \
-        || fail "_cr_public_action accepts $act but usage never lists it"
-done <<ACCEPTED
-$accepted
-ACCEPTED
-while read -r act; do
-    [ -n "$act" ] || continue
-    printf '%s\n' "$accepted" | grep -qx -- "$act" \
-        || fail "usage lists $act but _cr_public_action does not accept it"
-done <<LISTED
-$usage_actions
-LISTED
+# 그래서 집합 자체를 정확히 못박고, 바뀌면 usage·별칭 표·정본을 같이 보라고 알린다.
+# 집합을 바꾸는 변경은 어차피 리뷰에서 그 세 곳을 함께 봐야 하는 변경이다.
+expected_actions='camera_hard_reset
+gstapp_restart
+gstapp_stop
+module_reload
+reboot_fallback'
+got_actions=$(printf '%s\n' "$accepted" | LC_ALL=C sort)
+if [ "$got_actions" != "$expected_actions" ]; then
+    echo 'FAIL: _cr_public_action 의 수용 집합이 바뀌었다' >&2
+    echo "  want: $(printf '%s' "$expected_actions" | tr '\n' ' ')" >&2
+    echo "  got:  $(printf '%s' "$got_actions" | tr '\n' ' ')" >&2
+    echo '  cam-recoveryctl usage, 별칭 표, docs/camera-health/cam-recovery-operations.md' >&2
+    echo '  를 같이 갱신하고 이 목록도 고친다.' >&2
+    exit 1
+fi
 
 echo 'submission notice, cam_enable delay, action aliases: PASS'
