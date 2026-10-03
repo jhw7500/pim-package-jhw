@@ -322,6 +322,22 @@ for bogus in bogus_action restar rebooot stopp ''; do
     [ ! -s "$ALIAS_SEEN" ] || fail "request '$bogus' submitted [$(cat "$ALIAS_SEEN")]"
 done
 
+# 후행 개행이 붙은 토큰은 정규화를 거쳐도 거부돼야 한다.  정규화 결과를 $(...) 로 받으면
+# 명령 치환이 그 개행을 깎아서, 전에는 _cr_request_type 이 거부했던 $'reboot_fallback\n' 이
+# 정규명으로 통과해 재부팅을 제출한다.  인자는 $'...' 로 만든다 — $(printf ...) 로 만들면
+# 개행이 스크립트에 닿기 전에 깎여 이 검사가 조용히 무의미해진다.
+for nl_token in $'reboot_fallback\n' $'camera_hard_reset\n' $'reboot\n' $'hard\n'; do
+    : > "$ALIAS_SEEN"
+    set +e
+    PIM_LIB="$ALIAS_LIB" "$RCTL" request "$nl_token" \
+        --source alias-test --reason alias-test >/dev/null 2>&1
+    rc=$?
+    set -e
+    [ "$rc" -eq 64 ] || fail "a token with a trailing newline exited $rc instead of 64"
+    [ ! -s "$ALIAS_SEEN" ] \
+        || fail "a token with a trailing newline submitted [$(cat "$ALIAS_SEEN")]"
+done
+
 # apply_config 는 request 로 보낼 수 없고 별칭도 두지 않았다.
 : > "$ALIAS_SEEN"
 set +e

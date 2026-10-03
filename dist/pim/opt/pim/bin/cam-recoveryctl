@@ -22,7 +22,7 @@ ACTION (괄호는 별칭) 과 실패 시 에스컬레이션:
   camera_hard_reset (hard)     모듈 내리고 CSI/ISI unbind/bind 후 재적재.
                                실패하면 reboot_fallback
   reboot_fallback   (reboot)   보드 재부팅. 최종 폴백이고 직접 요청도 받는다
-  gstapp_stop       (stop)     gstApp 정지만. 체인에 자리 없고 executor 가 거부
+  gstapp_stop       (stop)     gstApp 정지만. 에스컬레이션 없고 재기동은 liveness 가 판단
 
 별칭은 request 인자에서만 쓴다 — 요청 기록과 CAM_RECOVERY_RESULT 의 type= 은 정규명이다.
 apply_config 는 request 가 아니라 apply-config 서브커맨드로 보낸다.
@@ -32,15 +32,20 @@ USAGE
 # 별칭은 여기서만 정규명으로 바꾼다.  아래로는 정규명만 흐르므로 _cr_request_type, 에스컬레이션
 # case, cam_execute_recovery_request 의 거부 목록은 손대지 않는다.  요청 기록과
 # CAM_RECOVERY_RESULT 의 type= 도 정규명이다 — recovery_protocol_test.sh 가 그 줄을 정확
-# 문자열로 비교한다.  모르는 토큰은 그대로 넘겨 _cr_request_type 이 거부하게 둔다.
-canonical_action() {
+# 문자열로 비교한다.  모르는 토큰은 바이트 그대로 넘겨 _cr_request_type 이 거부하게 둔다.
+#
+# 결과를 출력하고 $(...) 로 받으면 안 된다.  명령 치환이 후행 개행을 깎으므로 정규화 전에는
+# _cr_request_type 이 거부했던 $'"'"'reboot_fallback\n'"'"' 같은 토큰이 정규명으로 통과해 재부팅을
+# 제출한다 (실측: 전 rc 64 / 제출 0 -> 후 rc 0 / reboot_fallback 제출).  그래서 $type 에
+# 직접 넣는다.
+canonicalize_action() {
     case "$1" in
-        restart) printf 'gstapp_restart\n';;
-        stop)    printf 'gstapp_stop\n';;
-        module)  printf 'module_reload\n';;
-        hard)    printf 'camera_hard_reset\n';;
-        reboot)  printf 'reboot_fallback\n';;
-        *)       printf '%s\n' "$1";;
+        restart) type=gstapp_restart;;
+        stop)    type=gstapp_stop;;
+        module)  type=module_reload;;
+        hard)    type=camera_hard_reset;;
+        reboot)  type=reboot_fallback;;
+        *)       type=$1;;
     esac
 }
 bad() { usage; exit 64; }
@@ -80,7 +85,7 @@ request() {
     if [ -n "$wait" ]; then wait_for_result "$id" "$type" "$wait"; else printf '%s\n' "$id"; fi
 }
 case "${1:-}" in
-    request) [ $# -ge 2 ] || bad; type=$(canonical_action "$2"); shift 2; [ "$type" != apply_config ] || bad; request "$type" "$@"; exit $?;;
+    request) [ $# -ge 2 ] || bad; canonicalize_action "$2"; shift 2; [ "$type" != apply_config ] || bad; request "$type" "$@"; exit $?;;
     apply-config) shift; request apply_config "$@"; exit $?;;
     status)
         shift; id=; json=0
