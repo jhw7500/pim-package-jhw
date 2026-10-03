@@ -74,10 +74,19 @@ while IFS= read -r file; do
 done <<< "$parts"
 
 echo fatal-signatures
-if journalctl -b -u cam-operate.service --no-pager | grep -Eiq 'segfault|core dumped|symbol lookup error|undefined symbol'; then
-    journalctl -b -u cam-operate.service --no-pager | grep -Ei 'segfault|core dumped|symbol lookup error|undefined symbol'
+# journalctl 을 파이프로 grep 하지 않는다.  `journalctl | grep -q` 는 grep -q 가 첫 매치에서
+# 파이프를 닫아 journalctl 이 SIGPIPE 로 141 을 내고, 이 블록의 `set -o pipefail` 아래에서
+# 그 141 이 파이프라인 상태가 되어 **매치가 있는데 if 가 거짓**이 된다 — fatal 서명이 있는데
+# 없다고 읽는다 (Codex 지적 P1, 실측 재현: 매치를 먼저 내고 많이 출력하는 생산자로 rc=141).
+# 파일로 받아 읽으면 생산자가 끝까지 돌아 그 경로가 없고, journalctl 을 두 번 돌리지도 않는다.
+jlog=$(mktemp)
+journalctl -b -u cam-operate.service --no-pager > "$jlog"
+if grep -Eiq 'segfault|core dumped|symbol lookup error|undefined symbol' "$jlog"; then
+    grep -Ei 'segfault|core dumped|symbol lookup error|undefined symbol' "$jlog"
+    rm -f "$jlog"
     exit 1
 fi
+rm -f "$jlog"
 echo none
 echo RECOVERY_PASS
 REMOTE
