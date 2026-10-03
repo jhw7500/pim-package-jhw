@@ -163,19 +163,35 @@ while IFS= read -r part; do stat -c '%y %s %n' "$part"; done <<< "$recent_parts"
 test -f /tmp/start_video_time
 stat -c 'start_video_time=%y size=%s' /tmp/start_video_time
 
+# 창 시작 시각을 파일 mtime 으로 박아 둔다.  아래에서 "그 시각 이후 수정된 조각"을
+# 요구하는 기준이 된다.
+window_ref=$(mktemp)
 echo "stability window"
 sleep 20
 pid2=$(pgrep -xo gstApp)
 test "$pid1" = "$pid2"
 systemctl is-active cam-operate.service ord-operate.service sd-mount.service vsd-operate.service
 ps -o pid=,etimes=,stat=,cmd= -p "$pid2"
-recent_parts_after=$(find "$tmp_path" -maxdepth 1 -type f -name "${vhl_name}_*-ch*.${muxer}.part" -mmin -2 -print | sort)
-test -n "$recent_parts_after"
+# 존재가 아니라 **전진**을 요구한다.  `-mmin -2` 창은 sleep 20 보다 넓으므로, 인코딩이
+# 창 동안 멈춰도 직전 조각이 그 창에 그대로 남고 크기도 0 보다 커서 "존재 + 크기>0" 검사는
+# 새 바이트 없이 통과한다 — 멈춘 VPU 파이프라인이 TEST pass 를 받는다 (Codex 지적, P1).
+# `-newer "$window_ref"` 는 창 시작 이후 mtime 이 갱신된 것만 고르므로 "창 동안 바이트가
+# 쓰였다"를 직접 표현하고, 기존 조각의 성장과 새 조각 생성을 모두 포함한다.
+# find 가 경로를 직접 비교하므로 조각 이름에 공백이 있어도 안전하다.
+progressed=$(find "$tmp_path" -maxdepth 1 -type f -name "${vhl_name}_*-ch*.${muxer}.part" -newer "$window_ref" -print | sort)
+rm -f "$window_ref"
+if [ -z "$progressed" ]; then
+    echo "no fragment advanced during the stability window: encoding stalled" >&2
+    find "$tmp_path" -maxdepth 1 -type f -name "${vhl_name}_*-ch*.${muxer}.part" -mmin -2 \
+        -exec stat -c '  %y %s %n' {} + >&2
+    exit 1
+fi
+printf 'fragments_written_during_window\n%s\n' "$progressed"
 while IFS= read -r part; do
     size=$(stat -c %s "$part")
     test "$size" -gt 0
     stat -c '%y %s %n' "$part"
-done <<< "$recent_parts_after"
+done <<< "$progressed"
 
 echo "journal since test start"
 journalctl -u cam-operate.service --since "@$start_epoch" --no-pager | tail -120
