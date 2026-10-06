@@ -2,6 +2,35 @@
 
 ## Unreleased (2026-10-06)
 
+### camera10 — reboot-refusal and persistent action diagnostics (issues #140, #141)
+
+- Package version is `0.6.3+jhw.camera10`. `camera9` is what is installed on the
+  board; PR #142 (issue #140) and PR #143 (issue #141, narrowed scope) landed in
+  `dist/` afterwards, so the payloads are separated for `dpkg -l`.
+- **#140**: `cam_action_reboot_fallback` captures the `reboot` output and, only on
+  failure, logs `reboot refused rc=<rc> out=<systemd output>`. The old code
+  logged rc but neither systemd's reason nor a refusal-vs-recovery distinction.
+- **#141**: `cam-operate.service` sets
+  `PIM_CAMERA_ACTION_LOG=/var/lib/pim-camera/recovery/actions.log`, under
+  `StateDirectory`, so action diagnostics survive journald rotation and reboot.
+  Records are `<epoch> <level> <line>`; the file is capped by
+  `PIM_CAMERA_ACTION_LOG_MAX_BYTES` (default 256 KiB, minimum 512 B) and a single
+  record is truncated to a quarter of the cap **keeping its front**. Lengths are
+  counted in bytes: on the board `cam-operate` runs with `LANG=C.UTF-8` (set by
+  preinst, measured). Plan logging uses the same writer. Write failures are
+  absorbed and never break a recovery action. History and state schemas are
+  unchanged.
+- **Install note**: the unit file changed but postinst does not run
+  `daemon-reload`. A reboot applies it; otherwise run `systemctl daemon-reload`
+  and restart `cam-operate`.
+- **Correction**: the camera9 note below says the recorded `reboot_fallback`
+  ended `rc=1` without rebooting and that this remained open. That was later
+  disproven: a directly submitted `reboot_fallback` rebooted the board and the
+  history settled as designed (`RUNNING`, `interrupted=true`). The cause of that
+  earlier rc=1 (presumed systemd refusal) is what the #140 diagnostic will
+  record on the next occurrence.
+- `errno` capture (issue #141 remainder) is out of scope.
+
 ### camera9 — issue #61 requirements 4 and 5
 
 - Package version is `0.6.3+jhw.camera9`. `camera8` is what was installed on the
