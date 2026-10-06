@@ -10,7 +10,12 @@
   남겼지만 systemd 의 거부 사유와 "거부"/"복구 실패"의 구분이 없었다.
 - **#141 액션 진단 영속**: `cam-operate.service`에
   `Environment=PIM_CAMERA_ACTION_LOG=/var/lib/pim-camera/recovery/actions.log`를
-  더했다. `StateDirectory` 아래라 journald 회전과 재부팅 뒤에도 남는다. 형식은
+  더했다. `StateDirectory` 아래라 재부팅 뒤에도 남는다. **같은 진단은 이미
+  journald 스냅샷(`journald-snapshot.sh`, 매분, `/var/log/cantops/journald` 30일)에도
+  남는다** — 이 파일의 고유 가치는 eMMC mode 4(`chk_mmc.sh` 가 rsyslog·journald 를
+  멈춤)에서도 남는 것, 급전원 차단 시 스냅샷의 최대 1분 공백, 작은 전용 파일이라는
+  점이다. 이슈 #141 은 "journald 회전으로 진단을 잃는다"를 근거로 했으나 틀렸다
+  (아래 정정 참조). 형식은
   `<epoch> <level> <line>`, 상한 `PIM_CAMERA_ACTION_LOG_MAX_BYTES`(기본 256KiB,
   최소 512B)이고 레코드는 상한의 1/4 로 **앞을 남기고** 자른다. 길이는 바이트로
   센다 — 보드의 `cam-operate`는 `LANG=C.UTF-8`로 돈다(preinst 가 설정, 실측).
@@ -28,8 +33,14 @@
 - **정정**: 아래 camera9 항목의 "`reboot_fallback`이 `rc=1`로 끝나고 재부팅이
   발생하지 않은 것이 미해결"은 이후 반증됐다. 직접 제출한 `reboot_fallback`이
   실제로 보드를 재부팅했고, 이력은 설계대로 `RUNNING`/`interrupted=true`로
-  정산됐다. 그 rc=1 의 원인(systemd 거부로 추정)은 이 버전의 #140 진단이 다음
-  발생 때 남긴다.
+  정산됐다. 그 rc=1 기록(`19ffa910`, 2026-09-09)은 운영 장애가 아니라 고장 주입
+  시험(`source=task10-fault-chain`, `reason=verify-module-hard-reboot-escalation`)
+  이었고, 그 시각의 journald 스냅샷에 재부팅 시도·거부 메시지는 없다.
+- **정정 (#141 근거)**: "단계 이름이 journald 회전으로 사라져 실패 4건의 원인을
+  잃었다"는 틀렸다. 운영 실패 4건(startup `camera_hard_reset`) 중 3건(9/9, 9/11,
+  9/15 04:51 UTC)은 단계 이름을 남기는 `_cra_fail`(`9987dfb`, 9/15 05:12 UTC)
+  **도입 전**이라 어느 채널에도 기록될 수 없었고, 나머지 1건(9/22 `455f4a57`)은
+  journald 스냅샷에 `step=verify_camera_ready rc=1` 로 남아 있다.
 - `errno` 캡처(이슈 #141 잔여)는 이 범위가 아니다.
 
 ## 최신 변경사항 (2026-10-06) — camera9 / 이슈 #61 요구 4·5

@@ -12,7 +12,13 @@
   logged rc but neither systemd's reason nor a refusal-vs-recovery distinction.
 - **#141**: `cam-operate.service` sets
   `PIM_CAMERA_ACTION_LOG=/var/lib/pim-camera/recovery/actions.log`, under
-  `StateDirectory`, so action diagnostics survive journald rotation and reboot.
+  `StateDirectory`, so action diagnostics survive reboot. **The same lines are
+  already kept by the journald snapshot** (`journald-snapshot.sh`, every minute,
+  `/var/log/cantops/journald`, 30 days); this file's own value is surviving eMMC
+  mode 4 (where `chk_mmc.sh` stops rsyslog and journald), covering the snapshot's
+  up-to-one-minute gap on power loss, and being a small dedicated file. Issue
+  #141's premise that journald rotation loses the diagnostics was wrong (see the
+  corrections below).
   Records are `<epoch> <level> <line>`; the file is capped by
   `PIM_CAMERA_ACTION_LOG_MAX_BYTES` (default 256 KiB, minimum 512 B) and a single
   record is truncated to a quarter of the cap **keeping its front**. Lengths are
@@ -34,9 +40,16 @@
 - **Correction**: the camera9 note below says the recorded `reboot_fallback`
   ended `rc=1` without rebooting and that this remained open. That was later
   disproven: a directly submitted `reboot_fallback` rebooted the board and the
-  history settled as designed (`RUNNING`, `interrupted=true`). The cause of that
-  earlier rc=1 (presumed systemd refusal) is what the #140 diagnostic will
-  record on the next occurrence.
+  history settled as designed (`RUNNING`, `interrupted=true`). That rc=1 record
+  (`19ffa910`, 2026-09-09) was a fault-injection test
+  (`source=task10-fault-chain`), not a production failure, and the journald
+  snapshot for that minute has no reboot attempt or refusal message.
+- **Correction (#141 premise)**: "step names were lost to journald rotation for
+  four failures" was wrong. Of the four production failures (startup
+  `camera_hard_reset`), three (Sep 9, Sep 11, Sep 15 04:51 UTC) predate
+  `_cra_fail` (`9987dfb`, Sep 15 05:12 UTC), so no channel could have held a step
+  name; the fourth (Sep 22, `455f4a57`) is in the journald snapshot as
+  `step=verify_camera_ready rc=1`.
 - `errno` capture (issue #141 remainder) is out of scope.
 
 ### camera9 — issue #61 requirements 4 and 5
