@@ -1,5 +1,29 @@
 # PIM Package Changelog
 
+## 최신 변경사항 (2026-10-06) — camera9 / 이슈 #61 요구 4·5
+
+- 전달 패키지를 `pim-mp 0.6.3+jhw.camera9`로 올렸다. `camera8`은 2026-10-03에
+  보드에 설치한 내용이고, 그 뒤 이슈 #61 요구 4·5 구현(PR #138)이 `dist/`에
+  들어왔다. 같은 문자열로 두 내용을 담으면 `dpkg -l`로 구분할 수 없으므로
+  분리했다 — camera7 이 95커밋을 한 문자열에 담고 있던 것과 같은 부류다.
+- **요구 4 (소요 시간)**: `cam-recoveryctl status --json`에 새 top-level
+  `derived.actions.<action>.last_duration_s`를 더했다. `finished_at -
+  started_at` 파생이고 **영속 state 에 저장하지 않는다** — `_cr_state_valid`가
+  액션별 키를 정확히 9개로 단정하고 `_cr_state_init`은 기존 파일 검증 실패 시
+  복구 없이 1을 돌려주므로, 필드를 늘리면 이미 배포된 보드의 `state.json`이
+  무효가 되어 업그레이드 후 복구가 동작하지 않는다. 단위는 초다.
+- **요구 5 (health 출력)**: shadow 집계에 읽기 전용 `recovery` 블록을 더했다.
+  `/var/lib/pim-camera/recovery/state.json`을 투영하고, 부재·손상·형태불일치는
+  `{"available":false,"actions":{}}`로 보고해 집계를 실패시키지 않는다.
+  `--recovery-state` 인자를 추가했다. `health-v1.schema.json`은 producer→healthd
+  **입력** 계약이라 건드리지 않았고, `recovery_requested`는 shadow 불변식이라
+  재사용하지 않았다.
+- `errno`는 이번 범위에서 제외했다 — 캡처 경로가 0건이고 rc 가 이미 액션의
+  exit code 를 운반한다. 11개 액션 단계 배관이 필요해 별건으로 둔다.
+- 보드 수락 테스트(camera8 설치본 기준)에서 완료조건 1·2·3·4·5·6이 충족됐고,
+  조건 7은 에스컬레이션 기록은 충족이나 `reboot_fallback`이 `rc=1`로 끝나고
+  재부팅이 발생하지 않은 것이 미해결이다.
+
 ## 최신 변경사항 (2026-10-03) — camera8 / 전달 버전 분리
 
 - 전달 패키지를 `pim-mp 0.6.3+jhw.camera8`로 올렸다. `camera7`은 2026-09-09

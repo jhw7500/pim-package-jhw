@@ -1041,7 +1041,7 @@ def parse_control_fields(text: str) -> Dict[str, str]:
 def control_errors(text: str) -> List[str]:
     fields = parse_control_fields(text)
     errors: List[str] = []
-    expected_version = "0.6.3+jhw.camera8"
+    expected_version = "0.6.3+jhw.camera9"
     expected_dependencies = "python3, python3-yaml, jq, util-linux, procps"
     if fields.get("Version") != expected_version:
         errors.append(

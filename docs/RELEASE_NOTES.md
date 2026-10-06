@@ -1,6 +1,34 @@
 # PIM Package Release Notes
 
-## Unreleased (2026-10-03)
+## Unreleased (2026-10-06)
+
+### camera9 — issue #61 requirements 4 and 5
+
+- Package version is `0.6.3+jhw.camera9`. `camera8` is what was installed on the
+  board on 2026-10-03; the issue #61 requirement 4/5 implementation (PR #138)
+  landed in `dist/` afterwards. Shipping both payloads under one version string
+  would make them indistinguishable to `dpkg -l`, the same defect camera7 had.
+- **Requirement 4 (elapsed time)**: `cam-recoveryctl status --json` gained a new
+  top-level `derived.actions.<action>.last_duration_s`, derived from
+  `finished_at - started_at` and **never stored**. Storing it is unsafe:
+  `_cr_state_valid` asserts an exact nine-key set per action and
+  `_cr_state_init` returns 1 without repair when an existing file fails
+  validation, so widening the set would invalidate the `state.json` already
+  present on deployed boards. The unit is seconds.
+- **Requirement 5 (health output)**: the shadow aggregate gained a read-only
+  `recovery` block projecting
+  `/var/lib/pim-camera/recovery/state.json`. Missing, malformed or
+  shape-mismatched state reports `{"available":false,"actions":{}}` instead of
+  failing the aggregate. A `--recovery-state` argument was added.
+  `health-v1.schema.json` is the producer-to-healthd **input** contract and was
+  left untouched; `recovery_requested` is a shadow invariant and was not reused.
+- `errno` is out of scope: there is no capture path today and rc already carries
+  the action exit code. Plumbing it through eleven action steps is tracked
+  separately.
+- Board acceptance against the camera8 install satisfied completion conditions
+  1, 2, 3, 4, 5 and 6. Condition 7's escalation record is satisfied, but the one
+  recorded `reboot_fallback` ended `rc=1` without rebooting and that remains
+  open.
 
 ### camera8 delivery version separation
 
