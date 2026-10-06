@@ -380,12 +380,18 @@ PIM_CAMERA_ACTION_LOG="$over" PIM_CAMERA_ACTION_LOG_MAX_BYTES=2048 PIM_CAMERA_AC
 sz=$(stat -c%s "$over")
 [ "$sz" -le 2048 ] || fail "레코드가 상한을 넘겼는데 추가 후 절삭되지 않았다 ($sz > 2048)"
 grep -q 'crossing record rc=1' "$over" || { fail "절삭이 방금 추가한 레코드를 버렸다"; }
-# 단일 레코드가 상한보다 큰 극단도 상한 안으로 들어와야 한다.
+# 단일 레코드가 상한보다 큰 극단도 상한 안으로 들어와야 하고, 그때 남는 것은 레코드의
+# **앞**이어야 한다. 식별 접두사(reboot refused rc=...)가 무제한 payload(out=) 앞에 오므로
+# 꼬리만 남기면 무엇이 왜 실패했는지가 사라진다. 크기만 보면 이 손실을 못 잡는다
+# (PR #143 Codex 라운드 3 P2).
 : > "$over"
 PIM_CAMERA_ACTION_LOG="$over" PIM_CAMERA_ACTION_LOG_MAX_BYTES=2048 PIM_CAMERA_ACTION_TAG=t141 \
-    _cra_log err "huge rc=1 out=$(head -c 5000 /dev/zero | tr '\0' 'Z')"
+    _cra_log err "reboot refused rc=1 out=$(head -c 5000 /dev/zero | tr '\0' 'Z')"
 sz=$(stat -c%s "$over")
 [ "$sz" -le 2048 ] || fail "상한보다 큰 단일 레코드가 상한 안으로 들어오지 않았다 ($sz > 2048)"
+grep -Eq '^[0-9]+ err reboot refused rc=1 out=Z' "$over" \
+    || { head -c 120 "$over" >&2; fail "큰 레코드 절삭이 식별 접두사(시각·level·reboot refused rc=1)를 버렸다"; }
+grep -q 'truncated 5' "$over" || fail "절삭 표지가 없다 — 잘린 레코드와 원래 짧은 레코드가 구분되지 않는다"
 
 # ⑤ plan 경로(_coc_plan_log)도 같은 경계 writer 를 타야 한다. 이 경로는 매 부팅
 #    initial_module_load 를 기록하므로(cam_operate_control.sh:140, :149) 가장 빈번한

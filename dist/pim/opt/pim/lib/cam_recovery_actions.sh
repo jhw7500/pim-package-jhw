@@ -58,7 +58,20 @@ _cra_log() {
 # 이 함수는 어떤 경로로도 액션을 깨뜨리지 않는다. 호출자(_cra_log)가 return 0 고정이고
 # 아래 모든 단계가 실패해도 조용히 포기한다.
 _cra_log_persist() {
-    local level=$1 line=$2 cap=${PIM_CAMERA_ACTION_LOG_MAX_BYTES:-262144} dir size tmp
+    local level=$1 line=$2 cap=${PIM_CAMERA_ACTION_LOG_MAX_BYTES:-262144} dir size tmp max_rec
+    # 레코드 하나가 상한의 1/4 를 넘으면 **뒤를** 자른다. 앞을 남기는 이유는 식별
+    # 접두사가 앞에 있기 때문이다 — reboot 거부 경로는 "reboot refused rc=... out="
+    # 뒤에 임의 크기의 명령 출력을 싣는다(cam_action_reboot_fallback). 바이트 꼬리
+    # 절삭에만 맡기면 그 접두사가 먼저 사라져, 이 로그가 보존하려던 사유가 라벨 없는
+    # 꼬리만 남는다. PR #143 라운드 3 에서 Codex 가 P2 로 잡았다.
+    #
+    # 실측(수정 전): cap 2048 에 5000바이트 out= 레코드 하나 → 파일이 ZZZZ... 1024
+    # 바이트가 되고 "reboot refused"·rc=1·epoch 접두사가 전부 소실됐다. 크기만 보는
+    # 단정은 그 소실을 통과시킨다.
+    #
+    # 상한의 1/4 로 두면 절삭이 남기는 뒤 절반(cap/2) 안에 최신 레코드가 통째로 들어온다.
+    max_rec=$((cap / 4)); [ "$max_rec" -ge 64 ] || max_rec=64
+    [ "${#line}" -le "$max_rec" ] || line="${line:0:$max_rec}...[truncated ${#line}B]"
     dir=${PIM_CAMERA_ACTION_LOG%/*}
     [ "$dir" = "$PIM_CAMERA_ACTION_LOG" ] || [ -d "$dir" ] || mkdir -p -- "$dir" 2>/dev/null || return 0
     # EPOCHSECONDS 는 bash 5.0+ 내장이라 fork 가 없다 (이 파일 :19 의 같은 근거).
