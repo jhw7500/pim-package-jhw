@@ -1,5 +1,37 @@
 # PIM Package Changelog
 
+## 최신 변경사항 (2026-10-06) — camera10 / 이슈 #140·#141 진단
+
+- 전달 패키지를 `pim-mp 0.6.3+jhw.camera10`으로 올렸다. 보드에 설치된 `camera9`
+  이후 `dist/`에 PR #142(이슈 #140)와 PR #143(이슈 #141 좁힌 범위)이 들어왔다.
+  같은 문자열로 두 내용을 담으면 `dpkg -l`로 구분할 수 없으므로 분리했다.
+- **#140 재부팅 거부 식별**: `cam_action_reboot_fallback`이 `reboot` 출력을 받아,
+  실패할 때만 `reboot refused rc=<rc> out=<systemd 출력>`을 남긴다. 구 코드도 rc 는
+  남겼지만 systemd 의 거부 사유와 "거부"/"복구 실패"의 구분이 없었다.
+- **#141 액션 진단 영속**: `cam-operate.service`에
+  `Environment=PIM_CAMERA_ACTION_LOG=/var/lib/pim-camera/recovery/actions.log`를
+  더했다. `StateDirectory` 아래라 journald 회전과 재부팅 뒤에도 남는다. 형식은
+  `<epoch> <level> <line>`, 상한 `PIM_CAMERA_ACTION_LOG_MAX_BYTES`(기본 256KiB,
+  최소 512B)이고 레코드는 상한의 1/4 로 **앞을 남기고** 자른다. 길이는 바이트로
+  센다 — 보드의 `cam-operate`는 `LANG=C.UTF-8`로 돈다(preinst 가 설정, 실측).
+  plan 기록(`_coc_plan_log`)도 같은 writer 를 탄다. 기록 실패는 흡수되어 복구
+  액션을 깨뜨리지 않는다. 이력·state 스키마는 바꾸지 않았다.
+- **설치 후 재부팅한다.** preinst 가 `cam-operate`와 `sd-mount`를 무조건 멈추고
+  (`preinst:39`, `:41`) postinst 는 둘 다 다시 띄우지 않는다 — camera10 이전부터의
+  동작이다. `cam-operate`는 `sd-mount`에 `After=`만 있어 시작해도 `sd-mount`를
+  끌어오지 않는다. 바뀐 `.service`도 postinst 가 `daemon-reload`를 하지 않으므로
+  재부팅에서 반영된다. 재부팅 전까지는 `cam-operate`가 내려가 있고, `sd-mount`의
+  SD 재삽입·읽기전용 복구 감시 루프(`automnt_sd_for_emmc_boot.sh:139`)도 멈춰 있다
+  — SD 마운트와 `sd_mount_flag`는 postinst 가 직접 복구하므로(`postinst:385-397`,
+  #76) 녹화가 곧바로 RAM_ONLY 로 떨어지지는 않는다. `sd-mount`는 부팅 초기
+  (`Before=sysinit.target`)용 유닛이라 런타임 수동 시작 절차는 검증하지 않았다.
+- **정정**: 아래 camera9 항목의 "`reboot_fallback`이 `rc=1`로 끝나고 재부팅이
+  발생하지 않은 것이 미해결"은 이후 반증됐다. 직접 제출한 `reboot_fallback`이
+  실제로 보드를 재부팅했고, 이력은 설계대로 `RUNNING`/`interrupted=true`로
+  정산됐다. 그 rc=1 의 원인(systemd 거부로 추정)은 이 버전의 #140 진단이 다음
+  발생 때 남긴다.
+- `errno` 캡처(이슈 #141 잔여)는 이 범위가 아니다.
+
 ## 최신 변경사항 (2026-10-06) — camera9 / 이슈 #61 요구 4·5
 
 - 전달 패키지를 `pim-mp 0.6.3+jhw.camera9`로 올렸다. `camera8`은 2026-10-03에
@@ -23,6 +55,7 @@
 - 보드 수락 테스트(camera8 설치본 기준)에서 완료조건 1·2·3·4·5·6이 충족됐고,
   조건 7은 에스컬레이션 기록은 충족이나 `reboot_fallback`이 `rc=1`로 끝나고
   재부팅이 발생하지 않은 것이 미해결이다.
+  → 이후 반증됨. camera10 항목의 정정을 본다.
 
 ## 최신 변경사항 (2026-10-03) — camera8 / 전달 버전 분리
 
