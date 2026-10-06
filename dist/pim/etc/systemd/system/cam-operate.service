@@ -14,6 +14,10 @@ RuntimeDirectory=pim-camera
 RuntimeDirectoryMode=0750
 StateDirectory=pim-camera
 StateDirectoryMode=0750
+# 이슈 #141: _cra_fail 이 남기는 단계 이름을 journald 회전 뒤에도 조사할 수 있게
+# 디스크로도 보낸다. StateDirectory 아래라 재부팅을 횡단한다. 상한은
+# PIM_CAMERA_ACTION_LOG_MAX_BYTES (기본 256KiB) 이고 _cra_log_persist 가 절삭한다.
+Environment=PIM_CAMERA_ACTION_LOG=/var/lib/pim-camera/recovery/actions.log
 KillMode=control-group
 SuccessExitStatus=143
 TimeoutStartSec=90s

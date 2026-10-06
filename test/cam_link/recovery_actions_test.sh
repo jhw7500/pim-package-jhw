@@ -323,6 +323,44 @@ grep -q 'reboot refused' "$PIM_CAMERA_ACTION_LOG" \
     && { cat "$PIM_CAMERA_ACTION_LOG" >&2; fail "성공한 reboot 가 거부로 기록됐다"; }
 unset PIM_CAMERA_ACTION_LOG FAIL_REBOOT_RC
 
+# 이슈 #141: journald 는 회전하므로 _cra_fail 이 남기는 단계 이름이 조사 시점에 이미
+# 사라져 있다. 기록 스키마는 정확 키 집합 단정이라 손대지 않고, 같은 진단을 디스크로도
+# 보낸다. 아래 셋이 그 영속 경로의 계약이다.
+echo "=== 액션 진단의 영속 기록 (이슈 #141) ==="
+
+# ① 부모 디렉터리가 없어도 남긴다. 구 코드는 mkdir 을 하지 않아 아무것도 안 쓴다.
+deep="$WORK/nodir-a/nodir-b/actions.log"
+rm -rf "$WORK/nodir-a"
+PIM_CAMERA_ACTION_LOG="$deep" PIM_CAMERA_ACTION_TAG=t141 \
+    _cra_log err "probe-mkdir rc=7"
+[ -f "$deep" ] || fail "부모 디렉터리가 없을 때 진단이 유실됐다 (mkdir 미수행)"
+grep -q 'probe-mkdir rc=7' "$deep" || { cat "$deep" >&2; fail "진단 줄이 기록되지 않았다"; }
+# 시각 접두사가 붙어야 회전 뒤에도 history 의 started_at 과 맞출 수 있다.
+grep -qE '^[0-9]+ err probe-mkdir rc=7$' "$deep" \
+    || { cat "$deep" >&2; fail "기록 형식이 '<epoch> <level> <line>' 이 아니다"; }
+
+# ② 상한을 넘으면 절삭하되 최신 줄은 남는다. 구 코드는 무한 성장한다.
+rot="$WORK/rotate/actions.log"; rm -rf "$WORK/rotate"; mkdir -p "$WORK/rotate"
+head -c 4096 /dev/zero | tr '\0' 'x' > "$rot"
+printf '\n' >> "$rot"
+before=$(stat -c%s "$rot")
+PIM_CAMERA_ACTION_LOG="$rot" PIM_CAMERA_ACTION_LOG_MAX_BYTES=2048 PIM_CAMERA_ACTION_TAG=t141 \
+    _cra_log err "probe-rotate rc=9"
+after=$(stat -c%s "$rot")
+[ "$after" -lt "$before" ] || fail "상한을 넘겼는데 절삭되지 않았다 (before=$before after=$after)"
+[ "$after" -le 2048 ] || fail "절삭 후에도 상한을 넘는다 (after=$after)"
+grep -q 'probe-rotate rc=9' "$rot" || { fail "절삭이 최신 진단 줄을 버렸다"; }
+
+# ③ 기록이 불가능해도 액션을 깨지 않는다. 경로가 디렉터리면 추가가 실패한다.
+#    이 하네스는 set -e 라, 구 코드의 무가드 printf 는 여기서 호출자를 중단시킨다.
+baddir="$WORK/as-dir"; rm -rf "$baddir"; mkdir -p "$baddir"
+PIM_CAMERA_ACTION_LOG="$baddir" PIM_CAMERA_ACTION_TAG=t141 \
+    _cra_log err "probe-unwritable rc=11" \
+    || fail "기록 불가가 _cra_log 를 실패시켰다 (액션이 깨진다)"
+# VAR=x func 형태는 bash 에서 함수 종료 후 남지 않는다(실측). unset 을 하면
+# 오히려 라이브러리가 source 시점에 넣은 PIM_CAMERA_ACTION_TAG 기본값을 지워
+# 뒤따르는 _cra_log 가 set -u 에서 깨진다.
+
 owner_active
 : > "$PIM_CAMERA_CALL_LOG"
 touch "$PIM_CAMERA_SYSFS_ROOT/bus/platform/drivers/isi-capture/32e00000.isi:cap_device"

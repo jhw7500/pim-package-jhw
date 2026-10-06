@@ -203,6 +203,17 @@ def cam_operate_errors(text: str) -> List[str]:
     }
     for key, value in expected.items():
         require_single(errors, sections, "Service", key, value)
+    # 이슈 #141: _cra_fail 이 남기는 단계 이름이 journald 회전 뒤에도 조사 가능해야
+    # 한다. 실측으로 기동 경로 camera_hard_reset 실패 4건에 대해 이력에는 rc 만 남고
+    # journal 의 "step failed" 는 0건이었다. StateDirectory 아래 경로여야 재부팅을
+    # 횡단한다.
+    require_token(
+        errors,
+        sections,
+        "Service",
+        "Environment",
+        "PIM_CAMERA_ACTION_LOG=/var/lib/pim-camera/recovery/actions.log",
+    )
     actual_stops = values(sections, "Service", "ExecStop")
     if actual_stops != STOP_EXECS:
         errors.append(
@@ -1637,6 +1648,7 @@ RuntimeDirectory=pim-camera
 RuntimeDirectoryMode=0750
 StateDirectory=pim-camera
 StateDirectoryMode=0750
+Environment=PIM_CAMERA_ACTION_LOG=/var/lib/pim-camera/recovery/actions.log
 KillMode=control-group
 TimeoutStartSec=90s
 TimeoutStopSec=130s

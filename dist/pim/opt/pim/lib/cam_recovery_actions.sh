@@ -44,7 +44,38 @@ PIM_CAMERA_ACTION_TAG="${PIM_CAMERA_ACTION_TAG:-cam_recovery_actions}"
 _cra_log() {
     local level=$1; shift
     logger -p "local0.$level" "[CAM][$PIM_CAMERA_ACTION_TAG] $*" 2>/dev/null
-    [ -z "${PIM_CAMERA_ACTION_LOG:-}" ] || printf '%s %s\n' "$level" "$*" >> "$PIM_CAMERA_ACTION_LOG"
+    [ -z "${PIM_CAMERA_ACTION_LOG:-}" ] || _cra_log_persist "$level" "$*"
+    return 0
+}
+
+# 이슈 #141. journald 는 회전하므로 _cra_fail 이 남기는 단계 이름
+# (unload_max9296, unbind_csi:32e40000.csi 등)이 사고 조사 시점에 이미 사라져 있다.
+# 실측: 기동 경로 camera_hard_reset 실패 4건에 대해 이력에는 rc=1 만 남고 journal 의
+# "step failed" 는 0건이었다. 이력 스키마는 (keys|sort)==[...] 로 정확 키 집합을
+# 단정하므로 필드를 늘리면 배포된 보드의 기록이 무효가 된다 — 그래서 기록은 건드리지
+# 않고 같은 진단을 디스크로도 보낸다.
+#
+# 이 함수는 어떤 경로로도 액션을 깨뜨리지 않는다. 호출자(_cra_log)가 return 0 고정이고
+# 아래 모든 단계가 실패해도 조용히 포기한다.
+_cra_log_persist() {
+    local level=$1 line=$2 cap=${PIM_CAMERA_ACTION_LOG_MAX_BYTES:-262144} dir size tmp
+    dir=${PIM_CAMERA_ACTION_LOG%/*}
+    [ "$dir" = "$PIM_CAMERA_ACTION_LOG" ] || [ -d "$dir" ] || mkdir -p -- "$dir" 2>/dev/null || return 0
+    # 상한을 넘으면 앞을 버리고 뒤 절반만 남긴다. tail -c 는 첫 줄이 잘릴 수 있는데
+    # 진단 로그에서는 허용한다 — 대안(행 단위 보존)은 파일 전체를 읽어야 한다.
+    if size=$(stat -c%s -- "$PIM_CAMERA_ACTION_LOG" 2>/dev/null) && [ "${size:-0}" -gt "$cap" ] 2>/dev/null; then
+        tmp="$PIM_CAMERA_ACTION_LOG.$$"
+        if tail -c "$((cap / 2))" -- "$PIM_CAMERA_ACTION_LOG" 2>/dev/null > "$tmp"; then
+            mv -f -- "$tmp" "$PIM_CAMERA_ACTION_LOG" 2>/dev/null || rm -f -- "$tmp" 2>/dev/null
+        else
+            rm -f -- "$tmp" 2>/dev/null
+        fi
+    fi
+    # EPOCHSECONDS 는 bash 5.0+ 내장이라 fork 가 없다 (이 파일 :19 의 같은 근거).
+    # 2>/dev/null 은 >> 보다 **앞**에 와야 한다. 뒤에 두면 경로가 디렉터리일 때
+    # 셸이 내는 리다이렉션 실패 메시지("Is a directory")가 그대로 새어 나간다 —
+    # 리다이렉션은 왼쪽부터 처리되므로 stderr 를 먼저 돌려야 그 메시지까지 잡힌다.
+    printf '%s %s %s\n' "${EPOCHSECONDS:-0}" "$level" "$line" 2>/dev/null >> "$PIM_CAMERA_ACTION_LOG"
     return 0
 }
 
