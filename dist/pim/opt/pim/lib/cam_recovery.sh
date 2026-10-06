@@ -1162,5 +1162,20 @@ cam_recovery_status_json() {
         printf '%s\n' "$result"; return 0
     fi
     owner=$(cat "$(_cr_owner_file)" 2>/dev/null || printf null); pending=$(cat "$(_cr_pending_file)" 2>/dev/null || printf null); active=$(cat "$(_cr_active_file)" 2>/dev/null || printf null); state=$(cat "$(_cr_state_file)" 2>/dev/null || printf null)
-    jq -cn --argjson owner "$owner" --argjson pending "$pending" --argjson active "$active" --argjson state "$state" '{owner:$owner,pending:$pending,active:$active,state:$state}'
+    # 이슈 #61 요구 4 의 "소요 시간". 저장하지 않고 여기서 파생한다 —
+    # _cr_state_valid 가 액션별 키를 정확히 9개로 단정하므로 last_duration_s 를
+    # state 에 넣으면 이미 배포된 보드의 state.json 이 무효가 되고
+    # _cr_state_init(:756) 은 복구 없이 1 을 돌려준다. state 는 파일 그대로
+    # 통과시키고 derived 로만 노출해 저장값과 파생값이 어긋날 여지를 없앤다.
+    # 단위는 초다 — _cr_now 가 `date +%s` 다. jq 를 더 띄우지 않으려고 같은
+    # 호출 안에서 계산한다(보드 실측 jq spawn ~307ms).
+    jq -cn --argjson owner "$owner" --argjson pending "$pending" --argjson active "$active" --argjson state "$state" '
+      def last_duration_s:
+        if (.last_started_at|type=="number") and (.last_finished_at|type=="number")
+           and .last_finished_at>=.last_started_at
+        then .last_finished_at - .last_started_at else null end;
+      {owner:$owner,pending:$pending,active:$active,state:$state,
+       derived:(if ($state|type=="object") and ($state.actions|type=="object")
+                then {actions:($state.actions|map_values({last_duration_s:last_duration_s}))}
+                else null end)}'
 }
