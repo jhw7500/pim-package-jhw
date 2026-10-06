@@ -351,12 +351,22 @@ after=$(stat -c%s "$rot")
 [ "$after" -le 2048 ] || fail "절삭 후에도 상한을 넘는다 (after=$after)"
 grep -q 'probe-rotate rc=9' "$rot" || { fail "절삭이 최신 진단 줄을 버렸다"; }
 
-# ③ 기록이 불가능해도 액션을 깨지 않는다. 경로가 디렉터리면 추가가 실패한다.
-#    이 하네스는 set -e 라, 구 코드의 무가드 printf 는 여기서 호출자를 중단시킨다.
+# ③ 기록이 불가능해도 set -e 호출자를 중단시키지 않는다. 경로가 디렉터리면 추가가
+#    실패하는데, 그 실패가 흡수되지 않으면 진단 영속화가 복구 액션을 깨뜨린다.
+#
+#    이 단정은 **별도 bash 프로세스**로만 성립한다. 실측한 두 함정:
+#      - `_cra_log ... || fail` 처럼 함수 호출을 OR-list 에 두면 bash 가 그 함수
+#        **안쪽 전체**에서 errexit 를 면제해 아무것도 검출하지 못한다.
+#      - `( set -e; ... ) || true` 도 안 된다. 외부 OR-list 가 errexit 억제 문맥을
+#        서브셸로 전파해 내부 set -e 를 무력화한다.
+#    PR #143 에서 Codex 가 이 공백을 P2 로 지적했다.
 baddir="$WORK/as-dir"; rm -rf "$baddir"; mkdir -p "$baddir"
+probe="$WORK/errexit-probe.out"; probe_rc=0
 PIM_CAMERA_ACTION_LOG="$baddir" PIM_CAMERA_ACTION_TAG=t141 \
-    _cra_log err "probe-unwritable rc=11" \
-    || fail "기록 불가가 _cra_log 를 실패시켰다 (액션이 깨진다)"
+    bash -c 'set -euo pipefail; . "$PIM_LIB/cam_recovery_actions.sh"; _cra_log err "probe-unwritable rc=11"; echo REACHED' \
+    > "$probe" 2>/dev/null || probe_rc=$?
+grep -q REACHED "$probe" \
+    || { cat "$probe" >&2; fail "기록 불가가 set -e 호출자를 중단시켰다 (rc=$probe_rc) — 복구 액션이 깨진다"; }
 # VAR=x func 형태는 bash 에서 함수 종료 후 남지 않는다(실측). unset 을 하면
 # 오히려 라이브러리가 source 시점에 넣은 PIM_CAMERA_ACTION_TAG 기본값을 지워
 # 뒤따르는 _cra_log 가 set -u 에서 깨진다.

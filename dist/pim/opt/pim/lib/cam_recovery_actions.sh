@@ -66,16 +66,21 @@ _cra_log_persist() {
     if size=$(stat -c%s -- "$PIM_CAMERA_ACTION_LOG" 2>/dev/null) && [ "${size:-0}" -gt "$cap" ] 2>/dev/null; then
         tmp="$PIM_CAMERA_ACTION_LOG.$$"
         if tail -c "$((cap / 2))" -- "$PIM_CAMERA_ACTION_LOG" 2>/dev/null > "$tmp"; then
-            mv -f -- "$tmp" "$PIM_CAMERA_ACTION_LOG" 2>/dev/null || rm -f -- "$tmp" 2>/dev/null
+            mv -f -- "$tmp" "$PIM_CAMERA_ACTION_LOG" 2>/dev/null || rm -f -- "$tmp" 2>/dev/null || :
         else
-            rm -f -- "$tmp" 2>/dev/null
+            rm -f -- "$tmp" 2>/dev/null || :
         fi
     fi
     # EPOCHSECONDS 는 bash 5.0+ 내장이라 fork 가 없다 (이 파일 :19 의 같은 근거).
     # 2>/dev/null 은 >> 보다 **앞**에 와야 한다. 뒤에 두면 경로가 디렉터리일 때
     # 셸이 내는 리다이렉션 실패 메시지("Is a directory")가 그대로 새어 나간다 —
     # 리다이렉션은 왼쪽부터 처리되므로 stderr 를 먼저 돌려야 그 메시지까지 잡힌다.
-    printf '%s %s %s\n' "${EPOCHSECONDS:-0}" "$level" "$line" 2>/dev/null >> "$PIM_CAMERA_ACTION_LOG"
+    # `|| return 0` 이 **필수**다. 이것이 없으면 호출자의 set -e 에서 실패한 printf 가
+    # 뒤따르는 return 0 전에 셸을 종료시켜, 진단 영속화가 복구 액션을 깨뜨린다.
+    # bash 의 errexit 면제는 "&&/|| 리스트의 마지막 연산자 뒤 명령"을 제외하므로
+    # _cra_log 의 `[ -z ... ] || _cra_log_persist ...` 는 이 함수 안을 보호하지 않는다.
+    # PR #143 에서 Codex 가 P2 로 잡았고, set -e 아래 단독 호출로 재현했다.
+    printf '%s %s %s\n' "${EPOCHSECONDS:-0}" "$level" "$line" 2>/dev/null >> "$PIM_CAMERA_ACTION_LOG" || return 0
     return 0
 }
 
