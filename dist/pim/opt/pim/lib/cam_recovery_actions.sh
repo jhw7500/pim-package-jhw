@@ -602,7 +602,26 @@ _cra_consumer_detail() {
     return 0
 }
 
-cam_action_reboot_fallback() { local runtime=$1; cam_effect "$runtime" reboot; }
+cam_action_reboot_fallback() {
+    # reboot 는 /usr/sbin/reboot -> /bin/systemctl 심링크다. 즉 실제 호출은
+    # `systemctl reboot` 이고, systemd 가 재부팅 트랜잭션을 거부하면 nonzero 로
+    # 돌아온다. 그러면 최종 폴백이 침묵하고 보드가 깨진 상태로 남는다 — rc 숫자
+    # 하나만 남아 "복구 실패"와 "재부팅 거부"가 구분되지 않았다 (이슈 #140).
+    #
+    # 성공 경로는 systemctl 이 0 을 즉시 돌려준 뒤 프로세스가 죽으므로 아래
+    # 로그 줄에 도달하지 않는다. 거부될 때만 사유가 남는다.
+    #
+    # 출력을 받아 두는 것은 stdout 계약도 지킨다 — cam-recoveryctl 의 stdout 은
+    # CAM_RECOVERY_RESULT 한 줄이어야 하는데 지금까지 reboot 의 출력이 그대로
+    # 새어 나갈 수 있었다.
+    #
+    # 대입은 if 형태로 받는다. `out=$(...)` 단독은 set -e 에서 실패를 전파해
+    # 거부 시 로그 줄에 도달하지 못한다 (이 파일 :297 과 같은 관용구).
+    local runtime=$1 out rc
+    if out=$(cam_effect "$runtime" reboot 2>&1); then rc=0; else rc=$?; fi
+    [ "$rc" -eq 0 ] || _cra_log err "reboot refused rc=$rc out=${out:-<empty>}"
+    return "$rc"
+}
 
 cam_execute_action_step() {
     local action=$1 runtime=$2 rc finish_rc
