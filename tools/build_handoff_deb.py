@@ -18,7 +18,6 @@ from typing import Dict, Tuple
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_VERSION = "0.6.3+jhw.camera1"
 DEFAULT_SOURCE = ROOT / "dist/pim"
 DEFAULT_OUTPUT = ROOT / "handover/pim-package-jhw-camera-vpu-20260831"
 DEFAULT_SOURCE_DATE_EPOCH = 1788134400  # 2026-08-31 00:00:00 UTC
@@ -195,7 +194,7 @@ def validate_local_runtime_artifacts(source: Path) -> None:
 def build_package(
     source: Path,
     output_dir: Path,
-    version: str,
+    version: str | None = None,
     source_date_epoch: int = DEFAULT_SOURCE_DATE_EPOCH,
 ) -> Path:
     source = source.resolve()
@@ -206,6 +205,11 @@ def build_package(
 
     package = control_field(control, "Package")
     architecture = control_field(control, "Architecture")
+    # Package 와 Architecture 가 control 에서 오는데 Version 만 호출자 기본값에서
+    # 오면, dist/pim 이 올라갈 때마다 라벨이 조용히 뒤처진다. 세 필드를 같은
+    # source 에서 읽는다. --version 은 의도적 override 로만 남긴다.
+    if version is None:
+        version = control_field(control, "Version")
     if "/" in package or "/" in architecture:
         raise ValueError("package metadata must not contain path separators")
 
@@ -264,7 +268,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--source", type=Path, default=DEFAULT_SOURCE)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
-    parser.add_argument("--version", default=DEFAULT_VERSION)
+    parser.add_argument(
+        "--version",
+        default=None,
+        help="override the package version; defaults to the Version field of "
+        "<source>/DEBIAN/control",
+    )
     parser.add_argument(
         "--source-date-epoch",
         type=int,
