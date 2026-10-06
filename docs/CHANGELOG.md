@@ -10,11 +10,13 @@
   남겼지만 systemd 의 거부 사유와 "거부"/"복구 실패"의 구분이 없었다.
 - **#141 액션 진단 영속**: `cam-operate.service`에
   `Environment=PIM_CAMERA_ACTION_LOG=/var/lib/pim-camera/recovery/actions.log`를
-  더했다. `StateDirectory` 아래라 재부팅 뒤에도 남는다. **같은 진단은 이미
-  journald 스냅샷(`journald-snapshot.sh`, 매분, `/var/log/cantops/journald` 30일)에도
-  남는다** — 이 파일의 고유 가치는 eMMC mode 4(`chk_mmc.sh` 가 rsyslog·journald 를
-  멈춤)에서도 남는 것, 급전원 차단 시 스냅샷의 최대 1분 공백, 작은 전용 파일이라는
-  점이다. 이슈 #141 은 "journald 회전으로 진단을 잃는다"를 근거로 했으나 틀렸다
+  더했다. `StateDirectory` 아래라 재부팅 뒤에도 남는다. **평상시에는 같은 진단이
+  이미 journald 스냅샷(`journald-snapshot.sh`, 매분, `/var/log/cantops/journald`)에도
+  남는다** — 보존은 날짜 디렉터리 최대 30개이고 10GiB 를 넘으면 오래된 날부터 지우므로
+  로그가 많을 때는 30일보다 짧다. 이 파일의 고유 가치는 eMMC mode 3(`chk_mmc.sh` 가
+  journald `MaxLevelStore=err` 로 낮춰 notice 레벨인 plan·`action begin`/`ok` 가
+  스냅샷에서 빠짐)과 mode 4(rsyslog·journald 정지)에서도 남는 것, 급전원 차단 시
+  스냅샷의 최대 1분 공백, 작은 전용 파일이라는 점이다. 이슈 #141 은 "journald 회전으로 진단을 잃는다"를 근거로 했으나 틀렸다
   (아래 정정 참조). 형식은
   `<epoch> <level> <line>`, 상한 `PIM_CAMERA_ACTION_LOG_MAX_BYTES`(기본 256KiB,
   최소 512B)이고 레코드는 상한의 1/4 로 **앞을 남기고** 자른다. 길이는 바이트로

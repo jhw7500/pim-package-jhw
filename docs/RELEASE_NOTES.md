@@ -12,11 +12,16 @@
   logged rc but neither systemd's reason nor a refusal-vs-recovery distinction.
 - **#141**: `cam-operate.service` sets
   `PIM_CAMERA_ACTION_LOG=/var/lib/pim-camera/recovery/actions.log`, under
-  `StateDirectory`, so action diagnostics survive reboot. **The same lines are
-  already kept by the journald snapshot** (`journald-snapshot.sh`, every minute,
-  `/var/log/cantops/journald`, 30 days); this file's own value is surviving eMMC
-  mode 4 (where `chk_mmc.sh` stops rsyslog and journald), covering the snapshot's
-  up-to-one-minute gap on power loss, and being a small dedicated file. Issue
+  `StateDirectory`, so action diagnostics survive reboot. **In normal operation
+  the same lines are already kept by the journald snapshot**
+  (`journald-snapshot.sh`, every minute, `/var/log/cantops/journald`), which
+  keeps at most 30 daily directories and drops the oldest whenever the tree
+  exceeds 10 GiB, so retention is shorter under heavy logging. This file's own
+  value is surviving eMMC mode 3 (where `chk_mmc.sh` lowers journald to
+  `MaxLevelStore=err`, so the notice-level plan and `action begin`/`ok` lines
+  leave the snapshot) and mode 4 (rsyslog and journald stopped), covering the
+  snapshot's up-to-one-minute gap on power loss, and being a small dedicated
+  file. Issue
   #141's premise that journald rotation loses the diagnostics was wrong (see the
   corrections below).
   Records are `<epoch> <level> <line>`; the file is capped by
