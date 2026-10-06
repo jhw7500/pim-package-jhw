@@ -60,7 +60,7 @@ prepare_sysfs() {
 prepare_stubs() {
     mkdir -p "$WORK/stub"; : > "$PIM_CAMERA_CALL_LOG"
     for cmd in rmmod modprobe reboot logger sleep; do
-        printf '#!/bin/sh\nprintf "%%s %%s\\n" "$(basename "$0")" "$*" >> "$PIM_CAMERA_CALL_LOG"\n[ "$(basename "$0")" = modprobe ] && [ "$1" = "${FAIL_MODPROBE:-}" ] && exit 23\n[ "$(basename "$0")" = reboot ] && [ -n "${FAIL_REBOOT_RC:-}" ] && exit "$FAIL_REBOOT_RC"\nexit 0\n' > "$WORK/stub/$cmd"
+        printf '#!/bin/sh\nprintf "%%s %%s\\n" "$(basename "$0")" "$*" >> "$PIM_CAMERA_CALL_LOG"\n[ "$(basename "$0")" = modprobe ] && [ "$1" = "${FAIL_MODPROBE:-}" ] && exit 23\n[ "$(basename "$0")" = reboot ] && [ -n "${FAIL_REBOOT_RC:-}" ] && { echo "Failed to start reboot.target: Transaction is destructive." >&2; exit "$FAIL_REBOOT_RC"; }\nexit 0\n' > "$WORK/stub/$cmd"
         chmod +x "$WORK/stub/$cmd"
     done
     printf '#!/bin/sh\nprintf "kill %%s\\n" "$*" >> "$PIM_CAMERA_CALL_LOG"\n[ "${KEEP_BG:-0}" = 1 ] || rm -f "$PIM_CAMERA_PROCESS_ROOT/$2/cmdline"\nexit 0\n' > "$WORK/stub/kill"
@@ -299,6 +299,29 @@ grep -q '^reboot ' "$PIM_CAMERA_CALL_LOG" || fail "module and hard-reset failure
 [ "$(grep -c '^reboot ' "$PIM_CAMERA_CALL_LOG")" -eq 1 ] || fail "reboot requested more than once"
 history=$(grep -rl '"reboot_fallback"' "$PIM_CAMERA_STATE_DIR/recovery/history")
 jq -e '[.actions[].action] == ["module_reload","camera_hard_reset","reboot_fallback"]' "$history" >/dev/null || { cat "$history" >&2; fail "fallback actions were not ordered"; }
+
+# 이슈 #140: 구 코드도 일반 실패 줄로 rc 는 남긴다
+# (`action FAILED: reboot_fallback rc=1 step=<unnamed>`). 빠진 것은 systemd 가 낸
+# 거부 사유이고, step 이 <unnamed> 이라 "재부팅이 거부됐다"와 "복구가 실패했다"가
+# 구분되지 않는다. reboot 는 systemctl 심링크라 사유를 stderr 로 내므로 그것이
+# 액션 로그에 닿는지 고정한다. 구 코드는 출력을 버려 이 단정이 실패한다.
+owner_active
+: > "$PIM_CAMERA_CALL_LOG"
+export PIM_CAMERA_ACTION_LOG="$WORK/action-refusal.log"
+: > "$PIM_CAMERA_ACTION_LOG"
+FAIL_MODPROBE=max9296 FAIL_REBOOT_RC=1 \
+    expect_rc 1 cam_execute_recovery_request "$PIM_CAMERA_RUNTIME_JSON" module_reload test refusal
+grep -q 'reboot refused rc=1' "$PIM_CAMERA_ACTION_LOG" \
+    || { cat "$PIM_CAMERA_ACTION_LOG" >&2; fail "재부팅 거부가 거부로 식별되지 않았다 (reboot refused 줄 없음)"; }
+grep -q 'Transaction is destructive' "$PIM_CAMERA_ACTION_LOG" \
+    || { cat "$PIM_CAMERA_ACTION_LOG" >&2; fail "systemd 가 낸 거부 사유가 액션 로그에 남지 않았다"; }
+# 성공 경로는 로그 줄에 도달하지 않아야 한다 — 보존 검사.
+: > "$PIM_CAMERA_ACTION_LOG"
+owner_active
+FAIL_MODPROBE=max9296 expect cam_execute_recovery_request "$PIM_CAMERA_RUNTIME_JSON" module_reload test nolog
+grep -q 'reboot refused' "$PIM_CAMERA_ACTION_LOG" \
+    && { cat "$PIM_CAMERA_ACTION_LOG" >&2; fail "성공한 reboot 가 거부로 기록됐다"; }
+unset PIM_CAMERA_ACTION_LOG FAIL_REBOOT_RC
 
 owner_active
 : > "$PIM_CAMERA_CALL_LOG"
