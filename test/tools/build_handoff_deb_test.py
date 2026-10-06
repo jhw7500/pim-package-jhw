@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -184,6 +185,72 @@ class HandoffDebTest(unittest.TestCase):
             )
 
             self.assertEqual(first.read_bytes(), second.read_bytes())
+
+    def test_version_defaults_to_source_control_field(self):
+        module = load_module()
+        with tempfile.TemporaryDirectory(prefix="handoff-deb-test.") as tmp:
+            work = Path(tmp)
+            source = self.make_package(work)
+            output = module.build_package(source, work / "out")
+            self.assertEqual(output.name, "pim-mp_0.6.3_arm64.deb")
+            self.assertEqual(
+                subprocess.check_output(
+                    ["dpkg-deb", "-f", str(output), "Version"], text=True
+                ).strip(),
+                "0.6.3",
+            )
+
+    def test_cli_without_version_uses_source_control_field(self):
+        # 기본값이 하드코딩이던 시절에는 dist/pim 이 올라가도 이 경로가 낡은
+        # 라벨을 붙였다. CLI 를 실제로 실행해 그 경로를 고정한다.
+        with tempfile.TemporaryDirectory(prefix="handoff-deb-test.") as tmp:
+            work = Path(tmp)
+            source = self.make_package(work)
+            control = source / "DEBIAN/control"
+            control.write_text(
+                control.read_text(encoding="utf-8").replace(
+                    "Version: 0.6.3\n", "Version: 0.6.3+jhw.camera9\n"
+                ),
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--source",
+                    str(source),
+                    "--output-dir",
+                    str(work / "out"),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            produced = sorted((work / "out").glob("*.deb"))
+            self.assertEqual(
+                [path.name for path in produced],
+                ["pim-mp_0.6.3+jhw.camera9_arm64.deb"],
+            )
+            self.assertEqual(
+                subprocess.check_output(
+                    ["dpkg-deb", "-f", str(produced[0]), "Version"], text=True
+                ).strip(),
+                "0.6.3+jhw.camera9",
+            )
+
+    def test_explicit_version_still_overrides_control(self):
+        module = load_module()
+        with tempfile.TemporaryDirectory(prefix="handoff-deb-test.") as tmp:
+            work = Path(tmp)
+            source = self.make_package(work)
+            output = module.build_package(source, work / "out", "9.9.9+override")
+            self.assertEqual(output.name, "pim-mp_9.9.9+override_arm64.deb")
+            self.assertEqual(
+                subprocess.check_output(
+                    ["dpkg-deb", "-f", str(output), "Version"], text=True
+                ).strip(),
+                "9.9.9+override",
+            )
 
 
 if __name__ == "__main__":
