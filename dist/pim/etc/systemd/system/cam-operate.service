@@ -14,9 +14,11 @@ RuntimeDirectory=pim-camera
 RuntimeDirectoryMode=0750
 StateDirectory=pim-camera
 StateDirectoryMode=0750
-# 이슈 #141: _cra_fail 이 남기는 단계 이름을 journald 회전 뒤에도 조사할 수 있게
-# 디스크로도 보낸다. StateDirectory 아래라 재부팅을 횡단한다. 상한은
-# PIM_CAMERA_ACTION_LOG_MAX_BYTES (기본 256KiB) 이고 _cra_log_persist 가 절삭한다.
+# 액션 진단(_cra_log)을 전용 파일로도 남긴다. 평상시 같은 줄은 journald 스냅샷
+# (journald-snapshot.sh, 매분, /var/log/cantops/journald)에도 있지만, 그 사본이 놓치는
+# 경우에 남는다: eMMC mode 3(journald MaxLevelStore=err → notice 레벨 plan·begin/ok 누락),
+# mode 4(journald 정지), 스냅샷 사이 휘발성 저널(RuntimeMaxUse=1M) 회전. StateDirectory
+# 아래라 재부팅을 횡단한다. 상한은 PIM_CAMERA_ACTION_LOG_MAX_BYTES (기본 256KiB).
 Environment=PIM_CAMERA_ACTION_LOG=/var/lib/pim-camera/recovery/actions.log
 KillMode=control-group
 SuccessExitStatus=143
