@@ -478,7 +478,7 @@ static int cmd_update(const Json::Value& data, std::string& ans) {
         FILE *fp;
 #define MAXLINE         (512)
         char buff[MAXLINE];
-        std::string exec = "/opt/pim/bin/fwdriver upgrade /shared/";
+        std::string exec = "/opt/cis/bin/fwdriver upgrade /shared/";
         exec += filename;
         fp = popen(exec.c_str(), "r");
         if(fp==NULL) {
@@ -763,7 +763,7 @@ bool Tcpsvr::Begin(uint16_t port) {
                         reload_configfile_flag_ = false;
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-result"
-                        system("python3 /opt/pim/bin/init.py");
+                        system("python3 /opt/cis/bin/init.py");
                         system("python3 /opt/cis/bin/update_network.py");
 #pragma GCC diagnostic pop
                     }
