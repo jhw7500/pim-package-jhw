@@ -134,6 +134,7 @@ class Tests:
             self.disabled_and_boot_test(work)
             self.full_producer_set_test(work)
             self.future_skew_test(work)
+            self.recovery_counter_test(work)
             self_cli_test(work, self)
         print()
         print(f"camera health aggregator: {self.passed} passed / {self.failed} failed")
@@ -431,6 +432,124 @@ class Tests:
             "one UNKNOWN observation degrades the aggregate despite a fresh producer",
         )
 
+
+    def recovery_counter_test(self, work: Path) -> None:
+        # 이슈 #61 요구 5. 영속 복구 카운터를 집계에 읽기 전용으로 투영한다.
+        # 이 블록이 없던 시절에는 recovery_requested 하나뿐이었는데 그건 shadow
+        # 불변식 표식이고 카운터 슬롯이 아니다 — 그래서 별도 키를 쓴다.
+        self.clear(work)
+        write(work / "gstApp.json", snapshot("gstApp", [observation("gstreamer", "OK", "NONE")]))
+        state_file = work / "recovery-state.json"
+
+        # ① 경로를 주지 않으면(기존 5인자 호출) 블록은 unavailable 이어야 한다.
+        legacy = self.aggregate(work)
+        self.check(
+            legacy.get("recovery") == {"available": False, "actions": {}},
+            "aggregate without a recovery state path reports unavailable",
+        )
+        self.check(
+            legacy["recovery_requested"] is False,
+            "the shadow invariant stays false alongside the recovery block",
+        )
+
+        # ② 부재·손상·형태불일치는 집계를 실패시키지 않고 unavailable 이다.
+        for label, prepare in (
+            ("a missing", lambda: None),
+            ("a malformed", lambda: state_file.write_text("{nope", encoding="utf-8")),
+            ("a non-object", lambda: state_file.write_text('"x"', encoding="utf-8")),
+            ("an array-actions", lambda: state_file.write_text('{"actions":[]}', encoding="utf-8")),
+        ):
+            if state_file.exists():
+                state_file.unlink()
+            prepare()
+            document = healthd.aggregate(
+                work, BOOT_ID, NOW_MS, TTL_MS, self.registry, state_file
+            )
+            self.check(
+                document.get("recovery") == {"available": False, "actions": {}},
+                f"{label} recovery state is unavailable, not fatal",
+            )
+            # 하드코딩한 기대 상태가 아니라 **불변성**을 본다. 복구 state 는
+            # producer 판정의 입력이 아니므로, 깨진 state 가 들어와도 같은
+            # producer 파일에 대한 판정은 경로를 주지 않은 경우와 같아야 한다.
+            self.check(
+                (document["status"], document["overall_status"])
+                == (legacy["status"], legacy["overall_status"]),
+                f"{label} recovery state leaves producer health unchanged",
+            )
+
+        # ③ 정상 파일이면 카운터가 그대로 나오고 소요 시간은 파생된다.
+        write(
+            state_file,
+            {
+                "actions": {
+                    "gstapp_restart": {
+                        "attempted": 3, "succeeded": 2, "failed": 1,
+                        "consecutive_failures": 0, "last_request_id": "a",
+                        "last_started_at": 100, "last_finished_at": 119,
+                        "last_status": "SUCCEEDED", "last_rc": 0,
+                    },
+                    "module_reload": {
+                        "attempted": 0, "succeeded": 0, "failed": 0,
+                        "consecutive_failures": 0, "last_request_id": None,
+                        "last_started_at": None, "last_finished_at": None,
+                        "last_status": None, "last_rc": None,
+                    },
+                    "camera_hard_reset": {
+                        "attempted": 1, "succeeded": 0, "failed": 1,
+                        "consecutive_failures": 1, "last_request_id": "b",
+                        "last_started_at": 300, "last_finished_at": 250,
+                        "last_status": "FAILED", "last_rc": 70,
+                    },
+                    "reboot_fallback": {
+                        "attempted": 0, "succeeded": 0, "failed": 0,
+                        "consecutive_failures": 0, "last_request_id": None,
+                        "last_started_at": True, "last_finished_at": 400,
+                        "last_status": None, "last_rc": None,
+                    },
+                }
+            },
+        )
+        block = healthd.aggregate(
+            work, BOOT_ID, NOW_MS, TTL_MS, self.registry, state_file
+        ).get("recovery") or {"available": None, "actions": {}}
+        self.check(block["available"] is True, "a valid recovery state is available")
+        self.check(
+            sorted(block["actions"]) == sorted(getattr(healthd, "RECOVERY_ACTIONS", ())),
+            "every countered action is projected",
+        )
+        restart = block["actions"].get("gstapp_restart", {})
+        self.check(
+            (restart.get("attempted"), restart.get("succeeded"), restart.get("failed"))
+            == (3, 2, 1)
+            and restart.get("consecutive_failures") == 0
+            and restart.get("last_status") == "SUCCEEDED"
+            and restart.get("last_rc") == 0,
+            "persisted counters survive the projection unchanged",
+        )
+        self.check(
+            restart.get("last_duration_s") == 19,
+            "elapsed seconds are derived from the stored timestamps",
+        )
+        self.check(
+            block["actions"].get("module_reload", {}).get("last_duration_s", 1) is None,
+            "an action that never ran has no derived duration",
+        )
+        # finished < started 는 산술이 음수가 되므로 값을 내지 않는다.
+        self.check(
+            block["actions"].get("camera_hard_reset", {}).get("last_duration_s", 1) is None,
+            "a finished-before-started pair yields no duration instead of a negative",
+        )
+        # bool 은 파이썬에서 int 의 하위형이라 isinstance 만으로는 통과한다.
+        self.check(
+            block["actions"].get("reboot_fallback", {}).get("last_duration_s", 1) is None,
+            "a boolean timestamp is rejected rather than treated as 1",
+        )
+        self.check(
+            "last_request_id" not in restart,
+            "the projection carries counters only, not request identity",
+        )
+        self.clear(work)
 
     def future_skew_test(self, work: Path) -> None:
         # aggregate() 는 now_ms 를 한 번 받아 세 producer 파일을 차례로 읽는다. 그

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Read-only camera health v1 shadow aggregator.
 
-The shadow path never writes legacy flags and never requests recovery. It only
-reads producer snapshots and atomically publishes a diagnostic aggregate.
+The shadow path never writes legacy flags and never requests recovery. It reads
+producer snapshots and the persisted recovery counters, then atomically
+publishes a diagnostic aggregate. Both reads are read-only: this process never
+submits a recovery request and never mutates recovery state.
 """
 
 from __future__ import annotations
@@ -50,6 +52,26 @@ PRODUCER_FILES = {
     "pim-healthd": "pim-probe.json",
 }
 CODE_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+
+# 이슈 #61 요구 5. cam-operate 가 쓰는 영속 복구 카운터이고 입력 디렉터리와
+# 루트가 다르다(--input-dir 는 /run, 이쪽은 /var/lib). 읽기 전용이다.
+DEFAULT_RECOVERY_STATE = Path("/var/lib/pim-camera/recovery/state.json")
+# cam_recovery.sh 의 _cr_state_template 과 같은 4종. 그쪽이 액션별 키를 정확히
+# 9개로 단정하므로 여기서도 그 이름만 읽고 없는 것은 생략한다.
+RECOVERY_ACTIONS: Tuple[str, ...] = (
+    "gstapp_restart",
+    "module_reload",
+    "camera_hard_reset",
+    "reboot_fallback",
+)
+RECOVERY_COUNTER_FIELDS: Tuple[str, ...] = (
+    "attempted",
+    "succeeded",
+    "failed",
+    "consecutive_failures",
+    "last_status",
+    "last_rc",
+)
 
 # 스냅샷이 우리 시계보다 이만큼까지 앞서는 것은 동시성으로 설명된다. load_snapshot
 # 참조.
@@ -364,12 +386,67 @@ def root_causes(observations: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any
     return result
 
 
+def _recovery_duration_s(entry: Mapping[str, Any]) -> Optional[int]:
+    """Derive one action's elapsed seconds from its stored timestamps.
+
+    Early returns rather than ``_is_int`` so the arithmetic narrows: ``_is_int``
+    returns ``bool`` and ``typing.TypeGuard`` needs 3.10 while the board ships
+    Python 3.8. Timestamps are epoch seconds — ``cam_recovery.sh`` ``_cr_now``
+    is ``date +%s``.
+    """
+    started = entry.get("last_started_at")
+    finished = entry.get("last_finished_at")
+    if not isinstance(started, int) or isinstance(started, bool):
+        return None
+    if not isinstance(finished, int) or isinstance(finished, bool):
+        return None
+    return finished - started if finished >= started else None
+
+
+def load_recovery_counters(path: Optional[Path]) -> Dict[str, Any]:
+    """Read the persisted recovery counters without ever failing the aggregate.
+
+    This is a diagnostic projection, so a missing or malformed state file is
+    reported as unavailable rather than raised: the shadow aggregate must still
+    publish producer health when recovery state cannot be read. ``last_duration_s``
+    is derived from the stored timestamps, never stored — ``_cr_state_valid``
+    asserts an exact nine-key set per action, so adding a field there would
+    invalidate the state file already present on deployed boards.
+    """
+    unavailable: Dict[str, Any] = {"available": False, "actions": {}}
+    if path is None:
+        return unavailable
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return unavailable
+    if not isinstance(document, dict):
+        return unavailable
+    actions = document.get("actions")
+    if not isinstance(actions, dict):
+        return unavailable
+    projected: Dict[str, Any] = {}
+    for action in RECOVERY_ACTIONS:
+        entry = actions.get(action)
+        if not isinstance(entry, dict):
+            continue
+        counters: Dict[str, Any] = {
+            field: entry.get(field) for field in RECOVERY_COUNTER_FIELDS
+        }
+        counters["last_duration_s"] = _recovery_duration_s(entry)
+        projected[action] = counters
+    if not projected:
+        return unavailable
+    return {"available": True, "actions": projected}
+
+
 def aggregate(
     input_dir: Path,
     boot_id: str,
     now_ms: int,
     ttl_ms: int,
     registry: Mapping[str, Mapping[str, Any]],
+    recovery_state: Optional[Path] = None,
 ) -> Dict[str, Any]:
     producer_states: List[Dict[str, Any]] = []
     observations: List[Dict[str, Any]] = []
@@ -423,7 +500,10 @@ def aggregate(
         "root_causes": roots,
         "observations": observations,
         "legacy_write": False,
+        # shadow 불변식이다 — 이 프로세스는 복구를 요청하지 않는다. 아래
+        # recovery 블록은 읽기 전용 투영이므로 이 값과 무관하다.
         "recovery_requested": False,
+        "recovery": load_recovery_counters(recovery_state),
     }
     if masks is not None:
         output["channel_masks"] = masks
@@ -466,6 +546,13 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         "--boot-id-file", type=Path, default=Path("/proc/sys/kernel/random/boot_id")
     )
     parser.add_argument("--registry", type=Path, default=default_registry)
+    parser.add_argument(
+        "--recovery-state",
+        type=Path,
+        default=DEFAULT_RECOVERY_STATE,
+        help="persisted recovery counters to project read-only into the "
+        "aggregate; absent or malformed is reported as unavailable",
+    )
     parser.add_argument("--ttl-ms", type=int, default=3000)
     parser.add_argument("--interval-ms", type=int, default=1000)
     parser.add_argument("--now-monotonic-ms", type=int)
@@ -507,7 +594,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             if args.now_monotonic_ms is not None
             else time.monotonic_ns() // 1_000_000
         )
-        document = aggregate(args.input_dir, boot_id, now_ms, args.ttl_ms, registry)
+        document = aggregate(
+            args.input_dir,
+            boot_id,
+            now_ms,
+            args.ttl_ms,
+            registry,
+            args.recovery_state,
+        )
         atomic_write_json(args.output, document)
         if args.once:
             break
