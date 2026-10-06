@@ -61,16 +61,6 @@ _cra_log_persist() {
     local level=$1 line=$2 cap=${PIM_CAMERA_ACTION_LOG_MAX_BYTES:-262144} dir size tmp
     dir=${PIM_CAMERA_ACTION_LOG%/*}
     [ "$dir" = "$PIM_CAMERA_ACTION_LOG" ] || [ -d "$dir" ] || mkdir -p -- "$dir" 2>/dev/null || return 0
-    # 상한을 넘으면 앞을 버리고 뒤 절반만 남긴다. tail -c 는 첫 줄이 잘릴 수 있는데
-    # 진단 로그에서는 허용한다 — 대안(행 단위 보존)은 파일 전체를 읽어야 한다.
-    if size=$(stat -c%s -- "$PIM_CAMERA_ACTION_LOG" 2>/dev/null) && [ "${size:-0}" -gt "$cap" ] 2>/dev/null; then
-        tmp="$PIM_CAMERA_ACTION_LOG.$$"
-        if tail -c "$((cap / 2))" -- "$PIM_CAMERA_ACTION_LOG" 2>/dev/null > "$tmp"; then
-            mv -f -- "$tmp" "$PIM_CAMERA_ACTION_LOG" 2>/dev/null || rm -f -- "$tmp" 2>/dev/null || :
-        else
-            rm -f -- "$tmp" 2>/dev/null || :
-        fi
-    fi
     # EPOCHSECONDS 는 bash 5.0+ 내장이라 fork 가 없다 (이 파일 :19 의 같은 근거).
     # 2>/dev/null 은 >> 보다 **앞**에 와야 한다. 뒤에 두면 경로가 디렉터리일 때
     # 셸이 내는 리다이렉션 실패 메시지("Is a directory")가 그대로 새어 나간다 —
@@ -81,6 +71,22 @@ _cra_log_persist() {
     # _cra_log 의 `[ -z ... ] || _cra_log_persist ...` 는 이 함수 안을 보호하지 않는다.
     # PR #143 에서 Codex 가 P2 로 잡았고, set -e 아래 단독 호출로 재현했다.
     printf '%s %s %s\n' "${EPOCHSECONDS:-0}" "$level" "$line" 2>/dev/null >> "$PIM_CAMERA_ACTION_LOG" || return 0
+    # 상한은 **추가 후에** 적용한다. 추가 전만 검사하면 이 레코드가 상한을 넘기는 경우가
+    # 걸러지지 않아 다음 메시지가 올 때까지 초과 상태로 방치된다. reboot 거부 경로는
+    # 임의 크기의 명령 출력을 싣는다(cam_action_reboot_fallback 의 out=).
+    # 실측: 2040바이트 파일 + 일반 레코드 1건 = 2076바이트(cap 2048), 빈 파일 +
+    # 5000바이트 레코드 = 5040바이트. PR #143 에서 Codex 가 P2 로 잡았다.
+    #
+    # tail -c 는 첫 줄을 중간에서 자를 수 있는데 진단 로그에서는 허용한다 — 행 단위
+    # 보존은 파일 전체를 읽어야 하고, 뒤를 남기므로 최신 레코드는 살아남는다.
+    size=$(stat -c%s -- "$PIM_CAMERA_ACTION_LOG" 2>/dev/null) || return 0
+    [ "${size:-0}" -gt "$cap" ] 2>/dev/null || return 0
+    tmp="$PIM_CAMERA_ACTION_LOG.$$"
+    if tail -c "$((cap / 2))" -- "$PIM_CAMERA_ACTION_LOG" 2>/dev/null > "$tmp"; then
+        mv -f -- "$tmp" "$PIM_CAMERA_ACTION_LOG" 2>/dev/null || rm -f -- "$tmp" 2>/dev/null || :
+    else
+        rm -f -- "$tmp" 2>/dev/null || :
+    fi
     return 0
 }
 

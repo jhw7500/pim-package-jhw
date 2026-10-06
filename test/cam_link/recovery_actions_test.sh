@@ -367,6 +367,43 @@ PIM_CAMERA_ACTION_LOG="$baddir" PIM_CAMERA_ACTION_TAG=t141 \
     > "$probe" 2>/dev/null || probe_rc=$?
 grep -q REACHED "$probe" \
     || { cat "$probe" >&2; fail "기록 불가가 set -e 호출자를 중단시켰다 (rc=$probe_rc) — 복구 액션이 깨진다"; }
+
+# ④ 레코드 자체가 상한을 넘기는 경우. 추가 **전**에만 검사하면 그 레코드는 걸러지지
+#    않고 다음 메시지가 올 때까지 초과 상태로 방치된다. reboot 거부 경로는 임의 크기의
+#    명령 출력을 싣는다(cam_action_reboot_fallback 의 out=). PR #143 Codex P2.
+#    픽스처 필러는 개행으로 끝나야 한다 — 개행이 없으면 >> 가 같은 줄에 이어 붙어
+#    ^ 앵커 단정이 깨진다. 실제 로그는 매 쓰기가 개행으로 끝난다.
+over="$WORK/over/actions.log"; rm -rf "$WORK/over"; mkdir -p "$WORK/over"
+{ head -c 2040 /dev/zero | tr '\0' 'x'; printf '\n'; } > "$over"
+PIM_CAMERA_ACTION_LOG="$over" PIM_CAMERA_ACTION_LOG_MAX_BYTES=2048 PIM_CAMERA_ACTION_TAG=t141 \
+    _cra_log err "crossing record rc=1"
+sz=$(stat -c%s "$over")
+[ "$sz" -le 2048 ] || fail "레코드가 상한을 넘겼는데 추가 후 절삭되지 않았다 ($sz > 2048)"
+grep -q 'crossing record rc=1' "$over" || { fail "절삭이 방금 추가한 레코드를 버렸다"; }
+# 단일 레코드가 상한보다 큰 극단도 상한 안으로 들어와야 한다.
+: > "$over"
+PIM_CAMERA_ACTION_LOG="$over" PIM_CAMERA_ACTION_LOG_MAX_BYTES=2048 PIM_CAMERA_ACTION_TAG=t141 \
+    _cra_log err "huge rc=1 out=$(head -c 5000 /dev/zero | tr '\0' 'Z')"
+sz=$(stat -c%s "$over")
+[ "$sz" -le 2048 ] || fail "상한보다 큰 단일 레코드가 상한 안으로 들어오지 않았다 ($sz > 2048)"
+
+# ⑤ plan 경로(_coc_plan_log)도 같은 경계 writer 를 타야 한다. 이 경로는 매 부팅
+#    initial_module_load 를 기록하므로(cam_operate_control.sh:140, :149) 가장 빈번한
+#    producer 다. 직접 append 하면 절삭·타임스탬프가 없고 errexit 도 흡수하지 않는다.
+plan="$WORK/plan/actions.log"; rm -rf "$WORK/plan"; mkdir -p "$WORK/plan"
+{ head -c 2040 /dev/zero | tr '\0' 'x'; printf '\n'; } > "$plan"
+PIM_CAMERA_ACTION_LOG="$plan" PIM_CAMERA_ACTION_LOG_MAX_BYTES=2048 \
+    _coc_plan_log initial_module_load "no previous state"
+sz=$(stat -c%s "$plan")
+[ "$sz" -le 2048 ] || fail "plan 기록이 상한을 우회했다 ($sz > 2048)"
+grep -qE '^[0-9]+ notice plan: action=initial_module_load reason=no previous state$' "$plan" \
+    || { cat "$plan" >&2; fail "plan 기록에 epoch 접두사가 없다 (경계 writer 를 우회했다)"; }
+plan_probe="$WORK/plan-probe.out"; plan_rc=0
+PIM_CAMERA_ACTION_LOG="$WORK/as-dir" \
+    bash -c 'set -euo pipefail; . "$PIM_LIB/cam_recovery_actions.sh"; . "$PIM_LIB/cam_operate_control.sh"; _coc_plan_log initial_module_load x; echo REACHED' \
+    > "$plan_probe" 2>/dev/null || plan_rc=$?
+grep -q REACHED "$plan_probe" \
+    || { cat "$plan_probe" >&2; fail "plan 기록 불가가 set -e 호출자를 중단시켰다 (rc=$plan_rc)"; }
 # VAR=x func 형태는 bash 에서 함수 종료 후 남지 않는다(실측). unset 을 하면
 # 오히려 라이브러리가 source 시점에 넣은 PIM_CAMERA_ACTION_TAG 기본값을 지워
 # 뒤따르는 _cra_log 가 set -u 에서 깨진다.
