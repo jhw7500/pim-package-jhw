@@ -44,7 +44,84 @@ PIM_CAMERA_ACTION_TAG="${PIM_CAMERA_ACTION_TAG:-cam_recovery_actions}"
 _cra_log() {
     local level=$1; shift
     logger -p "local0.$level" "[CAM][$PIM_CAMERA_ACTION_TAG] $*" 2>/dev/null
-    [ -z "${PIM_CAMERA_ACTION_LOG:-}" ] || printf '%s %s\n' "$level" "$*" >> "$PIM_CAMERA_ACTION_LOG"
+    [ -z "${PIM_CAMERA_ACTION_LOG:-}" ] || _cra_log_persist "$level" "$*"
+    return 0
+}
+
+# 이슈 #141. journald 는 회전하므로 _cra_fail 이 남기는 단계 이름
+# (unload_max9296, unbind_csi:32e40000.csi 등)이 사고 조사 시점에 이미 사라져 있다.
+# 실측: 기동 경로 camera_hard_reset 실패 4건에 대해 이력에는 rc=1 만 남고 journal 의
+# "step failed" 는 0건이었다. 이력 스키마는 (keys|sort)==[...] 로 정확 키 집합을
+# 단정하므로 필드를 늘리면 배포된 보드의 기록이 무효가 된다 — 그래서 기록은 건드리지
+# 않고 같은 진단을 디스크로도 보낸다.
+#
+# 이 함수는 어떤 경로로도 액션을 깨뜨리지 않는다. 호출자(_cra_log)가 return 0 고정이고
+# 아래 모든 단계가 실패해도 조용히 포기한다.
+_cra_log_persist() {
+    local level=$1 line=$2 cap=${PIM_CAMERA_ACTION_LOG_MAX_BYTES:-262144} dir size tmp max_rec
+    # 레코드 하나가 상한의 1/4 를 넘으면 **뒤를** 자른다. 앞을 남기는 이유는 식별
+    # 접두사가 앞에 있기 때문이다 — reboot 거부 경로는 "reboot refused rc=... out="
+    # 뒤에 임의 크기의 명령 출력을 싣는다(cam_action_reboot_fallback). 바이트 꼬리
+    # 절삭에만 맡기면 그 접두사가 먼저 사라져, 이 로그가 보존하려던 사유가 라벨 없는
+    # 꼬리만 남는다. PR #143 라운드 3 에서 Codex 가 P2 로 잡았다.
+    #
+    # 실측(수정 전): cap 2048 에 5000바이트 out= 레코드 하나 → 파일이 ZZZZ... 1024
+    # 바이트가 되고 "reboot refused"·rc=1·epoch 접두사가 전부 소실됐다. 크기만 보는
+    # 단정은 그 소실을 통과시킨다.
+    #
+    # 상한의 1/4 로 두면 절삭이 남기는 뒤 절반(cap/2) 안에 최신 레코드가 통째로 들어온다.
+    # 이 보장은 길이를 **바이트**로 셀 때만 성립한다. UTF-8 로케일에서 ${#line} 은 문자
+    # 수라, 한글 3000자 레코드가 1524바이트(> cap/2)로 남고 기존 내용 뒤에 붙으면 회전이
+    # 다시 접두사를 잘랐다(실측). 함수 범위에서 C 로케일로 고정한다.
+    local LC_ALL=C
+    # cap 자체가 작으면 어떤 레코드 상한으로도 접두사를 지킬 수 없다 — 접두사(epoch+level,
+    # 약 15B)와 절삭 표지("...[truncated NB]", 약 24B)가 레코드 **밖에서** 더해지므로
+    # 오버헤드에 하한이 있다. 실측: cap 128 에 사전 120B → 회전 꼬리 64B 가 접두사를 버렸다.
+    # 그래서 레코드가 아니라 cap 을 올린다(기본값 262144 에서는 닿지 않는 경로다).
+    # cap 512 → max_rec 128, 128+15+24=167 ≤ 256(cap/2) 로 불변식이 성립한다.
+    [ "$cap" -ge 512 ] 2>/dev/null || cap=512
+    max_rec=$((cap / 4))
+    if [ "${#line}" -gt "$max_rec" ]; then
+        local orig=${#line} i
+        line=${line:0:$max_rec}
+        # 바이트 절삭이 멀티바이트 문자를 반으로 가르면 잘못된 UTF-8 이 남고, UTF-8
+        # 로케일의 grep 은 파일 전체를 바이너리로 보고 줄을 보여주지 않는다(실측).
+        # 끝의 연속 바이트(10xxxxxx)를 떼고, 이어서 리드 바이트(11xxxxxx) 하나를 뗀다.
+        # 비 ASCII 를 개수로만 떼면 앞 문자의 리드 바이트가 남는 경우가 있다.
+        for i in 1 2 3; do
+            case ${line: -1} in [$'\x80'-$'\xbf']) line=${line%?} ;; *) break ;; esac
+        done
+        case ${line: -1} in [$'\xc0'-$'\xff']) line=${line%?} ;; esac
+        line="$line...[truncated ${orig}B]"
+    fi
+    dir=${PIM_CAMERA_ACTION_LOG%/*}
+    [ "$dir" = "$PIM_CAMERA_ACTION_LOG" ] || [ -d "$dir" ] || mkdir -p -- "$dir" 2>/dev/null || return 0
+    # EPOCHSECONDS 는 bash 5.0+ 내장이라 fork 가 없다 (이 파일 :19 의 같은 근거).
+    # 2>/dev/null 은 >> 보다 **앞**에 와야 한다. 뒤에 두면 경로가 디렉터리일 때
+    # 셸이 내는 리다이렉션 실패 메시지("Is a directory")가 그대로 새어 나간다 —
+    # 리다이렉션은 왼쪽부터 처리되므로 stderr 를 먼저 돌려야 그 메시지까지 잡힌다.
+    # `|| return 0` 이 **필수**다. 이것이 없으면 호출자의 set -e 에서 실패한 printf 가
+    # 뒤따르는 return 0 전에 셸을 종료시켜, 진단 영속화가 복구 액션을 깨뜨린다.
+    # bash 의 errexit 면제는 "&&/|| 리스트의 마지막 연산자 뒤 명령"을 제외하므로
+    # _cra_log 의 `[ -z ... ] || _cra_log_persist ...` 는 이 함수 안을 보호하지 않는다.
+    # PR #143 에서 Codex 가 P2 로 잡았고, set -e 아래 단독 호출로 재현했다.
+    printf '%s %s %s\n' "${EPOCHSECONDS:-0}" "$level" "$line" 2>/dev/null >> "$PIM_CAMERA_ACTION_LOG" || return 0
+    # 상한은 **추가 후에** 적용한다. 추가 전만 검사하면 이 레코드가 상한을 넘기는 경우가
+    # 걸러지지 않아 다음 메시지가 올 때까지 초과 상태로 방치된다. reboot 거부 경로는
+    # 임의 크기의 명령 출력을 싣는다(cam_action_reboot_fallback 의 out=).
+    # 실측: 2040바이트 파일 + 일반 레코드 1건 = 2076바이트(cap 2048), 빈 파일 +
+    # 5000바이트 레코드 = 5040바이트. PR #143 에서 Codex 가 P2 로 잡았다.
+    #
+    # tail -c 는 첫 줄을 중간에서 자를 수 있는데 진단 로그에서는 허용한다 — 행 단위
+    # 보존은 파일 전체를 읽어야 하고, 뒤를 남기므로 최신 레코드는 살아남는다.
+    size=$(stat -c%s -- "$PIM_CAMERA_ACTION_LOG" 2>/dev/null) || return 0
+    [ "${size:-0}" -gt "$cap" ] 2>/dev/null || return 0
+    tmp="$PIM_CAMERA_ACTION_LOG.$$"
+    if tail -c "$((cap / 2))" -- "$PIM_CAMERA_ACTION_LOG" 2>/dev/null > "$tmp"; then
+        mv -f -- "$tmp" "$PIM_CAMERA_ACTION_LOG" 2>/dev/null || rm -f -- "$tmp" 2>/dev/null || :
+    else
+        rm -f -- "$tmp" 2>/dev/null || :
+    fi
     return 0
 }
 

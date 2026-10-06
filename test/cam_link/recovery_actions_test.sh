@@ -323,6 +323,125 @@ grep -q 'reboot refused' "$PIM_CAMERA_ACTION_LOG" \
     && { cat "$PIM_CAMERA_ACTION_LOG" >&2; fail "성공한 reboot 가 거부로 기록됐다"; }
 unset PIM_CAMERA_ACTION_LOG FAIL_REBOOT_RC
 
+# 이슈 #141: journald 는 회전하므로 _cra_fail 이 남기는 단계 이름이 조사 시점에 이미
+# 사라져 있다. 기록 스키마는 정확 키 집합 단정이라 손대지 않고, 같은 진단을 디스크로도
+# 보낸다. 아래 셋이 그 영속 경로의 계약이다.
+echo "=== 액션 진단의 영속 기록 (이슈 #141) ==="
+
+# ① 부모 디렉터리가 없어도 남긴다. 구 코드는 mkdir 을 하지 않아 아무것도 안 쓴다.
+deep="$WORK/nodir-a/nodir-b/actions.log"
+rm -rf "$WORK/nodir-a"
+PIM_CAMERA_ACTION_LOG="$deep" PIM_CAMERA_ACTION_TAG=t141 \
+    _cra_log err "probe-mkdir rc=7"
+[ -f "$deep" ] || fail "부모 디렉터리가 없을 때 진단이 유실됐다 (mkdir 미수행)"
+grep -q 'probe-mkdir rc=7' "$deep" || { cat "$deep" >&2; fail "진단 줄이 기록되지 않았다"; }
+# 시각 접두사가 붙어야 회전 뒤에도 history 의 started_at 과 맞출 수 있다.
+grep -qE '^[0-9]+ err probe-mkdir rc=7$' "$deep" \
+    || { cat "$deep" >&2; fail "기록 형식이 '<epoch> <level> <line>' 이 아니다"; }
+
+# ② 상한을 넘으면 절삭하되 최신 줄은 남는다. 구 코드는 무한 성장한다.
+rot="$WORK/rotate/actions.log"; rm -rf "$WORK/rotate"; mkdir -p "$WORK/rotate"
+head -c 4096 /dev/zero | tr '\0' 'x' > "$rot"
+printf '\n' >> "$rot"
+before=$(stat -c%s "$rot")
+PIM_CAMERA_ACTION_LOG="$rot" PIM_CAMERA_ACTION_LOG_MAX_BYTES=2048 PIM_CAMERA_ACTION_TAG=t141 \
+    _cra_log err "probe-rotate rc=9"
+after=$(stat -c%s "$rot")
+[ "$after" -lt "$before" ] || fail "상한을 넘겼는데 절삭되지 않았다 (before=$before after=$after)"
+[ "$after" -le 2048 ] || fail "절삭 후에도 상한을 넘는다 (after=$after)"
+grep -q 'probe-rotate rc=9' "$rot" || { fail "절삭이 최신 진단 줄을 버렸다"; }
+
+# ③ 기록이 불가능해도 set -e 호출자를 중단시키지 않는다. 경로가 디렉터리면 추가가
+#    실패하는데, 그 실패가 흡수되지 않으면 진단 영속화가 복구 액션을 깨뜨린다.
+#
+#    이 단정은 **별도 bash 프로세스**로만 성립한다. 실측한 두 함정:
+#      - `_cra_log ... || fail` 처럼 함수 호출을 OR-list 에 두면 bash 가 그 함수
+#        **안쪽 전체**에서 errexit 를 면제해 아무것도 검출하지 못한다.
+#      - `( set -e; ... ) || true` 도 안 된다. 외부 OR-list 가 errexit 억제 문맥을
+#        서브셸로 전파해 내부 set -e 를 무력화한다.
+#    PR #143 에서 Codex 가 이 공백을 P2 로 지적했다.
+baddir="$WORK/as-dir"; rm -rf "$baddir"; mkdir -p "$baddir"
+probe="$WORK/errexit-probe.out"; probe_rc=0
+PIM_CAMERA_ACTION_LOG="$baddir" PIM_CAMERA_ACTION_TAG=t141 \
+    bash -c 'set -euo pipefail; . "$PIM_LIB/cam_recovery_actions.sh"; _cra_log err "probe-unwritable rc=11"; echo REACHED' \
+    > "$probe" 2>/dev/null || probe_rc=$?
+grep -q REACHED "$probe" \
+    || { cat "$probe" >&2; fail "기록 불가가 set -e 호출자를 중단시켰다 (rc=$probe_rc) — 복구 액션이 깨진다"; }
+
+# ④ 레코드 자체가 상한을 넘기는 경우. 추가 **전**에만 검사하면 그 레코드는 걸러지지
+#    않고 다음 메시지가 올 때까지 초과 상태로 방치된다. reboot 거부 경로는 임의 크기의
+#    명령 출력을 싣는다(cam_action_reboot_fallback 의 out=). PR #143 Codex P2.
+#    픽스처 필러는 개행으로 끝나야 한다 — 개행이 없으면 >> 가 같은 줄에 이어 붙어
+#    ^ 앵커 단정이 깨진다. 실제 로그는 매 쓰기가 개행으로 끝난다.
+over="$WORK/over/actions.log"; rm -rf "$WORK/over"; mkdir -p "$WORK/over"
+{ head -c 2040 /dev/zero | tr '\0' 'x'; printf '\n'; } > "$over"
+PIM_CAMERA_ACTION_LOG="$over" PIM_CAMERA_ACTION_LOG_MAX_BYTES=2048 PIM_CAMERA_ACTION_TAG=t141 \
+    _cra_log err "crossing record rc=1"
+sz=$(stat -c%s "$over")
+[ "$sz" -le 2048 ] || fail "레코드가 상한을 넘겼는데 추가 후 절삭되지 않았다 ($sz > 2048)"
+grep -q 'crossing record rc=1' "$over" || { fail "절삭이 방금 추가한 레코드를 버렸다"; }
+# 단일 레코드가 상한보다 큰 극단도 상한 안으로 들어와야 하고, 그때 남는 것은 레코드의
+# **앞**이어야 한다. 식별 접두사(reboot refused rc=...)가 무제한 payload(out=) 앞에 오므로
+# 꼬리만 남기면 무엇이 왜 실패했는지가 사라진다. 크기만 보면 이 손실을 못 잡는다
+# (PR #143 Codex 라운드 3 P2).
+: > "$over"
+PIM_CAMERA_ACTION_LOG="$over" PIM_CAMERA_ACTION_LOG_MAX_BYTES=2048 PIM_CAMERA_ACTION_TAG=t141 \
+    _cra_log err "reboot refused rc=1 out=$(head -c 5000 /dev/zero | tr '\0' 'Z')"
+sz=$(stat -c%s "$over")
+[ "$sz" -le 2048 ] || fail "상한보다 큰 단일 레코드가 상한 안으로 들어오지 않았다 ($sz > 2048)"
+grep -Eq '^[0-9]+ err reboot refused rc=1 out=Z' "$over" \
+    || { head -c 120 "$over" >&2; fail "큰 레코드 절삭이 식별 접두사(시각·level·reboot refused rc=1)를 버렸다"; }
+grep -q 'truncated 5' "$over" || fail "절삭 표지가 없다 — 잘린 레코드와 원래 짧은 레코드가 구분되지 않는다"
+# 아주 작은 cap. 접두사·절삭 표지가 레코드 밖에서 더해지므로 레코드 상한만으로는
+# 접두사를 지킬 수 없다 — cap 자체에 하한(512)이 있어야 한다. 실측(하한 전): cap 128 에
+# 사전 120B → 회전 꼬리 64B 가 접두사를 버렸다.
+{ head -c 120 /dev/zero | tr '\0' 'x'; printf '\n'; } > "$over"
+PIM_CAMERA_ACTION_LOG="$over" PIM_CAMERA_ACTION_LOG_MAX_BYTES=128 PIM_CAMERA_ACTION_TAG=t141 \
+    _cra_log err "reboot refused rc=1 out=$(head -c 5000 /dev/zero | tr '\0' 'Z')"
+# epoch 는 10자리 전체를 요구한다 — 하한이 없으면 앞자리만 잘려 "270340 err reboot
+# refused..." 가 남고, ^[0-9]+ 는 그 잘린 줄도 통과시킨다(실측, 대조군이 통과했다).
+grep -Eq '^[0-9]{10} err reboot refused rc=1 out=Z' "$over" \
+    || fail "작은 cap(128)에서 최신 레코드의 식별 접두사가 회전에 잘렸다"
+# 멀티바이트 레코드. UTF-8 로케일에서 ${#line} 은 문자 수라 바이트 상한 보장이 깨지고,
+# 기존 내용 뒤에 붙으면 회전이 다시 접두사를 자른다. 바이트 절삭이 문자를 반으로
+# 가르면 잘못된 UTF-8 이 남아 UTF-8 grep 이 줄을 보여주지 않는다. 별도 프로세스로 돌려
+# 로케일을 그 안에 한정한다.
+if locale -a 2>/dev/null | grep -qix 'c.utf-\?8'; then
+    # 필러 2040B 로 두어 수정 후에도 회전 분기가 실제로 돈다(1000B 면 512B 로 줄어든
+    # 레코드가 상한 안에 들어가 회전을 건너뛰고, 그 경로를 검사하지 못한다). 필러는
+    # ASCII 다 — tail -c 가 유지 구간 첫 문자를 가르는 경우는 이 단정 범위 밖이다.
+    { head -c 2040 /dev/zero | tr '\0' 'x'; printf '\n'; } > "$over"
+    LC_ALL=C.UTF-8 PIM_CAMERA_ACTION_LOG="$over" PIM_CAMERA_ACTION_LOG_MAX_BYTES=2048 PIM_CAMERA_ACTION_TAG=t141 \
+        bash -c '. "$PIM_LIB/cam_recovery_actions.sh"; p=$(printf "가%.0s" $(seq 1 3000)); _cra_log err "reboot refused rc=1 out=$p"' 2>/dev/null
+    [ "$(stat -c%s "$over")" -eq 1024 ] || fail "UTF-8 회전 전제 불성립 — 회전이 돌지 않았다 ($(stat -c%s "$over")B)"
+    LC_ALL=C grep -aEq '^[0-9]{10} err reboot refused rc=1 out=' "$over" \
+        || fail "UTF-8 로케일의 큰 레코드가 회전에서 식별 접두사를 잃었다 (문자 수로 셌다)"
+    iconv -f UTF-8 -t UTF-8 "$over" >/dev/null 2>&1 || fail "절삭이 멀티바이트 문자를 갈라 잘못된 UTF-8 을 남겼다"
+else
+    echo "SKIP: C.UTF-8 로케일 없음 — 멀티바이트 절삭 단정을 건너뛴다" >&2
+fi
+
+# ⑤ plan 경로(_coc_plan_log)도 같은 경계 writer 를 타야 한다. 이 경로는 매 부팅
+#    initial_module_load 를 기록하므로(cam_operate_control.sh:140, :149) 가장 빈번한
+#    producer 다. 직접 append 하면 절삭·타임스탬프가 없고 errexit 도 흡수하지 않는다.
+plan="$WORK/plan/actions.log"; rm -rf "$WORK/plan"; mkdir -p "$WORK/plan"
+{ head -c 2040 /dev/zero | tr '\0' 'x'; printf '\n'; } > "$plan"
+PIM_CAMERA_ACTION_LOG="$plan" PIM_CAMERA_ACTION_LOG_MAX_BYTES=2048 \
+    _coc_plan_log initial_module_load "no previous state"
+sz=$(stat -c%s "$plan")
+[ "$sz" -le 2048 ] || fail "plan 기록이 상한을 우회했다 ($sz > 2048)"
+grep -qE '^[0-9]+ notice plan: action=initial_module_load reason=no previous state$' "$plan" \
+    || { cat "$plan" >&2; fail "plan 기록에 epoch 접두사가 없다 (경계 writer 를 우회했다)"; }
+plan_probe="$WORK/plan-probe.out"; plan_rc=0
+PIM_CAMERA_ACTION_LOG="$WORK/as-dir" \
+    bash -c 'set -euo pipefail; . "$PIM_LIB/cam_recovery_actions.sh"; . "$PIM_LIB/cam_operate_control.sh"; _coc_plan_log initial_module_load x; echo REACHED' \
+    > "$plan_probe" 2>/dev/null || plan_rc=$?
+grep -q REACHED "$plan_probe" \
+    || { cat "$plan_probe" >&2; fail "plan 기록 불가가 set -e 호출자를 중단시켰다 (rc=$plan_rc)"; }
+# VAR=x func 형태는 bash 에서 함수 종료 후 남지 않는다(실측). unset 을 하면
+# 오히려 라이브러리가 source 시점에 넣은 PIM_CAMERA_ACTION_TAG 기본값을 지워
+# 뒤따르는 _cra_log 가 set -u 에서 깨진다.
+
 owner_active
 : > "$PIM_CAMERA_CALL_LOG"
 touch "$PIM_CAMERA_SYSFS_ROOT/bus/platform/drivers/isi-capture/32e00000.isi:cap_device"

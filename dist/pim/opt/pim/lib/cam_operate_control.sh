@@ -127,8 +127,14 @@ _coc_plan_apply() {
 # 왜 그 액션이 선택됐는지는 service-state.json 을 직접 열어야 알 수 있었다.
 # stdout 은 액션 이름 전용이므로(_coc 가 명령치환으로 읽는다) 반드시 logger 로만 남긴다.
 _coc_plan_log() {
-    logger -p local0.notice "[CAM][cam_operate_control] plan: action=$1 reason=$2" 2>/dev/null
-    [ -z "${PIM_CAMERA_ACTION_LOG:-}" ] || printf 'notice plan: action=%s reason=%s\n' "$1" "$2" >> "$PIM_CAMERA_ACTION_LOG"
+    # 이슈 #141 / PR #143 Codex P2: 여기서 PIM_CAMERA_ACTION_LOG 에 직접 추가하면
+    # _cra_log_persist 를 우회해 절삭도 타임스탬프도 없고, printf 가 `||` 리스트의
+    # 마지막 명령이라 호출자의 set -e 에서 종료까지 시킨다. 그리고 이 경로는 매 부팅
+    # initial_module_load 를 기록하는(:140, :149) 가장 빈번한 producer 이므로, 우회가
+    # 곧 상한 무력화를 뜻한다. 경계가 있는 writer 로 보낸다.
+    #
+    # 태그는 per-call 로 유지한다 — bash 에서 `VAR=x func` 는 함수 종료 후 남지 않는다(실측).
+    PIM_CAMERA_ACTION_TAG=cam_operate_control _cra_log notice "plan: action=$1 reason=$2"
     return 0
 }
 
