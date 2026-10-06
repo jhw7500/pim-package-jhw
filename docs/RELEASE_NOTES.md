@@ -20,9 +20,17 @@
   preinst, measured). Plan logging uses the same writer. Write failures are
   absorbed and never break a recovery action. History and state schemas are
   unchanged.
-- **Install note**: the unit file changed but postinst does not run
-  `daemon-reload`. A reboot applies it; otherwise run `systemctl daemon-reload`
-  and restart `cam-operate`.
+- **Reboot after installing.** preinst unconditionally stops `cam-operate` and
+  `sd-mount` (`preinst:39`, `:41`) and postinst starts neither; this predates
+  camera10. `cam-operate` only has `After=sd-mount.service`, so starting it does
+  not pull the mount service in. postinst also does not run `daemon-reload`, so
+  the changed unit file takes effect on reboot. Until then `cam-operate` stays
+  down and `sd-mount`'s SD-reinsert / read-only recovery loop
+  (`automnt_sd_for_emmc_boot.sh:139`) is inactive; postinst itself restores the
+  SD mount and `sd_mount_flag` (`postinst:385-397`, #76), so recording does not
+  drop straight to RAM_ONLY. `sd-mount` is an early-boot unit
+  (`Before=sysinit.target`); a manual runtime start sequence has not been
+  validated.
 - **Correction**: the camera9 note below says the recorded `reboot_fallback`
   ended `rc=1` without rebooting and that this remained open. That was later
   disproven: a directly submitted `reboot_fallback` rebooted the board and the
@@ -58,6 +66,7 @@
   1, 2, 3, 4, 5 and 6. Condition 7's escalation record is satisfied, but the one
   recorded `reboot_fallback` ended `rc=1` without rebooting and that remains
   open.
+  → Later disproven; see the correction in the camera10 notes.
 
 ### camera8 delivery version separation
 

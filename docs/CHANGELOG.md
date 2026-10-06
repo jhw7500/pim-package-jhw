@@ -16,9 +16,15 @@
   센다 — 보드의 `cam-operate`는 `LANG=C.UTF-8`로 돈다(preinst 가 설정, 실측).
   plan 기록(`_coc_plan_log`)도 같은 writer 를 탄다. 기록 실패는 흡수되어 복구
   액션을 깨뜨리지 않는다. 이력·state 스키마는 바꾸지 않았다.
-- **설치 주의**: `.service`가 바뀌었지만 postinst 는 `daemon-reload`를 하지 않는다.
-  재부팅하면 반영되고, 재부팅 없이 적용하려면 `systemctl daemon-reload` 후
-  `cam-operate`를 재시작한다.
+- **설치 후 재부팅한다.** preinst 가 `cam-operate`와 `sd-mount`를 무조건 멈추고
+  (`preinst:39`, `:41`) postinst 는 둘 다 다시 띄우지 않는다 — camera10 이전부터의
+  동작이다. `cam-operate`는 `sd-mount`에 `After=`만 있어 시작해도 `sd-mount`를
+  끌어오지 않는다. 바뀐 `.service`도 postinst 가 `daemon-reload`를 하지 않으므로
+  재부팅에서 반영된다. 재부팅 전까지는 `cam-operate`가 내려가 있고, `sd-mount`의
+  SD 재삽입·읽기전용 복구 감시 루프(`automnt_sd_for_emmc_boot.sh:139`)도 멈춰 있다
+  — SD 마운트와 `sd_mount_flag`는 postinst 가 직접 복구하므로(`postinst:385-397`,
+  #76) 녹화가 곧바로 RAM_ONLY 로 떨어지지는 않는다. `sd-mount`는 부팅 초기
+  (`Before=sysinit.target`)용 유닛이라 런타임 수동 시작 절차는 검증하지 않았다.
 - **정정**: 아래 camera9 항목의 "`reboot_fallback`이 `rc=1`로 끝나고 재부팅이
   발생하지 않은 것이 미해결"은 이후 반증됐다. 직접 제출한 `reboot_fallback`이
   실제로 보드를 재부팅했고, 이력은 설계대로 `RUNNING`/`interrupted=true`로
@@ -49,6 +55,7 @@
 - 보드 수락 테스트(camera8 설치본 기준)에서 완료조건 1·2·3·4·5·6이 충족됐고,
   조건 7은 에스컬레이션 기록은 충족이나 `reboot_fallback`이 `rc=1`로 끝나고
   재부팅이 발생하지 않은 것이 미해결이다.
+  → 이후 반증됨. camera10 항목의 정정을 본다.
 
 ## 최신 변경사항 (2026-10-03) — camera8 / 전달 버전 분리
 
