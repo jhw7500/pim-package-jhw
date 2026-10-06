@@ -2,6 +2,21 @@
 
 ## Unreleased (2026-10-06)
 
+### camera11 — vsd exec paths (issue #146)
+
+- Package version is `0.6.3+jhw.camera11`. `camera10` is what is installed on the
+  board; PR #147 (issue #146) changed the vsd source, so the vsd binary differs.
+- **#146**: `vsd` called `/opt/pim/bin/fwdriver` (TCP firmware upgrade) and
+  `/opt/pim/bin/init.py` (config reload), but both files ship only under
+  `/opt/cis/bin`. A 2024-05-10 vsd commit moved the neighbouring
+  `update_network` call and left these two behind; they are now fixed the same
+  way. From this version a vsd firmware-upgrade request really runs `fwdriver`.
+  `init.py` still fails at import because the cis runtime modules (`serial`,
+  `psutil`) are absent on the board, so config-reload behaviour is unchanged.
+- The `PIM_CAMERA_ACTION_LOG` comment in `cam-operate.service` now states the
+  real rationale (comment only, no behaviour change).
+- Reboot after installing (same install note as camera10).
+
 ### camera10 — reboot-refusal and persistent action diagnostics (issues #140, #141)
 
 - Package version is `0.6.3+jhw.camera10`. `camera9` is what is installed on the

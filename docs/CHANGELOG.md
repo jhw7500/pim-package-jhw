@@ -1,5 +1,20 @@
 # PIM Package Changelog
 
+## 최신 변경사항 (2026-10-06) — camera11 / vsd 호출 경로 (이슈 #146)
+
+- 전달 패키지를 `pim-mp 0.6.3+jhw.camera11`로 올렸다. 보드에 설치된 `camera10`
+  이후 PR #147(이슈 #146)이 vsd 소스를 바꿔 vsd 바이너리가 달라진다.
+- **#146 vsd 호출 경로**: `vsd`가 `/opt/pim/bin/fwdriver`(TCP 펌웨어 업그레이드)와
+  `/opt/pim/bin/init.py`(설정 재적재)를 호출했지만 두 파일은 `/opt/cis/bin`에만
+  설치된다. 2024-05-10 vsd 커밋이 바로 옆 `update_network` 호출만 옮기고 남긴 것을
+  같은 방식으로 고쳤다. 이 버전부터 vsd 의 펌웨어 업그레이드 요청이 실제로
+  `fwdriver`를 실행한다. `init.py`는 cis 런타임 의존성(`serial`·`psutil`)이 보드에
+  없어 여전히 import 단계에서 실패하므로 설정 재적재 동작은 바뀌지 않는다.
+- `cam-operate.service`의 `PIM_CAMERA_ACTION_LOG` 주석을 실제 근거로 고쳤다(주석만
+  변경, 동작 동일): 평상시 같은 진단은 journald 스냅샷에도 있고, 전용 파일은 eMMC
+  mode 3·4 와 휘발성 저널(`RuntimeMaxUse=1M`) 회전 때를 위해 남긴다.
+- 설치 후 재부팅이 필요하다(camera10 항목의 설치 주의와 같다).
+
 ## 최신 변경사항 (2026-10-06) — camera10 / 이슈 #140·#141 진단
 
 - 전달 패키지를 `pim-mp 0.6.3+jhw.camera10`으로 올렸다. 보드에 설치된 `camera9`
