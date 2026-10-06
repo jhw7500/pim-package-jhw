@@ -392,6 +392,34 @@ sz=$(stat -c%s "$over")
 grep -Eq '^[0-9]+ err reboot refused rc=1 out=Z' "$over" \
     || { head -c 120 "$over" >&2; fail "큰 레코드 절삭이 식별 접두사(시각·level·reboot refused rc=1)를 버렸다"; }
 grep -q 'truncated 5' "$over" || fail "절삭 표지가 없다 — 잘린 레코드와 원래 짧은 레코드가 구분되지 않는다"
+# 아주 작은 cap. 접두사·절삭 표지가 레코드 밖에서 더해지므로 레코드 상한만으로는
+# 접두사를 지킬 수 없다 — cap 자체에 하한(512)이 있어야 한다. 실측(하한 전): cap 128 에
+# 사전 120B → 회전 꼬리 64B 가 접두사를 버렸다.
+{ head -c 120 /dev/zero | tr '\0' 'x'; printf '\n'; } > "$over"
+PIM_CAMERA_ACTION_LOG="$over" PIM_CAMERA_ACTION_LOG_MAX_BYTES=128 PIM_CAMERA_ACTION_TAG=t141 \
+    _cra_log err "reboot refused rc=1 out=$(head -c 5000 /dev/zero | tr '\0' 'Z')"
+# epoch 는 10자리 전체를 요구한다 — 하한이 없으면 앞자리만 잘려 "270340 err reboot
+# refused..." 가 남고, ^[0-9]+ 는 그 잘린 줄도 통과시킨다(실측, 대조군이 통과했다).
+grep -Eq '^[0-9]{10} err reboot refused rc=1 out=Z' "$over" \
+    || fail "작은 cap(128)에서 최신 레코드의 식별 접두사가 회전에 잘렸다"
+# 멀티바이트 레코드. UTF-8 로케일에서 ${#line} 은 문자 수라 바이트 상한 보장이 깨지고,
+# 기존 내용 뒤에 붙으면 회전이 다시 접두사를 자른다. 바이트 절삭이 문자를 반으로
+# 가르면 잘못된 UTF-8 이 남아 UTF-8 grep 이 줄을 보여주지 않는다. 별도 프로세스로 돌려
+# 로케일을 그 안에 한정한다.
+if locale -a 2>/dev/null | grep -qix 'c.utf-\?8'; then
+    # 필러 2040B 로 두어 수정 후에도 회전 분기가 실제로 돈다(1000B 면 512B 로 줄어든
+    # 레코드가 상한 안에 들어가 회전을 건너뛰고, 그 경로를 검사하지 못한다). 필러는
+    # ASCII 다 — tail -c 가 유지 구간 첫 문자를 가르는 경우는 이 단정 범위 밖이다.
+    { head -c 2040 /dev/zero | tr '\0' 'x'; printf '\n'; } > "$over"
+    LC_ALL=C.UTF-8 PIM_CAMERA_ACTION_LOG="$over" PIM_CAMERA_ACTION_LOG_MAX_BYTES=2048 PIM_CAMERA_ACTION_TAG=t141 \
+        bash -c '. "$PIM_LIB/cam_recovery_actions.sh"; p=$(printf "가%.0s" $(seq 1 3000)); _cra_log err "reboot refused rc=1 out=$p"' 2>/dev/null
+    [ "$(stat -c%s "$over")" -eq 1024 ] || fail "UTF-8 회전 전제 불성립 — 회전이 돌지 않았다 ($(stat -c%s "$over")B)"
+    LC_ALL=C grep -aEq '^[0-9]{10} err reboot refused rc=1 out=' "$over" \
+        || fail "UTF-8 로케일의 큰 레코드가 회전에서 식별 접두사를 잃었다 (문자 수로 셌다)"
+    iconv -f UTF-8 -t UTF-8 "$over" >/dev/null 2>&1 || fail "절삭이 멀티바이트 문자를 갈라 잘못된 UTF-8 을 남겼다"
+else
+    echo "SKIP: C.UTF-8 로케일 없음 — 멀티바이트 절삭 단정을 건너뛴다" >&2
+fi
 
 # ⑤ plan 경로(_coc_plan_log)도 같은 경계 writer 를 타야 한다. 이 경로는 매 부팅
 #    initial_module_load 를 기록하므로(cam_operate_control.sh:140, :149) 가장 빈번한

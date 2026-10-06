@@ -70,8 +70,30 @@ _cra_log_persist() {
     # 단정은 그 소실을 통과시킨다.
     #
     # 상한의 1/4 로 두면 절삭이 남기는 뒤 절반(cap/2) 안에 최신 레코드가 통째로 들어온다.
-    max_rec=$((cap / 4)); [ "$max_rec" -ge 64 ] || max_rec=64
-    [ "${#line}" -le "$max_rec" ] || line="${line:0:$max_rec}...[truncated ${#line}B]"
+    # 이 보장은 길이를 **바이트**로 셀 때만 성립한다. UTF-8 로케일에서 ${#line} 은 문자
+    # 수라, 한글 3000자 레코드가 1524바이트(> cap/2)로 남고 기존 내용 뒤에 붙으면 회전이
+    # 다시 접두사를 잘랐다(실측). 함수 범위에서 C 로케일로 고정한다.
+    local LC_ALL=C
+    # cap 자체가 작으면 어떤 레코드 상한으로도 접두사를 지킬 수 없다 — 접두사(epoch+level,
+    # 약 15B)와 절삭 표지("...[truncated NB]", 약 24B)가 레코드 **밖에서** 더해지므로
+    # 오버헤드에 하한이 있다. 실측: cap 128 에 사전 120B → 회전 꼬리 64B 가 접두사를 버렸다.
+    # 그래서 레코드가 아니라 cap 을 올린다(기본값 262144 에서는 닿지 않는 경로다).
+    # cap 512 → max_rec 128, 128+15+24=167 ≤ 256(cap/2) 로 불변식이 성립한다.
+    [ "$cap" -ge 512 ] 2>/dev/null || cap=512
+    max_rec=$((cap / 4))
+    if [ "${#line}" -gt "$max_rec" ]; then
+        local orig=${#line} i
+        line=${line:0:$max_rec}
+        # 바이트 절삭이 멀티바이트 문자를 반으로 가르면 잘못된 UTF-8 이 남고, UTF-8
+        # 로케일의 grep 은 파일 전체를 바이너리로 보고 줄을 보여주지 않는다(실측).
+        # 끝의 연속 바이트(10xxxxxx)를 떼고, 이어서 리드 바이트(11xxxxxx) 하나를 뗀다.
+        # 비 ASCII 를 개수로만 떼면 앞 문자의 리드 바이트가 남는 경우가 있다.
+        for i in 1 2 3; do
+            case ${line: -1} in [$'\x80'-$'\xbf']) line=${line%?} ;; *) break ;; esac
+        done
+        case ${line: -1} in [$'\xc0'-$'\xff']) line=${line%?} ;; esac
+        line="$line...[truncated ${orig}B]"
+    fi
     dir=${PIM_CAMERA_ACTION_LOG%/*}
     [ "$dir" = "$PIM_CAMERA_ACTION_LOG" ] || [ -d "$dir" ] || mkdir -p -- "$dir" 2>/dev/null || return 0
     # EPOCHSECONDS 는 bash 5.0+ 내장이라 fork 가 없다 (이 파일 :19 의 같은 근거).
