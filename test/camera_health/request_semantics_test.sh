@@ -20,6 +20,9 @@ export PIM_LIB="$ROOT/dist/pim/opt/pim/lib"
 DAEMON_PID=4242
 # shellcheck source=/dev/null
 source "${REQUEST_SEMANTICS_LIB:-$PIM_LIB/cam_recovery.sh}"
+# _coc_record_step is the real producer of the uncountered history steps.
+# shellcheck source=/dev/null
+source "$PIM_LIB/cam_operate_control.sh"
 # Every _cr_now call returns a later second, so a resume that restamps
 # finished_at changes the bytes even when crash and resume share a second.
 # Callers use $(_cr_now), a subshell, so the clock lives in a file.
@@ -60,11 +63,14 @@ start_request() {
     cam_request_claim
 }
 # Counted actions write state.json; gstapp_stop is never counted, so its
-# finish must not need state.json at all.
+# finish must not need state.json at all.  Its history still holds a step:
+# _coc_run_uncountered_step records gstapp_stop with countered:false, so the
+# state.json requirement must come from counted actions, not from any action.
 to_verifying() {
     start_request "$1"
     cam_request_transition QUIESCING; cam_request_transition RUNNING
     if [ "$2" = countered ]; then cam_action_counter_begin "$1" "$id"; fi
+    if [ "$2" = uncountered ]; then _coc_record_step "$1" SUCCEEDED 0; fi
     cam_request_transition VERIFYING
     if [ "$2" = countered ]; then cam_action_counter_finish "$1" "$id" SUCCEEDED 0; fi
     if [ "$2" = uncountered ] && [ -e "$state_file" ]; then fail "precondition: uncountered request has state.json"; fi
@@ -165,7 +171,10 @@ assert_finished FAILED 5
 
 label='apply_config succeeded, no state.json'
 start_request apply_config
-cam_request_transition QUIESCING; cam_request_transition RUNNING; cam_request_transition VERIFYING; remember_actions
+cam_request_transition QUIESCING; cam_request_transition RUNNING
+_coc_record_step ord_restart SUCCEEDED 0; _coc_record_step policy_reload SUCCEEDED 0
+cam_request_transition VERIFYING; remember_actions
+[ "$(jq '[.actions[] | select(.countered == false)] | length' "$(history_file)")" -eq 2 ] || fail "precondition: uncountered steps missing"
 [ ! -e "$state_file" ] || fail "precondition: state.json exists"
 expect_rc 0 cam_request_finish SUCCEEDED 0
 assert_finished
