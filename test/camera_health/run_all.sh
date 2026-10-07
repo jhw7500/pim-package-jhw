@@ -21,6 +21,7 @@ bash recovery_guard_rc_test.sh
 bash ord_single_owner_test.sh
 bash cam_operate_control_test.sh
 bash cam_liveness_test.sh
+bash jq_memo_test.sh
 bash cam_stop_order_test.sh
 python3 capture_probe_test.py
 python3 max9296_producer_test.py
