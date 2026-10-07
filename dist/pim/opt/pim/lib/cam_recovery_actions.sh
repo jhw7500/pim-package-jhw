@@ -257,6 +257,27 @@ cam_runtime_app() {
     [ -n "$app" ] || return 64
     printf '%s\n' "$app"
 }
+# 결과를 변수로 받는 판 (이슈 #150). cam_runtime_app 은 $(...) 로만 불려 캐시가 서브셸과
+# 함께 사라졌다(위 주석). 여기서는 런타임 문서의 파일 정체(stat)를 키로 값을 프로세스 안에
+# 둔다 — cam_validate_runtime 과 같은 키이고, atomic rename 이면 inode 가 바뀌어 다시
+# 읽는다. 내부 변수에 접두사를 붙인 것은 printf -v 가 호출부의 같은 이름(app)이 아니라
+# 이 함수의 local 에 쓰는 것을 막기 위해서다.
+_CAM_RUNTIME_APP_KEY=""
+_CAM_RUNTIME_APP_VAL=""
+_cam_runtime_app_into() {
+    local _cra_var=$1 _cra_runtime=$2 _cra_stamp _cra_app
+    _cra_stamp=$(stat -c '%d:%i:%s:%y' "$_cra_runtime" 2>/dev/null) || _cra_stamp=""
+    if [ -n "$_cra_stamp" ] && [ "$_cra_runtime|$_cra_stamp" = "$_CAM_RUNTIME_APP_KEY" ] && [ -n "$_CAM_RUNTIME_APP_VAL" ]; then
+        printf -v "$_cra_var" '%s' "$_CAM_RUNTIME_APP_VAL"
+        return 0
+    fi
+    _cra_app=$(cam_runtime_app "$_cra_runtime") || return $?
+    if [ -n "$_cra_stamp" ]; then
+        _CAM_RUNTIME_APP_KEY="$_cra_runtime|$_cra_stamp"
+        _CAM_RUNTIME_APP_VAL=$_cra_app
+    fi
+    printf -v "$_cra_var" '%s' "$_cra_app"
+}
 
 cam_cleanup_recording_orphans() {
     local runtime=$1 dir canonical vehicle started normalized prefix f marker=${PIM_CAMERA_SESSION_TIME_FILE:-/tmp/start_video_time_chk}
@@ -360,7 +381,7 @@ cam_bg_checker_present() {
 cam_process_present() {
     local runtime=$1 kind=$2 app bg
     case "$kind" in
-        app) app=$(cam_runtime_app "$runtime") || return $?; pgrep -x "$app" >/dev/null 2>&1 ;;
+        app) _cam_runtime_app_into app "$runtime" || return $?; pgrep -x "$app" >/dev/null 2>&1 ;;
         gstapp) pgrep -x gstApp >/dev/null 2>&1 ;;
         pimcam) pgrep -x PIMCAM >/dev/null 2>&1 ;;
         bg) bg=$(cam_bg_checker_path); cam_bg_checker_present "$bg" ;;
@@ -408,7 +429,7 @@ cam_wait_ord_ready() {
 cam_signal_process() {
     local runtime=$1 signal=$2 kind=$3 app bg records=${4:-}
     case "$kind" in
-        app) app=$(cam_runtime_app "$runtime") || return $?; cam_effect "$runtime" pkill "$signal" -x "$app" ;;
+        app) _cam_runtime_app_into app "$runtime" || return $?; cam_effect "$runtime" pkill "$signal" -x "$app" ;;
         gstapp) cam_effect "$runtime" pkill "$signal" -x gstApp ;;
         pimcam) cam_effect "$runtime" pkill "$signal" -x PIMCAM ;;
         bg)
