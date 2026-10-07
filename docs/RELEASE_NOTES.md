@@ -2,6 +2,21 @@
 
 ## Unreleased (2026-10-06)
 
+### camera12 — liveness gstApp restart after reboot (issue #149)
+
+- Package version is `0.6.3+jhw.camera12`. `camera11` is what is installed on the
+  board; PR #151 (issue #149) changed `cam_liveness.sh` afterwards.
+- **#149**: liveness `_cl_gstapp_failures` required the result file of the last
+  `gstapp_restart` request. Results live in the RuntimeDirectory
+  (`/run/pim-camera`, tmpfs) while state and history persist under `/var/lib`, so
+  after a reboot (and, with no RuntimeDirectoryPreserve, after a `cam-operate`
+  restart) only that file was gone and every tick returned 70 without submitting
+  a gstApp restart. On the camera11 board this left about four minutes unrecorded
+  after `kill_test.sh`. A missing result is now accepted only when the recorded
+  owner is no longer active; a missing result under a live owner still fails
+  closed.
+- Reboot after installing (same install note as camera10).
+
 ### camera11 — vsd exec paths (issue #146)
 
 - Package version is `0.6.3+jhw.camera11`. `camera10` is what is installed on the
