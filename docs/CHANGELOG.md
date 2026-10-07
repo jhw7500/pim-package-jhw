@@ -1,5 +1,18 @@
 # PIM Package Changelog
 
+## 최신 변경사항 (2026-10-07) — camera12 / 재부팅 뒤 liveness gstApp 재기동 (이슈 #149)
+
+- 전달 패키지를 `pim-mp 0.6.3+jhw.camera12`로 올렸다. 보드에 설치된 `camera11` 이후
+  PR #151(이슈 #149)이 `cam_liveness.sh`를 바꿨다.
+- **#149**: liveness 의 `_cl_gstapp_failures`가 마지막 `gstapp_restart` 요청의 결과
+  파일을 무조건 요구했는데, 결과는 RuntimeDirectory(`/run/pim-camera`, tmpfs)에 있고
+  state·이력은 `/var/lib`에 남는다. 재부팅(그리고 RuntimeDirectoryPreserve 가 없어
+  `cam-operate` 재시작) 뒤 그 파일만 사라져 매 틱 rc=70 으로 gstApp 재기동을 제출하지
+  못했다 — camera11 보드에서 `kill_test.sh` 뒤 약 4분 미녹화로 관측. 결과 파일이 없을
+  때만 기록된 소유자가 더는 살아 있지 않은지로 판단하도록 고쳤다(같은 부팅·소유자
+  생존·결과 부재는 여전히 fail-closed).
+- 설치 후 재부팅이 필요하다(camera10 항목의 설치 주의와 같다).
+
 ## 최신 변경사항 (2026-10-06) — camera11 / vsd 호출 경로 (이슈 #146)
 
 - 전달 패키지를 `pim-mp 0.6.3+jhw.camera11`로 올렸다. 보드에 설치된 `camera10`
