@@ -768,6 +768,51 @@ expect_rc 0 cam_action_counter_begin gstapp_restart "$runtime_loss_retry_id"
 jq -e --arg id "$runtime_loss_retry_id" '.actions.gstapp_restart.attempted==2 and .actions.gstapp_restart.succeeded==0 and .actions.gstapp_restart.failed==1 and .actions.gstapp_restart.consecutive_failures==1 and .actions.gstapp_restart.last_request_id==$id and .actions.gstapp_restart.last_status=="RUNNING"' "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null || fail 'liveness retry did not settle missing-result predecessor exactly once'
 [ "$runtime_loss_history_before" = "$(fingerprint "$runtime_loss_history")" ] || fail 'liveness retry rewrote missing-result predecessor history'
 
+echo '=== #149: a finished predecessor whose result was lost to a reboot still lets liveness resubmit ==='
+# The case above is a predecessor interrupted while RUNNING.  This one finished: its
+# history and the state counter persist under the state dir, but its result lived in
+# the RuntimeDirectory (/run, tmpfs) and a reboot dropped it.  Requiring the result
+# returned 70 on every tick and liveness never resubmitted - on the board kill_test.sh
+# left gstApp down for about four minutes until chk_cam_operate.sh's file ladder fired.
+finished_predecessor() {   # $1 = SUCCEEDED|FAILED; leaves a finished gstapp_restart in boot-a
+    local status=$1 rc=0 id
+    [ "$status" = SUCCEEDED ] || rc=1
+    reset_case; owner_at ACTIVE
+    printf 'vcm\n' > "$WORK/procs"; touch "$PIM_CAMERA_DEVICE_ROOT/video3"
+    id=$(cam_request_submit gstapp_restart liveness 'previous boot restart')
+    cam_request_claim; cam_request_transition QUIESCING; cam_request_transition RUNNING
+    cam_action_counter_begin gstapp_restart "$id"
+    cam_action_counter_finish gstapp_restart "$id" "$status" "$rc"
+    cam_request_transition VERIFYING
+    cam_request_finish "$status" "$rc"
+    [ -e "$PIM_CAMERA_RUN_DIR/recovery/results/$id.json" ] || fail "#149 fixture did not publish a $status result"
+    FINISHED_ID=$id
+}
+simulate_reboot() {   # /run is tmpfs: results, owner and leases go; state and history stay
+    rm -rf "$PIM_CAMERA_RUN_DIR"; mkdir -p "$PIM_CAMERA_RUN_DIR"; write_runtime
+    printf 'boot-b\n' > "$PIM_CAMERA_BOOT_ID_FILE"; fake_stat 333
+    owner_at ACTIVE
+}
+for prior in SUCCEEDED:0 FAILED:1; do
+    finished_predecessor "${prior%%:*}"
+    [ "$(_cl_gstapp_failures)" = "${prior#*:}" ] || fail "#149 same-boot control did not read ${prior%%:*} failures"
+    simulate_reboot
+    [ -e "$PIM_CAMERA_STATE_DIR/recovery/history/$FINISHED_ID.json" ] && [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/results/$FINISHED_ID.json" ] \
+        || fail '#149 reboot simulation did not keep history and drop the result'
+    [ "$(_cl_gstapp_failures)" = "${prior#*:}" ] || fail "#149 ${prior%%:*} predecessor from a previous boot did not carry its failure count"
+    : > "$PIM_CAMERA_CALL_LOG"
+    expect_rc 0 cam_liveness_tick
+    jq -e '.type=="gstapp_restart" and .source=="liveness" and .reason=="gstapp process absent"' "$PIM_CAMERA_RUN_DIR/recovery/pending.json" >/dev/null \
+        || fail "#149 liveness did not resubmit after a reboot dropped the ${prior%%:*} predecessor result"
+done
+# Negative control: same boot, owner still live, result missing.  That is not a reboot
+# and must keep failing closed.
+finished_predecessor SUCCEEDED
+rm -f "$PIM_CAMERA_RUN_DIR/recovery/results/$FINISHED_ID.json"
+: > "$PIM_CAMERA_CALL_LOG"
+expect_rc 70 cam_liveness_tick
+! grep -q '^request:' "$PIM_CAMERA_CALL_LOG" || fail '#149 a missing result under a live owner submitted recovery'
+
 reset_case; owner_at ACTIVE; prepare_gst_missing 0
 jq '.actions.gstapp_restart.consecutive_failures=5' "$PIM_CAMERA_STATE_DIR/recovery/state.json" > "$WORK/state.impossible" && mv "$WORK/state.impossible" "$PIM_CAMERA_STATE_DIR/recovery/state.json"
 impossible_owner_before=$(fingerprint "$PIM_CAMERA_RUN_DIR/owner.json")

@@ -373,9 +373,20 @@ _cl_gstapp_failures() {
             terminal=$(jq -ce '.request | select(type=="object")' <<<"$history") || return 70
             _cr_terminal_request_valid "$terminal" || return 70
             _cr_request_interruption_absent "$terminal" || return 70
-            result=$(cat "$(_cr_result_file "$id")" 2>/dev/null) || return 70
-            _cr_terminal_result_valid "$result" "$terminal" || return 70
-            _cr_terminal_request_result_equal "$terminal" "$result" || return 70
+            # Results live under the RuntimeDirectory (/run, tmpfs) while state and
+            # history persist, so a reboot drops exactly this file for the last
+            # finished gstapp_restart.  Requiring it then returned 70 on every tick
+            # and liveness never resubmitted the restart (issue #149).  As in
+            # _cr_counter_begin_prior_interruption_valid, the persistent evidence is
+            # sufficient only once the recorded owner is no longer active; a missing
+            # result under a live owner still fails closed.
+            if [ -e "$(_cr_result_file "$id")" ]; then
+                result=$(cat "$(_cr_result_file "$id")" 2>/dev/null) || return 70
+                _cr_terminal_result_valid "$result" "$terminal" || return 70
+                _cr_terminal_request_result_equal "$terminal" "$result" || return 70
+            else
+                _cr_reconciled_owner_inactive "$terminal" || return 70
+            fi
             _cr_terminal_attribution_valid "$history" "$terminal" "$state" || return 70
             _cr_history_public_state_arithmetic_valid "$history" "$state" "$id" || return 70
         fi
