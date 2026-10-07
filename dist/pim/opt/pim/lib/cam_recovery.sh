@@ -80,6 +80,31 @@ _cr_public_action() { case "$1" in gstapp_restart|gstapp_stop|module_reload|came
 _cr_request_type() { _cr_public_action "$1" || [ "$1" = apply_config ]; }
 _cr_owner_json() { cat "$(_cr_owner_file)" 2>/dev/null; }
 
+# 같은 프로세스 안의 jq 호출 메모 (이슈 #150). 보드에서 jq 1회가 ~307ms 인데, 소유자
+# 가드는 요청 한 건 동안 같은 owner 문서·같은 인자로 같은 필터를 수십 번 다시 돌렸다.
+# 키는 jq 인자 전체와 입력 문자열 전체이고 판정은 jq 필터 그대로라 결과가 기존과 같다 —
+# 여기서 쓰는 필터들은 env·now 를 읽지 않으므로 입력이 같으면 출력도 같다. 비교 논리를
+# bash 로 옮기지 않는 것이 핵심이다(다중 문서 owner·끝 개행 필드에서 판정이 갈린다).
+# rc 0 결과만 저장한다: 일시적 실패를 캐시하면 장수 데몬의 가드가 owner 가 바뀔 때까지
+# 굳는다. 항목이 상한을 넘으면 비운다. /proc 생존 확인은 호출부에서 매번 그대로 한다.
+declare -gA _CR_JQ_MEMO=()
+# 결과는 출력하지 않고 첫 인자로 받은 변수에 넣는다. $(...) 로 부르면 서브셸이라 저장한
+# 메모가 부모 셸에 남지 않는다(실측: 36회 중 33회가 다시 jq 를 띄웠다).
+_cr_jq_memo() {
+    local _cr_memo_var=$1 _cr_memo_input=$2 _cr_memo_key _cr_memo_out
+    shift 2
+    printf -v _cr_memo_key '%s\037' "$@"
+    _cr_memo_key+=$'\036'"$_cr_memo_input"
+    if [ -n "${_CR_JQ_MEMO[$_cr_memo_key]+x}" ]; then
+        printf -v "$_cr_memo_var" '%s' "${_CR_JQ_MEMO[$_cr_memo_key]}"
+        return 0
+    fi
+    _cr_memo_out=$(jq "$@" <<<"$_cr_memo_input") || return $?
+    [ "${#_CR_JQ_MEMO[@]}" -lt 64 ] || _CR_JQ_MEMO=()
+    _CR_JQ_MEMO[$_cr_memo_key]=$_cr_memo_out
+    printf -v "$_cr_memo_var" '%s' "$_cr_memo_out"
+}
+
 # jq 한 번이 보드(A53, loadavg 5.7)에서 412ms 다. 같은 문서를 필드마다 새 프로세스로
 # 파싱하면 owner 검증 한 번에 3초가 든다. 필터를 변수로 두고 한 번의 jq 로 합친다.
 # 조건 자체는 바꾸지 않는다 — 검증을 줄이는 게 아니라 프로세스 스폰만 줄인다.
@@ -100,9 +125,8 @@ _cr_owner_schema() {
 _cr_owner_snapshot_live() {
     local owner=$1 expected_invocation=${2:-} expected_token=${3:-} boot fields pid start actual
     boot=$(cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null) || return 69
-    fields=$(jq -r --arg boot "$boot" --arg ei "$expected_invocation" --arg et "$expected_token" \
-        "if (($_CR_OWNER_SCHEMA_FILTER) and ($_CR_OWNER_LIVE_MATCH_FILTER)) then [(.pid|tostring), .proc_start_time] | join(\"\\n\") else empty end" \
-        <<<"$owner") || return 69
+    _cr_jq_memo fields "$owner" -r --arg boot "$boot" --arg ei "$expected_invocation" --arg et "$expected_token" \
+        "if (($_CR_OWNER_SCHEMA_FILTER) and ($_CR_OWNER_LIVE_MATCH_FILTER)) then [(.pid|tostring), .proc_start_time] | join(\"\\n\") else empty end" || return 69
     [ -n "$fields" ] || return 69
     { IFS= read -r pid; IFS= read -r start; } <<<"$fields"
     actual=$(_cr_proc_start "$pid")
@@ -110,7 +134,7 @@ _cr_owner_snapshot_live() {
 }
 _cr_owner_snapshot_lifecycle_in() {
     local owner=$1 lifecycle allowed
-    lifecycle=$(jq -r .lifecycle <<<"$owner") || return 69
+    _cr_jq_memo lifecycle "$owner" -r .lifecycle || return 69
     shift
     for allowed in "$@"; do [ "$lifecycle" = "$allowed" ] && return 0; done
     return 69
@@ -121,7 +145,8 @@ _cr_owner_snapshot_lifecycle_in() {
 _CR_OWNER_IMMUTABLE_EQ_FILTER='($a.boot_id == $b.boot_id) and ($a.invocation_id == $b.invocation_id) and ($a.pid == $b.pid) and ($a.proc_start_time == $b.proc_start_time) and ($a.token == $b.token) and ($a.created_at == $b.created_at)'
 _cr_owner_immutable_equal() {
     local saved=$1 current=$2
-    jq -e -n --argjson a "$saved" --argjson b "$current" \
+    local _verdict
+    _cr_jq_memo _verdict "" -e -n --argjson a "$saved" --argjson b "$current" \
       "(\$a | ($_CR_OWNER_SCHEMA_FILTER)) and (\$b | ($_CR_OWNER_SCHEMA_FILTER)) and $_CR_OWNER_IMMUTABLE_EQ_FILTER" \
       >/dev/null 2>&1 || return 1
 }
@@ -159,10 +184,10 @@ _cr_owner_monitor_snapshot() {
 }
 _cr_owner_matches_exported_context() {
     local verdict
-    verdict=$(jq -r --arg b "${PIM_CAMERA_OWNER_BOOT_ID:-}" --arg iv "${PIM_CAMERA_OWNER_INVOCATION:-}" \
+    _cr_jq_memo verdict "$1" -r --arg b "${PIM_CAMERA_OWNER_BOOT_ID:-}" --arg iv "${PIM_CAMERA_OWNER_INVOCATION:-}" \
           --arg p "${PIM_CAMERA_OWNER_PID:-}" --arg ps "${PIM_CAMERA_OWNER_PROC_START_TIME:-}" \
           --arg tk "${PIM_CAMERA_OWNER_TOKEN:-}" --arg ca "${PIM_CAMERA_OWNER_CREATED_AT:-}" \
-        "((($_CR_OWNER_SCHEMA_FILTER) and ($_CR_OWNER_EXPORTED_MATCH_FILTER)) | tostring)" <<<"$1") || return 69
+        "((($_CR_OWNER_SCHEMA_FILTER) and ($_CR_OWNER_EXPORTED_MATCH_FILTER)) | tostring)" || return 69
     [ "$verdict" = true ] || return 69
 }
 # owner lifecycle 를 같은 프로세스에서 반복 조회하는 monitor 경로용 캐시. 파일이
@@ -180,7 +205,7 @@ _cr_load_owner_lifecycle() {
 }
 cam_owner_assert() { local owner; owner=$(_cr_owner_json); _cr_owner_snapshot_live "$owner" "${1:-}" "${2:-}"; }
 _cr_owner_lifecycle_in() { local owner; owner=$(_cr_owner_json); _cr_owner_snapshot_live "$owner" || return 69; _cr_owner_snapshot_lifecycle_in "$owner" "$@"; }
-_cr_record_owner_matches() { local saved current; saved=$(jq -c .owner <<<"$1") || return 1; current=$(_cr_owner_json) || return 1; _cr_owner_immutable_equal "$saved" "$current" && _cr_owner_snapshot_live "$current"; }
+_cr_record_owner_matches() { local saved current; _cr_jq_memo saved "$1" -c .owner || return 1; current=$(_cr_owner_json) || return 1; _cr_owner_immutable_equal "$saved" "$current" && _cr_owner_snapshot_live "$current"; }
 # 이 가드는 호출부 31곳을 지난다 (camera_hard_reset 은 25회 부른다). 예전에는
 # .owner 추출 + immutable_equal + snapshot_live + lifecycle_in 으로 jq 를 네 번
 # 띄웠다. 보드에서 jq 한 번이 307ms 이므로 호출마다 1.2초다. 조건은 그대로 두고
@@ -215,9 +240,9 @@ _cr_record_owner_ready() {
     # longer holds.  _cr_owner_monitor_snapshot guards the same way.
     # jq's stderr is not discarded: a jq that cannot run this filter must not
     # be indistinguishable from an ownership rejection.
-    fields=$(jq -r -s --argjson rec "$record" --arg boot "$boot" --arg ei "" --arg et "" --argjson allowed "$allowed" \
+    _cr_jq_memo fields "$current" -r -s --argjson rec "$record" --arg boot "$boot" --arg ei "" --arg et "" --argjson allowed "$allowed" \
         "if (length == 1) then .[0] | if ((\$rec.owner | ($_CR_OWNER_SCHEMA_FILTER)) and ($_CR_OWNER_SCHEMA_FILTER) and ($_CR_OWNER_LIVE_MATCH_FILTER) and (\$rec.owner as \$a | . as \$b | $_CR_OWNER_IMMUTABLE_EQ_FILTER) and (.lifecycle as \$l | \$allowed | index(\$l) != null)) then [(.pid|tostring), .proc_start_time] | join(\"\\n\") else empty end else empty end" \
-        <<<"$current") || return 69
+         || return 69
     [ -n "$fields" ] || return 69
     { IFS= read -r pid; IFS= read -r start; } <<<"$fields"
     actual=$(_cr_proc_start "$pid")
