@@ -777,7 +777,9 @@ _cr_claim_locked() {
     _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69
     [ -f "$(_cr_pending_file)" ] || return 69; [ ! -e "$(_cr_active_file)" ] || return 75
     pending=$(cat "$(_cr_pending_file)") || return 70; jq -e '.id and .type and .source and .reason and .owner' >/dev/null <<<"$pending" || return 70
-    _cr_record_owner_matches "$pending" || return 69; id=$(jq -r .id <<<"$pending")
+    # 메모로 꺼낸다 — claim 직후의 첫 전이가 같은 바이트(active 는 pending 을 옮긴 것)의
+    # .id 를 찾으므로 jq 를 다시 띄우지 않는다.
+    _cr_record_owner_matches "$pending" || return 69; _cr_jq_memo id "$pending" -r .id || id=""
     history=$(jq -cn --argjson request "$pending" '{request:$request,actions:[]}') || return 70
     _cr_mutation_guard "$pending" claim_history ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_history_file "$id")" "$history" || return 70
     _cr_mutation_guard "$pending" claim_active ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_move "$(_cr_pending_file)" "$(_cr_active_file)" || return 70
