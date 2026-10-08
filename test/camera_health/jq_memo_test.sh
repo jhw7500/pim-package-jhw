@@ -76,4 +76,26 @@ _cam_runtime_app_into app "$runtime"
 [ "$app" = PIMCAM ] || fail "a replaced runtime file returned the stale app '$app'"
 expect_runs 3 'a replaced runtime file was served from the cache'
 
+# cam_executor_assert_context runs before every side effect (camera_hard_reset
+# calls it 27 times) and the active record does not change in between.  Once
+# warm, repeating it must not spawn jq: the executor snapshot is cached by owner
+# file identity, the owner guard by _cr_jq_memo, and the active id by
+# _cr_jq_memo too.  Only the extraction is memoized, never the comparison, so a
+# different request id is still refused.
+export PIM_CAMERA_PROC_ROOT="$WORK/proc"
+mkdir -p "$PIM_CAMERA_PROC_ROOT/4242"
+{ printf '%s' '4242 (cam operate) S'; for _ in $(seq 1 18); do printf ' 0'; done; printf ' 111 0 0\n'; } > "$PIM_CAMERA_PROC_ROOT/4242/stat"
+printf 'memo-boot\n' > "$PIM_CAMERA_BOOT_ID_FILE"
+cam_owner_create 4242; cam_owner_set_lifecycle ACTIVE
+cam_request_submit gstapp_restart operator 'executor memo' >/dev/null
+cam_request_claim; cam_request_transition QUIESCING; cam_request_transition RUNNING
+cam_owner_set_lifecycle RECOVERING
+cam_executor_set_context
+cam_executor_assert_context || fail "the executor context was refused before warming"
+: > "$WORK/jq.log"
+for _ in 1 2 3 4 5; do cam_executor_assert_context || fail "the warm executor context was refused"; done
+expect_runs 0 'a repeated executor check against an unchanged active record spawned jq'
+rc=0; PIM_CAMERA_REQUEST_ID=00000000-0000-4000-8000-000000000000 cam_executor_assert_context || rc=$?
+[ "$rc" -eq 69 ] || fail "a warm executor check accepted another request id (rc $rc)"
+
 echo "jq memo: PASS"

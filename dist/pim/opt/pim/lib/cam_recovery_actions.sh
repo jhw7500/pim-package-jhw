@@ -162,7 +162,7 @@ cam_validate_runtime() {
 _CR_EXECUTOR_CACHE_KEY=""
 _CR_EXECUTOR_CACHE_VAL=""
 cam_executor_assert_context() {
-    local owner active boot fields pid start lifecycle actual skip_live=0 key stamp
+    local owner active boot fields pid start lifecycle actual skip_live=0 key stamp active_id
     [ "${PIM_CAMERA_STOP_EXECUTOR:-}" != 1 ] || skip_live=1
     boot=$(cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null) || return 69
     stamp=$(stat -c '%d:%i:%s:%y' "$(_cr_owner_file)" 2>/dev/null) || stamp=""
@@ -194,7 +194,10 @@ cam_executor_assert_context() {
     [ "${PIM_CAMERA_EXECUTOR:-}" = 1 ] || return 69
     [ -n "${PIM_CAMERA_REQUEST_ID:-}" ] || return 69
     active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69
-    [ "$(jq -r .id <<<"$active")" = "$PIM_CAMERA_REQUEST_ID" ] || return 69
+    # 부수 효과마다 불린다 (camera_hard_reset 은 27회). active 는 그동안 같은 바이트라
+    # id 추출을 메모하면 jq 는 한 번만 뜬다 (이슈 #150).
+    _cr_jq_memo active_id "$active" -r .id || active_id=""
+    [ "$active_id" = "$PIM_CAMERA_REQUEST_ID" ] || return 69
     _cr_record_owner_ready "$active" RECOVERING APPLYING_CONFIG || return 69
 }
 
@@ -764,7 +767,7 @@ cam_executor_set_context() {
     # propagates, so such an owner now fails here instead of downstream.
     _cr_owner_export_fields "$owner" || return $?
     PIM_CAMERA_EXECUTOR=1
-    PIM_CAMERA_REQUEST_ID=$(jq -r .id <<<"$active") || return 69
+    _cr_jq_memo PIM_CAMERA_REQUEST_ID "$active" -r .id || { PIM_CAMERA_REQUEST_ID=; return 69; }
     export PIM_CAMERA_EXECUTOR PIM_CAMERA_REQUEST_ID
 }
 

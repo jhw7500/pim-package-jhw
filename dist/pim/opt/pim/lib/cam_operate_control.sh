@@ -283,7 +283,7 @@ cam_daemon_startup() {
 _coc_record_step() {
     local action=$1 status=$2 rc=$3 active id history next now
     active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69
-    id=$(jq -r .id <<<"$active") || return 70
+    _cr_jq_memo id "$active" -r .id || return 70
     history=$(cat "$(_cr_history_file "$id")" 2>/dev/null) || return 70
     now=$(_cr_now)
     next=$(jq -c --arg action "$action" --arg id "$id" --arg status "$status" --argjson rc "$rc" --argjson now "$now" \
