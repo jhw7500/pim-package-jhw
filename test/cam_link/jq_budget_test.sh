@@ -8,21 +8,30 @@
 # counted through a PATH shim that appends one line per exec, which covers those
 # two processes and every child they start.
 #
+# The shipped start_cam.sh runs too: it is a process of its own that checks the
+# owner and the runtime again before it launches anything.  Only what it finally
+# execs is stubbed - the app binary (gstApp, found through PATH) and the BG
+# checker.  The real BG checker runs jq of its own when it starts; that is not
+# counted here.
+#
 # The ceilings are a ratchet: each is the exact count measured on the commit that
 # added this file.  A change that spawns more jq fails here; a change that spawns
 # fewer lowers the ceiling in the same commit.
 set -euo pipefail
 
 # --- ceilings: jq spawns per flow (submit + daemon) ---------------------------
-# Measured on e3da7ca as submit + daemon; the assertion is on the total.
-# flow                   ceiling   measured   terminal state the flow must reach
+# Measured on e3da7ca as submit + daemon; the daemon side includes the 4 jq of
+# each start_cam.sh run (one per flow that starts the app).  The assertion is on
+# the total.
+# flow                   ceiling   measured        terminal state the flow must reach
 declare -A CEILING=(
-    [gstapp_stop]=68           #   6 + 62    SUCCEEDED
-    [gstapp_restart]=114       #   6 + 108   SUCCEEDED
-    [camera_hard_reset]=116    #   6 + 110   SUCCEEDED
-    [module_reload_fails]=196  #   6 + 190   FAILED rc=1: module_reload and
-                               #             camera_hard_reset fail at modprobe
-                               #             (rc 23), reboot_fallback is refused (rc 1)
+    [gstapp_stop]=68           #   6 + 62          SUCCEEDED
+    [gstapp_restart]=118       #   6 + 108 + 4     SUCCEEDED
+    [camera_hard_reset]=120    #   6 + 110 + 4     SUCCEEDED
+    [module_reload_fails]=196  #   6 + 190         FAILED rc=1: module_reload and
+                               #                   camera_hard_reset fail at modprobe
+                               #                   (rc 23) before the app starts,
+                               #                   reboot_fallback is refused (rc 1)
 )
 FLOWS=(gstapp_stop gstapp_restart camera_hard_reset module_reload_fails)
 
@@ -30,10 +39,12 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/pim-jq-budget.XXXXXX")
 export WORK
 trap 'rm -rf "$WORK"' EXIT
-# JQ_BUDGET_LIB_DIR swaps the whole library directory (mutation controls); both
-# cam-recoveryctl and cam_operate_control.sh source from PIM_LIB.
+# JQ_BUDGET_LIB_DIR and JQ_BUDGET_BIN_DIR swap the library and bin directories
+# (mutation controls).  cam-recoveryctl, cam_operate_control.sh and start_cam.sh
+# source from PIM_LIB; start_cam.sh itself is $PIM_BIN/start_cam.sh.  A swapped
+# bin directory needs a config/ beside it: camera_runtime_config.py reads ../config.
 export PIM_LIB="${JQ_BUDGET_LIB_DIR:-$ROOT/dist/pim/opt/pim/lib}"
-export PIM_BIN="$ROOT/dist/pim/opt/pim/bin"
+export PIM_BIN="${JQ_BUDGET_BIN_DIR:-$ROOT/dist/pim/opt/pim/bin}"
 export PIM_CAMERA_RUN_DIR="$WORK/run"
 export PIM_CAMERA_STATE_DIR="$WORK/state"
 export PIM_CAMERA_BOOT_ID_FILE="$WORK/boot-id"
@@ -45,13 +56,14 @@ export PIM_CAMERA_CONTROL_WORK_DIR="$PIM_CAMERA_RUN_DIR/control"
 export PIM_CAMERA_SYSFS_ROOT="$WORK/sys"
 export PIM_CAMERA_DEVICE_ROOT="$WORK/dev"
 export PIM_CAMERA_CALL_LOG="$WORK/calls"
-export PIM_CAMERA_START_CAM="$WORK/start-cam"
+# Unset, so the executor runs $PIM_BIN/start_cam.sh as it does on the board.
+unset PIM_CAMERA_START_CAM
 export PIM_CAMERA_SHM_DIR="$WORK/shm"
 export PIM_CAMERA_PROCESS_ROOT="$WORK/processes"
 export PIM_CAMERA_SYSTEMCTL=systemctl
 export PIM_CAMERA_ORD_STATE_FILE="$WORK/ord-state"
 export PIM_CAMERA_ORD_POLL_FILE="$WORK/ord-poll"
-export PIM_CAMERA_BG_CHECKER="$PIM_BIN/BG_Check_for_pim.sh"
+export PIM_CAMERA_BG_CHECKER="$WORK/bg/BG_Check_for_pim.sh"
 export PIM_CAMERA_SESSION_TIME_FILE="$WORK/start-time"
 EDGE_TEMPLATE="$ROOT/dist/pim/opt/pim/config/edgeconf_pim_base.json"
 ORD_TEMPLATE="$ROOT/dist/pim/opt/pim/config/ord_vcm_conf.json"
@@ -62,7 +74,7 @@ fail() { echo "FAIL: $*" >&2; failures=$((failures + 1)); }
 die() { echo "FAIL: $*" >&2; exit 1; }
 
 # --- stubs: the same command doubles as test/cam_link/recovery_actions_test.sh -
-mkdir -p "$WORK/stub" "$WORK/shim"
+mkdir -p "$WORK/stub" "$WORK/shim" "$WORK/bg"
 for cmd in rmmod modprobe reboot logger sleep; do
     cat > "$WORK/stub/$cmd" <<'SH'
 #!/bin/sh
@@ -117,18 +129,20 @@ case "$1" in
   *) exit 64 ;;
 esac
 SH
-cat > "$PIM_CAMERA_START_CAM" <<'SH'
+# What start_cam.sh finally execs.  The app is the runtime's `gstApp`, found
+# through PATH (the loop below); the BG checker is exec'd by path with the delay,
+# and the BG scan recognises it by a process record whose argv is
+# `/bin/bash <checker> <delay>`, so its stub writes that record.
+cat > "$PIM_CAMERA_BG_CHECKER" <<'SH'
 #!/bin/sh
 exec 9>"$WORK/procs.lock"
 flock 9
-printf "start_cam\n" >> "$PIM_CAMERA_CALL_LOG"
-printf "gstApp\n" >> "$WORK/procs"
+printf "start BG_Check_for_pim.sh %s\n" "$*" >> "$PIM_CAMERA_CALL_LOG"
 mkdir -p "$PIM_CAMERA_PROCESS_ROOT/100"
 printf "%s" "100 (BG_Check_for_pim) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1000 0" > "$PIM_CAMERA_PROCESS_ROOT/100/stat"
-printf "/bin/bash\000%s\0004\000" "$PIM_CAMERA_BG_CHECKER" > "$PIM_CAMERA_PROCESS_ROOT/100/cmdline"
-exit 0
+printf "/bin/bash\000%s\000%s\000" "$PIM_CAMERA_BG_CHECKER" "$1" > "$PIM_CAMERA_PROCESS_ROOT/100/cmdline"
 SH
-for cmd in ord vcm; do
+for cmd in ord vcm gstApp; do
     cat > "$WORK/stub/$cmd" <<'SH'
 #!/bin/sh
 exec 9>"$WORK/procs.lock"
@@ -138,14 +152,106 @@ printf "%s\n" "$(basename "$0")" >> "$WORK/procs"
 SH
 done
 REAL_JQ=$(command -v jq)
+# The daemon and the children start_cam.sh and the vcm launch leave behind run
+# at the same time, so several processes append here at once.  Each appends one
+# 3-byte line with O_APPEND (>>), and a write that small lands whole at the end
+# of the file, so lines neither interleave nor overwrite: the count is the number
+# of lines.
 cat > "$WORK/shim/jq" <<SH
 #!/bin/sh
 printf 'jq\n' >> "\${JQ_BUDGET_LOG:?}"
 exec "$REAL_JQ" "\$@"
 SH
-chmod +x "$WORK"/stub/* "$WORK/shim/jq" "$PIM_CAMERA_START_CAM"
+chmod +x "$WORK"/stub/* "$WORK/shim/jq" "$PIM_CAMERA_BG_CHECKER"
 STUB_PATH="$WORK/stub:$PATH"
 SHIM_PATH="$WORK/shim:$STUB_PATH"
+
+# --- every jq on the request path goes through PATH ---------------------------
+# The shim sees only a jq found through PATH.  A shipped script that runs jq by
+# path, through `command -p`, from a captured path, or after replacing PATH or
+# the environment would spawn jq this budget never counts, so such a line fails
+# here.  Scanned: every shell and python file under dist/pim/opt/pim, by
+# shebang or extension.  Patterns, in order:
+#   a path ending in /jq (absolute or relative, shell or python)
+#   command -p jq
+#   jq's path captured: $(command -v jq), $(which jq), $(type -P jq), hash -t jq
+#   a variable assigned the bare name jq
+#   a jq-named variable used as the command: $JQ ${JQ} $jq_bin ${JQ_PATH} ...
+#   env -i / --ignore-environment
+#   python shutil.which("jq")
+# plus any PATH= assignment that does not extend $PATH.
+# Not seen: a command name built at run time (eval, a value read from a file);
+# a PATH set outside these files (the systemd unit, cron, sudo's secure_path -
+# the counted processes here get PATH from this test); jq run by compiled
+# programs or by anything outside dist/pim/opt/pim; languages other than shell
+# and python.
+cat > "$WORK/jq-bypass.patterns" <<'RE'
+/jq([[:space:]"'`;|&)]|$)
+command[[:space:]]+-[A-Za-z]*p[A-Za-z]*[[:space:]]+jq([^A-Za-z0-9_.-]|$)
+(\$\(|`)[[:space:]]*(command[[:space:]]+-[A-Za-z]*[vV]|which|type[[:space:]]+-[A-Za-z]*[pP])[[:space:]]+jq([^A-Za-z0-9_.-]|$)
+hash[[:space:]]+-t[[:space:]]+jq([^A-Za-z0-9_.-]|$)
+(^|[^A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]*=["']?jq["']?([[:space:];)]|$)
+\$\{?(JQ|jq)(_?(BIN|bin|PATH|path|CMD|cmd|EXE|exe))?\}?([^A-Za-z0-9_[]|$)
+env[[:space:]]+(-[A-Za-z]*i|--ignore-environment)
+which\([[:space:]]*["']jq["']
+RE
+# Prints each offending line as file:line:text; returns 2 if a file could not
+# be read, so an unreadable tree is not mistaken for a clean one.
+jq_bypass_scan() {
+    local rc=0
+    grep -nHE -f "$WORK/jq-bypass.patterns" -- "$@" || rc=$?
+    [ "$rc" -le 1 ] || return 2
+    rc=0
+    grep -nHE '(^|[^A-Za-z0-9_])PATH=' -- "$@" > "$WORK/path-assignments" || rc=$?
+    [ "$rc" -le 1 ] || return 2
+    grep -vE '\$\{?PATH([^A-Za-z0-9_]|$)' "$WORK/path-assignments" || [ $? -eq 1 ]
+}
+scan_files=()
+while IFS= read -r -d '' f; do
+    first=
+    { IFS= read -r first || :; } < "$f" 2>/dev/null
+    case "$f" in
+        *.sh|*.py) scan_files+=("$f") ;;
+        *) [[ $first =~ ^\#!.*[[:space:]/](sh|bash|dash|ksh|python[0-9.]*)([[:space:]]|$) ]] && scan_files+=("$f") ;;
+    esac
+done < <(find "$ROOT/dist/pim/opt/pim" -type f -print0)
+# The scan must at least cover the request path itself.
+for f in lib/cam_recovery.sh lib/cam_recovery_actions.sh lib/cam_operate_control.sh bin/cam-recoveryctl bin/start_cam.sh bin/camera_runtime_config.py; do
+    [[ " ${scan_files[*]} " == *" $ROOT/dist/pim/opt/pim/$f "* ]] || fail "jq bypass scan: $f is not among the scanned files"
+done
+hits=$(jq_bypass_scan "${scan_files[@]}") || die "jq bypass scan: a shipped file could not be read"
+[ -z "$hits" ] || fail "a shipped script runs jq outside PATH, which the budget cannot count:"$'\n'"$hits"
+# Positive control: each form is flagged on its own.  Negative control: the forms
+# the shipped scripts do use are not, so the check is not flagging everything.
+mkdir -p "$WORK/scan"
+n=0
+while IFS= read -r line; do
+    n=$((n + 1)); printf '%s\n' "$line" > "$WORK/scan/bypass$n.sh"
+    [ -n "$(jq_bypass_scan "$WORK/scan/bypass$n.sh")" ] || fail "jq bypass scan missed: $line"
+done <<'EOF'
+/usr/bin/jq -n 1
+out=$(./tools/jq -n 1)
+command -p jq -n 1
+JQ=$(command -v jq)
+jq_bin=`which jq`
+hash -t jq
+tool=jq
+"$JQ" -n 1
+${JQ_BIN} -n 1
+env -i jq -n 1
+PATH=/usr/bin:/bin jq -n 1
+subprocess.run(["/usr/bin/jq", "-n", "1"])
+path = shutil.which("jq")
+EOF
+cat > "$WORK/scan/clean.sh" <<'EOF'
+jq -n 1
+command -v jq >/dev/null 2>&1 || exit 64
+_cr_jq_memo out "$x" -r .a; [ "${#_CR_JQ_MEMO[@]}" -lt 64 ]
+dpkg -i /opt/pim/package/jq/*.deb
+export PATH="$WORK/bin:$PATH"
+EOF
+hits=$(jq_bypass_scan "$WORK/scan/clean.sh") || die "jq bypass scan: control file unreadable"
+[ -z "$hits" ] || fail "jq bypass scan flagged a plain PATH lookup: $hits"
 
 # A booted board with a running app: owner ACTIVE, the startup's service-state
 # and counter state on disk, ORD ready, all four consumers up, ISI children
