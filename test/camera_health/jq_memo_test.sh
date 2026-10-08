@@ -135,4 +135,17 @@ expect_runs 0 'the transition did not leave .owner and .id of the record it wrot
 [ "$got_owner" = "$want_owner" ] || fail "the memo holds another .owner than jq prints: '$got_owner' vs '$want_owner'"
 [ "$got_id" = "$want_id" ] || fail "the memo holds another .id than jq prints: '$got_id' vs '$want_id'"
 
+# The put values are taken from the written text parsed back, because the next
+# operation's jq -c .owner reads the file.  jq 1.7 prints a number it parsed from
+# text in its own form (1.7976931348623157E+308) and one it computed
+# (Infinity) as 1.7976931348623157e+308, so values derived from the record in
+# memory would differ from what jq prints for the file.  jq 1.6 prints both
+# alike, so this only fails on 1.7 if the derivation regresses.
+sed 's/"owner":{/"owner":{"x":Infinity,/' "$PIM_CAMERA_RUN_DIR/recovery/active.json" > "$WORK/active.next"
+mv "$WORK/active.next" "$PIM_CAMERA_RUN_DIR/recovery/active.json"
+cam_request_transition SUCCEEDED || fail "the transition to SUCCEEDED was refused"
+record=$(cat "$PIM_CAMERA_RUN_DIR/recovery/active.json"); got_owner=
+_cr_jq_memo got_owner "$record" -c .owner
+[ "$got_owner" = "$(jq -c .owner <<<"$record")" ] || fail "the memo holds another .owner than jq prints for the written record: '$got_owner'"
+
 echo "jq memo: PASS"

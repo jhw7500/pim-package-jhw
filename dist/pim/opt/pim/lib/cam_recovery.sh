@@ -798,6 +798,10 @@ _cr_transition_allowed() { case "$1:$2" in PENDING:QUIESCING|QUIESCING:RUNNING|R
 # 예전에는 status 추출이 실패해 허용된 전이도 64 로 보고했다(승인).
 # 시각은 문자열로 받아 안에서 해석한다: 해석할 수 없으면 2~5번 줄이 "-" 이고, 전이표
 # 판정 뒤에 70 이다 — 예전 --argjson 이 jq 를 실패시키던 자리와 같은 rc 다.
+# 메모에 넣는 .id·.owner 와 history 의 request 는 쓰는 텍스트를 다시 파싱한 값에서
+# 뽑는다 — 다음 연산의 jq -c .owner 는 디스크의 텍스트를 읽으므로, 메모리의 값을 바로
+# 직렬화하면 jq 1.7 에서 Infinity 같은 수의 표기가 달라질 수 있다(e+308 대 E+308).
+# 예전 history 갱신도 쓴 텍스트를 --argjson 으로 다시 읽어 넣었다.
 # 줄 경계: 정규식의 $ 는 끝 개행 앞에서도 맞으므로 \A…\z 로 묶는다. status 는 예전
 # $(jq -r .status) 처럼 NUL 과 끝 개행을 지운 값으로 판정한다.
 _CR_TRANSITION_FILTER='split("\u0000") as $p
@@ -807,8 +811,9 @@ _CR_TRANSITION_FILTER='split("\u0000") as $p
      | if type == "string" then (explode | map(select(. != 0)) | implode | sub("\n+\\z"; "")) else . end
      | if type == "string" and test("\\A[A-Z_]+\\z") then . else "-" end),
     (if $t == null then "-", "-", "-", "-" else
-       ($a | .status = $next | .updated_at = $t[0]) as $u
-       | ($u | tojson),
+       ($a | .status = $next | .updated_at = $t[0] | tojson) as $us
+       | ($us | fromjson) as $u
+       | $us,
          ($u.id | if type == "string" and test("\\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\z") then . else "-" end),
          ($u.owner | tojson),
          (if ($p | length) == 2 then (try ($p[1] | fromjson | .request = $u | tojson) catch "-") else "-" end)
