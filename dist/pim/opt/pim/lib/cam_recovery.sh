@@ -845,8 +845,11 @@ _cr_claim_locked() {
 cam_request_claim() { _cr_lock_call _cr_claim_locked; }
 _cr_transition_allowed() { case "$1:$2" in PENDING:QUIESCING|QUIESCING:RUNNING|RUNNING:VERIFYING|VERIFYING:SUCCEEDED|VERIFYING:FAILED|RUNNING:FAILED|QUIESCING:FAILED) return 0;; esac; return 1; }
 # 전이 한 번의 판정 재료와 쓸 문서를 jq 한 번으로 만든다 (이슈 #150 재설계).
-# active 와 history 원문은 NUL 로 이어 stdin 으로 넘긴다 — 문서를 argv 로 넘기지
-# 않으므로 크기 상한 근처에서도 E2BIG 로 실패하지 않는다. 출력은 줄마다 하나:
+# active 와 history 원문은 --rawfile 로 넘긴다 — 문서를 argv 로 넘기지 않으므로 크기
+# 상한 근처에서도 E2BIG 로 실패하지 않는다. -R stdin 은 쓰지 않는다: jq 는 원시 입력을
+# 4095 바이트 조각마다 따로 UTF-8 로 검사해, 조각 경계에 걸친 멀티바이트 문자(한글
+# reason 등)를 U+FFFD 로 바꾼다(jq 1.6·1.7.1 실측). history 가 없으면 hhave 가 0 이고
+# $p 는 active 하나다. 출력은 줄마다 하나:
 #   1 현재 status (대문자·밑줄이 아니면 "-")   2 갱신한 active
 #   3 갱신한 active 의 id (UUID 가 아니면 "-")  4 그 owner (jq -c 와 같은 직렬화)
 #   5 갱신한 history (history 가 없거나 .request 를 바꿀 수 없는 문서면 "-")
@@ -866,7 +869,7 @@ _cr_transition_allowed() { case "$1:$2" in PENDING:QUIESCING|QUIESCING:RUNNING|R
 # $(jq -r .status) 처럼 NUL 과 끝 개행을 지운 값으로 판정한다. 시각의 try 는 배열 안에
 # 가둔다 — jq 1.6 은 뒤에서 난 오류를 이미 지나간 try 로 되돌아가 잡아 줄을 더 낸다.
 # 줄이 다섯이 아니면 쓰지 않고 70 이다.
-_CR_TRANSITION_FILTER='split("\u0000") as $p
+_CR_TRANSITION_FILTER='([$araw] + (if $hhave == "1" then [$hraw] else [] end)) as $p
   | ($p[0] | fromjson) as $a
   | ([ $now | try [fromjson] catch null ] | .[0]) as $t
   | ($a.status
@@ -881,7 +884,7 @@ _CR_TRANSITION_FILTER='split("\u0000") as $p
          (if ($p | length) == 2 then (try ($p[1] | fromjson | .request = $u | tojson) catch "-") else "-" end)
      end)'
 _cr_transition_locked() {
-    local next=$1 active id history plan now current updated updated_id updated_owner history_next lines=()
+    local next=$1 active id history="" hhave=0 plan now current updated updated_id updated_owner history_next lines=()
     _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69
     active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69; _cr_record_owner_matches "$active" || return 69
     _cr_jq_memo id "$active" -r .id || id=""
@@ -890,10 +893,12 @@ _cr_transition_locked() {
     # 보고(active 를 쓴 뒤 70) 저장 디렉터리 밖을 가리키는 경로를 열지 않는다.
     if [[ $id =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] \
         && history=$(cat "$(_cr_history_file "$id")" 2>/dev/null); then
-        plan=$(printf '%s\0%s' "$active" "$history" | jq -Rrs --arg next "$next" --arg now "$now" "$_CR_TRANSITION_FILTER") || return 70
+        hhave=1
     else
-        plan=$(printf '%s' "$active" | jq -Rrs --arg next "$next" --arg now "$now" "$_CR_TRANSITION_FILTER") || return 70
+        history=""
     fi
+    plan=$(jq -nr --rawfile araw <(printf '%s' "$active") --rawfile hraw <(printf '%s' "$history") --arg hhave "$hhave" \
+        --arg next "$next" --arg now "$now" "$_CR_TRANSITION_FILTER") || return 70
     mapfile -t lines <<<"$plan"
     [ "${#lines[@]}" -eq 5 ] || return 70
     current=${lines[0]} updated=${lines[1]} updated_id=${lines[2]} updated_owner=${lines[3]} history_next=${lines[4]}
@@ -1106,6 +1111,8 @@ _CR_COUNTER_BEGIN_STATE_UPDATE='if $settle then .actions[$action].failed+=1 | .a
 # 코드가 낸다. 검증 필터는 예전 함수와 같은 문자열이고, 다음 문서의 검증은 예전처럼
 # 쓸 텍스트를 다시 파싱한 값으로 한다. 직전 요청 id 는 UUID 일 때만 받는다(예전은
 # jq -r 출력을 $(...) 로 받아 개행·NUL 이 든 id 에서 갈렸다). 기준은 jq 1.6 의미다.
+# 세 문서는 --rawfile 로 받는다 — -R stdin 은 4095 바이트 조각 경계의 멀티바이트
+# 문자를 U+FFFD 로 바꿔, 예전이 파싱한 것과 다른 텍스트를 놓고 판정하게 된다.
 _CR_COUNTER_BEGIN_FAST_FILTER='
   def state_valid: '"$_CR_STATE_FILTER"';
   def state_action_valid($action; $id): '"$_CR_STATE_ACTION_FILTER"';
@@ -1113,11 +1120,9 @@ _CR_COUNTER_BEGIN_FAST_FILTER='
   def argv_ok: utf8bytelength < 131072;
   def own_actions($action; $id): [.actions[] | select(.action==$action and .request_id==$id)];
   try (
-    split("\u0000") as $p
-    | if ($p | length) == 3 then . else error("shape") end
-    | ($p[0] | fromjson) as $s
-    | ($p[1] | fromjson) as $h
-    | ($p[2] | fromjson) as $a
+    ($sraw | fromjson) as $s
+    | ($hraw | fromjson) as $h
+    | ($araw | fromjson) as $a
     | ([ $now | try [fromjson] catch null ] | .[0]) as $t
     | if $t == null then error("clock") else . end
     | $s.actions[$action] as $sa
@@ -1160,7 +1165,7 @@ _CR_COUNTER_BEGIN_FAST_FILTER='
 _cr_counter_begin_locked() {
     local action=$1 id=$2 active state history history_request history_action history_next state_next
     local history_count history_phase state_phase state_mode settle=false now active_status active_id
-    local history_read=true now_read=true out plan=()
+    local history_read=true now_read=true fast_out fast_plan=()
     _cr_public_action "$action" || return 64; _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69
     active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69; _cr_record_owner_matches "$active" || return 69
     _cr_jq_memo active_status "$active" -r .status || active_status=""; [ "$active_status" = RUNNING ] || return 64
@@ -1171,14 +1176,15 @@ _cr_counter_begin_locked() {
     history=$(cat "$(_cr_history_file "$id")" 2>/dev/null) || history_read=false
     if [ "$history_read" = true ]; then
         now=$(_cr_now) || now_read=false
-        if [ "$now_read" = true ] && out=$(printf '%s\0%s\0%s' "$state" "$history" "$active" | jq -Rrs --arg action "$action" --arg id "$id" --arg now "$now" "$_CR_COUNTER_BEGIN_FAST_FILTER" 2>/dev/null); then
-            mapfile -t plan <<<"$out"
+        if [ "$now_read" = true ] && fast_out=$(jq -nr --rawfile sraw <(printf '%s' "$state") --rawfile hraw <(printf '%s' "$history") \
+            --rawfile araw <(printf '%s' "$active") --arg action "$action" --arg id "$id" --arg now "$now" "$_CR_COUNTER_BEGIN_FAST_FILTER" 2>/dev/null); then
+            mapfile -t fast_plan <<<"$fast_out"
         fi
     fi
-    if [ "${#plan[@]}" -eq 3 ] && [ "${plan[0]}" = ok ]; then
-        _cr_mutation_guard "$active" counter_history ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_history_file "$id")" "${plan[1]}" || return 70
+    if [ "${#fast_plan[@]}" -eq 3 ] && [ "${fast_plan[0]}" = ok ]; then
+        _cr_mutation_guard "$active" counter_history ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_history_file "$id")" "${fast_plan[1]}" || return 70
         _cr_test_failpoint counter_begin_after_history || return 70
-        _cr_mutation_guard "$active" counter_state ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_state_file)" "${plan[2]}" || return 70
+        _cr_mutation_guard "$active" counter_state ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_state_file)" "${fast_plan[2]}" || return 70
         return 0
     fi
     _cr_state_valid <<<"$state" || return 70

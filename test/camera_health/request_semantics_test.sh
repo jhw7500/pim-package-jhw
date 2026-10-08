@@ -761,4 +761,30 @@ snapshot
 expect_rc 70 cam_action_counter_begin gstapp_restart "$id"
 unchanged history state
 
+# --- H. text across jq's 4095-byte raw-input chunks --------------------------
+# jq reads raw input (-R) 4095 bytes at a time and checks each chunk for UTF-8 on
+# its own, so a multibyte character across a chunk boundary came back as U+FFFD.
+# Documents now reach jq whole (--rawfile).  Each case puts a Korean character at
+# byte 4094 of the first document jq used to read raw, and checks it survives.
+# Byte offset of the first 가 in $1; sets n.
+n=0
+first_ga_at() { local pre=${1%%가*}; _cr_byte_length n "$pre"; }
+label='transition keeps a reason across a jq raw-input chunk'
+fresh_owner
+cam_request_submit gstapp_restart operator '가' >/dev/null
+first_ga_at "$(cat "$pending_file")"
+reason="$(printf '%*s' "$(( 4094 - n ))" '' | tr ' ' a)가가가"
+fresh_owner; id=$(cam_request_submit gstapp_restart operator "$reason"); cam_request_claim
+first_ga_at "$(cat "$active_file")"; [ "$n" -eq 4094 ] || fail "the reason does not start a character at byte 4094 ($n)"
+expect_rc 0 cam_request_transition QUIESCING
+[ "$(jq -r .reason "$active_file")" = "$reason" ] || fail "the transition changed the reason in active.json"
+[ "$(jq -r .request.reason "$(history_file)")" = "$reason" ] || fail "the transition changed the reason in the history"
+label='counter begin keeps a state across a jq raw-input chunk'
+running_request
+first_ga_at "$(_cr_state_template | jq -c '.actions.reboot_fallback.last_request_id="가"')"
+jq -c --arg p "$(printf '%*s' "$(( 4094 - n ))" '' | tr ' ' a)가가가" '.actions.reboot_fallback.last_request_id=$p' \
+    <<<"$(_cr_state_template)" > "$state_file"
+first_ga_at "$(cat "$state_file")"; [ "$n" -eq 4094 ] || fail "the state does not start a character at byte 4094 ($n)"
+begin_writes_old_bytes
+
 echo "request semantics: PASS"
