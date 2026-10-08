@@ -351,4 +351,77 @@ expect_rc 69 cam_request_submit gstapp_restart "$long" "$long"
 id=$(cam_request_submit gstapp_restart operator 'after a refused long request')
 expect_rc 0 cam_request_claim
 
+# --- E. behaviour the issue #150 redesign is approved to change --------------
+# Pinned as it is today, so that the redesign changes it by flipping these
+# assertions on purpose rather than as a side effect.
+
+# Approved change (1): a history file holding two JSON documents only comes from
+# tampering.  Today the transition updates both, because jq applies
+# '.request=$request' to every document of the stream, and returns 0.
+label='transition with a two-document history'
+start_request gstapp_restart
+cam_request_transition QUIESCING
+history_doc=$(cat "$(history_file)")
+printf '%s\n%s\n' "$history_doc" "$history_doc" > "$(history_file)"
+expect_rc 0 cam_request_transition RUNNING
+jq -e '.status=="RUNNING"' "$active_file" >/dev/null || fail "active is not RUNNING"
+history_next=$(jq -c --argjson a "$(cat "$active_file")" '.request=$a' <<<"$history_doc")
+printf '%s\n%s\n' "$history_next" "$history_next" | cmp -s - "$(history_file)" \
+    || fail "history is not the two documents, each with the new request"
+
+# Approved change (3): a record just under the 128KiB argument limit passes the
+# submit guard (section D pins the refusal from 128KiB on), but the operations
+# that hand jq a document larger than the record as one argument fail on it.
+# The redesign passes no document through argv and is expected to flip both
+# cases below to a completed request.  Sizes are exact in this sandbox: owner
+# fields, uuids and timestamps have fixed lengths, so a record is a fixed part
+# plus the reason, and each case checks the size it asked for.
+label='near-limit record: fixed part'
+fresh_owner
+cam_request_submit gstapp_restart operator x >/dev/null
+record_fixed=$(( $(wc -c < "$PIM_CAMERA_RUN_DIR/recovery/pending.json") - 2 ))
+# A pending gstapp_restart whose record is exactly $1 bytes; sets id.
+near_limit_request() {
+    local bytes=$1
+    fresh_owner
+    id=$(cam_request_submit gstapp_restart operator "$(printf "%0$(( bytes - record_fixed ))d" 0)") \
+        || fail "submit refused a $bytes-byte record (rc $?)"
+    [ "$(( $(wc -c < "$PIM_CAMERA_RUN_DIR/recovery/pending.json") - 1 ))" -eq "$bytes" ] || fail "the record is not $bytes bytes"
+}
+# exec's refusal is the cause being pinned; its message goes to a file.
+argv_call() { "$@" 2>>"$WORK/argv.err"; }
+countered_to_verifying() {
+    expect_rc 0 argv_call cam_request_claim
+    expect_rc 0 argv_call cam_request_transition QUIESCING
+    expect_rc 0 argv_call cam_request_transition RUNNING
+    expect_rc 0 argv_call cam_action_counter_begin gstapp_restart "$id"
+    expect_rc 0 argv_call cam_request_transition VERIFYING
+    expect_rc 0 argv_call cam_action_counter_finish gstapp_restart "$id" SUCCEEDED 0
+}
+# Control: the same request with a smaller record completes.
+label='near-limit record: 130000 bytes completes'
+near_limit_request 130000
+countered_to_verifying; remember_actions
+expect_rc 0 argv_call cam_request_finish SUCCEEDED 0
+assert_finished
+# 131000 bytes: every step up to finish succeeds; finish passes the history,
+# which embeds the record, to jq as one argument and returns 70 before writing
+# anything, so active.json is left behind.
+label='near-limit record: 131000 bytes, finish fails'
+: > "$WORK/argv.err"
+near_limit_request 131000
+countered_to_verifying; snapshot
+expect_rc 70 argv_call cam_request_finish SUCCEEDED 0
+unchanged active history result state
+jq -e '.status=="VERIFYING"' "$active_file" >/dev/null || fail "active is not left at VERIFYING"
+grep -q 'Argument list too long' "$WORK/argv.err" || fail "finish did not fail on exec's argument limit"
+# 131060 bytes: the first transition adds status and updated_at, which takes
+# the updated record over the guard's limit; it returns 69 and writes nothing.
+label='near-limit record: 131060 bytes, first transition fails'
+near_limit_request 131060
+expect_rc 0 argv_call cam_request_claim; snapshot
+expect_rc 69 argv_call cam_request_transition QUIESCING
+unchanged active history
+jq -e '.status=="PENDING"' "$active_file" >/dev/null || fail "active is not left at PENDING"
+
 echo "request semantics: PASS"
