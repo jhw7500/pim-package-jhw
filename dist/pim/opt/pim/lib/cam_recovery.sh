@@ -112,7 +112,10 @@ _cr_jq_memo() {
 # /proc/sys/kernel/random 의 UUID 에서 나오는데 스키마는 "비어 있지만 않으면 됨"
 # 이었다. 개행이 든 값이 통과하면 한 번의 jq 로 여러 필드를 받아 오는 쪽의
 # 프레이밍이 어긋나므로, 실제 생성기가 내는 문자만 받도록 불변식을 명시한다.
-_CR_OWNER_SCHEMA_FILTER='type == "object" and (.boot_id|type == "string" and test("^[A-Za-z0-9._:-]+$")) and (.invocation_id|type == "string" and test("^[A-Za-z0-9._:-]+$")) and (.pid|type == "number" and floor == . and . > 0) and (.proc_start_time|type == "string" and test("^[0-9]+$")) and (.token|type == "string" and test("^[A-Za-z0-9._:-]+$")) and (.created_at|type == "number" and floor == . and . > 0) and (.lifecycle as $l | ["STARTING","ACTIVE","APPLYING_CONFIG","RECOVERING","DEGRADED","STOPPING"] | index($l) != null)'
+# lifecycle 은 문자열이어야 한다. index() 는 배열 인자를 부분 배열로 찾아서
+# ["ACTIVE"] 도 통과시켰다 — 이 필터를 쓰는 판정 모두에 걸리는 구멍이라 여기서
+# 막는다 (이슈 #150).
+_CR_OWNER_SCHEMA_FILTER='type == "object" and (.boot_id|type == "string" and test("^[A-Za-z0-9._:-]+$")) and (.invocation_id|type == "string" and test("^[A-Za-z0-9._:-]+$")) and (.pid|type == "number" and floor == . and . > 0) and (.proc_start_time|type == "string" and test("^[0-9]+$")) and (.token|type == "string" and test("^[A-Za-z0-9._:-]+$")) and (.created_at|type == "number" and floor == . and . > 0) and (.lifecycle as $l | ($l|type) == "string" and (["STARTING","ACTIVE","APPLYING_CONFIG","RECOVERING","DEGRADED","STOPPING"] | index($l) != null))'
 _CR_OWNER_LIVE_MATCH_FILTER='(.boot_id == $boot) and ($ei == "" or .invocation_id == $ei) and ($et == "" or .token == $et)'
 _CR_OWNER_EXPORTED_MATCH_FILTER='($b != "" and .boot_id == $b) and ($iv != "" and .invocation_id == $iv) and ($p != "" and (.pid|tostring) == $p) and ($ps != "" and .proc_start_time == $ps) and ($tk != "" and .token == $tk) and ($ca != "" and (.created_at|tostring) == $ca)'
 # cam_executor_assert_context 의 루프는 빈 값 검사 없이 동등 비교만 한다. 그 의미를
@@ -213,25 +216,28 @@ _cr_record_owner_matches() { local saved current; _cr_jq_memo saved "$1" -c .own
 # rc 는 달라지지 않는다. /proc 확인만 jq 가 못 하므로 shell 에 남는다.
 # ei/et 를 빈 문자열로 넘기는 것은 예전 snapshot_live 호출이 인자를 주지 않아
 # 그 두 절이 무조건 참이던 것을 그대로 유지하기 위해서다.
+# 문자열의 바이트 수. locale 을 바꾸는 범위를 이 함수 안으로 한정한다.
+_cr_byte_length() { local LC_ALL=C; printf -v "$1" '%s' "${#2}"; }
 _cr_record_owner_ready() {
-    local record=$1 current boot fields pid start actual allowed=[] sep=
+    local record=$1 rec_owner rec_bytes current boot fields lifecycle pid start actual allowed
     shift
+    # 예전에는 --argjson rec 가 레코드 전체를 argv 한 칸으로 넘겨 128KiB
+    # (MAX_ARG_STRLEN) 부터 exec 가 실패했고 그래서 69 였다. 같은 상한을 명시해
+    # 그 rc 를 보존한다 — 없으면 claim 이 레코드를 argv 로 넘기다 실패해, 써지기는
+    # 하지만 claim 할 수 없는 pending 이 큐를 75 로 막는다. 상한 바로 아래에서도
+    # 레코드보다 큰 문서(history·종결 요청)를 argv 로 넘기는 곳은 실패할 수 있다
+    # — 이 변경 전부터 같고, 문서를 argv 로 넘기지 않게 바꿀 때 함께 없앤다.
+    _cr_byte_length rec_bytes "$record"
+    [ "$rec_bytes" -lt 131072 ] || return 69
     current=$(_cr_owner_json) || return 69
     boot=$(cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null) || return 69
-    # The allowed lifecycles go in as one --argjson array rather than through
-    # --args.  --args and $ARGS need jq 1.6 and the package declares no jq
-    # floor, and jq's own option parser would still claim any argument starting
-    # with a hyphen, so a caller's value could turn into a jq option.  Values
-    # outside the lifecycle character set are dropped rather than passed on:
-    # the owner schema constrains .lifecycle to six enum names, so such a value
-    # could never have matched in the shell loop this replaces either.
-    allowed='['
-    for pid in "$@"; do
-        case "$pid" in *[!A-Z_]*|'') continue;; esac
-        allowed="$allowed$sep\"$pid\""; sep=,
-    done
-    allowed="$allowed]"
-    pid=
+    # 메모 키에는 판정이 실제로 읽는 것만 넣는다 (이슈 #150). 필터가 레코드에서
+    # 보는 것은 .owner 뿐인데 예전에는 레코드 전체와 허용 lifecycle 목록이 키에
+    # 들어가, 전이로 status·updated_at 만 바뀌어도, 허용 목록이 다른 호출자가
+    # 불러도 같은 판정을 jq 로 다시 했다. .owner 추출은 _cr_record_owner_matches
+    # 와 같은 메모 호출이라 두 가드가 결과를 함께 쓴다. 여러 문서가 이어진
+    # 레코드는 추출이 여러 줄이 되어 --argjson 이 거부하므로 예전처럼 69 다.
+    _cr_jq_memo rec_owner "$record" -c .owner || return 69
     # -s is what keeps this a single-document check.  Master bound the owner
     # with --argjson, which rejects a JSON stream outright; reading it as input
     # instead would run the filter once per document and accept the record if
@@ -240,13 +246,17 @@ _cr_record_owner_ready() {
     # longer holds.  _cr_owner_monitor_snapshot guards the same way.
     # jq's stderr is not discarded: a jq that cannot run this filter must not
     # be indistinguishable from an ownership rejection.
-    _cr_jq_memo fields "$current" -r -s --argjson rec "$record" --arg boot "$boot" --arg ei "" --arg et "" --argjson allowed "$allowed" \
-        "if (length == 1) then .[0] | if ((\$rec.owner | ($_CR_OWNER_SCHEMA_FILTER)) and ($_CR_OWNER_SCHEMA_FILTER) and ($_CR_OWNER_LIVE_MATCH_FILTER) and (\$rec.owner as \$a | . as \$b | $_CR_OWNER_IMMUTABLE_EQ_FILTER) and (.lifecycle as \$l | \$allowed | index(\$l) != null)) then [(.pid|tostring), .proc_start_time] | join(\"\\n\") else empty end else empty end" \
+    # lifecycle 은 첫 줄로 내보내고 허용 여부는 아래 shell 에서 비교한다. 두
+    # 문서 모두 lifecycle 이 문자열임은 스키마 필터가 보장한다.
+    _cr_jq_memo fields "$current" -r -s --argjson a "$rec_owner" --arg boot "$boot" --arg ei "" --arg et "" \
+        "if (length == 1) then .[0] | if ((\$a | ($_CR_OWNER_SCHEMA_FILTER)) and ($_CR_OWNER_SCHEMA_FILTER) and ($_CR_OWNER_LIVE_MATCH_FILTER) and (. as \$b | $_CR_OWNER_IMMUTABLE_EQ_FILTER)) then [.lifecycle, (.pid|tostring), .proc_start_time] | join(\"\\n\") else empty end else empty end" \
          || return 69
     [ -n "$fields" ] || return 69
-    { IFS= read -r pid; IFS= read -r start; } <<<"$fields"
+    { IFS= read -r lifecycle; IFS= read -r pid; IFS= read -r start; } <<<"$fields"
     actual=$(_cr_proc_start "$pid")
     [ -n "$actual" ] && [ "$actual" = "$start" ] || return 69
+    for allowed in "$@"; do [ "$lifecycle" = "$allowed" ] && return 0; done
+    return 69
 }
 _cr_test_owner_rollover() {
     local stage=$1 owner changed field=${PIM_CAMERA_TEST_OWNER_ROLLOVER_FIELD:-created_at}
