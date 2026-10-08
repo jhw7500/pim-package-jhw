@@ -178,15 +178,16 @@ SHIM_PATH="$WORK/shim:$STUB_PATH"
 #   a variable assigned the bare name jq
 #   a jq-named variable used as the command: $JQ ${JQ} $jq_bin ${JQ_PATH}
 #     ${jq_path[0]} ...
-#   env -i / --ignore-environment
 #   python shutil.which("jq")
-# plus any PATH= assignment other than appending to $PATH (replacing it or
-# prepending a directory both let a real jq win over the shim).  Lines that are
-# only a comment are skipped; a comment after code on the same line is not.
+# and, as a blanket rule, any PATH= assignment and any use of env - as a command
+# (env -i, env -, env -u PATH ...) or as python's env= argument.  Which of those
+# forms keep the shim first depends on quoting and options (PATH='$PATH:/x' does
+# not expand; env - clears the environment), so the shipped scripts, which use
+# none of them, are held to using none.  Lines that are only a comment are
+# skipped; a comment after code on the same line is not.
 # Not seen: a command name built at run time (eval, a value read from a file);
 # a PATH set outside these files (the systemd unit, cron, sudo's secure_path -
-# the counted processes here get PATH from this test); a python subprocess given
-# its own env= without PATH; jq run by compiled
+# the counted processes here get PATH from this test); jq run by compiled
 # programs or by anything outside dist/pim/opt/pim; languages other than shell
 # and python.
 cat > "$WORK/jq-bypass.patterns" <<'RE'
@@ -196,7 +197,9 @@ command[[:space:]]+-[A-Za-z]*p[A-Za-z]*[[:space:]]+jq([^A-Za-z0-9_.-]|$)
 hash[[:space:]]+-t[[:space:]]+jq([^A-Za-z0-9_.-]|$)
 (^|[^A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]*=["']?jq["']?([[:space:];)]|$)
 \$\{?(JQ|jq)(_?(BIN|bin|PATH|path|CMD|cmd|EXE|exe))?(\[[^]]*\])?\}?([^A-Za-z0-9_[]|$)
-env[[:space:]]+(-[A-Za-z]*i|--ignore-environment)
+(^|[;&|(`[:space:]])env([[:space:]]|$)
+(^|[^A-Za-z0-9_])PATH=
+(^|[^A-Za-z0-9_.])env[[:space:]]*=[^=]
 which\([[:space:]]*["']jq["']
 RE
 # Prints each offending line as file:line:text; returns 2 if a file could not
@@ -205,13 +208,6 @@ jq_bypass_scan() {
     local rc=0
     grep -nHE -f "$WORK/jq-bypass.patterns" -- "$@" > "$WORK/bypass-hits" || rc=$?
     [ "$rc" -le 1 ] || return 2
-    rc=0
-    grep -nHE '(^|[^A-Za-z0-9_])PATH=' -- "$@" > "$WORK/path-assignments" || rc=$?
-    [ "$rc" -le 1 ] || return 2
-    # Only appending to PATH keeps the shim first: PATH="$PATH:/dir".  Any other
-    # assignment - replacing PATH, or prepending a directory as in
-    # PATH=/usr/bin:$PATH - can put a real jq ahead of the shim.
-    grep -vE '(^|[^A-Za-z0-9_])PATH=["'"'"']?\$\{?PATH\}?([:"'"'"'[:space:];]|$)' "$WORK/path-assignments" >> "$WORK/bypass-hits" || [ $? -eq 1 ]
     # A line that is only a comment runs nothing.
     grep -vE '^[^:]*:[0-9]+:[[:space:]]*#' "$WORK/bypass-hits" || [ $? -eq 1 ]
 }
@@ -250,6 +246,11 @@ ${JQ_BIN} -n 1
 "${jq_path[0]}" -n 1
 PATH=/usr/bin:$PATH jq -n 1
 export PATH="/usr/bin:${PATH}"
+PATH='$PATH:/usr/bin' jq -n 1
+export PATH="$PATH:/opt/x"
+env - jq -n 1
+env -u PATH jq -n 1
+subprocess.run(["jq", "-n", "1"], env={})
 env -i jq -n 1
 PATH=/usr/bin:/bin jq -n 1
 subprocess.run(["/usr/bin/jq", "-n", "1"])
@@ -260,8 +261,7 @@ jq -n 1
 command -v jq >/dev/null 2>&1 || exit 64
 _cr_jq_memo out "$x" -r .a; [ "${#_CR_JQ_MEMO[@]}" -lt 64 ]
 dpkg -i /opt/pim/package/jq/*.deb
-export PATH="$PATH:$WORK/bin"
-PATH=${PATH}:/opt/pim/bin cam-recoveryctl status
+environment=ok; printenv HOME >/dev/null
 # a note on /usr/bin/jq and mode=jq in a comment runs nothing
     # an indented comment: ${JQ} -n 1
 EOF
