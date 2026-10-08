@@ -748,15 +748,17 @@ cam_startup_request_reserve() {
 }
 
 # submit 의 owner 스키마 판정과 요청 생성을 jq 한 번으로 (이슈 #150 재설계 PR2). owner 원문은
-# stdin 으로 받아 -s 로 문서 배열로 읽고, 예전 두 단계를 그대로 재현한다:
-#   _cr_owner_schema(jq -e FILTER, 문서 스트림) — 어느 문서든 평가 오류거나 마지막 문서가
-#   거짓이면 69, 문서가 없으면 통과
+# stdin 으로 받아 -s 로 문서 배열로 읽고, 예전 두 단계를 jq 1.6 의미 그대로 재현한다:
+#   _cr_owner_schema(jq -e FILTER, 문서 스트림) — rc 는 마지막 문서만 반영한다: 마지막
+#   문서가 평가 오류거나 거짓이면 69, 앞 문서의 오류는 무시, 문서가 없으면 통과(jq 1.7 은
+#   빈 입력에 4 를 내 69 였다)
 #   요청 생성(--argjson owner) — owner 가 문서 하나가 아니면 70, 시각을 해석할 수 없으면 70
 # 출력은 줄마다: 판정(ok|69|70), 요청, 그 요청의 owner(쓴 텍스트를 다시 파싱해 jq -c 와 같은
-# 직렬화 — 쓰기 가드가 꺼낼 .owner 를 메모에 미리 넣는다).
+# 직렬화 — 쓰기 가드가 꺼낼 .owner 를 메모에 미리 넣는다). 시각의 try 는 배열 안에 가둔다 —
+# jq 1.6 은 뒤에서 난 오류를 이미 지나간 try 로 되돌아가 잡아 줄을 더 낸다.
 _CR_SUBMIT_FILTER='[ .[] | try ('"$_CR_OWNER_SCHEMA_FILTER"') catch "error" ] as $schema
-  | (try ($now | [fromjson]) catch null) as $t
-  | if any($schema[]; . == "error") or (($schema | length) > 0 and ($schema[-1] | not)) then "69"
+  | ([ $now | try [fromjson] catch null ] | .[0]) as $t
+  | if ($schema | length) > 0 and ($schema[-1] == "error" or ($schema[-1] | not)) then "69"
     elif length != 1 or $t == null then "70"
     else ({id:$id,type:$type,source:$source,reason:$reason,status:"PENDING",created_at:$t[0],owner:.[0]}
           + (if $source_path=="" then {} else {source_path:$source_path} end)
@@ -764,19 +766,24 @@ _CR_SUBMIT_FILTER='[ .[] | try ('"$_CR_OWNER_SCHEMA_FILTER"') catch "error" ] as
       | "ok", $rs, ($rs | fromjson | .owner | tojson)
     end'
 _cr_request_new() {
-    local type=$1 source=$2 reason=$3 source_path=${4:-} source_mtime=${5:-} id now owner plan verdict request request_owner
+    local type=$1 source=$2 reason=$3 source_path=${4:-} source_mtime=${5:-} id now owner out rc owner_bytes plan=()
     _cr_request_type "$type" || return 64; [ -n "$source" ] && [ -n "$reason" ] || return 64
     [ -z "$source_mtime" ] || [[ $source_mtime =~ ^[0-9]+$ ]] || return 64
     _cr_owner_lifecycle_in ACTIVE DEGRADED || return 69
     [ ! -e "$(_cr_pending_file)" ] && [ ! -e "$(_cr_active_file)" ] || return 75
     id=$(_cr_uuid) || return 70; now=$(_cr_now); owner=$(_cr_owner_json)
-    plan=$(jq -rs --arg id "$id" --arg type "$type" --arg source "$source" --arg reason "$reason" --arg source_path "$source_path" --arg source_mtime "$source_mtime" --arg now "$now" "$_CR_SUBMIT_FILTER" <<<"$owner") || return 69
-    { IFS= read -r verdict; IFS= read -r request; IFS= read -r request_owner; } <<<"$plan"
-    [ "$verdict" != 69 ] || return 69
+    # jq 를 실행하지 못하면(126·127 — 인자가 128KiB 를 넘는 E2BIG 포함) 70, 그 밖의 jq
+    # 실패(owner 파싱 실패 등)는 예전 스키마 판정처럼 69 다.
+    out=$(jq -rs --arg id "$id" --arg type "$type" --arg source "$source" --arg reason "$reason" --arg source_path "$source_path" --arg source_mtime "$source_mtime" --arg now "$now" "$_CR_SUBMIT_FILTER" <<<"$owner") || { rc=$?; [ "$rc" -lt 126 ] || return 70; return 69; }
+    mapfile -t plan <<<"$out"
+    case "${plan[0]}:${#plan[@]}" in 69:1|70:1|ok:3) ;; *) return 70;; esac
+    [ "${plan[0]}" != 69 ] || return 69
     if [ -n "${PIM_CAMERA_OWNER_INVOCATION:-}" ]; then _cr_owner_matches_exported_context "$owner" || return 69; fi
-    [ "$verdict" = ok ] || return 70
-    _cr_jq_memo_put "$request_owner" "$request" -c .owner
-    _cr_mutation_guard "$request" pending ACTIVE DEGRADED || return 69; _cr_atomic_write "$(_cr_pending_file)" "$request" || return 70; printf '%s\n' "$id"
+    [ "${plan[0]}" = ok ] || return 70
+    # 예전에는 owner 를 --argjson 으로 넘겨 128KiB 부터 exec 가 실패했고 그래서 70 이었다.
+    _cr_byte_length owner_bytes "$owner"; [ "$owner_bytes" -lt 131072 ] || return 70
+    _cr_jq_memo_put "${plan[2]}" "${plan[1]}" -c .owner
+    _cr_mutation_guard "${plan[1]}" pending ACTIVE DEGRADED || return 69; _cr_atomic_write "$(_cr_pending_file)" "${plan[1]}" || return 70; printf '%s\n' "$id"
 }
 cam_request_submit() {
     if [ -e "$(_cr_pending_file)" ] || [ -e "$(_cr_active_file)" ]; then
@@ -793,36 +800,46 @@ _cr_history_request() {
     _cr_atomic_write "$(_cr_history_file "$id")" "$updated"
 }
 # claim 의 모양 판정, id·owner 추출, history 생성을 jq 한 번으로 (이슈 #150 재설계 PR2).
-# pending 원문을 -s 로 문서 배열로 읽고 예전 모양 검사(jq -e '.id and …' 를 문서 스트림에)를
-# 그대로 재현한다: 어느 문서든 평가 오류거나 마지막 문서가 거짓이면 70, 문서가 없으면 통과.
-# 문서가 하나가 아니면 이어지는 owner 대조가 .owner 를 여러 줄로 받아 거부했으므로 69 다.
-# 출력은 줄마다: 판정(ok|69|70), id(UUID 가 아니면 "-"), owner(jq -c 와 같은 직렬화),
-# history. id 와 owner 는 메모에 미리 넣어 owner 대조와 claim 직후의 첫 전이가 jq 를 다시
-# 띄우지 않는다(active 는 pending 을 옮긴 같은 바이트다). 문서는 argv 로 넘기지 않는다.
+# pending 원문을 -s 로 문서 배열로 읽고 예전 세 단계를 jq 1.6 의미 그대로 재현한다 — jq 는
+# 문서 스트림에서 마지막 문서의 결과만 rc 에 반영하고, 오류 난 문서는 출력하지 않는다:
+#   모양 검사(jq -e '.id and …') — 마지막 문서가 평가 오류거나 거짓이면 70, 문서가 없으면
+#   통과(jq 1.7 은 빈 입력에 4 를 내 70 이었다)
+#   owner 대조(jq -c .owner) — .owner 가 오류 없이 나오는 문서가 하나가 아니면 69
+#   history 생성(--argjson request) — 문서가 하나가 아니면 대조를 통과해도 70("multi")
+# 출력은 줄마다: 판정(ok|multi|69|70), id(UUID 가 아니면 "-"), owner(jq -c .owner 와 같은
+# 직렬화), history. id 와 owner 는 메모에 미리 넣어 owner 대조와 claim 직후의 첫 전이가 jq 를
+# 다시 띄우지 않는다(active 는 pending 을 옮긴 같은 바이트다). 문서는 argv 로 넘기지 않는다.
 _CR_CLAIM_FILTER='[ .[] | try (.id and .type and .source and .reason and .owner) catch "error" ] as $shape
-  | if any($shape[]; . == "error") or (($shape | length) > 0 and ($shape[-1] | not)) then "70"
-    elif length != 1 then "69"
+  | [ .[] | try (.owner | tojson) catch empty ] as $owners
+  | if ($shape | length) > 0 and ($shape[-1] == "error" or ($shape[-1] | not)) then "70"
+    elif ($owners | length) != 1 then "69"
+    elif length != 1 then "multi", "-", $owners[0], "-"
     else "ok",
       (.[0].id | if type == "string" and test("\\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\z") then . else "-" end),
       (.[0].owner | tojson),
       ({request: .[0], actions: []} | tojson)
     end'
 _cr_claim_locked() {
-    local pending plan verdict id owner history
+    local pending out pending_bytes plan=()
     _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69
     [ -f "$(_cr_pending_file)" ] || return 69; [ ! -e "$(_cr_active_file)" ] || return 75
     pending=$(cat "$(_cr_pending_file)") || return 70
-    plan=$(jq -rs "$_CR_CLAIM_FILTER" <<<"$pending") || return 70
-    { IFS= read -r verdict; IFS= read -r id; IFS= read -r owner; IFS= read -r history; } <<<"$plan"
-    [ "$verdict" != 70 ] || return 70
-    [ "$verdict" = ok ] || return 69
-    _cr_jq_memo_put "$owner" "$pending" -c .owner
-    [ "$id" = - ] || _cr_jq_memo_put "$id" "$pending" -r .id
+    out=$(jq -rs "$_CR_CLAIM_FILTER" <<<"$pending") || return 70
+    mapfile -t plan <<<"$out"
+    case "${plan[0]}:${#plan[@]}" in 69:1|70:1|ok:4|multi:4) ;; *) return 70;; esac
+    [ "${plan[0]}" != 70 ] || return 70
+    [ "${plan[0]}" != 69 ] || return 69
+    _cr_jq_memo_put "${plan[2]}" "$pending" -c .owner
+    [ "${plan[0]}" = ok ] || { _cr_record_owner_matches "$pending" || return 69; return 70; }
+    [ "${plan[1]}" = - ] || _cr_jq_memo_put "${plan[1]}" "$pending" -r .id
     _cr_record_owner_matches "$pending" || return 69
     # history 경로는 UUID 인 id 로만 만든다 — 아니면 아무것도 쓰지 않고 70 이다(전이와 같은
     # 규칙: 저장 디렉터리 밖을 가리키는 경로를 열지 않는다).
-    [ "$id" != - ] || return 70
-    _cr_mutation_guard "$pending" claim_history ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_history_file "$id")" "$history" || return 70
+    [ "${plan[1]}" != - ] || return 70
+    # 예전에는 history 를 만들 때 pending 을 --argjson 으로 넘겨 128KiB 부터 exec 가
+    # 실패했고 그래서 가드(69)보다 먼저 70 이었다.
+    _cr_byte_length pending_bytes "$pending"; [ "$pending_bytes" -lt 131072 ] || return 70
+    _cr_mutation_guard "$pending" claim_history ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_history_file "${plan[1]}")" "${plan[3]}" || return 70
     _cr_mutation_guard "$pending" claim_active ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_move "$(_cr_pending_file)" "$(_cr_active_file)" || return 70
 }
 cam_request_claim() { _cr_lock_call _cr_claim_locked; }
@@ -846,10 +863,12 @@ _cr_transition_allowed() { case "$1:$2" in PENDING:QUIESCING|QUIESCING:RUNNING|R
 # 직렬화하면 jq 1.7 에서 Infinity 같은 수의 표기가 달라질 수 있다(e+308 대 E+308).
 # 예전 history 갱신도 쓴 텍스트를 --argjson 으로 다시 읽어 넣었다.
 # 줄 경계: 정규식의 $ 는 끝 개행 앞에서도 맞으므로 \A…\z 로 묶는다. status 는 예전
-# $(jq -r .status) 처럼 NUL 과 끝 개행을 지운 값으로 판정한다.
+# $(jq -r .status) 처럼 NUL 과 끝 개행을 지운 값으로 판정한다. 시각의 try 는 배열 안에
+# 가둔다 — jq 1.6 은 뒤에서 난 오류를 이미 지나간 try 로 되돌아가 잡아 줄을 더 낸다.
+# 줄이 다섯이 아니면 쓰지 않고 70 이다.
 _CR_TRANSITION_FILTER='split("\u0000") as $p
   | ($p[0] | fromjson) as $a
-  | (try ($now | [fromjson]) catch null) as $t
+  | ([ $now | try [fromjson] catch null ] | .[0]) as $t
   | ($a.status
      | if type == "string" then (explode | map(select(. != 0)) | implode | sub("\n+\\z"; "")) else . end
      | if type == "string" and test("\\A[A-Z_]+\\z") then . else "-" end),
@@ -862,7 +881,7 @@ _CR_TRANSITION_FILTER='split("\u0000") as $p
          (if ($p | length) == 2 then (try ($p[1] | fromjson | .request = $u | tojson) catch "-") else "-" end)
      end)'
 _cr_transition_locked() {
-    local next=$1 active id history plan now current updated updated_id updated_owner history_next
+    local next=$1 active id history plan now current updated updated_id updated_owner history_next lines=()
     _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69
     active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69; _cr_record_owner_matches "$active" || return 69
     _cr_jq_memo id "$active" -r .id || id=""
@@ -875,7 +894,9 @@ _cr_transition_locked() {
     else
         plan=$(printf '%s' "$active" | jq -Rrs --arg next "$next" --arg now "$now" "$_CR_TRANSITION_FILTER") || return 70
     fi
-    { IFS= read -r current; IFS= read -r updated; IFS= read -r updated_id; IFS= read -r updated_owner; IFS= read -r history_next; } <<<"$plan"
+    mapfile -t lines <<<"$plan"
+    [ "${#lines[@]}" -eq 5 ] || return 70
+    current=${lines[0]} updated=${lines[1]} updated_id=${lines[2]} updated_owner=${lines[3]} history_next=${lines[4]}
     _cr_transition_allowed "$current" "$next" || return 64
     [ "$updated" != - ] || return 70
     [ "$updated_id" = - ] || _cr_jq_memo_put "$updated_id" "$updated" -r .id
