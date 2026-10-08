@@ -23,14 +23,15 @@ set -euo pipefail
 # Measured as submit + daemon; the daemon side includes the 4 jq of each
 # start_cam.sh run (one per flow that starts the app).  The assertion is on the
 # total.  History (stop/restart/hard_reset/module_reload/module_reload_fails):
-# e3da7ca 68/118/120/120/196; one jq per transition (#150 PR1) 54/105/107/107/183.
+# e3da7ca 68/118/120/120/196; one jq per transition (#150 PR1) 54/105/107/107/183;
+# one jq per claim and per submit request (#150 PR2) 49/100/102/102/178.
 # flow                   ceiling   measured        terminal state the flow must reach
 declare -A CEILING=(
-    [gstapp_stop]=54           #   6 + 48          SUCCEEDED
-    [gstapp_restart]=105       #   6 + 95 + 4      SUCCEEDED
-    [camera_hard_reset]=107    #   6 + 97 + 4      SUCCEEDED
-    [module_reload]=107        #   6 + 97 + 4      SUCCEEDED
-    [module_reload_fails]=183  #   6 + 177         FAILED rc=1: module_reload and
+    [gstapp_stop]=49           #   4 + 45          SUCCEEDED
+    [gstapp_restart]=100       #   4 + 92 + 4      SUCCEEDED
+    [camera_hard_reset]=102    #   4 + 94 + 4      SUCCEEDED
+    [module_reload]=102        #   4 + 94 + 4      SUCCEEDED
+    [module_reload_fails]=178  #   4 + 174         FAILED rc=1: module_reload and
                                #                   camera_hard_reset fail at modprobe
                                #                   (rc 23) before the app starts,
                                #                   reboot_fallback is refused (rc 1)

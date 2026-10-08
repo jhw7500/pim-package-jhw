@@ -27,6 +27,7 @@ source "$PIM_LIB/cam_operate_control.sh"
 # finished_at changes the bytes even when crash and resume share a second.
 # Callers use $(_cr_now), a subshell, so the clock lives in a file.
 printf '1700000000\n' > "$WORK/clock"
+# shellcheck disable=SC2317 # called by the library, not by this file
 _cr_now() { local now; now=$(( $(cat "$WORK/clock") + 1 )); printf '%s\n' "$now" > "$WORK/clock"; printf '%s\n' "$now"; }
 
 fail() { echo "FAIL: $label: $*" >&2; exit 1; }
@@ -398,6 +399,7 @@ hash -r
 label='transition with a clock that prints no number'
 start_request gstapp_restart
 clock_fn=$(declare -f _cr_now)
+# shellcheck disable=SC2317 # called by the library, not by this file
 _cr_now() { echo not-a-number; }
 snapshot
 expect_rc 64 cam_request_transition RUNNING
@@ -488,5 +490,140 @@ expect_rc 0 argv_call cam_request_claim; snapshot
 expect_rc 69 argv_call cam_request_transition QUIESCING
 unchanged active history
 jq -e '.status=="PENDING"' "$active_file" >/dev/null || fail "active is not left at PENDING"
+
+# --- F. claim and submit judge their documents as the old per-step jq did ----
+# One jq per operation since issue #150 PR2: the outcomes below are the old
+# ones under jq 1.6, which reflects only the last document of a stream in its
+# rc and prints nothing for a document that fails.  The claim's shape test
+# (jq -e) is 70 when the last document fails or is false and passes on no
+# document; the owner match (jq -c .owner) is 69 unless exactly one document
+# yields an owner; the history (--argjson) is 70 for anything but one document.
+pending_file="$PIM_CAMERA_RUN_DIR/recovery/pending.json"
+# The review's oracle: every memo entry is what jq prints for its key, so a
+# prefilled value stands in for the jq it saves.
+memo_matches_jq() {
+    local key expect args=()
+    for key in "${!_CR_JQ_MEMO[@]}"; do
+        mapfile -d $'\037' -t args < <(printf '%s' "${key%%$'\036'*}")
+        expect=$(jq "${args[@]}" <<<"${key#*$'\036'}" 2>/dev/null) || fail "the memo holds a value jq does not print: ${args[*]}"
+        [ "${_CR_JQ_MEMO[$key]}" = "$expect" ] || fail "the memo holds another value than jq prints: ${args[*]}"
+    done
+}
+# A well-formed pending owned by the current owner; $1 is a shell snippet that
+# turns it ($good) into the text the case writes.
+claim_case() { # label, text-making snippet, expected rc
+    label="claim with $1"
+    fresh_owner; mkdir -p "$(dirname "$pending_file")"
+    local good text before
+    # shellcheck disable=SC2034 # read by the eval'd snippet in $2
+    good=$(jq -cn --argjson o "$(cat "$PIM_CAMERA_RUN_DIR/owner.json")" '{id:"11111111-2222-4333-8444-555555555555",type:"gstapp_restart",source:"s",reason:"r",status:"PENDING",created_at:1,owner:$o}')
+    text=$(eval "$2"); printf '%s\n' "$text" > "$pending_file"
+    before=$(fingerprint "$pending_file")
+    expect_rc "$3" cam_request_claim
+    [ "$before" = "$(fingerprint "$pending_file")" ] || fail "the pending request changed"
+    [ ! -e "$active_file" ] || fail "an active request was created"
+    [ -z "$(ls -A "$PIM_CAMERA_STATE_DIR/recovery/history" 2>/dev/null)" ] || fail "a history was written"
+}
+# shellcheck disable=SC2016 # expanded by claim_case
+{
+# jq 1.7 gives 4 on empty input, so the old code there was 70.
+claim_case 'an empty pending' 'printf ""' 69
+claim_case 'two pending documents' 'printf "%s\n%s" "$good" "$good"' 69
+claim_case 'a pending followed by a number' 'printf "%s 5" "$good"' 70
+claim_case 'a number, then a pending' 'printf "1 %s" "$good"' 70
+claim_case 'a pending, true, a pending' 'printf "%s true %s" "$good" "$good"' 69
+claim_case 'a number, then a pending of another owner' 'printf "1 %s" "$(jq -c ".owner.token=\"other\"" <<<"$good")"' 69
+claim_case 'a false id' 'jq -c ".id=false" <<<"$good"' 70
+claim_case 'an array' 'printf "[]"' 70
+claim_case 'null' 'printf null' 70
+# The old history took the pending as one argument, which exec refuses from
+# 128KiB on - 70 before the guard's 69.
+claim_case 'a pending of 131072 bytes' 'jq -c --arg r "$(printf "%0$(( 131072 - ${#good} + 1 ))d" 0)" ".reason=\$r" <<<"$good"' 70
+# Approved with the redesign, as for the transition: no history path from an id
+# that is not a UUID, and nothing is written.
+claim_case 'an id that is not a UUID' 'jq -c ".id=\"not-a-uuid\"" <<<"$good"' 70
+}
+memo_matches_jq
+label='claim of a 131071-byte pending'
+fresh_owner; mkdir -p "$(dirname "$pending_file")"
+pending=$(jq -cn --argjson o "$(cat "$PIM_CAMERA_RUN_DIR/owner.json")" '{id:"11111111-2222-4333-8444-555555555555",type:"gstapp_restart",source:"s",reason:"r",status:"PENDING",created_at:1,owner:$o}')
+pending=$(jq -c --arg r "$(printf "%0$(( 131071 - ${#pending} + 1 ))d" 0)" '.reason=$r' <<<"$pending"); printf '%s\n' "$pending" > "$pending_file"
+[ "${#pending}" -eq 131071 ] || fail "the pending is not 131071 bytes"
+expect_rc 0 cam_request_claim
+label='claim of a well-formed pending'
+fresh_owner; mkdir -p "$(dirname "$pending_file")"
+pending=$(jq -cn --argjson o "$(cat "$PIM_CAMERA_RUN_DIR/owner.json")" '{id:"11111111-2222-4333-8444-555555555555",type:"gstapp_restart",source:"s",reason:"r",status:"PENDING",created_at:1,owner:$o}'); printf '%s\n' "$pending" > "$pending_file"
+id=$(jq -r .id <<<"$pending")
+expect_rc 0 cam_request_claim
+[ "$(cat "$(history_file)")" = "$(jq -cn --argjson request "$pending" '{request:$request,actions:[]}')" ] \
+    || fail "the history is not the old serialization"
+memo_owner=; memo_id=
+_cr_jq_memo memo_owner "$pending" -c .owner; _cr_jq_memo memo_id "$pending" -r .id
+[ "$memo_owner" = "$(jq -c .owner <<<"$pending")" ] || fail "the memo holds another .owner than jq prints"
+[ "$memo_id" = "$id" ] || fail "the memo holds another .id than jq prints"
+
+label='submit writes the old request bytes'
+fresh_owner
+clock_before=$(cat "$WORK/clock")
+id=$(cam_request_submit module_reload watcher 'old bytes' /source/path 123)
+request=$(cat "$pending_file")
+[ "$request" = "$(jq -cn --arg id "$id" --argjson now "$((clock_before + 1))" --argjson owner "$(cat "$PIM_CAMERA_RUN_DIR/owner.json")" '{id:$id,type:"module_reload",source:"watcher",reason:"old bytes",status:"PENDING",created_at:$now,owner:$owner,source_path:"/source/path",source_mtime:123}')" ] \
+    || fail "the request is not the old serialization: $request"
+memo_owner=
+_cr_jq_memo memo_owner "$request" -c .owner
+[ "$memo_owner" = "$(jq -c .owner <<<"$request")" ] || fail "the memo holds another .owner than jq prints"
+label='submit with a clock that prints no number'
+fresh_owner
+clock_fn=$(declare -f _cr_now)
+# shellcheck disable=SC2317 # called by the library, not by this file
+_cr_now() { echo not-a-number; }
+expect_rc 70 cam_request_submit gstapp_restart operator 'no clock'
+[ ! -e "$pending_file" ] || fail "a pending request was written"
+eval "$clock_fn"
+# The owner checks before the request see only the last document, so a number
+# before the owner passes them and the old schema test.  The exported context,
+# when there is one, then refused two documents (69); without it the old
+# request did (70).
+label='submit with a number before the owner'
+fresh_owner
+{ printf '1 '; cat "$PIM_CAMERA_RUN_DIR/owner.json"; } > "$WORK/owner.tmp"; mv "$WORK/owner.tmp" "$PIM_CAMERA_RUN_DIR/owner.json"
+[ -n "${PIM_CAMERA_OWNER_INVOCATION:-}" ] || fail "the owner context is not exported"
+expect_rc 69 cam_request_submit gstapp_restart operator 'two owner documents'
+PIM_CAMERA_OWNER_INVOCATION='' expect_rc 70 cam_request_submit gstapp_restart operator 'two owner documents'
+[ ! -e "$pending_file" ] || fail "a pending request was written"
+# The old request took the owner and each field as one argument each, which
+# exec refuses from 128KiB on - 70 after the schema; one byte less reaches the
+# guard, whose limit the request is then over (69).
+label='submit with a reason of 131072 bytes'
+fresh_owner; : > "$WORK/argv.err"
+expect_rc 70 argv_call cam_request_submit gstapp_restart operator "$(printf '%0131072d' 0)"
+[ ! -e "$pending_file" ] || fail "a pending request was written"
+grep -q 'Argument list too long' "$WORK/argv.err" || fail "submit did not fail on exec's argument limit"
+# The owner of exactly $1 bytes, padded with a field the schema allows.
+pad_owner() {
+    local file="$PIM_CAMERA_RUN_DIR/owner.json" base
+    base=$(jq -c '.pad=""' "$file")
+    jq -c --arg p "$(printf "%0$(( $1 - ${#base} ))d" 0)" '.pad=$p' "$file" > "$file.tmp"; mv "$file.tmp" "$file"
+    [ "$(( $(wc -c < "$file") - 1 ))" -eq "$1" ] || fail "the owner is not $1 bytes"
+}
+label='submit with an owner of 131072 bytes'
+fresh_owner; pad_owner 131072
+expect_rc 70 cam_request_submit gstapp_restart operator 'large owner'
+[ ! -e "$pending_file" ] || fail "a pending request was written"
+label='submit with an owner of 131071 bytes'
+fresh_owner; pad_owner 131071
+expect_rc 69 cam_request_submit gstapp_restart operator 'large owner'
+[ ! -e "$pending_file" ] || fail "a pending request was written"
+# An owner nested 253 deep makes the request one level too deep for jq 1.6 to
+# parse back.  The old guard refused it (69); jq 1.6 must not answer the error
+# by re-running a try it has already left, which wrote "70" into the memo as
+# the request's owner.
+label='submit with a deeply nested owner'
+fresh_owner
+jq -c --argjson p "$(printf '%*s' 253 '' | tr ' ' '[')$(printf '%*s' 253 '' | tr ' ' ']')" '.pad=$p' \
+    "$PIM_CAMERA_RUN_DIR/owner.json" > "$WORK/owner.tmp"; mv "$WORK/owner.tmp" "$PIM_CAMERA_RUN_DIR/owner.json"
+expect_rc 69 cam_request_submit gstapp_restart operator 'deep owner'
+[ ! -e "$pending_file" ] || fail "a pending request was written"
+memo_matches_jq
 
 echo "request semantics: PASS"
