@@ -22,6 +22,8 @@ chmod +x "$WORK/bin/jq"
 export PATH="$WORK/bin:$PATH"
 # shellcheck source=/dev/null
 source "${JQ_MEMO_LIB:-$PIM_LIB/cam_recovery.sh}"
+# shellcheck source=/dev/null
+source "${JQ_MEMO_ACTIONS_LIB:-$PIM_LIB/cam_recovery_actions.sh}"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 runs() { if [ -e "$WORK/jq.log" ]; then wc -l < "$WORK/jq.log"; else echo 0; fi; }
@@ -56,5 +58,22 @@ expect_runs 7 'a false (rc 1) result was cached'
 
 _cr_jq_memo out '{"a":1,"b":2}' -r '.a,.b'
 [ "$out" = $'1\n2' ] || fail "multi-line output was altered: '$out'"
+
+# _cam_runtime_app_into: the app name is read once per runtime file identity.  The
+# hot callers name their variable "app", so a helper local of the same name would
+# swallow the assignment - the caller must still see the value.
+runtime="$WORK/runtime.json"
+printf '%s\n' '{"VHL_CAM":{"app":"gstApp"}}' > "$runtime"
+: > "$WORK/jq.log"
+probe_caller() { local app=unset; _cam_runtime_app_into app "$runtime" || return $?; printf '%s' "$app"; }
+[ "$(probe_caller)" = gstApp ] || fail "caller variable 'app' did not receive the runtime app"
+expect_runs 1 'runtime app first read did not run jq'
+_cam_runtime_app_into app "$runtime"; _cam_runtime_app_into app "$runtime"
+[ "$app" = gstApp ] || fail "cached runtime app returned '$app'"
+expect_runs 2 'runtime app was re-read for an unchanged file'
+printf '%s\n' '{"VHL_CAM":{"app":"streamApp"}}' > "$runtime.next" && mv -f "$runtime.next" "$runtime"
+_cam_runtime_app_into app "$runtime"
+[ "$app" = PIMCAM ] || fail "a replaced runtime file returned the stale app '$app'"
+expect_runs 3 'a replaced runtime file was served from the cache'
 
 echo "jq memo: PASS"
