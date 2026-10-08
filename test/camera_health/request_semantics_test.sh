@@ -53,12 +53,16 @@ unchanged() {
         esac
     done
 }
-# A claimed request owned by a fresh ACTIVE owner; sets id.
-start_request() {
+# A fresh ACTIVE owner with no request.
+fresh_owner() {
     rm -rf "$PIM_CAMERA_RUN_DIR" "$PIM_CAMERA_STATE_DIR" "$PIM_CAMERA_PROC_ROOT"
     printf 'test-boot-id\n' > "$PIM_CAMERA_BOOT_ID_FILE"
     fake_stat 111
     cam_owner_create "$DAEMON_PID"; cam_owner_set_lifecycle ACTIVE
+}
+# A claimed request owned by a fresh ACTIVE owner; sets id.
+start_request() {
+    fresh_owner
     id=$(cam_request_submit "$1" operator "semantics $1")
     cam_request_claim
 }
@@ -303,5 +307,42 @@ label='counter finish on a request that is neither RUNNING nor VERIFYING'
 cam_request_transition FAILED; snapshot
 expect_rc 64 cam_action_counter_finish gstapp_restart "$id" FAILED 3
 unchanged active history state
+
+# --- D. the owner guard before every write (_cr_record_owner_ready) ----------
+# The memo holds what jq extracted, never a verdict: each caller's lifecycle
+# set is compared afresh, so one caller's rejection is not another's answer.
+label='owner guard lifecycle sets'
+start_request gstapp_restart
+record=$(cat "$active_file")
+expect_rc 0 _cr_record_owner_ready "$record" ACTIVE DEGRADED
+expect_rc 69 _cr_record_owner_ready "$record" RECOVERING APPLYING_CONFIG
+expect_rc 0 _cr_record_owner_ready "$record" ACTIVE
+expect_rc 69 _cr_record_owner_ready "$record"
+label='owner guard on a multi-document record'
+expect_rc 69 _cr_record_owner_ready "$record"$'\n'"$record" ACTIVE
+label='owner guard on a multi-document owner'
+cp "$PIM_CAMERA_RUN_DIR/owner.json" "$WORK/owner.single"
+cat "$WORK/owner.single" "$WORK/owner.single" > "$PIM_CAMERA_RUN_DIR/owner.json"
+expect_rc 69 _cr_record_owner_ready "$record" ACTIVE
+cp "$WORK/owner.single" "$PIM_CAMERA_RUN_DIR/owner.json"
+# Stricter than before issue #150 (a): the schema filter's index() accepts the
+# sub-array ["ACTIVE"], and this guard used to as well; it now requires a string,
+# as the entry gate always has.
+label='owner guard on an array lifecycle'
+owner_edit '.lifecycle=["ACTIVE"]'
+expect_rc 69 _cr_record_owner_ready "$record" ACTIVE
+guard_err=$(_cr_record_owner_ready "$record" ACTIVE 2>&1 >/dev/null || true)
+[ -z "$guard_err" ] || fail "the array lifecycle was refused through a jq error: $guard_err"
+
+# Claim and history updates pass the record to jq as one argument, which exec
+# refuses from 128KiB.  The guard refuses such a record before it is written,
+# so a request that could never be claimed does not block the queue.
+label='a record too long for one argument is refused at submit'
+fresh_owner
+long=$(printf '%070000d' 0)
+expect_rc 69 cam_request_submit gstapp_restart "$long" "$long"
+[ ! -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] || fail "an unclaimable request was queued"
+id=$(cam_request_submit gstapp_restart operator 'after a refused long request')
+expect_rc 0 cam_request_claim
 
 echo "request semantics: PASS"

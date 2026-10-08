@@ -98,4 +98,26 @@ expect_runs 0 'a repeated executor check against an unchanged active record spaw
 rc=0; PIM_CAMERA_REQUEST_ID=00000000-0000-4000-8000-000000000000 cam_executor_assert_context || rc=$?
 [ "$rc" -eq 69 ] || fail "a warm executor check accepted another request id (rc $rc)"
 
+# _cr_record_owner_ready reads only .owner from the record, so its memo is keyed
+# on that and not on the whole record (issue #150 (a)): a record that differs
+# only in status, whose .owner _cr_record_owner_matches already extracted, is
+# judged without another jq - and the lifecycle set is still compared per call.
+record=$(cat "$PIM_CAMERA_RUN_DIR/recovery/active.json")
+next=$(jq -c '.status="VERIFYING" | .updated_at += 1' <<<"$record")
+_cr_record_owner_matches "$record" || fail "the owner check refused the active record"
+_cr_record_owner_ready "$record" RECOVERING || fail "the owner guard refused the active record"
+: > "$WORK/jq.log"
+_cr_record_owner_matches "$next" || fail "the owner check refused the next record"
+_cr_record_owner_ready "$next" RECOVERING APPLYING_CONFIG || fail "the owner guard refused the next record"
+expect_runs 1 'the owner guard re-ran jq for a record whose owner it had already judged'
+rc=0; _cr_record_owner_ready "$next" ACTIVE || rc=$?
+[ "$rc" -eq 69 ] || fail "a verdict for one lifecycle set was reused for another (rc $rc)"
+expect_runs 1 'comparing another lifecycle set spawned jq'
+# The /proc start time is read on every call and never memoized: with every memo
+# warm, a restarted owner process is still refused, and noticing it needs no jq.
+{ printf '%s' '4242 (cam operate) S'; for _ in $(seq 1 18); do printf ' 0'; done; printf ' 222 0 0\n'; } > "$PIM_CAMERA_PROC_ROOT/4242/stat"
+rc=0; _cr_record_owner_ready "$next" RECOVERING || rc=$?
+[ "$rc" -eq 69 ] || fail "a changed /proc start time was not noticed while warm (rc $rc)"
+expect_runs 1 'noticing a changed /proc start time spawned jq'
+
 echo "jq memo: PASS"

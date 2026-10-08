@@ -103,9 +103,9 @@ check 69 "rejects a record and owner agreeing on a wrong proc start time" \
     _cr_record_owner_ready "$(rec '.owner.proc_start_time="1"')" ACTIVE
 restore_owner
 # Reaching the schema check on the *live* owner alone needs the allowed set to
-# contain a value the schema itself rejects.  The sanitizer below only limits the
-# character class, not the six enum names, so an out-of-enum [A-Z_] value passes
-# through: the live owner carries it, membership therefore matches, the record's
+# contain a value the schema itself rejects.  The allowed set is compared as
+# plain strings in the shell, not against the six enum names, so an out-of-enum
+# value can match: the live owner carries it, membership therefore matches, the record's
 # own owner is a normal enum value so its schema passes, and the six immutable
 # fields still agree.  Only the live owner's schema can reject.  An earlier
 # version of this commit argued that clause was unreachable alone; it is not.
@@ -113,15 +113,13 @@ own '.lifecycle="BOGUS_STATE"'
 check 69 "rejects a live owner whose lifecycle is outside the enum" \
     _cr_record_owner_ready "$(rec '.owner.lifecycle="ACTIVE"')" BOGUS_STATE
 restore_owner
-# The sanitizer that keeps caller values out of the hand-built JSON array is the
-# only thing between a lifecycle argument and the --argjson payload.  Deleting it
-# leaves every other assertion here green, so it gets its own case: a value with
-# a quote or a bracket must be dropped, giving an ordinary 69, never a jq failure.
-# rc alone cannot see the sanitizer: a junk value that reaches --argjson makes the
-# array malformed, jq fails, and the guard returns 69 - the same code a dropped
-# value produces.  Pairing junk with a value that should match separates them.
-# Sanitized, ACTIVE survives and the guard accepts; unsanitized, the array is
-# broken and nothing is accepted.
+# Caller lifecycle values never reach jq: since issue #150 (a) the guard emits
+# the owner's lifecycle and compares the allowed set as strings in the shell, so
+# a value with a quote, a bracket or a backslash is an ordinary non-match - never
+# a jq failure, and never able to spoil the values beside it.  rc alone cannot
+# tell those apart: a junk value that reached a jq argument would break the jq
+# call and also give 69.  Pairing junk with a value that should match separates
+# them: ACTIVE must still be accepted.
 check 0 "drops a quote and still honours a valid lifecycle"   _cr_record_owner_ready "$RECORD" 'AC"TIVE' ACTIVE
 check 0 "drops a bracket and still honours a valid lifecycle" _cr_record_owner_ready "$RECORD" 'ACTIVE]' ACTIVE
 check 0 "drops a backslash and still honours a valid one"     _cr_record_owner_ready "$RECORD" 'ACT\\IVE' ACTIVE
