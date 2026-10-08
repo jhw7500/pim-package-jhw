@@ -197,7 +197,7 @@ command[[:space:]]+-[A-Za-z]*p[A-Za-z]*[[:space:]]+jq([^A-Za-z0-9_.-]|$)
 hash[[:space:]]+-t[[:space:]]+jq([^A-Za-z0-9_.-]|$)
 (^|[^A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]*=["']?jq["']?([[:space:];)]|$)
 \$\{?(JQ|jq)(_?(BIN|bin|PATH|path|CMD|cmd|EXE|exe))?(\[[^]]*\])?\}?([^A-Za-z0-9_[]|$)
-(^|[;&|(`[:space:]])env([[:space:]]|$)
+(^|[^A-Za-z0-9_.-])env([[:space:]]|$)
 (^|[^A-Za-z0-9_])PATH=
 (^|[^A-Za-z0-9_.])env[[:space:]]*=[^=]
 which\([[:space:]]*["']jq["']
@@ -250,6 +250,8 @@ PATH='$PATH:/usr/bin' jq -n 1
 export PATH="$PATH:/opt/x"
 env - jq -n 1
 env -u PATH jq -n 1
+/usr/bin/env -i jq -n 1
+out=$(/bin/env -u PATH jq -n 1)
 subprocess.run(["jq", "-n", "1"], env={})
 env -i jq -n 1
 PATH=/usr/bin:/bin jq -n 1
@@ -262,6 +264,7 @@ command -v jq >/dev/null 2>&1 || exit 64
 _cr_jq_memo out "$x" -r .a; [ "${#_CR_JQ_MEMO[@]}" -lt 64 ]
 dpkg -i /opt/pim/package/jq/*.deb
 environment=ok; printenv HOME >/dev/null
+#!/usr/bin/env bash
 # a note on /usr/bin/jq and mode=jq in a comment runs nothing
     # an indented comment: ${JQ} -n 1
 EOF
