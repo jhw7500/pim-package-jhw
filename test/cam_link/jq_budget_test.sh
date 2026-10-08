@@ -28,12 +28,13 @@ declare -A CEILING=(
     [gstapp_stop]=68           #   6 + 62          SUCCEEDED
     [gstapp_restart]=118       #   6 + 108 + 4     SUCCEEDED
     [camera_hard_reset]=120    #   6 + 110 + 4     SUCCEEDED
+    [module_reload]=120        #   6 + 110 + 4     SUCCEEDED
     [module_reload_fails]=196  #   6 + 190         FAILED rc=1: module_reload and
                                #                   camera_hard_reset fail at modprobe
                                #                   (rc 23) before the app starts,
                                #                   reboot_fallback is refused (rc 1)
 )
-FLOWS=(gstapp_stop gstapp_restart camera_hard_reset module_reload_fails)
+FLOWS=(gstapp_stop gstapp_restart camera_hard_reset module_reload module_reload_fails)
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/pim-jq-budget.XXXXXX")
@@ -167,37 +168,47 @@ STUB_PATH="$WORK/stub:$PATH"
 SHIM_PATH="$WORK/shim:$STUB_PATH"
 
 # --- every jq on the request path goes through PATH ---------------------------
-# The shim sees only a jq found through PATH.  A shipped script that runs jq by
-# path, through `command -p`, from a captured path, or after replacing PATH or
-# the environment would spawn jq this budget never counts, so such a line fails
-# here.  Scanned: every shell and python file under dist/pim/opt/pim, by
-# shebang or extension.  Patterns, in order:
+# What this is: a guard for the budget's honesty, not a complete defence.  The
+# shim counts only a jq found through PATH, so a shipped script that ran jq any
+# other way would make the budget under-count without anyone noticing.  This
+# scan blocks the obvious and accidental ways of doing that; a script written to
+# evade it can.
+# Scanned: every shell and python file under dist/pim/opt/pim, by shebang or
+# extension.  A line that is only a comment is skipped; a comment after code on
+# the same line is not.  Flagged, one pattern each, in order:
 #   a path ending in /jq (absolute or relative, shell or python)
-#   command -p jq
-#   jq's path captured: $(command -v jq), $(which jq), $(type -P jq), hash -t jq
+#   inside $( ... ) or backticks, a lookup verb - command, which, type, hash,
+#     whereis - together with the word jq, whatever its options
+#   outside one, which / type / hash / whereis with the word jq in the same
+#     simple command, whatever its options
+#   command with an option containing p before jq (runs jq from the default
+#     path), whatever its other options
 #   a variable assigned the bare name jq
 #   a jq-named variable used as the command: $JQ ${JQ} $jq_bin ${JQ_PATH}
 #     ${jq_path[0]} ...
+#   env used as a command, bare, by path or quoted ("env" -i, 'env' -, /usr/bin/env)
+#   any PATH= assignment
+#   python's env= argument
 #   python shutil.which("jq")
-# and, as a blanket rule, any PATH= assignment and any use of env - as a command
-# (env -i, env -, env -u PATH ...) or as python's env= argument.  Which of those
-# forms keep the shim first depends on quoting and options (PATH='$PATH:/x' does
-# not expand; env - clears the environment), so the shipped scripts, which use
-# none of them, are held to using none.  Lines that are only a comment are
-# skipped; a comment after code on the same line is not.
-# Not seen: a command name built at run time (eval, a value read from a file);
-# a PATH set outside these files (the systemd unit, cron, sudo's secure_path -
-# the counted processes here get PATH from this test); jq run by compiled
-# programs or by anything outside dist/pim/opt/pim; languages other than shell
-# and python.
+# The PATH and env rules are blanket: which of those forms keep the shim first
+# depends on quoting and options (PATH='$PATH:/x' does not expand; env - clears
+# the environment), so the shipped scripts, which use none of them, are held to
+# using none.  The one lookup allowed is the bare existence test
+# `command -v jq >/dev/null`, whose output is discarded.
+# Not seen: a command name built at run time (eval, a value read from a file, a
+# word split across quotes such as e"nv"); the output of `command -v jq` passed
+# on through a pipe or a file instead of a substitution; a PATH set outside
+# these files (the systemd unit, cron, sudo's secure_path - the counted
+# processes here get PATH from this test); jq run by compiled programs or by
+# anything outside dist/pim/opt/pim; languages other than shell and python.
 cat > "$WORK/jq-bypass.patterns" <<'RE'
 /jq([[:space:]"'`;|&)]|$)
-command[[:space:]]+-[A-Za-z]*p[A-Za-z]*[[:space:]]+jq([^A-Za-z0-9_.-]|$)
-(\$\(|`)[[:space:]]*(command[[:space:]]+-[A-Za-z]*[vV]|which|type[[:space:]]+-[A-Za-z]*[pP])[[:space:]]+jq([^A-Za-z0-9_.-]|$)
-hash[[:space:]]+-t[[:space:]]+jq([^A-Za-z0-9_.-]|$)
+(\$\(|`)([^`)]*[^A-Za-z0-9_.-])?(command|which|type|hash|whereis)[[:space:]]([^`)]*[^A-Za-z0-9_.-])?jq([^A-Za-z0-9_.-]|$)
+(^|[^A-Za-z0-9_.-])(which|type|hash|whereis)[[:space:]]([^;|&]*[^A-Za-z0-9_.-])?jq([^A-Za-z0-9_.-]|$)
+(^|[^A-Za-z0-9_.-])command([[:space:]]+-[^[:space:]]*)*[[:space:]]+-[A-Za-z]*p[A-Za-z]*([[:space:]]+-[^[:space:]]*)*[[:space:]]+jq([^A-Za-z0-9_.-]|$)
 (^|[^A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]*=["']?jq["']?([[:space:];)]|$)
 \$\{?(JQ|jq)(_?(BIN|bin|PATH|path|CMD|cmd|EXE|exe))?(\[[^]]*\])?\}?([^A-Za-z0-9_[]|$)
-(^|[^A-Za-z0-9_.-])env([[:space:]]|$)
+(^|[^A-Za-z0-9_.$-])env["']?([[:space:]]|$)
 (^|[^A-Za-z0-9_])PATH=
 (^|[^A-Za-z0-9_.])env[[:space:]]*=[^=]
 which\([[:space:]]*["']jq["']
@@ -257,10 +268,21 @@ env -i jq -n 1
 PATH=/usr/bin:/bin jq -n 1
 subprocess.run(["/usr/bin/jq", "-n", "1"])
 path = shutil.which("jq")
+tool=$(command -v -- jq)
+jq_bin=`command -pv jq`
+tool=$(type -a -P jq | head -1)
+"env" -i jq -n 1
+'env' - jq -n 1
+command -p -- jq -n 1
+hash -p "$p" jq
+which jq | xargs -I{} {} -n 1
 EOF
 cat > "$WORK/scan/clean.sh" <<'EOF'
 jq -n 1
 command -v jq >/dev/null 2>&1 || exit 64
+command -v -- jq &> /dev/null || exit 64
+if runtime_json=$(<"$f") && command -V jq >/dev/null 2>&1; then :; fi
+jq -e 'type == "object"' <<<"$x" >/dev/null
 _cr_jq_memo out "$x" -r .a; [ "${#_CR_JQ_MEMO[@]}" -lt 64 ]
 dpkg -i /opt/pim/package/jq/*.deb
 environment=ok; printenv HOME >/dev/null
@@ -355,6 +377,7 @@ run_flow() {
         jq -e --arg id "$id" --arg type "$type" '.id==$id and .type==$type and .status=="SUCCEEDED" and .rc==0' "$result" >/dev/null 2>&1 \
             || fail "$flow: no SUCCEEDED result ($(cat "$result" 2>/dev/null || echo absent))"
         [ "$(jq -r .lifecycle "$PIM_CAMERA_RUN_DIR/owner.json")" = ACTIVE ] || fail "$flow: owner did not return to ACTIVE"
+        [ "$flow" != module_reload ] || assert_module_reload_succeeded "$id"
     else
         assert_escalation_failed "$id" "$result"
     fi
@@ -365,6 +388,26 @@ run_flow() {
     # no jq at all; zero means the shim was bypassed.
     if [ "$submit_n" -eq 0 ] || [ "$daemon_n" -eq 0 ]; then fail "$flow: the shim counted nothing (submit=$submit_n daemon=$daemon_n)"; fi
     [ "$total" -le "${CEILING[$flow]}" ] || fail "$flow: $total jq spawns, ceiling ${CEILING[$flow]}"
+}
+
+# module_reload that succeeds: the modules are reloaded, the camera verified and
+# the consumers started once each - the part a failing modprobe never reaches -
+# and the request ends with a clean service-state and no escalation.
+assert_module_reload_succeeded() {
+    local id=$1 history="$PIM_CAMERA_STATE_DIR/recovery/history/$1.json" call
+    jq -e '.request.status=="SUCCEEDED" and .request.rc==0 and ([.actions[] | [.action,.status,.rc]] == [["module_reload","SUCCEEDED",0]])' "$history" >/dev/null 2>&1 \
+        || fail "module_reload: history is not one succeeded module_reload ($(jq -c '[.request.status,.request.rc,[.actions[]|[.action,.status,.rc]]]' "$history" 2>/dev/null || echo absent))"
+    jq -e --arg id "$id" '.actions.module_reload | {attempted,succeeded,failed,consecutive_failures,last_request_id,last_status,last_rc}
+        == {attempted:1,succeeded:1,failed:0,consecutive_failures:0,last_request_id:$id,last_status:"SUCCEEDED",last_rc:0}' \
+        "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null 2>&1 || fail "module_reload: the counter does not record one success"
+    jq -e '[.actions.gstapp_restart, .actions.camera_hard_reset, .actions.reboot_fallback] | all(.attempted==0 and .last_request_id==null)' \
+        "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null 2>&1 || fail "module_reload: another action's counter moved"
+    jq -e '.dirty==false and .degraded_reason==null and .degraded_target==null' "$PIM_CAMERA_STATE_DIR/service-state.json" >/dev/null 2>&1 \
+        || fail "module_reload: service-state is not clean ($(cat "$PIM_CAMERA_STATE_DIR/service-state.json"))"
+    [ "$(grep -c '^reboot ' "$PIM_CAMERA_CALL_LOG" || true)" -eq 0 ] || fail "module_reload: a reboot was requested"
+    for call in 'modprobe max9296' 'modprobe imx8-media-dev' 'start gstApp' 'start vcm' 'systemctl restart ord-operate.service'; do
+        [ "$(grep -cFx "$call" "$PIM_CAMERA_CALL_LOG" || true)" -eq 1 ] || fail "module_reload: '$call' did not run exactly once"
+    done
 }
 
 # module_reload -> camera_hard_reset -> reboot_fallback, each failing, then the
