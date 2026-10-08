@@ -120,4 +120,19 @@ rc=0; _cr_record_owner_ready "$next" RECOVERING || rc=$?
 [ "$rc" -eq 69 ] || fail "a changed /proc start time was not noticed while warm (rc $rc)"
 expect_runs 1 'noticing a changed /proc start time spawned jq'
 
+# A transition writes the next active record from one jq and puts that jq's
+# answers for the record's .id and .owner into the memo, so the guards and the
+# next operation find them without a jq of their own.  A put value must be the
+# exact bytes the jq call would print - check it against real jq.
+{ printf '%s' '4242 (cam operate) S'; for _ in $(seq 1 18); do printf ' 0'; done; printf ' 111 0 0\n'; } > "$PIM_CAMERA_PROC_ROOT/4242/stat"
+cam_request_transition VERIFYING || fail "the transition to VERIFYING was refused"
+record=$(cat "$PIM_CAMERA_RUN_DIR/recovery/active.json")
+want_owner=$(jq -c .owner <<<"$record"); want_id=$(jq -r .id <<<"$record")
+got_owner=; got_id=
+: > "$WORK/jq.log"
+_cr_jq_memo got_owner "$record" -c .owner; _cr_jq_memo got_id "$record" -r .id
+expect_runs 0 'the transition did not leave .owner and .id of the record it wrote in the memo'
+[ "$got_owner" = "$want_owner" ] || fail "the memo holds another .owner than jq prints: '$got_owner' vs '$want_owner'"
+[ "$got_id" = "$want_id" ] || fail "the memo holds another .id than jq prints: '$got_id' vs '$want_id'"
+
 echo "jq memo: PASS"

@@ -104,6 +104,17 @@ _cr_jq_memo() {
     _CR_JQ_MEMO[$_cr_memo_key]=$_cr_memo_out
     printf -v "$_cr_memo_var" '%s' "$_cr_memo_out"
 }
+# 메모에 값을 미리 넣는다. 한 번의 jq 로 문서를 만든 연산이, 그 문서에 다음 연산이
+# 부를 추출(.id, .owner)의 답도 같은 jq 에서 계산해 넣는다. 값은 그 jq 호출이 냈을
+# 출력과 바이트까지 같아야 한다 — tojson 은 jq -c 와 같은 직렬화를 쓴다.
+_cr_jq_memo_put() {
+    local _cr_memo_value=$1 _cr_memo_input=$2 _cr_memo_key
+    shift 2
+    printf -v _cr_memo_key '%s\037' "$@"
+    _cr_memo_key+=$'\036'"$_cr_memo_input"
+    [ "${#_CR_JQ_MEMO[@]}" -lt 64 ] || _CR_JQ_MEMO=()
+    _CR_JQ_MEMO[$_cr_memo_key]=$_cr_memo_value
+}
 
 # jq 한 번이 보드(A53, loadavg 5.7)에서 412ms 다. 같은 문서를 필드마다 새 프로세스로
 # 파싱하면 owner 검증 한 번에 3초가 든다. 필터를 변수로 두고 한 번의 jq 로 합친다.
@@ -773,14 +784,58 @@ _cr_claim_locked() {
 }
 cam_request_claim() { _cr_lock_call _cr_claim_locked; }
 _cr_transition_allowed() { case "$1:$2" in PENDING:QUIESCING|QUIESCING:RUNNING|RUNNING:VERIFYING|VERIFYING:SUCCEEDED|VERIFYING:FAILED|RUNNING:FAILED|QUIESCING:FAILED) return 0;; esac; return 1; }
+# 전이 한 번의 판정 재료와 쓸 문서를 jq 한 번으로 만든다 (이슈 #150 재설계).
+# active 와 history 원문은 NUL 로 이어 stdin 으로 넘긴다 — 문서를 argv 로 넘기지
+# 않으므로 크기 상한 근처에서도 E2BIG 로 실패하지 않는다. 출력은 줄마다 하나:
+#   1 현재 status (대문자·밑줄이 아니면 "-")   2 갱신한 active
+#   3 갱신한 active 의 id (UUID 가 아니면 "-")  4 그 owner (jq -c 와 같은 직렬화)
+#   5 갱신한 history (history 가 없거나 .request 를 바꿀 수 없는 문서면 "-")
+# history 는 jq 에 넘기려고 판정 전에 읽지만(읽기만 한다) 판정 순서(owner 69 →
+# 전이표 64 → history 70)와 쓰기 순서, 각 쓰기 앞의 가드는 예전과 같다 — history 를
+# 쓸 수 없으면 active 를 쓴 뒤 70 이다. history 는 문서 하나여야 한다: 예전에는 jq 가
+# 문서마다 .request 를 바꿔 여러 문서를, 문서가 없는 빈 파일은 빈 줄로 덮어 rc 0 으로
+# 받아들였다(승인된 의미 변경 ①, 0개·여러 개 모두). jq 를 실행하지 못하면 70 이다 —
+# 예전에는 status 추출이 실패해 허용된 전이도 64 로 보고했다(승인).
+# 시각은 문자열로 받아 안에서 해석한다: 해석할 수 없으면 2~5번 줄이 "-" 이고, 전이표
+# 판정 뒤에 70 이다 — 예전 --argjson 이 jq 를 실패시키던 자리와 같은 rc 다.
+# 줄 경계: 정규식의 $ 는 끝 개행 앞에서도 맞으므로 \A…\z 로 묶는다. status 는 예전
+# $(jq -r .status) 처럼 NUL 과 끝 개행을 지운 값으로 판정한다.
+_CR_TRANSITION_FILTER='split("\u0000") as $p
+  | ($p[0] | fromjson) as $a
+  | (try ($now | [fromjson]) catch null) as $t
+  | ($a.status
+     | if type == "string" then (explode | map(select(. != 0)) | implode | sub("\n+\\z"; "")) else . end
+     | if type == "string" and test("\\A[A-Z_]+\\z") then . else "-" end),
+    (if $t == null then "-", "-", "-", "-" else
+       ($a | .status = $next | .updated_at = $t[0]) as $u
+       | ($u | tojson),
+         ($u.id | if type == "string" and test("\\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\z") then . else "-" end),
+         ($u.owner | tojson),
+         (if ($p | length) == 2 then (try ($p[1] | fromjson | .request = $u | tojson) catch "-") else "-" end)
+     end)'
 _cr_transition_locked() {
-    local next=$1 active current updated id
+    local next=$1 active id history plan now current updated updated_id updated_owner history_next
     _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69
     active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69; _cr_record_owner_matches "$active" || return 69
-    _cr_jq_memo current "$active" -r .status || current=""; _cr_transition_allowed "$current" "$next" || return 64
-    updated=$(jq -c --arg next "$next" --argjson now "$(_cr_now)" '.status=$next | .updated_at=$now' <<<"$active") || return 70; id=$(jq -r .id <<<"$updated")
+    _cr_jq_memo id "$active" -r .id || id=""
+    now=$(_cr_now)
+    # history 경로는 UUID 인 id 로만 만든다 — 아니면 history 를 쓸 수 없는 것으로
+    # 보고(active 를 쓴 뒤 70) 저장 디렉터리 밖을 가리키는 경로를 열지 않는다.
+    if [[ $id =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] \
+        && history=$(cat "$(_cr_history_file "$id")" 2>/dev/null); then
+        plan=$(printf '%s\0%s' "$active" "$history" | jq -Rrs --arg next "$next" --arg now "$now" "$_CR_TRANSITION_FILTER") || return 70
+    else
+        plan=$(printf '%s' "$active" | jq -Rrs --arg next "$next" --arg now "$now" "$_CR_TRANSITION_FILTER") || return 70
+    fi
+    { IFS= read -r current; IFS= read -r updated; IFS= read -r updated_id; IFS= read -r updated_owner; IFS= read -r history_next; } <<<"$plan"
+    _cr_transition_allowed "$current" "$next" || return 64
+    [ "$updated" != - ] || return 70
+    [ "$updated_id" = - ] || _cr_jq_memo_put "$updated_id" "$updated" -r .id
+    _cr_jq_memo_put "$updated_owner" "$updated" -c .owner
     _cr_mutation_guard "$updated" active ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_active_file)" "$updated" || return 70
-    _cr_mutation_guard "$updated" transition_history ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_history_request "$id" "$updated" || return 70
+    _cr_mutation_guard "$updated" transition_history ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69
+    [ "$history_next" != - ] || return 70
+    _cr_atomic_write "$(_cr_history_file "$id")" "$history_next" || return 70
 }
 cam_request_transition() { [ $# -eq 1 ] || return 64; _cr_lock_call _cr_transition_locked "$1"; }
 

@@ -101,12 +101,18 @@ expect_rc 64 cam_request_transition RUNNING
 unchanged active history
 
 label='transition allowed'
+prev_active=$(cat "$active_file")
 cam_request_transition QUIESCING
+# The written record is byte for byte what jq -c makes of the update.
+[ "$(cat "$active_file")" = "$(jq -c --argjson t "$(jq .updated_at "$active_file")" '.status="QUIESCING" | .updated_at=$t' <<<"$prev_active")" ] \
+    || fail "active is not the jq -c serialization of the update"
 jq -e --arg id "$id" '.id==$id and .status=="QUIESCING" and (.updated_at|type=="number")' "$active_file" >/dev/null || fail "active not QUIESCING"
 [ "$(jq -cS .request "$(history_file)")" = "$(jq -cS . "$active_file")" ] || fail "history request does not mirror active"
 
-# The transition table and the owner are judged before history is read, so a
-# corrupt history must not turn 64 or 69 into 70.
+# The owner and the transition table are judged before the history is, so a
+# corrupt history must not turn 64 or 69 into 70.  (The transition reads the
+# history earlier since issue #150 - one jq takes both documents - but judges it
+# only after the table.)
 printf '{broken\n' > "$(history_file)"
 label='not allowed, corrupt history'; snapshot
 expect_rc 64 cam_request_transition VERIFYING
@@ -351,23 +357,82 @@ expect_rc 69 cam_request_submit gstapp_restart "$long" "$long"
 id=$(cam_request_submit gstapp_restart operator 'after a refused long request')
 expect_rc 0 cam_request_claim
 
+# Edge inputs the one-jq transition must read exactly as the old per-field jq
+# calls did, whose $(...) dropped NUL bytes and trailing newlines.
+active_edit() { jq -c "$1" "$active_file" > "$WORK/active.next" && mv "$WORK/active.next" "$active_file"; }
+label='transition with a status that ends in a newline'
+start_request gstapp_restart
+active_edit '.status="PENDING\n"'
+expect_rc 0 cam_request_transition QUIESCING
+jq -e '.status=="QUIESCING"' "$active_file" >/dev/null || fail "active not QUIESCING"
+[ "$(jq -cS .request "$(history_file)")" = "$(jq -cS . "$active_file")" ] || fail "history request does not mirror active"
+label='transition with an id that ends in a newline'
+start_request gstapp_restart
+active_edit '.id += "\n"'
+expect_rc 0 cam_request_transition QUIESCING
+[ "$(jq -cS .request "$(history_file)")" = "$(jq -cS . "$active_file")" ] || fail "history request does not mirror active"
+record=$(cat "$active_file"); memo_id=
+_cr_jq_memo memo_id "$record" -r .id
+[ "$memo_id" = "$(jq -r .id <<<"$record")" ] || fail "the memo holds another .id than jq prints: '$memo_id'"
+# Approved with the redesign: an active record whose id is not a UUID gets no
+# history path at all (it used to be joined into one unchecked, which can point
+# outside the history directory); the history counts as unwritable.
+label='transition with an id that is not a UUID'
+start_request gstapp_restart
+active_edit '.id="not-a-uuid"'
+printf '%s\n' '{"request":{},"actions":[]}' > "$PIM_CAMERA_STATE_DIR/recovery/history/not-a-uuid.json"
+crafted=$(fingerprint "$PIM_CAMERA_STATE_DIR/recovery/history/not-a-uuid.json")
+expect_rc 70 cam_request_transition QUIESCING
+jq -e '.status=="QUIESCING"' "$active_file" >/dev/null || fail "active was not written before the history failure"
+[ "$crafted" = "$(fingerprint "$PIM_CAMERA_STATE_DIR/recovery/history/not-a-uuid.json")" ] || fail "a history outside the request's own path was written"
+# Approved with the redesign: when jq cannot run at all the transition is 70,
+# not the 64 it used to report after its status extraction failed.
+label='transition when jq cannot run'
+start_request gstapp_restart
+cam_request_transition QUIESCING
+mkdir -p "$WORK/nojq"; printf '#!/bin/sh\nexit 5\n' > "$WORK/nojq/jq"; chmod +x "$WORK/nojq/jq"
+snapshot
+PATH="$WORK/nojq:$PATH" expect_rc 70 cam_request_transition RUNNING
+unchanged active history
+hash -r
+label='transition with a clock that prints no number'
+start_request gstapp_restart
+clock_fn=$(declare -f _cr_now)
+_cr_now() { echo not-a-number; }
+snapshot
+expect_rc 64 cam_request_transition RUNNING
+expect_rc 70 cam_request_transition QUIESCING
+unchanged active history
+eval "$clock_fn"
+
 # --- E. behaviour the issue #150 redesign is approved to change --------------
 # Pinned as it is today, so that the redesign changes it by flipping these
 # assertions on purpose rather than as a side effect.
 
-# Approved change (1): a history file holding two JSON documents only comes from
-# tampering.  Today the transition updates both, because jq applies
-# '.request=$request' to every document of the stream, and returns 0.
+# Approved change (1), made by the redesign: a history file holding two JSON
+# documents, or none, only comes from tampering.  The transition used to update
+# both documents, because jq applied '.request=$request' to every document of
+# the stream, and to rewrite an empty file as an empty line - both with rc 0.  It
+# now reads the history as one document, so these are histories it cannot
+# update: 70 after the active write, as for any corrupt history.
 label='transition with a two-document history'
 start_request gstapp_restart
 cam_request_transition QUIESCING
 history_doc=$(cat "$(history_file)")
 printf '%s\n%s\n' "$history_doc" "$history_doc" > "$(history_file)"
-expect_rc 0 cam_request_transition RUNNING
-jq -e '.status=="RUNNING"' "$active_file" >/dev/null || fail "active is not RUNNING"
-history_next=$(jq -c --argjson a "$(cat "$active_file")" '.request=$a' <<<"$history_doc")
-printf '%s\n%s\n' "$history_next" "$history_next" | cmp -s - "$(history_file)" \
-    || fail "history is not the two documents, each with the new request"
+snapshot
+expect_rc 70 cam_request_transition RUNNING
+jq -e '.status=="RUNNING"' "$active_file" >/dev/null || fail "active was not written before the history failure"
+unchanged history
+for empty in '' '  '; do
+    label="transition with an empty history ('$empty')"
+    start_request gstapp_restart
+    printf '%s' "$empty" > "$(history_file)"
+    snapshot
+    expect_rc 70 cam_request_transition QUIESCING
+    jq -e '.status=="QUIESCING"' "$active_file" >/dev/null || fail "active was not written before the history failure"
+    unchanged history
+done
 
 # Approved change (3): a record just under the 128KiB argument limit passes the
 # submit guard (section D pins the refusal from 128KiB on), but the operations
