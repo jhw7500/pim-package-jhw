@@ -174,15 +174,24 @@ SHIM_PATH="$WORK/shim:$STUB_PATH"
 # scan blocks the obvious and accidental ways of doing that; a script written to
 # evade it can.
 # Scanned: every shell and python file under dist/pim/opt/pim, by shebang or
-# extension.  A line that is only a comment is skipped; a comment after code on
-# the same line is not.  Flagged, one pattern each, in order:
+# extension.  Lines are joined first where a shell line continues (it ends in an
+# odd number of backslashes and is not a comment), so a command split over
+# continuation lines is judged whole; a hit is reported at its first physical
+# line.  A line that is only a comment is skipped; a comment after code on the
+# same line is not.
+# Lookups are a whitelist.  A lookup verb - command, which, type, hash, whereis
+# - in command position (at the start of a line, after one of ; & | ( { ` $(
+# or !, or after if/then/do/else/elif/while/until, optionally behind
+# assignments) followed anywhere on the same line by the word jq is a bypass.
+# That covers capturing jq's path ($(command -v jq), `which jq`, a substitution
+# whose lookup sits on its own line), running jq through command (command jq,
+# command -p jq) and pointing the hash table at another jq.  The one form
+# allowed is the existence test whose output is discarded:
+# `command -v|-V [--] jq` immediately followed by >/dev/null, &>/dev/null or
+# >&/dev/null (optionally then 2>&1).  A verb that is not in command position -
+# type inside a jq filter, '.x | type == "object"' - is not a lookup.
+# The other rules, one pattern each:
 #   a path ending in /jq (absolute or relative, shell or python)
-#   inside $( ... ) or backticks, a lookup verb - command, which, type, hash,
-#     whereis - together with the word jq, whatever its options
-#   outside one, which / type / hash / whereis with the word jq in the same
-#     simple command, whatever its options
-#   command with an option containing p before jq (runs jq from the default
-#     path), whatever its other options
 #   a variable assigned the bare name jq
 #   a jq-named variable used as the command: $JQ ${JQ} $jq_bin ${JQ_PATH}
 #     ${jq_path[0]} ...
@@ -193,19 +202,17 @@ SHIM_PATH="$WORK/shim:$STUB_PATH"
 # The PATH and env rules are blanket: which of those forms keep the shim first
 # depends on quoting and options (PATH='$PATH:/x' does not expand; env - clears
 # the environment), so the shipped scripts, which use none of them, are held to
-# using none.  The one lookup allowed is the bare existence test
-# `command -v jq >/dev/null`, whose output is discarded.
+# using none.
 # Not seen: a command name built at run time (eval, a value read from a file, a
-# word split across quotes such as e"nv"); the output of `command -v jq` passed
-# on through a pipe or a file instead of a substitution; a PATH set outside
-# these files (the systemd unit, cron, sudo's secure_path - the counted
+# word split across quotes such as e"nv" or c"ommand"); a lookup whose output
+# leaves through a redirect to a file or a pipe and is read back later; a lookup
+# verb run by another command (xargs, sudo, nice) or a multi-line construct the
+# line join does not cover (a here-document, an unclosed quote); a PATH set
+# outside these files (the systemd unit, cron, sudo's secure_path - the counted
 # processes here get PATH from this test); jq run by compiled programs or by
 # anything outside dist/pim/opt/pim; languages other than shell and python.
 cat > "$WORK/jq-bypass.patterns" <<'RE'
 /jq([[:space:]"'`;|&)]|$)
-(\$\(|`)([^`)]*[^A-Za-z0-9_.-])?(command|which|type|hash|whereis)[[:space:]]([^`)]*[^A-Za-z0-9_.-])?jq([^A-Za-z0-9_.-]|$)
-(^|[^A-Za-z0-9_.-])(which|type|hash|whereis)[[:space:]]([^;|&]*[^A-Za-z0-9_.-])?jq([^A-Za-z0-9_.-]|$)
-(^|[^A-Za-z0-9_.-])command([[:space:]]+-[^[:space:]]*)*[[:space:]]+-[A-Za-z]*p[A-Za-z]*([[:space:]]+-[^[:space:]]*)*[[:space:]]+jq([^A-Za-z0-9_.-]|$)
 (^|[^A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]*=["']?jq["']?([[:space:];)]|$)
 \$\{?(JQ|jq)(_?(BIN|bin|PATH|path|CMD|cmd|EXE|exe))?(\[[^]]*\])?\}?([^A-Za-z0-9_[]|$)
 (^|[^A-Za-z0-9_.$-])env["']?([[:space:]]|$)
@@ -213,14 +220,40 @@ cat > "$WORK/jq-bypass.patterns" <<'RE'
 (^|[^A-Za-z0-9_.])env[[:space:]]*=[^=]
 which\([[:space:]]*["']jq["']
 RE
-# Prints each offending line as file:line:text; returns 2 if a file could not
-# be read, so an unreadable tree is not mistaken for a clean one.
+cat > "$WORK/jq-lookup.pattern" <<'RE'
+((^|[;&|({`!])[[:space:]]*|(^|[^A-Za-z0-9_])(if|then|do|else|elif|while|until)[[:space:]]+)([A-Za-z_][A-Za-z0-9_]*=[^[:space:];&|]*[[:space:]]+)*(command|which|type|hash|whereis)([[:space:]].*)?(^|[^A-Za-z0-9_.-])jq([^A-Za-z0-9_.-]|$)
+RE
+# The allowed existence test, removed from a line before the lookup rule runs.
+cat > "$WORK/jq-lookup-allowed.sed" <<'SED'
+s#command[[:space:]]+-[vV][[:space:]]+(--[[:space:]]+)?jq[[:space:]]*(&>|>&|>)[[:space:]]*/dev/null([[:space:]]+2>&1)?#:#g
+SED
+# Prints each offending logical line as file:line:text; returns 2 if a file
+# could not be read, so an unreadable tree is not mistaken for a clean one.
 jq_bypass_scan() {
-    local rc=0
-    grep -nHE -f "$WORK/jq-bypass.patterns" -- "$@" > "$WORK/bypass-hits" || rc=$?
+    local rc
+    : > "$WORK/scan.index"
+    # One logical line per output line; its file:first-physical-line goes to
+    # scan.index on the same line number.
+    awk -v index_file="$WORK/scan.index" '
+        function emit() { print text; print name ":" start > index_file; joining = 0 }
+        FNR == 1 && joining { emit() }
+        !joining { name = FILENAME; start = FNR; text = "" }
+        { text = text $0 }
+        text !~ /^[ \t]*#/ && match(text, /\\+$/) && RLENGTH % 2 == 1 { text = substr(text, 1, length(text) - 1); joining = 1; next }
+        { emit() }
+        END { if (joining) emit() }
+    ' "$@" > "$WORK/scan.text" || return 2
+    sed -E -f "$WORK/jq-lookup-allowed.sed" "$WORK/scan.text" > "$WORK/scan.lookup" || return 2
+    rc=0; grep -nE -f "$WORK/jq-bypass.patterns" "$WORK/scan.text" > "$WORK/scan.hits" || rc=$?
     [ "$rc" -le 1 ] || return 2
+    rc=0; grep -nE -f "$WORK/jq-lookup.pattern" "$WORK/scan.lookup" >> "$WORK/scan.hits" || rc=$?
+    [ "$rc" -le 1 ] || return 2
+    cut -d: -f1 "$WORK/scan.hits" | sort -n -u > "$WORK/scan.hitlines"
     # A line that is only a comment runs nothing.
-    grep -vE '^[^:]*:[0-9]+:[[:space:]]*#' "$WORK/bypass-hits" || [ $? -eq 1 ]
+    awk 'FILENAME == ARGV[1] { at[FNR] = $0; next }
+         FILENAME == ARGV[2] { line[FNR] = $0; next }
+         line[$1] !~ /^[ \t]*#/ { print at[$1] ":" line[$1] }' \
+        "$WORK/scan.index" "$WORK/scan.text" "$WORK/scan.hitlines"
 }
 scan_files=()
 while IFS= read -r -d '' f; do
@@ -276,7 +309,32 @@ tool=$(type -a -P jq | head -1)
 command -p -- jq -n 1
 hash -p "$p" jq
 which jq | xargs -I{} {} -n 1
+command jq -n 1
 EOF
+# The same for forms that span lines; each block between ---- lines is a file.
+n=0
+while IFS= read -r line; do
+    if [ "$line" = ---- ]; then n=$((n + 1)); continue; fi
+    printf '%s\n' "$line" >> "$WORK/scan/multi$n.sh"
+done <<'EOF'
+----
+tool=$(
+    command -v jq
+)
+"$tool" -n 1
+----
+"$(
+type -P jq)" -n 1
+----
+x=$(command -v \
+jq)
+----
+# a comment that ends in a backslash does not continue \
+/usr/bin/jq -n 1
+EOF
+for f in "$WORK"/scan/multi*.sh; do
+    [ -n "$(jq_bypass_scan "$f")" ] || fail "jq bypass scan missed: $(paste -sd'|' "$f")"
+done
 cat > "$WORK/scan/clean.sh" <<'EOF'
 jq -n 1
 command -v jq >/dev/null 2>&1 || exit 64
@@ -289,6 +347,12 @@ environment=ok; printenv HOME >/dev/null
 #!/usr/bin/env bash
 # a note on /usr/bin/jq and mode=jq in a comment runs nothing
     # an indented comment: ${JQ} -n 1
+jq -e '
+  type == "object" and
+  (.a | type == "string")
+' <<<"$x" >/dev/null
+out=$(jq -n \
+  1)
 EOF
 hits=$(jq_bypass_scan "$WORK/scan/clean.sh") || die "jq bypass scan: control file unreadable"
 [ -z "$hits" ] || fail "jq bypass scan flagged a plain PATH lookup: $hits"
