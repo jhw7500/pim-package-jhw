@@ -767,7 +767,7 @@ _cr_transition_locked() {
     local next=$1 active current updated id
     _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69
     active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69; _cr_record_owner_matches "$active" || return 69
-    current=$(jq -r .status <<<"$active"); _cr_transition_allowed "$current" "$next" || return 64
+    _cr_jq_memo current "$active" -r .status || current=""; _cr_transition_allowed "$current" "$next" || return 64
     updated=$(jq -c --arg next "$next" --argjson now "$(_cr_now)" '.status=$next | .updated_at=$now' <<<"$active") || return 70; id=$(jq -r .id <<<"$updated")
     _cr_mutation_guard "$updated" active ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_active_file)" "$updated" || return 70
     _cr_mutation_guard "$updated" transition_history ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_history_request "$id" "$updated" || return 70
@@ -959,10 +959,11 @@ _cr_counter_begin_pair_valid() {
 }
 _cr_counter_begin_locked() {
     local action=$1 id=$2 active state history history_request history_action history_next state_next
-    local history_count history_phase state_phase state_mode settle=false now
+    local history_count history_phase state_phase state_mode settle=false now active_status active_id
     _cr_public_action "$action" || return 64; _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69
     active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69; _cr_record_owner_matches "$active" || return 69
-    [ "$(jq -r .status <<<"$active")" = RUNNING ] && [ "$(jq -r .id <<<"$active")" = "$id" ] || return 64
+    _cr_jq_memo active_status "$active" -r .status || active_status=""; [ "$active_status" = RUNNING ] || return 64
+    _cr_jq_memo active_id "$active" -r .id || active_id=""; [ "$active_id" = "$id" ] || return 64
     _cr_mutation_guard "$active" counter_init ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_state_init || return 70; state=$(cat "$(_cr_state_file)") || return 70; _cr_state_valid <<<"$state" || return 70
     history=$(cat "$(_cr_history_file "$id")" 2>/dev/null) || return 70
     history_request=$(jq -ce '.request | select(type=="object")' <<<"$history") || return 70
@@ -1006,11 +1007,12 @@ _cr_counter_begin_locked() {
 cam_action_counter_begin() { [ $# -eq 2 ] || return 64; _cr_lock_call _cr_counter_begin_locked "$@"; }
 _cr_counter_finish_locked() {
     local action=$1 id=$2 status=$3 rc=$4 active state history history_request history_action history_next state_next
-    local history_phase state_phase history_started state_started now phase
+    local history_phase state_phase history_started state_started now phase active_id active_status
     _cr_public_action "$action" || return 64; _cr_terminal_valid "$status" "$rc" || return 64
     _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69; _cr_record_owner_matches "$active" || return 69
-    [ "$(jq -r .id <<<"$active")" = "$id" ] || return 64
-    case "$(jq -r .status <<<"$active")" in RUNNING|VERIFYING) ;; *) return 64;; esac
+    _cr_jq_memo active_id "$active" -r .id || active_id=""; [ "$active_id" = "$id" ] || return 64
+    _cr_jq_memo active_status "$active" -r .status || active_status=""
+    case "$active_status" in RUNNING|VERIFYING) ;; *) return 64;; esac
     _cr_mutation_guard "$active" counter_init ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_state_init || return 70; state=$(cat "$(_cr_state_file)") || return 70; _cr_state_valid <<<"$state" || return 70; history=$(cat "$(_cr_history_file "$id")" 2>/dev/null) || return 70
     history_request=$(jq -ce '.request | select(type=="object")' <<<"$history") || return 70
     _cr_request_json_equal "$history_request" "$active" || return 70
@@ -1068,7 +1070,7 @@ _cr_finish_locked() {
     local status=$1 rc=$2 active id result terminal history history_request history_next state
     local result_path history_path write_result=1 write_history=1 now public_count terminal_req_valid
     _cr_terminal_valid "$status" "$rc" || return 64; _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69
-    active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69; _cr_record_owner_matches "$active" || return 69; id=$(jq -r .id <<<"$active")
+    active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69; _cr_record_owner_matches "$active" || return 69; _cr_jq_memo id "$active" -r .id || id=""
     result_path=$(_cr_result_file "$id"); history_path=$(_cr_history_file "$id")
     history=$(cat "$history_path" 2>/dev/null) || return 70
     jq -e 'type=="object" and (.request|type=="object") and (.actions|type=="array") and all(.actions[];type=="object")' >/dev/null <<<"$history" || return 70

@@ -282,4 +282,26 @@ for kind in 'gstapp_restart countered' 'gstapp_stop uncountered'; do
     assert_finished
 done
 
+# --- C. counter begin/finish gates on the active record ----------------------
+# Both read the active status and id; a request that is not in the right phase,
+# or another request's id, is refused with 64 before anything is written.
+other_id=00000000-0000-4000-8000-000000000000
+label='counter begin on a request that is not RUNNING'
+start_request gstapp_restart
+cam_request_transition QUIESCING; snapshot
+expect_rc 64 cam_action_counter_begin gstapp_restart "$id"
+unchanged active history state
+label='counter begin for another request id'
+cam_request_transition RUNNING; snapshot
+expect_rc 64 cam_action_counter_begin gstapp_restart "$other_id"
+unchanged active history state
+label='counter finish for another request id'
+cam_action_counter_begin gstapp_restart "$id"; snapshot
+expect_rc 64 cam_action_counter_finish gstapp_restart "$other_id" SUCCEEDED 0
+unchanged active history state
+label='counter finish on a request that is neither RUNNING nor VERIFYING'
+cam_request_transition FAILED; snapshot
+expect_rc 64 cam_action_counter_finish gstapp_restart "$id" FAILED 3
+unchanged active history state
+
 echo "request semantics: PASS"
