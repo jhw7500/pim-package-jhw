@@ -325,9 +325,15 @@ cp "$PIM_CAMERA_RUN_DIR/owner.json" "$WORK/owner.single"
 cat "$WORK/owner.single" "$WORK/owner.single" > "$PIM_CAMERA_RUN_DIR/owner.json"
 expect_rc 69 _cr_record_owner_ready "$record" ACTIVE
 cp "$WORK/owner.single" "$PIM_CAMERA_RUN_DIR/owner.json"
-# Stricter than before issue #150 (a): the schema filter's index() accepts the
-# sub-array ["ACTIVE"], and this guard used to as well; it now requires a string,
-# as the entry gate always has.
+# Stricter than before issue #150 (a): the owner schema filter used index(),
+# which finds the sub-array ["ACTIVE"], so the guard accepted it.  The filter now
+# requires a string - for the live owner and for the owner a record carries.
+label='owner guard on a record whose owner lifecycle is an array'
+array_record=$(jq -c '.owner.lifecycle=["ACTIVE"]' <<<"$record")
+expect_rc 69 _cr_record_owner_ready "$array_record" ACTIVE
+expect_rc 1 _cr_record_owner_matches "$array_record"
+guard_err=$(_cr_record_owner_ready "$array_record" ACTIVE 2>&1 >/dev/null || true)
+[ -z "$guard_err" ] || fail "the array lifecycle was refused through a jq error: $guard_err"
 label='owner guard on an array lifecycle'
 owner_edit '.lifecycle=["ACTIVE"]'
 expect_rc 69 _cr_record_owner_ready "$record" ACTIVE
