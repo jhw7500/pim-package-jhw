@@ -24,19 +24,23 @@ set -euo pipefail
 # start_cam.sh run (one per flow that starts the app).  The assertion is on the
 # total.  History (stop/restart/hard_reset/module_reload/module_reload_fails):
 # e3da7ca 68/118/120/120/196; one jq per transition (#150 PR1) 54/105/107/107/183;
-# one jq per claim and per submit request (#150 PR2) 49/100/102/102/178.
+# one jq per claim and per submit request (#150 PR2) 49/100/102/102/178;
+# counter_begin's common case in one jq (#150) 49/84/86/86/130.  restart_again
+# (an earlier request in the counter, as on a board): 101 before, 84 after.
 # flow                   ceiling   measured        terminal state the flow must reach
 declare -A CEILING=(
     [gstapp_stop]=49           #   4 + 45          SUCCEEDED
-    [gstapp_restart]=100       #   4 + 92 + 4      SUCCEEDED
-    [camera_hard_reset]=102    #   4 + 94 + 4      SUCCEEDED
-    [module_reload]=102        #   4 + 94 + 4      SUCCEEDED
-    [module_reload_fails]=178  #   4 + 174         FAILED rc=1: module_reload and
+    [gstapp_restart]=84        #   4 + 76 + 4      SUCCEEDED
+    [camera_hard_reset]=86     #   4 + 78 + 4      SUCCEEDED
+    [module_reload]=86         #   4 + 78 + 4      SUCCEEDED
+    [module_reload_fails]=130  #   4 + 126         FAILED rc=1: module_reload and
                                #                   camera_hard_reset fail at modprobe
                                #                   (rc 23) before the app starts,
                                #                   reboot_fallback is refused (rc 1)
+    [gstapp_restart_again]=84  #   4 + 76 + 4      SUCCEEDED after an earlier
+                               #                   gstapp_restart that succeeded
 )
-FLOWS=(gstapp_stop gstapp_restart camera_hard_reset module_reload module_reload_fails)
+FLOWS=(gstapp_stop gstapp_restart camera_hard_reset module_reload module_reload_fails gstapp_restart_again)
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/pim-jq-budget.XXXXXX")
@@ -412,17 +416,38 @@ counted() {
     return "$rc"
 }
 lines() { wc -l < "$1" | tr -d ' '; }
+# The same process shape as counted, without the shim: a request that is not
+# part of the count.
+uncounted() {
+    local rc=0
+    env PATH="$STUB_PATH" flock -s "$WORK/flow.lock" "$@" || rc=$?
+    flock -x -w 60 "$WORK/flow.lock" true || die "an uncounted process left a child running for 60s"
+    return "$rc"
+}
 
 run_flow() {
-    local flow=$1 type daemon_env=() want_rc=0 rc id submit_n daemon_n total
+    local flow=$1 type daemon_env=() want_rc=0 rc id submit_n daemon_n total prior=""
     local result active pending owner_env=()
     case "$flow" in
         module_reload_fails) type=module_reload; daemon_env=(FAIL_MODPROBE=max9296 FAIL_REBOOT_RC=1); want_rc=1 ;;
+        gstapp_restart_again) type=gstapp_restart ;;
         *) type=$flow ;;
     esac
     fresh_board
     # The daemon exported its owner context when it created the owner.
     mapfile -t owner_env < <(jq -r '"PIM_CAMERA_OWNER_BOOT_ID=\(.boot_id)", "PIM_CAMERA_OWNER_INVOCATION=\(.invocation_id)", "PIM_CAMERA_OWNER_PID=\(.pid)", "PIM_CAMERA_OWNER_PROC_START_TIME=\(.proc_start_time)", "PIM_CAMERA_OWNER_TOKEN=\(.token)", "PIM_CAMERA_OWNER_CREATED_AT=\(.created_at)"' "$PIM_CAMERA_RUN_DIR/owner.json")
+    # state.json persists across boots, so on a board the counter usually holds
+    # an earlier request that finished; a fresh board's template state does not.
+    if [ "$flow" = gstapp_restart_again ]; then
+        prior=$(uncounted bash "$PIM_BIN/cam-recoveryctl" request "$type" --source jq-budget --reason "jq budget $type, earlier") \
+            || die "$flow: the earlier request was not submitted"
+        # shellcheck disable=SC2016 # expanded by the daemon shell
+        uncounted env "${owner_env[@]}" bash -c 'enable -n kill; source "$PIM_LIB/cam_operate_control.sh"; cam_poll_pending_request' >/dev/null 2>&1 \
+            || die "$flow: the earlier request did not run"
+        jq -e --arg id "$prior" '.actions.gstapp_restart | .attempted==1 and .last_request_id==$id and .last_status=="SUCCEEDED"' \
+            "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null 2>&1 || die "$flow: the earlier request did not finish"
+        : > "$PIM_CAMERA_CALL_LOG"
+    fi
 
     rc=0
     id=$(counted "$WORK/jq.$flow.submit" bash "$PIM_BIN/cam-recoveryctl" request "$type" --source jq-budget --reason "jq budget $type") || rc=$?
@@ -444,6 +469,8 @@ run_flow() {
             || fail "$flow: no SUCCEEDED result ($(cat "$result" 2>/dev/null || echo absent))"
         [ "$(jq -r .lifecycle "$PIM_CAMERA_RUN_DIR/owner.json")" = ACTIVE ] || fail "$flow: owner did not return to ACTIVE"
         [ "$flow" != module_reload ] || assert_module_reload_succeeded "$id"
+        [ -z "$prior" ] || jq -e --arg id "$id" '.actions.gstapp_restart | .attempted==2 and .succeeded==2 and .last_request_id==$id and .last_status=="SUCCEEDED"' \
+            "$PIM_CAMERA_STATE_DIR/recovery/state.json" >/dev/null 2>&1 || fail "$flow: the counter does not record both requests"
     else
         assert_escalation_failed "$id" "$result"
     fi
