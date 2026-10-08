@@ -747,15 +747,35 @@ cam_startup_request_reserve() {
     _cr_lock_call _cr_startup_request_reserve_locked "$@"
 }
 
+# submit 의 owner 스키마 판정과 요청 생성을 jq 한 번으로 (이슈 #150 재설계 PR2). owner 원문은
+# stdin 으로 받아 -s 로 문서 배열로 읽고, 예전 두 단계를 그대로 재현한다:
+#   _cr_owner_schema(jq -e FILTER, 문서 스트림) — 어느 문서든 평가 오류거나 마지막 문서가
+#   거짓이면 69, 문서가 없으면 통과
+#   요청 생성(--argjson owner) — owner 가 문서 하나가 아니면 70, 시각을 해석할 수 없으면 70
+# 출력은 줄마다: 판정(ok|69|70), 요청, 그 요청의 owner(쓴 텍스트를 다시 파싱해 jq -c 와 같은
+# 직렬화 — 쓰기 가드가 꺼낼 .owner 를 메모에 미리 넣는다).
+_CR_SUBMIT_FILTER='[ .[] | try ('"$_CR_OWNER_SCHEMA_FILTER"') catch "error" ] as $schema
+  | (try ($now | [fromjson]) catch null) as $t
+  | if any($schema[]; . == "error") or (($schema | length) > 0 and ($schema[-1] | not)) then "69"
+    elif length != 1 or $t == null then "70"
+    else ({id:$id,type:$type,source:$source,reason:$reason,status:"PENDING",created_at:$t[0],owner:.[0]}
+          + (if $source_path=="" then {} else {source_path:$source_path} end)
+          + (if $source_mtime=="" then {} else {source_mtime:($source_mtime|tonumber)} end) | tojson) as $rs
+      | "ok", $rs, ($rs | fromjson | .owner | tojson)
+    end'
 _cr_request_new() {
-    local type=$1 source=$2 reason=$3 source_path=${4:-} source_mtime=${5:-} id now owner request
+    local type=$1 source=$2 reason=$3 source_path=${4:-} source_mtime=${5:-} id now owner plan verdict request request_owner
     _cr_request_type "$type" || return 64; [ -n "$source" ] && [ -n "$reason" ] || return 64
     [ -z "$source_mtime" ] || [[ $source_mtime =~ ^[0-9]+$ ]] || return 64
     _cr_owner_lifecycle_in ACTIVE DEGRADED || return 69
     [ ! -e "$(_cr_pending_file)" ] && [ ! -e "$(_cr_active_file)" ] || return 75
-    id=$(_cr_uuid) || return 70; now=$(_cr_now); owner=$(_cr_owner_json); _cr_owner_schema <<<"$owner" || return 69
+    id=$(_cr_uuid) || return 70; now=$(_cr_now); owner=$(_cr_owner_json)
+    plan=$(jq -rs --arg id "$id" --arg type "$type" --arg source "$source" --arg reason "$reason" --arg source_path "$source_path" --arg source_mtime "$source_mtime" --arg now "$now" "$_CR_SUBMIT_FILTER" <<<"$owner") || return 69
+    { IFS= read -r verdict; IFS= read -r request; IFS= read -r request_owner; } <<<"$plan"
+    [ "$verdict" != 69 ] || return 69
     if [ -n "${PIM_CAMERA_OWNER_INVOCATION:-}" ]; then _cr_owner_matches_exported_context "$owner" || return 69; fi
-    request=$(jq -cn --arg id "$id" --arg type "$type" --arg source "$source" --arg reason "$reason" --arg source_path "$source_path" --arg source_mtime "$source_mtime" --argjson now "$now" --argjson owner "$owner" '{id:$id,type:$type,source:$source,reason:$reason,status:"PENDING",created_at:$now,owner:$owner} + (if $source_path=="" then {} else {source_path:$source_path} end) + (if $source_mtime=="" then {} else {source_mtime:($source_mtime|tonumber)} end)') || return 70
+    [ "$verdict" = ok ] || return 70
+    _cr_jq_memo_put "$request_owner" "$request" -c .owner
     _cr_mutation_guard "$request" pending ACTIVE DEGRADED || return 69; _cr_atomic_write "$(_cr_pending_file)" "$request" || return 70; printf '%s\n' "$id"
 }
 cam_request_submit() {
@@ -772,15 +792,36 @@ _cr_history_request() {
     updated=$(jq -c --argjson request "$request" '.request=$request' <<<"$history") || return 1
     _cr_atomic_write "$(_cr_history_file "$id")" "$updated"
 }
+# claim 의 모양 판정, id·owner 추출, history 생성을 jq 한 번으로 (이슈 #150 재설계 PR2).
+# pending 원문을 -s 로 문서 배열로 읽고 예전 모양 검사(jq -e '.id and …' 를 문서 스트림에)를
+# 그대로 재현한다: 어느 문서든 평가 오류거나 마지막 문서가 거짓이면 70, 문서가 없으면 통과.
+# 문서가 하나가 아니면 이어지는 owner 대조가 .owner 를 여러 줄로 받아 거부했으므로 69 다.
+# 출력은 줄마다: 판정(ok|69|70), id(UUID 가 아니면 "-"), owner(jq -c 와 같은 직렬화),
+# history. id 와 owner 는 메모에 미리 넣어 owner 대조와 claim 직후의 첫 전이가 jq 를 다시
+# 띄우지 않는다(active 는 pending 을 옮긴 같은 바이트다). 문서는 argv 로 넘기지 않는다.
+_CR_CLAIM_FILTER='[ .[] | try (.id and .type and .source and .reason and .owner) catch "error" ] as $shape
+  | if any($shape[]; . == "error") or (($shape | length) > 0 and ($shape[-1] | not)) then "70"
+    elif length != 1 then "69"
+    else "ok",
+      (.[0].id | if type == "string" and test("\\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\z") then . else "-" end),
+      (.[0].owner | tojson),
+      ({request: .[0], actions: []} | tojson)
+    end'
 _cr_claim_locked() {
-    local pending id history
+    local pending plan verdict id owner history
     _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69
     [ -f "$(_cr_pending_file)" ] || return 69; [ ! -e "$(_cr_active_file)" ] || return 75
-    pending=$(cat "$(_cr_pending_file)") || return 70; jq -e '.id and .type and .source and .reason and .owner' >/dev/null <<<"$pending" || return 70
-    # 메모로 꺼낸다 — claim 직후의 첫 전이가 같은 바이트(active 는 pending 을 옮긴 것)의
-    # .id 를 찾으므로 jq 를 다시 띄우지 않는다.
-    _cr_record_owner_matches "$pending" || return 69; _cr_jq_memo id "$pending" -r .id || id=""
-    history=$(jq -cn --argjson request "$pending" '{request:$request,actions:[]}') || return 70
+    pending=$(cat "$(_cr_pending_file)") || return 70
+    plan=$(jq -rs "$_CR_CLAIM_FILTER" <<<"$pending") || return 70
+    { IFS= read -r verdict; IFS= read -r id; IFS= read -r owner; IFS= read -r history; } <<<"$plan"
+    [ "$verdict" != 70 ] || return 70
+    [ "$verdict" = ok ] || return 69
+    _cr_jq_memo_put "$owner" "$pending" -c .owner
+    [ "$id" = - ] || _cr_jq_memo_put "$id" "$pending" -r .id
+    _cr_record_owner_matches "$pending" || return 69
+    # history 경로는 UUID 인 id 로만 만든다 — 아니면 아무것도 쓰지 않고 70 이다(전이와 같은
+    # 규칙: 저장 디렉터리 밖을 가리키는 경로를 열지 않는다).
+    [ "$id" != - ] || return 70
     _cr_mutation_guard "$pending" claim_history ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_history_file "$id")" "$history" || return 70
     _cr_mutation_guard "$pending" claim_active ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_move "$(_cr_pending_file)" "$(_cr_active_file)" || return 70
 }

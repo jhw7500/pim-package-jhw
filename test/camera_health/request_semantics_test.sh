@@ -27,6 +27,7 @@ source "$PIM_LIB/cam_operate_control.sh"
 # finished_at changes the bytes even when crash and resume share a second.
 # Callers use $(_cr_now), a subshell, so the clock lives in a file.
 printf '1700000000\n' > "$WORK/clock"
+# shellcheck disable=SC2317 # called by the library, not by this file
 _cr_now() { local now; now=$(( $(cat "$WORK/clock") + 1 )); printf '%s\n' "$now" > "$WORK/clock"; printf '%s\n' "$now"; }
 
 fail() { echo "FAIL: $label: $*" >&2; exit 1; }
@@ -398,6 +399,7 @@ hash -r
 label='transition with a clock that prints no number'
 start_request gstapp_restart
 clock_fn=$(declare -f _cr_now)
+# shellcheck disable=SC2317 # called by the library, not by this file
 _cr_now() { echo not-a-number; }
 snapshot
 expect_rc 64 cam_request_transition RUNNING
@@ -488,5 +490,69 @@ expect_rc 0 argv_call cam_request_claim; snapshot
 expect_rc 69 argv_call cam_request_transition QUIESCING
 unchanged active history
 jq -e '.status=="PENDING"' "$active_file" >/dev/null || fail "active is not left at PENDING"
+
+# --- F. claim and submit judge their documents as the old per-step jq did ----
+# One jq per operation since issue #150 PR2: the outcomes below are the old
+# ones - the claim's shape test was jq -e over the document stream (no document
+# passes, an evaluation error or a false last document is 70), and a pending
+# that is not one document then failed the owner match (69).
+pending_file="$PIM_CAMERA_RUN_DIR/recovery/pending.json"
+# A well-formed pending owned by the current owner; $1 is a shell snippet that
+# turns it ($good) into the text the case writes.
+claim_case() { # label, text-making snippet, expected rc
+    label="claim with $1"
+    fresh_owner; mkdir -p "$(dirname "$pending_file")"
+    local good text before
+    # shellcheck disable=SC2034 # read by the eval'd snippet in $2
+    good=$(jq -cn --argjson o "$(cat "$PIM_CAMERA_RUN_DIR/owner.json")" '{id:"11111111-2222-4333-8444-555555555555",type:"gstapp_restart",source:"s",reason:"r",status:"PENDING",created_at:1,owner:$o}')
+    text=$(eval "$2"); printf '%s\n' "$text" > "$pending_file"
+    before=$(fingerprint "$pending_file")
+    expect_rc "$3" cam_request_claim
+    [ "$before" = "$(fingerprint "$pending_file")" ] || fail "the pending request changed"
+    [ ! -e "$active_file" ] || fail "an active request was created"
+    [ -z "$(ls -A "$PIM_CAMERA_STATE_DIR/recovery/history" 2>/dev/null)" ] || fail "a history was written"
+}
+# shellcheck disable=SC2016 # expanded by claim_case
+{
+claim_case 'an empty pending' 'printf ""' 69
+claim_case 'two pending documents' 'printf "%s\n%s" "$good" "$good"' 69
+claim_case 'a pending followed by a number' 'printf "%s 5" "$good"' 70
+claim_case 'a false id' 'jq -c ".id=false" <<<"$good"' 70
+claim_case 'an array' 'printf "[]"' 70
+claim_case 'null' 'printf null' 70
+# Approved with the redesign, as for the transition: no history path from an id
+# that is not a UUID, and nothing is written.
+claim_case 'an id that is not a UUID' 'jq -c ".id=\"not-a-uuid\"" <<<"$good"' 70
+}
+label='claim of a well-formed pending'
+fresh_owner; mkdir -p "$(dirname "$pending_file")"
+pending=$(jq -cn --argjson o "$(cat "$PIM_CAMERA_RUN_DIR/owner.json")" '{id:"11111111-2222-4333-8444-555555555555",type:"gstapp_restart",source:"s",reason:"r",status:"PENDING",created_at:1,owner:$o}'); printf '%s\n' "$pending" > "$pending_file"
+id=$(jq -r .id <<<"$pending")
+expect_rc 0 cam_request_claim
+[ "$(cat "$(history_file)")" = "$(jq -cn --argjson request "$pending" '{request:$request,actions:[]}')" ] \
+    || fail "the history is not the old serialization"
+memo_owner=; memo_id=
+_cr_jq_memo memo_owner "$pending" -c .owner; _cr_jq_memo memo_id "$pending" -r .id
+[ "$memo_owner" = "$(jq -c .owner <<<"$pending")" ] || fail "the memo holds another .owner than jq prints"
+[ "$memo_id" = "$id" ] || fail "the memo holds another .id than jq prints"
+
+label='submit writes the old request bytes'
+fresh_owner
+clock_before=$(cat "$WORK/clock")
+id=$(cam_request_submit module_reload watcher 'old bytes' /source/path 123)
+request=$(cat "$pending_file")
+[ "$request" = "$(jq -cn --arg id "$id" --argjson now "$((clock_before + 1))" --argjson owner "$(cat "$PIM_CAMERA_RUN_DIR/owner.json")" '{id:$id,type:"module_reload",source:"watcher",reason:"old bytes",status:"PENDING",created_at:$now,owner:$owner,source_path:"/source/path",source_mtime:123}')" ] \
+    || fail "the request is not the old serialization: $request"
+memo_owner=
+_cr_jq_memo memo_owner "$request" -c .owner
+[ "$memo_owner" = "$(jq -c .owner <<<"$request")" ] || fail "the memo holds another .owner than jq prints"
+label='submit with a clock that prints no number'
+fresh_owner
+clock_fn=$(declare -f _cr_now)
+# shellcheck disable=SC2317 # called by the library, not by this file
+_cr_now() { echo not-a-number; }
+expect_rc 70 cam_request_submit gstapp_restart operator 'no clock'
+[ ! -e "$pending_file" ] || fail "a pending request was written"
+eval "$clock_fn"
 
 echo "request semantics: PASS"
