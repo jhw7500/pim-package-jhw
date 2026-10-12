@@ -127,13 +127,38 @@ expect_runs 1 'noticing a changed /proc start time spawned jq'
 { printf '%s' '4242 (cam operate) S'; for _ in $(seq 1 18); do printf ' 0'; done; printf ' 111 0 0\n'; } > "$PIM_CAMERA_PROC_ROOT/4242/stat"
 cam_request_transition VERIFYING || fail "the transition to VERIFYING was refused"
 record=$(cat "$PIM_CAMERA_RUN_DIR/recovery/active.json")
-want_owner=$(jq -c .owner <<<"$record"); want_id=$(jq -r .id <<<"$record")
-got_owner=; got_id=
+want_owner=$(jq -c .owner <<<"$record"); want_id=$(jq -r .id <<<"$record"); want_status=$(jq -r .status <<<"$record")
+got_owner=; got_id=; got_status=
 : > "$WORK/jq.log"
-_cr_jq_memo got_owner "$record" -c .owner; _cr_jq_memo got_id "$record" -r .id
-expect_runs 0 'the transition did not leave .owner and .id of the record it wrote in the memo'
+_cr_jq_memo got_owner "$record" -c .owner; _cr_jq_memo got_id "$record" -r .id; _cr_jq_memo got_status "$record" -r .status
+expect_runs 0 'the transition did not leave .owner, .id and .status of the record it wrote in the memo'
 [ "$got_owner" = "$want_owner" ] || fail "the memo holds another .owner than jq prints: '$got_owner' vs '$want_owner'"
 [ "$got_id" = "$want_id" ] || fail "the memo holds another .id than jq prints: '$got_id' vs '$want_id'"
+[ "$got_status" = "$want_status" ] || fail "the memo holds another .status than jq prints: '$got_status' vs '$want_status'"
+
+# _cr_request_schema answers from the memo, and leaves the request's .type there:
+# what it prints is .type as jq -r prints it for the one document it accepted,
+# so poll and execution read the type without a jq of their own.
+got_type=
+: > "$WORK/jq.log"
+_cr_request_schema "$record" || fail "the schema check refused the active record"
+_cr_request_schema "$record" || fail "the repeated schema check refused the active record"
+_cr_jq_memo got_type "$record" -r .type
+expect_runs 1 'a repeated schema check or the .type lookup ran jq again'
+[ "$got_type" = "$(jq -r .type <<<"$record")" ] || fail "the memo holds another .type than jq prints: '$got_type'"
+# The old check read the type through \$(...), which drops a trailing newline, so
+# such a type passes; the memo then holds the type as jq -r prints it, stripped.
+newline_type=$(jq -c '.type="gstapp_restart\n"' <<<"$record")
+_cr_request_schema "$newline_type" || fail "the schema check refused a type that ends in a newline"
+_cr_jq_memo got_type "$newline_type" -r .type
+[ "$got_type" = "$(jq -r .type <<<"$newline_type")" ] || fail "the memo holds another .type than jq prints for a type ending in a newline"
+# A refused request leaves nothing behind: two documents are not one.
+two=$(printf '%s\n%s' "$record" "$record")
+rc=0; _cr_request_schema "$two" || rc=$?
+[ "$rc" -eq 1 ] || fail "the schema check accepted two documents (rc $rc)"
+: > "$WORK/jq.log"
+_cr_jq_memo got_type "$two" -r .type
+expect_runs 1 'a refused request left .type in the memo'
 
 # The put values are taken from the written text parsed back, because the next
 # operation's jq -c .owner reads the file.  jq 1.7 prints a number it parsed from

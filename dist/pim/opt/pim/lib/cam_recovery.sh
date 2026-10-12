@@ -307,8 +307,12 @@ _cr_request_schema() {
     # whose status follows the last value, so a stream whose final document was
     # invalid was rejected.  Reading a stream as input would accept the request
     # whenever any document in it validated.
-    type=$(jq -r -s "if (length == 1) then .[0] | if (($_CR_REQUEST_SCHEMA_FILTER)) and (.owner | ($_CR_OWNER_SCHEMA_FILTER)) then .type else empty end else empty end" <<<"$request") || return 1
+    # 메모로 부른다 (이슈 #150): 같은 프로세스가 같은 요청을 여러 번 검증한다(poll·실행·
+    # finish). 출력이 있으면 문서는 하나이고 그 .type 을 jq -r 로 찍은 것이므로, 같은
+    # 텍스트의 jq -r .type 출력과 바이트까지 같다 — 그 메모도 미리 넣는다.
+    _cr_jq_memo type "$request" -r -s "if (length == 1) then .[0] | if (($_CR_REQUEST_SCHEMA_FILTER)) and (.owner | ($_CR_OWNER_SCHEMA_FILTER)) then .type else empty end else empty end" || return 1
     [ -n "$type" ] || return 1
+    _cr_jq_memo_put "$type" "$request" -r .type
     _cr_request_type "$type"
 }
 _CR_REQUEST_IDENTITY_FILTER='
@@ -915,6 +919,9 @@ _cr_transition_locked() {
     _cr_transition_allowed "$current" "$next" || return 64
     [ "$updated" != - ] || return 70
     [ "$updated_id" = - ] || _cr_jq_memo_put "$updated_id" "$updated" -r .id
+    # 갱신한 active 의 status 는 전이표가 허용한 $next 그대로다(대문자·밑줄). counter 연산이
+    # 이 텍스트의 jq -r .status 를 찾는다.
+    _cr_jq_memo_put "$next" "$updated" -r .status
     _cr_jq_memo_put "$updated_owner" "$updated" -c .owner
     _cr_mutation_guard "$updated" active ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_active_file)" "$updated" || return 70
     _cr_mutation_guard "$updated" transition_history ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69

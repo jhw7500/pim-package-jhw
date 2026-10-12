@@ -188,6 +188,23 @@ mkdir -p "$PIM_CAMERA_PROCESS_ROOT/99"
 printf '%s' '99 (BG_Check_for_pim) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 999 0' > "$PIM_CAMERA_PROCESS_ROOT/99/stat"
 printf '/bin/bash\000%s\0004\000' "$PIM_CAMERA_BG_CHECKER" > "$PIM_CAMERA_PROCESS_ROOT/99/cmdline"
 
+echo "=== an active record with a NUL byte is refused before dispatch ==="
+# 실행 진입은 active 의 type 을 메모로 읽는다(이슈 #150). $(cat) 은 NUL 을 지우므로, NUL 이 든
+# 파일은 예전처럼 파일을 jq 로 읽어 판정해야 한다 - 토큰 사이 NUL 은 jq 1.6·1.7 모두 거부한다.
+: > "$PIM_CAMERA_CALL_LOG"
+owner_active
+expect cam_request_submit gstapp_stop legacy-kill-test legacy-wrapper >/dev/null
+expect cam_request_claim
+nul_active="$PIM_CAMERA_RUN_DIR/recovery/active.json"
+{ printf '{\0'; tail -c +2 "$nul_active"; } > "$WORK/nul-active.json"
+cp "$WORK/nul-active.json" "$nul_active"
+expect_rc 69 cam_execute_pending_request
+cmp -s "$WORK/nul-active.json" "$nul_active" || fail 'the refused execution rewrote the active record'
+[ "$(grep -cE '^(pkill|kill) ' "$PIM_CAMERA_CALL_LOG" || true)" -eq 0 ] \
+    || fail 'an active record with a NUL byte was dispatched'
+rm -f "$nul_active"
+owner_active
+
 echo "=== cam_execute_recovery_request refuses gstapp_stop without taking a lease ==="
 # That entry point's shared success path sets the owner ACTIVE for every type, so a stop
 # succeeding there would raise a DEGRADED owner and erase the persisted fault - the same
