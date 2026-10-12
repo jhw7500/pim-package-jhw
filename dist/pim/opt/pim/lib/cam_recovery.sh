@@ -311,18 +311,17 @@ _cr_request_schema() {
     [ -n "$type" ] || return 1
     _cr_request_type "$type"
 }
-_cr_request_identity_equal() {
-    jq -ne --argjson left "$1" --argjson right "$2" '
+_CR_REQUEST_IDENTITY_FILTER='
       def identity: {
         id,type,source,reason,created_at,owner,
         source_path:(.source_path // null),source_mtime:(.source_mtime // null)
       };
       ($left|identity)==($right|identity)
-    ' >/dev/null
+    '
+_cr_request_identity_equal() {
+    jq -ne --argjson left "$1" --argjson right "$2" "$_CR_REQUEST_IDENTITY_FILTER" >/dev/null
 }
-_cr_terminal_result_valid() {
-    local result=$1 request=$2
-    jq -e '
+_CR_TERMINAL_RESULT_FILTER='
       type=="object" and
       (has("interrupted")|not) and
       (has("interrupted_reason")|not) and
@@ -335,29 +334,35 @@ _cr_terminal_result_valid() {
        (.status=="FAILED" and (.rc|type=="number" and floor==. and .>0))) and
       ((has("source_path")|not) or (.source_path|type=="string" and length>0)) and
       ((has("source_mtime")|not) or (.source_mtime|type=="number" and floor==. and .>=0))
-    ' >/dev/null <<<"$result" || return 1
-    _cr_request_type "$(jq -r .type <<<"$result")" || return 1
-    jq -ne --argjson request "$request" --argjson result "$result" '
+    '
+_CR_RESULT_IDENTITY_FILTER='
       def identity: {
         id,type,source,reason,created_at,
         source_path:(.source_path // null),source_mtime:(.source_mtime // null)
       };
       ($request|identity)==($result|identity)
-    ' >/dev/null
+    '
+_cr_terminal_result_valid() {
+    local result=$1 request=$2
+    jq -e "$_CR_TERMINAL_RESULT_FILTER" >/dev/null <<<"$result" || return 1
+    _cr_request_type "$(jq -r .type <<<"$result")" || return 1
+    jq -ne --argjson request "$request" --argjson result "$result" "$_CR_RESULT_IDENTITY_FILTER" >/dev/null
 }
-_cr_terminal_request_valid() {
-    _cr_request_schema "$1" || return 1
-    jq -e '
+_CR_TERMINAL_REQUEST_FILTER='
       (.finished_at|type=="number" and floor==. and .>0) and
       ((.status=="SUCCEEDED" and .rc==0) or
        (.status=="FAILED" and (.rc|type=="number" and floor==. and .>0)))
-    ' >/dev/null <<<"$1"
+    '
+_cr_terminal_request_valid() {
+    _cr_request_schema "$1" || return 1
+    jq -e "$_CR_TERMINAL_REQUEST_FILTER" >/dev/null <<<"$1"
 }
-_cr_terminal_request_result_equal() {
-    jq -ne --argjson request "$1" --argjson result "$2" '
+_CR_TERMINAL_REQUEST_RESULT_FILTER='
       $request.status==$result.status and $request.rc==$result.rc and
       $request.finished_at==$result.finished_at
-    ' >/dev/null
+    '
+_cr_terminal_request_result_equal() {
+    jq -ne --argjson request "$1" --argjson result "$2" "$_CR_TERMINAL_REQUEST_RESULT_FILTER" >/dev/null
 }
 _cr_request_json_equal() {
     jq -ne --argjson left "$1" --argjson right "$2" '$left==$right' >/dev/null
@@ -376,9 +381,7 @@ _cr_terminal_interruption_valid() {
         return 0
     fi
 }
-_cr_terminal_history_actions_valid() {
-    local history=$1 terminal=$2
-    jq -ne --argjson history "$history" --argjson terminal "$terminal" '
+_CR_TERMINAL_HISTORY_ACTIONS_FILTER='
       def public_action:
         .=="gstapp_restart" or .=="module_reload" or
         .=="camera_hard_reset" or .=="reboot_fallback";
@@ -410,22 +413,15 @@ _cr_terminal_history_actions_valid() {
          elif (.action|uncountered_action) then uncountered_terminal
          else false end))) and
       (($history.actions|map(.action)|length)==($history.actions|map(.action)|unique|length))
-    ' >/dev/null
+    '
+_cr_terminal_history_actions_valid() {
+    local history=$1 terminal=$2
+    jq -ne --argjson history "$history" --argjson terminal "$terminal" "$_CR_TERMINAL_HISTORY_ACTIONS_FILTER" >/dev/null
 }
-_cr_terminal_public_counters_valid() {
-    local history=$1 state count
-    count=$(jq '[.actions[] | select(
+_CR_PUBLIC_COUNT_FILTER='[.actions[] | select(
       .action=="gstapp_restart" or .action=="module_reload" or
-      .action=="camera_hard_reset" or .action=="reboot_fallback")]|length' <<<"$history") || return 1
-    [ "$count" -eq 0 ] && return 0
-    if [ $# -ge 2 ]; then
-        state=$2
-    else
-        [ -f "$(_cr_state_file)" ] || return 1
-        state=$(cat "$(_cr_state_file)" 2>/dev/null) || return 1
-    fi
-    _cr_state_valid <<<"$state" 2>/dev/null || return 1
-    jq -ne --argjson history "$history" --argjson state "$state" '
+      .action=="camera_hard_reset" or .action=="reboot_fallback")]|length'
+_CR_PUBLIC_COUNTERS_FILTER='
       def public_action:
         .=="gstapp_restart" or .=="module_reload" or
         .=="camera_hard_reset" or .=="reboot_fallback";
@@ -440,7 +436,19 @@ _cr_terminal_public_counters_valid() {
            $state.actions[$action.action].last_rc==$action.rc and
            $state.actions[$action.action].last_finished_at==$action.finished_at
          end))
-    ' >/dev/null
+    '
+_cr_terminal_public_counters_valid() {
+    local history=$1 state count
+    count=$(jq "$_CR_PUBLIC_COUNT_FILTER" <<<"$history") || return 1
+    [ "$count" -eq 0 ] && return 0
+    if [ $# -ge 2 ]; then
+        state=$2
+    else
+        [ -f "$(_cr_state_file)" ] || return 1
+        state=$(cat "$(_cr_state_file)" 2>/dev/null) || return 1
+    fi
+    _cr_state_valid <<<"$state" 2>/dev/null || return 1
+    jq -ne --argjson history "$history" --argjson state "$state" "$_CR_PUBLIC_COUNTERS_FILTER" >/dev/null
 }
 _cr_terminal_attribution_valid() {
     local history=$1 terminal=$2
@@ -453,17 +461,19 @@ _cr_terminal_attribution_valid() {
     fi
     [ ! -e "$(_cr_service_file)" ] || jq -e 'type=="object"' "$(_cr_service_file)" >/dev/null 2>&1
 }
+_CR_RESULT_FROM_TERMINAL_FILTER='{id,type,status,rc,source,reason,created_at,finished_at} + (if has("source_path") then {source_path} else {} end) + (if has("source_mtime") then {source_mtime} else {} end)'
 _cr_result_from_terminal() {
-    jq -c '{id,type,status,rc,source,reason,created_at,finished_at} + (if has("source_path") then {source_path} else {} end) + (if has("source_mtime") then {source_mtime} else {} end)' <<<"$1"
+    jq -c "$_CR_RESULT_FROM_TERMINAL_FILTER" <<<"$1"
 }
-_cr_history_public_state_arithmetic_valid() {
-    local history=$1 state=$2 id=$3 actions action
-    actions=$(jq -r --arg id "$id" '
+_CR_ARITHMETIC_ACTIONS_FILTER='
       def public_action:
         .=="gstapp_restart" or .=="module_reload" or
         .=="camera_hard_reset" or .=="reboot_fallback";
       .actions[] | select(.request_id==$id and (.action|public_action)) | .action
-    ' <<<"$history") || return 1
+    '
+_cr_history_public_state_arithmetic_valid() {
+    local history=$1 state=$2 id=$3 actions action
+    actions=$(jq -r --arg id "$id" "$_CR_ARITHMETIC_ACTIONS_FILTER" <<<"$history") || return 1
     for action in $actions; do
         _cr_counter_finish_state_action_valid "$state" "$action" "$id" || return 1
     done
@@ -1247,6 +1257,7 @@ _CR_COUNTER_FINISH_STATE_UPDATE='.actions[$action].last_request_id=$id | .action
 # 시각과 started_at 의 [ -ge ] 비교, rc 의 --argjson 은 정규 10진수(15자리 이하, rc 는
 # 9자리 이하)일 때만 빠른 경로가 맡는다 — 그 밖의 표기는 예전 코드가 판정한다. 세
 # 문서는 --rawfile 로 받는다(-R 은 4095 바이트 조각 경계의 멀티바이트 문자를 깨뜨린다).
+# 필터 안의 $state 는 갱신한 뒤의 state 다(원본은 $s) — 짝 검증 필터가 이 이름을 쓴다.
 _CR_COUNTER_FINISH_FAST_FILTER=$_CR_FAST_PRELUDE'
   try (
     ($sraw | fromjson) as $s
@@ -1367,14 +1378,104 @@ _cr_counter_finish_locked() {
     esac
 }
 cam_action_counter_finish() { [ $# -eq 4 ] || return 64; _cr_lock_call _cr_counter_finish_locked "$@"; }
+_CR_TERMINAL_UPDATE_FILTER='.status=$status | .rc=$rc | .finished_at=$now'
+_CR_HISTORY_TERMINAL_FILTER='.request=$terminal'
+# finish 의 빠른 경로 (이슈 #150, counter 두 연산과 같은 틀). 일반 경로 — 결과 파일이
+# 없고 history 의 request 가 아직 종결되지 않은 경우 — 에서 예전 코드가 rc 0 으로 끝날
+# 때 거치는 판정을 jq 한 번으로 하고 쓸 두 문서(결과, history)를 낸다. 하나라도 확인하지
+# 못하면 "fallback" 이고 예전 코드를 그대로 실행한다(재개 분기, 중단 표시가 있는 요청,
+# UUID 가 아닌 id, 검사 실패 포함). 예전의 bash 단계도 따른다: type 은 예전이 $(...) 로
+# 받은 텍스트를 목록과 비교했으므로 정확히 일치할 때만 받고, 시각과 rc 는 정규 10진수일
+# 때만 받는다. 예전이 argv 로 넘겨 128KiB 부터 실패하던 문서(jq 가 다시 출력한
+# history.request, 종결 요청, 결과, history_next, state)는 크기 조건이다. active 원문은
+# 예전이 그대로 argv 로 넘겼고 앞에 크기 가드가 없으므로, 호출부가 131072 바이트 미만일
+# 때만 빠른 경로를 시도한다. active·history 는 bash 가 읽은 텍스트를, state·service-state
+# 는 파일을 --rawfile 로 받는다(없으면 빈 파일과 존재 플래그). 그래서 예전이 state 를
+# $(cat) 으로 읽을 때 찍던 NUL 경고는 빠른 경로에서 찍히지 않고, 예전이 state 를 읽지
+# 않던 경우에 새 경고가 생기지도 않는다. 기준은 jq 1.6 의미다.
+_CR_FINISH_FAST_FILTER=$_CR_FAST_PRELUDE'
+  def request_type: . as $t | ["gstapp_restart","gstapp_stop","module_reload","camera_hard_reset","reboot_fallback","apply_config"] | index([$t]) != null;
+  def request_valid: ('"$_CR_REQUEST_SCHEMA_FILTER"') and (.owner | ('"$_CR_OWNER_SCHEMA_FILTER"')) and (.type | type == "string" and request_type);
+  def terminal_request: '"$_CR_TERMINAL_REQUEST_FILTER"';
+  def terminal_result: '"$_CR_TERMINAL_RESULT_FILTER"';
+  def public_action: . == "gstapp_restart" or . == "module_reload" or . == "camera_hard_reset" or . == "reboot_fallback";
+  try (
+    ($araw | fromjson) as $a
+    | ($hraw | fromjson) as $h
+    | if ($now | test("\\A[1-9][0-9]{0,14}\\z")) and ($rcraw | test("\\A(0|[1-9][0-9]{0,8})\\z"))
+         and ($id | test("\\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\z")) and $a.id == $id
+      then . else error("args") end
+    | ($now | fromjson) as $now
+    | ($rcraw | fromjson) as $rc
+    | if ($h | history_shape) then . else error("slow") end
+    | ($h.request | tojson) as $hrs
+    | ($hrs | fromjson) as $hr
+    | if ($hr | request_valid) and ($hrs | argv_ok)
+         and ($a as $left | $hr as $right | '"$_CR_REQUEST_IDENTITY_FILTER"')
+         and (($hr | terminal_request) | not)
+         and $a == $hr
+      then . else error("slow") end
+    | ($a | '"$_CR_TERMINAL_UPDATE_FILTER"' | tojson) as $ts
+    | ($ts | fromjson) as $t
+    | ($t | '"$_CR_RESULT_FROM_TERMINAL_FILTER"' | tojson) as $rs
+    | ($rs | fromjson) as $r
+    | ($t as $terminal | $h | '"$_CR_HISTORY_TERMINAL_FILTER"' | tojson) as $hns
+    | ($hns | fromjson) as $hn
+    | if ($ts | argv_ok) and ($rs | argv_ok) and ($hns | argv_ok)
+         and ($t | request_valid) and ($t | terminal_request)
+         and ($r | terminal_result) and ($r.type | type == "string" and request_type)
+         and ($a as $request | $r as $result | '"$_CR_RESULT_IDENTITY_FILTER"')
+         and ($t as $request | $r as $result | '"$_CR_TERMINAL_REQUEST_RESULT_FILTER"')
+         and (($t | has("interrupted") or has("interrupted_reason")) | not)
+         and ($hn as $history | $t as $terminal | '"$_CR_TERMINAL_HISTORY_ACTIONS_FILTER"')
+         and ($svc_exists == "0" or ($svcraw | fromjson | type) == "object")
+      then . else error("slow") end
+    | ($hn | '"$_CR_PUBLIC_COUNT_FILTER"') as $pc
+    | if $pc == 0 then .
+      elif $state_exists == "1" then
+        ($sraw | fromjson) as $s
+        | if ($s | state_valid) and ($sraw | argv_ok)
+             and ($hn as $history | $s as $state | '"$_CR_PUBLIC_COUNTERS_FILTER"')
+             and all($hn.actions[] | select(.request_id == $id and (.action | public_action)) | .action;
+                     . as $act | $s | state_action_valid($act; $id))
+          then . else error("slow") end
+      else error("slow") end
+    | ["ok", $rs, $hns]
+  ) catch ["fallback"]
+  | .[]'
 _cr_finish_locked() {
     local status=$1 rc=$2 active id result terminal history history_request history_next state
     local result_path history_path write_result=1 write_history=1 now public_count terminal_req_valid
+    local now_read=true fast_out fast_plan=() state_exists=0 state_src=/dev/null svc_exists=0 svc_src=/dev/null active_bytes
     _cr_terminal_valid "$status" "$rc" || return 64; _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69
     active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69; _cr_record_owner_matches "$active" || return 69; _cr_jq_memo id "$active" -r .id || id=""
     result_path=$(_cr_result_file "$id"); history_path=$(_cr_history_file "$id")
     history=$(cat "$history_path" 2>/dev/null) || return 70
-    jq -e 'type=="object" and (.request|type=="object") and (.actions|type=="array") and all(.actions[];type=="object")' >/dev/null <<<"$history" || return 70
+    # 빠른 경로는 결과 파일이 없을 때만 시도하고, 판정 전에는 아무것도 쓰지 않는다. 시계는
+    # 그 경우에만 한 번 읽고, 예전 코드로 가면 종결 요청을 만드는 분기(결과 파일이 없을
+    # 때만 닿는다)가 같은 값을 쓴다.
+    if [ ! -e "$result_path" ]; then
+        now=$(_cr_now) || now_read=false
+        if [ -e "$(_cr_state_file)" ]; then state_exists=1; state_src=$(_cr_state_file); fi
+        if [ -e "$(_cr_service_file)" ]; then svc_exists=1; svc_src=$(_cr_service_file); fi
+        _cr_byte_length active_bytes "$active"
+        if [ "$now_read" = true ] && [ "$active_bytes" -lt 131072 ] && fast_out=$(jq -nr --rawfile araw <(printf '%s' "$active") --rawfile hraw <(printf '%s' "$history") \
+            --rawfile sraw "$state_src" --rawfile svcraw "$svc_src" --arg state_exists "$state_exists" --arg svc_exists "$svc_exists" \
+            --arg id "$id" --arg status "$status" --arg rcraw "$rc" --arg now "$now" "$_CR_FINISH_FAST_FILTER" 2>/dev/null); then
+            mapfile -t fast_plan <<<"$fast_out"
+        fi
+    fi
+    if [ "${#fast_plan[@]}" -eq 3 ] && [ "${fast_plan[0]}" = ok ]; then
+        _cr_mutation_guard "$active" result ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69
+        _cr_atomic_write "$result_path" "${fast_plan[1]}" || return 70
+        _cr_test_failpoint request_finish_after_result || return 70
+        _cr_mutation_guard "$active" finish_history ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69
+        _cr_atomic_write "$history_path" "${fast_plan[2]}" || return 70
+        _cr_test_failpoint request_finish_after_history || return 70
+        _cr_mutation_guard "$active" active_remove ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_remove "$(_cr_active_file)" || return 70
+        return 0
+    fi
+    jq -e "$_CR_HISTORY_SHAPE_FILTER" >/dev/null <<<"$history" || return 70
     history_request=$(jq -c .request <<<"$history") || return 70
     _cr_request_schema "$history_request" || return 70
     _cr_request_identity_equal "$active" "$history_request" || return 70
@@ -1400,8 +1501,8 @@ _cr_finish_locked() {
         terminal=$history_request
         result=$(_cr_result_from_terminal "$terminal") || return 70
     else
-        now=$(_cr_now) || return 70
-        terminal=$(jq -c --arg status "$status" --argjson rc "$rc" --argjson now "$now" '.status=$status | .rc=$rc | .finished_at=$now' <<<"$active") || return 70
+        [ "$now_read" = true ] || return 70
+        terminal=$(jq -c --arg status "$status" --argjson rc "$rc" --argjson now "$now" "$_CR_TERMINAL_UPDATE_FILTER" <<<"$active") || return 70
         result=$(_cr_result_from_terminal "$terminal") || return 70
     fi
     if [ "$terminal_req_valid" -eq 1 ]; then
@@ -1409,14 +1510,12 @@ _cr_finish_locked() {
         history_next=$history
         write_history=0
     else
-        history_next=$(jq -c --argjson terminal "$terminal" '.request=$terminal' <<<"$history") || return 70
+        history_next=$(jq -c --argjson terminal "$terminal" "$_CR_HISTORY_TERMINAL_FILTER" <<<"$history") || return 70
     fi
     _cr_terminal_request_valid "$terminal" || return 70
     _cr_terminal_result_valid "$result" "$active" || return 70
     _cr_terminal_request_result_equal "$terminal" "$result" || return 70
-    public_count=$(jq '[.actions[] | select(
-      .action=="gstapp_restart" or .action=="module_reload" or
-      .action=="camera_hard_reset" or .action=="reboot_fallback")]|length' <<<"$history_next") || return 70
+    public_count=$(jq "$_CR_PUBLIC_COUNT_FILTER" <<<"$history_next") || return 70
     if [ "$public_count" -gt 0 ]; then
         state=$(cat "$(_cr_state_file)" 2>/dev/null) || return 70
         _cr_state_valid <<<"$state" || return 70
