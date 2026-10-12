@@ -32,18 +32,20 @@ set -euo pipefail
 # the request check and the connective code read the active through the memo (#150)
 # 26/39/41/41/51, restart_again 39; claim pre-fills poll's request check and
 # reason (#150) 24/37/39/39/49, restart_again 37; an owner text the guards meet
-# for the first time is judged in one jq (#150) 21/34/36/36/45, restart_again 34.
+# for the first time is judged in one jq (#150) 21/34/36/36/45, restart_again 34;
+# the lifecycle write pre-fills the guards' answers for the owner it wrote (#150)
+# 20/33/35/35/43, restart_again 33.
 # flow                   ceiling   measured        terminal state the flow must reach
 declare -A CEILING=(
-    [gstapp_stop]=21           #   3 + 18          SUCCEEDED
-    [gstapp_restart]=34        #   3 + 27 + 4      SUCCEEDED
-    [camera_hard_reset]=36     #   3 + 29 + 4      SUCCEEDED
-    [module_reload]=36         #   3 + 29 + 4      SUCCEEDED
-    [module_reload_fails]=45   #   3 + 42          FAILED rc=1: module_reload and
+    [gstapp_stop]=20           #   3 + 17          SUCCEEDED
+    [gstapp_restart]=33        #   3 + 26 + 4      SUCCEEDED
+    [camera_hard_reset]=35     #   3 + 28 + 4      SUCCEEDED
+    [module_reload]=35         #   3 + 28 + 4      SUCCEEDED
+    [module_reload_fails]=43   #   3 + 40          FAILED rc=1: module_reload and
                                #                   camera_hard_reset fail at modprobe
                                #                   (rc 23) before the app starts,
                                #                   reboot_fallback is refused (rc 1)
-    [gstapp_restart_again]=34  #   3 + 27 + 4      SUCCEEDED after an earlier
+    [gstapp_restart_again]=33  #   3 + 26 + 4      SUCCEEDED after an earlier
                                #                   gstapp_restart that succeeded
 )
 FLOWS=(gstapp_stop gstapp_restart camera_hard_reset module_reload module_reload_fails gstapp_restart_again)

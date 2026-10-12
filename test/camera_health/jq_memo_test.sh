@@ -281,4 +281,35 @@ rc=0; _cr_owner_lifecycle_in ACTIVE 2>/dev/null || rc=$?
 expect_runs 1 'the owner guard ran more jq than before for a missing owner file'
 printf '%s\n' "$owner" > "$owner_file"
 
+# owner 를 쓰는 jq 는 쓴 owner 텍스트의 두 가드 답도 내어 넣는다 (이슈 #150): 쓴 직후의 가드는
+# jq 를 띄우지 않는다. 넣은 답은 실제 jq 출력과 같아야 한다.
+cam_owner_set_lifecycle RECOVERING || fail "the lifecycle write to RECOVERING was refused"
+written=$(cat "$owner_file")
+want_live=$(jq -r --arg boot "$boot" --arg ei "" --arg et "" "$live_program" <<<"$written"); want_lc=$(jq -r .lifecycle <<<"$written")
+: > "$WORK/jq.log"
+_cr_owner_lifecycle_in RECOVERING || fail "the owner guard refused the owner the lifecycle write had just written"
+got_live=; got_lc=
+_cr_jq_memo got_live "$written" -r --arg boot "$boot" --arg ei "" --arg et "" "$live_program"; _cr_jq_memo got_lc "$written" -r .lifecycle
+expect_runs 0 'the owner guard ran jq on the owner text the lifecycle write had just written'
+[ "$got_live" = "$want_live" ] || fail "the lifecycle write put another live answer than jq prints: '$got_live' vs '$want_live'"
+[ "$got_lc" = "$want_lc" ] || fail "the lifecycle write put another .lifecycle than jq prints: '$got_lc' vs '$want_lc'"
+# 출력이 정확히 네 줄일 때만 넣는다: 첫 문서의 lifecycle 에 개행이 있으면 줄이 밀려 셋째·넷째 줄이
+# 쓴 텍스트의 답이 아니다. 가드 판정은 메모를 비우고 다시 판정한 것과 같아야 한다.
+shifted=$(jq -c '.lifecycle = "RECOVERING"' <<<"$owner")
+{ jq -c --arg l "ACTIVE"$'\n'"$shifted" '.lifecycle = $l' <<<"$owner"; printf '%s\n' "$owner"; } > "$owner_file"
+rc=0; cam_owner_set_lifecycle RECOVERING || rc=$?
+[ "$rc" -eq 0 ] || fail "the lifecycle write behind a shifted line returned rc $rc"
+rc=0; _cr_owner_lifecycle_in RECOVERING || rc=$?
+_CR_JQ_MEMO=()
+fresh=0; _cr_owner_lifecycle_in RECOVERING || fresh=$?
+[ "$rc" -eq "$fresh" ] || fail "a shifted line of the lifecycle write was put in the memo (rc $rc, $fresh without the memo)"
+printf '%s\n' "$owner" > "$owner_file"
+# 두 답은 함께 남는다: 메모가 상한 바로 아래(63개)여도 lifecycle 답을 넣으며 메모를 비워 먼저
+# 넣은 live 답을 지우지 않는다(지우면 접기는 건너뛰고 live 가드가 jq 를 띄운다).
+_CR_JQ_MEMO=(); for ((i = 0; i < 63; i++)); do _cr_jq_memo_put x "filler$i" -r .; done
+[ "${#_CR_JQ_MEMO[@]}" -eq 63 ] || fail "the memo was not filled to 63 entries (${#_CR_JQ_MEMO[@]})"
+_cr_owner_guard_put "$owner" "$boot" "+4242:111" "+ACTIVE"
+_cr_jq_memo_has "$owner" -r --arg boot "$boot" --arg ei "" --arg et "" "$live_program" || fail 'the live answer was evicted by the lifecycle answer put after it'
+_cr_jq_memo_has "$owner" -r .lifecycle || fail 'the lifecycle answer was not kept'
+
 echo "jq memo: PASS"

@@ -237,28 +237,36 @@ cam_owner_assert() { local owner; owner=$(_cr_owner_json); _cr_owner_snapshot_li
 # 값("0"), 하나이고 숫자\n숫자면 "+pid:start", lifecycle 은 대문자·밑줄 문자열이면 "+값", 그 밖은
 # "-"(넣지 않음). 넣지 못하면 가드가 예전처럼 jq 를 띄운다(이때 jq 1회가 더 든다). jq 가 실패해도
 # 넣지 않을 뿐이고 그 stderr 는 버린다 — 오류는 가드의 jq 가 예전처럼 낸다.
-_CR_OWNER_GUARD_FOLD_FILTER='if length != 1 then "-", "-" else
-    .[0] as $o
-    | ([ try [ $o | '"$_CR_OWNER_LIVE_PROGRAM"' ] catch null ] | .[0]) as $l
+# 두 답을 내는 조각은 owner 문서 하나($o)를 받아 두 줄을 낸다. owner 를 쓰는 jq 도 같은 조각으로
+# 쓴 문서의 답을 낸다(_cr_owner_set_lifecycle_locked). 넣는 것은 _cr_owner_guard_put 이 한다.
+_CR_OWNER_GUARD_ANSWERS='([ try [ $o | '"$_CR_OWNER_LIVE_PROGRAM"' ] catch null ] | .[0]) as $l
     | (if ($l | type) == "array" and ($l | length) == 0 then "0"
        elif ($l | type) == "array" and ($l | length) == 1 and ($l[0] | type == "string" and test("\\A[0-9]+\\n[0-9]+\\z")) then "+" + ($l[0] | split("\n") | join(":"))
        else "-" end),
-      ($o | if type == "object" and (.lifecycle | type == "string" and test("\\A[A-Z_]+\\z")) then "+" + .lifecycle else "-" end)
-  end'
+      ($o | if type == "object" and (.lifecycle | type == "string" and test("\\A[A-Z_]+\\z")) then "+" + .lifecycle else "-" end)'
+_CR_OWNER_GUARD_FOLD_FILTER='if length != 1 then "-", "-" else .[0] as $o | '"$_CR_OWNER_GUARD_ANSWERS"' end'
+_cr_owner_guard_put() {
+    local owner=$1 boot=$2 live_answer=$3 lifecycle_answer=$4 live
+    # 두 답은 함께 남아야 한다: 메모가 상한 바로 아래면 두 번째 넣기가 메모를 비워 첫 답을
+    # 지운다 — 그러면 lifecycle 답만 남아 접기는 건너뛰고 live 가드가 jq 를 띄운다. 둘을 넣을
+    # 자리가 없으면 먼저 비운다.
+    [ "${#_CR_JQ_MEMO[@]}" -lt 63 ] || _CR_JQ_MEMO=()
+    case "$live_answer" in
+        0) _cr_jq_memo_put "" "$owner" -r --arg boot "$boot" --arg ei "" --arg et "" "$_CR_OWNER_LIVE_PROGRAM" ;;
+        +*:*) live=${live_answer#+}
+              _cr_jq_memo_put "${live%%:*}"$'\n'"${live#*:}" "$owner" -r --arg boot "$boot" --arg ei "" --arg et "" "$_CR_OWNER_LIVE_PROGRAM" ;;
+    esac
+    [ "$lifecycle_answer" = - ] || _cr_jq_memo_put "${lifecycle_answer#+}" "$owner" -r .lifecycle
+}
 _cr_owner_guard_fold() {
-    local owner=$1 boot out plan=() live
+    local owner=$1 boot out plan=()
     [ -n "$owner" ] || return 0
     ! _cr_jq_memo_has "$owner" -r .lifecycle || return 0
     boot=$(cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null) || return 0
     out=$(jq -rs --arg boot "$boot" --arg ei "" --arg et "" "$_CR_OWNER_GUARD_FOLD_FILTER" <<<"$owner" 2>/dev/null) || return 0
     mapfile -t plan <<<"$out"
     [ "${#plan[@]}" -eq 2 ] || return 0
-    case "${plan[0]}" in
-        0) _cr_jq_memo_put "" "$owner" -r --arg boot "$boot" --arg ei "" --arg et "" "$_CR_OWNER_LIVE_PROGRAM" ;;
-        +*:*) live=${plan[0]#+}
-              _cr_jq_memo_put "${live%%:*}"$'\n'"${live#*:}" "$owner" -r --arg boot "$boot" --arg ei "" --arg et "" "$_CR_OWNER_LIVE_PROGRAM" ;;
-    esac
-    [ "${plan[1]}" = - ] || _cr_jq_memo_put "${plan[1]#+}" "$owner" -r .lifecycle
+    _cr_owner_guard_put "$owner" "$boot" "${plan[0]}" "${plan[1]}"
 }
 _cr_owner_lifecycle_in() { local owner; owner=$(_cr_owner_json); _cr_owner_guard_fold "$owner"; _cr_owner_snapshot_live "$owner" || return 69; _cr_owner_snapshot_lifecycle_in "$owner" "$@"; }
 _cr_record_owner_matches() { local saved current; _cr_jq_memo saved "$1" -c .owner || return 1; current=$(_cr_owner_json) || return 1; _cr_owner_immutable_equal "$saved" "$current" && _cr_owner_snapshot_live "$current"; }
@@ -742,13 +750,21 @@ _cr_lifecycle_allowed() {
     case "$1:$2" in STARTING:ACTIVE|STARTING:DEGRADED|STARTING:STOPPING|ACTIVE:APPLYING_CONFIG|ACTIVE:RECOVERING|ACTIVE:DEGRADED|ACTIVE:STOPPING|APPLYING_CONFIG:ACTIVE|APPLYING_CONFIG:DEGRADED|APPLYING_CONFIG:STOPPING|RECOVERING:ACTIVE|RECOVERING:DEGRADED|RECOVERING:STOPPING|DEGRADED:APPLYING_CONFIG|DEGRADED:RECOVERING|DEGRADED:STOPPING) return 0;; esac; return 1
 }
 _cr_owner_set_lifecycle_locked() {
-    local next=$1 owner current updated pair
+    local next=$1 owner current updated pair boot lines=()
     owner=$(_cr_owner_json); _cr_owner_snapshot_live "$owner" || return 69
     # 현재 lifecycle 조회와 갱신본 생성을 한 번의 jq 로. 갱신본은 검사 통과 후에만 쓴다.
-    pair=$(jq -r --arg next "$next" '.lifecycle, ((.lifecycle=$next | .updated_at=(now|floor)) | tojson)' <<<"$owner") || return 70
+    # 같은 jq 가 갱신본의 두 가드 답(_CR_OWNER_GUARD_ANSWERS)도 낸다 (이슈 #150): 쓴 직후의 가드가
+    # jq 를 띄우지 않는다. 문서마다 네 줄 — lifecycle 을 먼저 내므로 예전과 같은 자리에서 실패한다
+    # — 이고, 출력이 정확히 네 줄일 때(문서 하나, 한 줄짜리 lifecycle)만 쓴 뒤에 넣는다. 다시
+    # 파싱은 try 로 배열 안에 가둬 이 jq 가 새로 실패하지 않는다. boot 를 못 읽으면 넣지 않는다.
+    boot=$(cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null) || boot=
+    pair=$(jq -r --arg next "$next" --arg boot "$boot" --arg ei "" --arg et "" '.lifecycle, (((.lifecycle=$next | .updated_at=(now|floor)) | tojson) as $u
+      | $u, ([ $u | try fromjson catch empty ] as $os | if ($os | length) == 1 then ($os[0] as $o | '"$_CR_OWNER_GUARD_ANSWERS"') else "-", "-" end))' <<<"$owner") || return 70
     { IFS= read -r current; IFS= read -r updated; } <<<"$pair"
     _cr_lifecycle_allowed "$current" "$next" || return 64
     _cr_owner_snapshot_live "$owner" || return 69; _cr_atomic_write "$(_cr_owner_file)" "$updated" || return 70
+    mapfile -t lines <<<"$pair"
+    [ -z "$boot" ] || [ "${#lines[@]}" -ne 4 ] || _cr_owner_guard_put "$updated" "$boot" "${lines[2]}" "${lines[3]}"
 }
 cam_owner_set_lifecycle() { _cr_lock_call _cr_owner_set_lifecycle_locked "$@"; }
 
