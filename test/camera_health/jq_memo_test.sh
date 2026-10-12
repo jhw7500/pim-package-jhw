@@ -401,6 +401,52 @@ _cr_jq_memo got_owner "$record" -c .owner
 rc=0; _cr_record_owner_matches "$record" || rc=$?
 [ "$rc" -eq 1 ] || fail "the record guard accepted an owner whose created_at changed (rc $rc)"
 printf '%s\n' "$owner" > "$owner_file"
+# start_cam 처럼 메모가 빈 새 프로세스의 실행자 가드는 active 의 .id, 레코드 가드의 .owner·ready 를 jq
+# 세 번으로 구했다. 셋을 jq 한 번으로 넣는다 (이슈 #168). 넣은 답은 실제 jq 출력과 같아야 하고, 실제
+# jq 가 실패할 입력(argv 한 칸을 넘는 .owner 텍스트)에는 ready 를 넣지 않는다.
+fold_check() {
+    local rec=$1 what=$2 cur want_id want_owner want_ready got
+    cur=$(cat "$owner_file")
+    _CR_JQ_MEMO=(); _CR_JQ_MEMO_BYTES=0
+    : > "$WORK/jq.log"
+    _cr_active_guard_fold "$rec"
+    expect_runs 1 "$what: the active guard fold did not run exactly one jq"
+    want_id=$(jq -r .id <<<"$rec"); want_owner=$(jq -c .owner <<<"$rec")
+    _cr_jq_memo_has "$rec" -r .id || fail "$what: the fold did not put the record id"
+    _cr_jq_memo got "$rec" -r .id
+    [ "$got" = "$want_id" ] || fail "$what: the fold put another id than jq prints: '$got' vs '$want_id'"
+    _cr_jq_memo_has "$rec" -c .owner || fail "$what: the fold did not put the record owner"
+    _cr_jq_memo got "$rec" -c .owner
+    [ "$got" = "$want_owner" ] || fail "$what: the fold put another owner than jq prints"
+    fold_ready=0
+    if _cr_jq_memo_has "$cur" -r -s --argjson a "$want_owner" --arg boot "$boot" --arg ei "" --arg et "" "$ready_program"; then
+        fold_ready=1
+        want_ready=$(jq -r -s --argjson a "$want_owner" --arg boot "$boot" --arg ei "" --arg et "" "$ready_program" <<<"$cur" 2>/dev/null) ||
+            fail "$what: the fold put a ready answer where the guard's jq fails"
+        _cr_jq_memo got "$cur" -r -s --argjson a "$want_owner" --arg boot "$boot" --arg ei "" --arg et "" "$ready_program"
+        [ "$got" = "$want_ready" ] || fail "$what: the fold put another ready answer than jq prints: '$got' vs '$want_ready'"
+    fi
+}
+fold_check "$record" 'the active record'
+[ "$fold_ready" -eq 1 ] || fail 'the fold did not put the ready answer for the active record'
+# 두 owner 의 created_at 이 1e1000 이면 가드는 -c .owner 텍스트를 다시 파싱한 값으로 판정한다.
+sed -E 's/"created_at":[0-9]+/"created_at":1e1000/' <<<"$owner" > "$owner_file"
+huge_ca=$(cat "$owner_file")
+[ "$huge_ca" != "$owner" ] || fail 'the created_at fixture did not change the owner'
+huge_rec=$(sed -E 's/"created_at":[0-9]+/"created_at":1e1000/g' <<<"$record")
+[ "$huge_rec" != "$record" ] || fail 'the created_at fixture did not change the record owner'
+fold_check "$huge_rec" 'a created_at of 1e1000 in both owners'
+printf '%s\n' "$owner" > "$owner_file"
+# 레코드는 128KiB 미만이어도 .owner 텍스트는 넘을 수 있다(1e1000 은 다시 쓰면 길어진다). 가드의
+# --argjson 이 실패해 69 이므로 ready 는 넣지 않는다.
+printf -v pad '1e1000,%.0s' {1..18000}
+wide_rec=${record/'"owner":{'/'"owner":{"pad":['"${pad%,}"'],'}
+[ "$wide_rec" != "$record" ] || fail 'the wide owner fixture did not change the record'
+wide_bytes=0; _cr_byte_length wide_bytes "$wide_rec"
+[ "$wide_bytes" -lt 131072 ] || fail "the wide owner fixture is $wide_bytes bytes, not under one argv slot"
+fold_check "$wide_rec" 'an owner text larger than one argv slot'
+[ "$fold_ready" -eq 0 ] || fail 'the fold put a ready answer for an owner text larger than one argv slot'
+_CR_JQ_MEMO=(); _CR_JQ_MEMO_BYTES=0
 # submit 의 jq 는 쓰기 가드(_cr_record_owner_ready)가 같은 owner 텍스트로 낼 답도 내어 넣는다
 # (이슈 #168): submit 은 jq 두 번(owner 가드 접기, submit)으로 끝난다. 넣은 답은 실제 jq 출력과 같다.
 rm -f "$PIM_CAMERA_RUN_DIR/recovery/active.json" "$PIM_CAMERA_RUN_DIR/recovery/pending.json"
