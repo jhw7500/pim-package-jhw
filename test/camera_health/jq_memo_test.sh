@@ -223,4 +223,62 @@ claim_fresh 'bad created_at' '.created_at = "x"'
 rc=0; _cr_request_schema "$record" || rc=$?
 [ "$rc" -eq 1 ] || fail "the schema check accepted a claimed record with a string created_at (rc $rc)"
 
+# _cr_owner_lifecycle_in 의 두 가드(live 판정, -r .lifecycle)는 owner 텍스트가 메모에 처음이면
+# jq 한 번으로 두 답을 구해 넣는다 (이슈 #150): submit 은 새 프로세스라 늘 처음이고, owner 를
+# 쓰면 텍스트가 바뀐다. 넣은 답은 실제 jq 출력과 같아야 한다. live 프로그램은 필터 변수로 직접
+# 만든다 — 라이브러리가 다른 문자열로 넣으면 키가 달라 적중 검사가 실패한다.
+owner_file="$PIM_CAMERA_RUN_DIR/owner.json"
+owner=$(cat "$owner_file"); boot=$(cat "$PIM_CAMERA_BOOT_ID_FILE")
+live_program="if (($_CR_OWNER_SCHEMA_FILTER) and ($_CR_OWNER_LIVE_MATCH_FILTER)) then [(.pid|tostring), .proc_start_time] | join(\"\\n\") else empty end"
+want_live=$(jq -r --arg boot "$boot" --arg ei "" --arg et "" "$live_program" <<<"$owner"); want_lc=$(jq -r .lifecycle <<<"$owner")
+_CR_JQ_MEMO=()
+: > "$WORK/jq.log"
+_cr_owner_lifecycle_in ACTIVE DEGRADED || fail "the owner guard refused the live ACTIVE owner"
+expect_runs 1 'the owner guard ran two jq on an owner text it met for the first time'
+got_live=; got_lc=
+_cr_jq_memo got_live "$owner" -r --arg boot "$boot" --arg ei "" --arg et "" "$live_program"; _cr_jq_memo got_lc "$owner" -r .lifecycle
+expect_runs 1 'the owner guard did not leave the live answer and .lifecycle in the memo'
+[ "$got_live" = "$want_live" ] || fail "the memo holds another live answer than jq prints: '$got_live' vs '$want_live'"
+[ "$got_lc" = "$want_lc" ] || fail "the memo holds another .lifecycle than jq prints: '$got_lc' vs '$want_lc'"
+_cr_owner_lifecycle_in ACTIVE || fail "the warm owner guard refused the live ACTIVE owner"
+expect_runs 1 'a warm owner guard ran jq'
+# 문서가 둘인 owner 는 넣지 않는다 — 두 가드가 예전처럼 jq 로 판정한다(접기 1 + 가드 2).
+printf '%s\n%s\n' "$owner" "$owner" > "$owner_file"
+: > "$WORK/jq.log"
+rc=0; _cr_owner_lifecycle_in ACTIVE || rc=$?
+[ "$rc" -eq 69 ] || fail "the owner guard accepted an owner file holding two documents (rc $rc)"
+expect_runs 3 'an owner file holding two documents was put in the memo'
+# 스키마의 ^[0-9]+$ 는 끝 개행 앞에서도 맞아 proc_start_time "111\n" 인 owner 도 통과한다. live
+# 답은 줄 하나로 옮겨지지 않으므로 넣지 않고(접기 1 + live 1), 판정은 예전과 같다.
+jq -c '.proc_start_time = "111\n"' <<<"$owner" > "$owner_file"
+: > "$WORK/jq.log"
+_cr_owner_lifecycle_in ACTIVE || fail "the owner guard refused an owner whose proc_start_time ends in a newline"
+expect_runs 2 'the live answer of a proc_start_time ending in a newline was put in the memo'
+printf '%s\n' "$owner" > "$owner_file"
+# boot 가 다르면 live 프로그램은 아무것도 내지 않는다 — 넣는 답도 빈 값이어야 한다.
+printf 'other-boot\n' > "$PIM_CAMERA_BOOT_ID_FILE"
+want_live=$(jq -r --arg boot other-boot --arg ei "" --arg et "" "$live_program" <<<"$owner")
+_CR_JQ_MEMO=()
+: > "$WORK/jq.log"
+rc=0; _cr_owner_lifecycle_in ACTIVE || rc=$?
+[ "$rc" -eq 69 ] || fail "the owner guard accepted an owner from another boot (rc $rc)"
+got_live='(none)'
+_cr_jq_memo got_live "$owner" -r --arg boot other-boot --arg ei "" --arg et "" "$live_program"
+expect_runs 1 'the empty live answer of an owner from another boot was not put in the memo'
+[ "$got_live" = "$want_live" ] || fail "the memo holds another live answer than jq prints for another boot: '$got_live' vs '$want_live'"
+printf '%s\n' "$boot" > "$PIM_CAMERA_BOOT_ID_FILE"
+# 실패 경로는 예전과 같다: 깨진 owner 의 jq 오류는 가드의 jq 가 한 번만 낸다(접기의 오류는
+# 버린다). owner 파일이 없으면 접기는 jq 를 띄우지 않는다.
+printf '%s\n' '{"lifecycle":' > "$owner_file"
+_CR_JQ_MEMO=()
+rc=0; _cr_owner_lifecycle_in ACTIVE 2> "$WORK/guard.err" || rc=$?
+[ "$rc" -eq 69 ] || fail "the owner guard accepted a broken owner file (rc $rc)"
+[ "$(grep -c 'parse error' "$WORK/guard.err")" -eq 1 ] || { cat "$WORK/guard.err" >&2; fail 'a broken owner file did not print exactly one jq parse error'; }
+rm -f "$owner_file"
+: > "$WORK/jq.log"
+rc=0; _cr_owner_lifecycle_in ACTIVE 2>/dev/null || rc=$?
+[ "$rc" -eq 69 ] || fail "the owner guard accepted a missing owner file (rc $rc)"
+expect_runs 1 'the owner guard ran more jq than before for a missing owner file'
+printf '%s\n' "$owner" > "$owner_file"
+
 echo "jq memo: PASS"
