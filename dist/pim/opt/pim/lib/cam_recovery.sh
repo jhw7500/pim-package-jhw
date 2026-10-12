@@ -126,12 +126,19 @@ _cr_jq_memo() {
 # 부를 추출(.id, .owner)의 답도 같은 jq 에서 계산해 넣는다. 값은 그 jq 호출이 냈을
 # 출력과 바이트까지 같아야 한다 — tojson 은 jq -c 와 같은 직렬화를 쓴다.
 _cr_jq_memo_put() {
-    local _cr_memo_value=$1 _cr_memo_input=$2 _cr_memo_key _cr_memo_size
+    local _cr_memo_value=$1 _cr_memo_input=$2 _cr_memo_key _cr_memo_size _cr_memo_old _cr_memo_new=1
     shift 2
     printf -v _cr_memo_key '%s\037' "$@"
     _cr_memo_key+=$'\036'"$_cr_memo_input"
+    # 이미 있는 키는 값만 바뀐다 — 옛 항목의 크기를 빼고 센다. 같은 요청을 검증할 때마다 다시
+    # 넣는 곳(_cr_request_schema 의 .type)이 있어, 두 번 세면 크기 상한에 헛닿아 메모를 비운다.
+    if [ -n "${_CR_JQ_MEMO[$_cr_memo_key]+x}" ]; then
+        _cr_byte_length _cr_memo_old "$_cr_memo_key${_CR_JQ_MEMO[$_cr_memo_key]}"
+        _CR_JQ_MEMO_BYTES=$(( _CR_JQ_MEMO_BYTES - _cr_memo_old ))
+        _cr_memo_new=0
+    fi
     _cr_byte_length _cr_memo_size "$_cr_memo_key$_cr_memo_value"
-    _cr_jq_memo_room 1 "$_cr_memo_size"
+    _cr_jq_memo_room "$_cr_memo_new" "$_cr_memo_size"
     _CR_JQ_MEMO[$_cr_memo_key]=$_cr_memo_value
     _CR_JQ_MEMO_BYTES=$(( _CR_JQ_MEMO_BYTES + _cr_memo_size ))
 }

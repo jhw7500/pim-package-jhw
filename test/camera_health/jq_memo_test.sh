@@ -451,6 +451,16 @@ _cr_owner_guard_put "$owner" "$boot" "+4242:111" "+ACTIVE"
 _cr_jq_memo_has "$owner" -r --arg boot "$boot" --arg ei "" --arg et "" "$live_program" || fail 'the live answer was evicted by the size bound between the two puts'
 _cr_jq_memo_has "$owner" -r .lifecycle || fail 'the lifecycle answer was not kept at the size bound'
 _CR_JQ_MEMO=(); _CR_JQ_MEMO_BYTES=0
+# 이미 있는 키를 다시 넣어도 크기는 그 항목 하나만큼이다: _cr_request_schema 는 같은 요청을 검증할 때마다
+# .type 답을 다시 넣는다. 3만 자 키를 100 번 넣어도(두 번 세면 약 3MB) 메모가 비워지면 안 된다.
+entry_bytes() { local LC_ALL=C k; printf -v k '%s\037' -r .; k+=$'\036'"$1"; echo $(( ${#k} + ${#2} )); }
+_cr_jq_memo_put x "keep-me" -r .
+for ((i = 0; i < 100; i++)); do _cr_jq_memo_put x "$big" -r .; done
+_cr_jq_memo_has "keep-me" -r . || fail 'putting one key 100 times cleared the memo - the size bound counted the same entry on every put'
+[ "$_CR_JQ_MEMO_BYTES" -eq $(( $(entry_bytes keep-me x) + $(entry_bytes "$big" x) )) ] || fail "the size count after re-puts is $_CR_JQ_MEMO_BYTES, not the two entries"
+_cr_jq_memo_put yy "$big" -r .
+[ "$_CR_JQ_MEMO_BYTES" -eq $(( $(entry_bytes keep-me x) + $(entry_bytes "$big" yy) )) ] || fail "the size count after replacing a value is $_CR_JQ_MEMO_BYTES"
+_CR_JQ_MEMO=(); _CR_JQ_MEMO_BYTES=0
 
 # owner lifecycle 을 쓰면 _cr_load_owner_lifecycle 의 캐시(파일 정체)에 그 값을 둔다 (이슈 #168): repair
 # 확인·실행 진입·데몬 루프가 방금 쓴 owner 를 jq 로 다시 읽지 않는다. 값은 jq 가 읽는 것과 같다.
