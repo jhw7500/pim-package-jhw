@@ -282,13 +282,16 @@ _CR_RECORD_READY_PROGRAM="if (length == 1) then .[0] | if ((\$a | ($_CR_OWNER_SC
 # ("0"), 하나이고 대문자\n숫자\n숫자면 "+lifecycle:pid:start" 로 넣는다. 그 밖과 jq 실패는 넣지
 # 않는다(stderr 는 버린다 — 오류는 가드의 jq 가 예전처럼 낸다). 두 답은 함께 남도록 자리를 먼저
 # 확보한다.
+# ready 답($r: 프로그램 출력의 배열)을 한 줄로: 출력이 없으면 "0", 하나이고 대문자\n숫자\n숫자면
+# "+lifecycle:pid:start", 그 밖은 "-". 넣는 것은 _cr_record_ready_put 이 한다. submit 도 쓴다.
+_CR_RECORD_READY_ANSWER='(if ($r | type) == "array" and ($r | length) == 0 then "0"
+       elif ($r | type) == "array" and ($r | length) == 1 and ($r[0] | type == "string" and test("\\A[A-Z_]+\\n[0-9]+\\n[0-9]+\\z")) then "+" + ($r[0] | split("\n") | join(":"))
+       else "-" end)'
 _CR_RECORD_GUARD_FOLD_FILTER='if length != 1 then "-", "-" else
     ([ .[0] as $b | try ('"$_CR_OWNER_IMMUTABLE_PROGRAM"') catch null ] | .[0]) as $i
     | ([ try [ '"$_CR_RECORD_READY_PROGRAM"' ] catch null ] | .[0]) as $r
     | (if $i == true then "+" else "-" end),
-      (if ($r | type) == "array" and ($r | length) == 0 then "0"
-       elif ($r | type) == "array" and ($r | length) == 1 and ($r[0] | type == "string" and test("\\A[A-Z_]+\\n[0-9]+\\n[0-9]+\\z")) then "+" + ($r[0] | split("\n") | join(":"))
-       else "-" end)
+      '"$_CR_RECORD_READY_ANSWER"'
   end'
 _cr_record_guard_fold() {
     local saved=$1 current=$2 boot out plan=() ready
@@ -300,9 +303,15 @@ _cr_record_guard_fold() {
     [ "${#plan[@]}" -eq 2 ] || return 0
     [ "${#_CR_JQ_MEMO[@]}" -lt 63 ] || _CR_JQ_MEMO=()
     [ "${plan[0]}" != + ] || _cr_jq_memo_put true "" -e -n --argjson a "$saved" --argjson b "$current" "$_CR_OWNER_IMMUTABLE_PROGRAM"
-    case "${plan[1]}" in
+    _cr_record_ready_put "$current" "$saved" "$boot" "${plan[1]}"
+}
+# _CR_RECORD_READY_ANSWER 의 한 줄을 _cr_record_owner_ready 의 메모 키(지금 owner 텍스트, 레코드의
+# owner, boot)로 넣는다. "-" 면 넣지 않는다.
+_cr_record_ready_put() {
+    local current=$1 saved=$2 boot=$3 answer=$4 ready
+    case "$answer" in
         0) _cr_jq_memo_put "" "$current" -r -s --argjson a "$saved" --arg boot "$boot" --arg ei "" --arg et "" "$_CR_RECORD_READY_PROGRAM" ;;
-        +*:*:*) ready=${plan[1]#+}
+        +*:*:*) ready=${answer#+}
                 _cr_jq_memo_put "${ready//:/$'\n'}" "$current" -r -s --argjson a "$saved" --arg boot "$boot" --arg ei "" --arg et "" "$_CR_RECORD_READY_PROGRAM" ;;
     esac
 }
@@ -865,7 +874,9 @@ cam_startup_request_reserve() {
 #   빈 입력에 4 를 내 69 였다)
 #   요청 생성(--argjson owner) — owner 가 문서 하나가 아니면 70, 시각을 해석할 수 없으면 70
 # 출력은 줄마다: 판정(ok|69|70), 요청, 그 요청의 owner(쓴 텍스트를 다시 파싱해 jq -c 와 같은
-# 직렬화 — 쓰기 가드가 꺼낼 .owner 를 메모에 미리 넣는다). 시각의 try 는 배열 안에 가둔다 —
+# 직렬화 — 쓰기 가드가 꺼낼 .owner 를 메모에 미리 넣는다), 쓰기 가드(_cr_record_owner_ready)가
+# 같은 owner 텍스트·같은 프로그램으로 낼 답(_CR_RECORD_READY_ANSWER 한 줄, 이슈 #168 — boot 를
+# 읽었을 때만 넣는다). 시각과 그 답의 try 는 배열 안에 가둔다 —
 # jq 1.6 은 뒤에서 난 오류를 이미 지나간 try 로 되돌아가 잡아 줄을 더 낸다.
 _CR_SUBMIT_FILTER='[ .[] | try ('"$_CR_OWNER_SCHEMA_FILTER"') catch "error" ] as $schema
   | ([ $now | try [fromjson] catch null ] | .[0]) as $t
@@ -874,26 +885,30 @@ _CR_SUBMIT_FILTER='[ .[] | try ('"$_CR_OWNER_SCHEMA_FILTER"') catch "error" ] as
     else ({id:$id,type:$type,source:$source,reason:$reason,status:"PENDING",created_at:$t[0],owner:.[0]}
           + (if $source_path=="" then {} else {source_path:$source_path} end)
           + (if $source_mtime=="" then {} else {source_mtime:($source_mtime|tonumber)} end) | tojson) as $rs
-      | "ok", $rs, ($rs | fromjson | .owner | tojson)
+      | "ok", $rs, ($rs | fromjson | .owner | tojson),
+        (([ try [ ($rs | fromjson | .owner | tojson | fromjson) as $a | '"$_CR_RECORD_READY_PROGRAM"' ] catch null ] | .[0]) as $r
+         | '"$_CR_RECORD_READY_ANSWER"')
     end'
 _cr_request_new() {
-    local type=$1 source=$2 reason=$3 source_path=${4:-} source_mtime=${5:-} id now owner out rc owner_bytes plan=()
+    local type=$1 source=$2 reason=$3 source_path=${4:-} source_mtime=${5:-} id now owner out rc owner_bytes boot plan=()
     _cr_request_type "$type" || return 64; [ -n "$source" ] && [ -n "$reason" ] || return 64
     [ -z "$source_mtime" ] || [[ $source_mtime =~ ^[0-9]+$ ]] || return 64
     _cr_owner_lifecycle_in ACTIVE DEGRADED || return 69
     [ ! -e "$(_cr_pending_file)" ] && [ ! -e "$(_cr_active_file)" ] || return 75
     id=$(_cr_uuid) || return 70; now=$(_cr_now); owner=$(_cr_owner_json)
+    boot=$(cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null) || boot=
     # jq 를 실행하지 못하면(126·127 — 인자가 128KiB 를 넘는 E2BIG 포함) 70, 그 밖의 jq
     # 실패(owner 파싱 실패 등)는 예전 스키마 판정처럼 69 다.
-    out=$(jq -rs --arg id "$id" --arg type "$type" --arg source "$source" --arg reason "$reason" --arg source_path "$source_path" --arg source_mtime "$source_mtime" --arg now "$now" "$_CR_SUBMIT_FILTER" <<<"$owner") || { rc=$?; [ "$rc" -lt 126 ] || return 70; return 69; }
+    out=$(jq -rs --arg id "$id" --arg type "$type" --arg source "$source" --arg reason "$reason" --arg source_path "$source_path" --arg source_mtime "$source_mtime" --arg now "$now" --arg boot "$boot" --arg ei "" --arg et "" "$_CR_SUBMIT_FILTER" <<<"$owner") || { rc=$?; [ "$rc" -lt 126 ] || return 70; return 69; }
     mapfile -t plan <<<"$out"
-    case "${plan[0]}:${#plan[@]}" in 69:1|70:1|ok:3) ;; *) return 70;; esac
+    case "${plan[0]}:${#plan[@]}" in 69:1|70:1|ok:4) ;; *) return 70;; esac
     [ "${plan[0]}" != 69 ] || return 69
     if [ -n "${PIM_CAMERA_OWNER_INVOCATION:-}" ]; then _cr_owner_matches_exported_context "$owner" || return 69; fi
     [ "${plan[0]}" = ok ] || return 70
     # 예전에는 owner 를 --argjson 으로 넘겨 128KiB 부터 exec 가 실패했고 그래서 70 이었다.
     _cr_byte_length owner_bytes "$owner"; [ "$owner_bytes" -lt 131072 ] || return 70
     _cr_jq_memo_put "${plan[2]}" "${plan[1]}" -c .owner
+    [ -z "$boot" ] || _cr_record_ready_put "$owner" "${plan[2]}" "$boot" "${plan[3]}"
     _cr_mutation_guard "${plan[1]}" pending ACTIVE DEGRADED || return 69; _cr_atomic_write "$(_cr_pending_file)" "${plan[1]}" || return 70; printf '%s\n' "$id"
 }
 cam_request_submit() {
