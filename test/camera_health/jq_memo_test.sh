@@ -75,6 +75,54 @@ printf '%s\n' '{"VHL_CAM":{"app":"streamApp"}}' > "$runtime.next" && mv -f "$run
 _cam_runtime_app_into app "$runtime"
 [ "$app" = PIMCAM ] || fail "a replaced runtime file returned the stale app '$app'"
 expect_runs 3 'a replaced runtime file was served from the cache'
+# 런타임 문서 한 번 읽기 (이슈 #168): 앱·시작 지연·녹화 임시 경로·차량 이름을 jq 한 번으로 읽어
+# 파일 정체로 둔다. 같은 파일이면 세 함수가 jq 를 다시 띄우지 않고, 결과는 예전과 같다.
+export PIM_CAMERA_SESSION_TIME_FILE="$WORK/no-session-marker"
+printf '%s\n' '{"VHL_CAM":{"app":"streamApp","app_delay":7,"tmp_path":"/nonexistent-pim-tmp","vhl_name":"veh1"}}' > "$runtime.next" && mv -f "$runtime.next" "$runtime"
+: > "$WORK/jq.log"
+_cam_runtime_app_into app "$runtime" || fail "the runtime app was refused for a clean runtime document"
+[ "$app" = PIMCAM ] || fail "the runtime app read '$app' from a streamApp document"
+delay_info=$(cam_runtime_app_delay "$runtime") || fail "the app delay was refused for a clean runtime document"
+[ "$delay_info" = $'PIMCAM\t7' ] || fail "the app delay read '$delay_info'"
+cam_cleanup_recording_orphans "$runtime" || fail "the orphan cleanup refused a clean runtime document"
+expect_runs 1 'the runtime document was read by jq more than once for one file'
+# 깨끗하지 않은 문서(경로가 숫자)는 두지 않는다 — 처음 한 번 더 읽고, 세 함수는 예전처럼 jq 로
+# 읽는다(앱 1, 지연 1, 경로·이름 2). 결과는 예전과 같다: 경로가 숫자면 정리를 거부한다(64).
+printf '%s\n' '{"VHL_CAM":{"app":"gstApp","app_delay":3,"tmp_path":5,"vhl_name":"veh1"}}' > "$runtime.next" && mv -f "$runtime.next" "$runtime"
+: > "$WORK/jq.log"
+_cam_runtime_app_into app "$runtime" || fail "the runtime app was refused for a document with a numeric tmp_path"
+[ "$app" = gstApp ] || fail "the runtime app read '$app' from a document with a numeric tmp_path"
+delay_info=$(cam_runtime_app_delay "$runtime") || fail "the app delay was refused for a document with a numeric tmp_path"
+[ "$delay_info" = $'gstApp\t3' ] || fail "the app delay read '$delay_info' from a document with a numeric tmp_path"
+rc=0; cam_cleanup_recording_orphans "$runtime" || rc=$?
+[ "$rc" -eq 64 ] || fail "the orphan cleanup accepted a numeric tmp_path (rc $rc)"
+expect_runs 5 'a runtime document that cannot be kept was read more than once by the one-read path'
+# 지연은 예전 검사(^[0-9]+$, 끝 개행 앞에서도 맞음)를 그대로 따른다: "12\n" 은 예전처럼 12 다.
+printf '%s\n' '{"VHL_CAM":{"app":"gstApp","app_delay":"12\n","tmp_path":"/nonexistent-pim-tmp","vhl_name":"veh1"}}' > "$runtime.next" && mv -f "$runtime.next" "$runtime"
+_cam_runtime_app_into app "$runtime" || fail "the runtime app was refused for a delay ending in a newline"
+delay_info=$(cam_runtime_app_delay "$runtime") || fail "the app delay refused a delay ending in a newline"
+[ "$delay_info" = $'gstApp\t12' ] || fail "a delay ending in a newline read '$delay_info'"
+# 앱 선택·지연 식은 cam_runtime_app·cam_runtime_app_delay·_cam_runtime_doc 세 곳에 있다(앞 둘은
+# 혼자 떼어 쓰여 공유 변수에 기대지 않는다). 한 번 읽기가 둔 값은 두 함수가 jq 로 직접 낸 값과 같아야 한다.
+for doc in '{"VHL_CAM":{"app":"gstApp","app_delay":4,"tmp_path":"/t","vhl_name":"v"}}' \
+           '{"VHL_CAM":{"app":"streamApp","tmp_path":"/t","vhl_name":"v"}}' \
+           '{"VHL_CAM":{"app":"PIMCAM","capture":{"enable":true},"app_delay":"9","tmp_path":"/t","vhl_name":"v"}}' \
+           '{"VHL_CAM":{"app":"other","app_delay":"x","tmp_path":"/t","vhl_name":"v"}}' \
+           '{"VHL_CAM":{"capture":{"enable":"true"},"app_delay":2.5}}'; do
+    printf '%s\n' "$doc" > "$runtime.next" && mv -f "$runtime.next" "$runtime"
+    _CAM_RUNTIME_DOC_KEY=""; _CAM_RUNTIME_DOC_OK=0
+    _cam_runtime_doc "$runtime" || fail "the runtime document was not kept: $doc"
+    kept_app=${_CAM_RUNTIME_DOC[0]}; kept_delay=${_CAM_RUNTIME_DOC[1]}
+    _CAM_RUNTIME_DOC_OK=0
+    direct_app=$(cam_runtime_app "$runtime") || direct_app=""
+    direct=$(cam_runtime_app_delay "$runtime" 2>/dev/null) || direct=""
+    [ "$kept_app" = "$direct_app" ] || fail "the kept app '$kept_app' differs from cam_runtime_app '$direct_app' for $doc"
+    if [ -n "$direct" ]; then
+        [ "$kept_app"$'\t'"$kept_delay" = "$direct" ] || fail "the kept app/delay differ from cam_runtime_app_delay '$direct' for $doc"
+    else
+        [ -z "$kept_app" ] || [[ ! $kept_delay =~ ^[0-9]+$ ]] || fail "the kept app/delay pass where cam_runtime_app_delay refuses for $doc"
+    fi
+done
 
 # cam_executor_assert_context runs before every side effect (camera_hard_reset
 # calls it 27 times) and the active record does not change in between.  Once

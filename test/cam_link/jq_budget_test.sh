@@ -36,18 +36,19 @@ set -euo pipefail
 # the lifecycle write pre-fills the guards' answers for the owner it wrote (#150)
 # 20/33/35/35/43, restart_again 33; the record guard pair met for the first time is
 # judged in one jq (#168) 18/31/33/33/40, restart_again 31; submit pre-fills its write
-# guard's answer (#168) 17/30/32/32/39, restart_again 30.
+# guard's answer (#168) 17/30/32/32/39, restart_again 30; one read of the runtime
+# document serves the app, delay and recording paths (#168) 17/27/31/31/39, restart_again 27.
 # flow                   ceiling   measured        terminal state the flow must reach
 declare -A CEILING=(
     [gstapp_stop]=17           #   2 + 15          SUCCEEDED
-    [gstapp_restart]=30        #   2 + 24 + 4      SUCCEEDED
-    [camera_hard_reset]=32     #   2 + 26 + 4      SUCCEEDED
-    [module_reload]=32         #   2 + 26 + 4      SUCCEEDED
+    [gstapp_restart]=27        #   2 + 21 + 4      SUCCEEDED
+    [camera_hard_reset]=31     #   2 + 25 + 4      SUCCEEDED
+    [module_reload]=31         #   2 + 25 + 4      SUCCEEDED
     [module_reload_fails]=39   #   2 + 37          FAILED rc=1: module_reload and
                                #                   camera_hard_reset fail at modprobe
                                #                   (rc 23) before the app starts,
                                #                   reboot_fallback is refused (rc 1)
-    [gstapp_restart_again]=30  #   2 + 24 + 4      SUCCEEDED after an earlier
+    [gstapp_restart_again]=27  #   2 + 21 + 4      SUCCEEDED after an earlier
                                #                   gstapp_restart that succeeded
 )
 FLOWS=(gstapp_stop gstapp_restart camera_hard_reset module_reload module_reload_fails gstapp_restart_again)
