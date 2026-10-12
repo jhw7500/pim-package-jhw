@@ -173,4 +173,54 @@ record=$(cat "$PIM_CAMERA_RUN_DIR/recovery/active.json"); got_owner=
 _cr_jq_memo got_owner "$record" -c .owner
 [ "$got_owner" = "$(jq -c .owner <<<"$record")" ] || fail "the memo holds another .owner than jq prints for the written record: '$got_owner'"
 
+# claim 은 pending 을 읽는 jq 에서, poll 이 같은 텍스트로 띄우던 요청 스키마 검사와 jq -r .reason
+# 의 답도 내어 메모에 미리 넣는다 (이슈 #150): poll 이 읽는 active 는 claim 이 옮긴 같은 바이트다.
+# 미리 넣은 값은 실제 jq 출력과 같아야 한다. 개행이 든 reason 은 넣지 않으므로 jq 가 다시 돈다.
+claim_fresh() {
+    rm -f "$PIM_CAMERA_RUN_DIR/recovery/active.json"
+    cam_request_submit gstapp_restart operator "$1" >/dev/null || fail "the submit for '$1' was refused"
+    if [ -n "${2:-}" ]; then
+        jq -c "$2" "$PIM_CAMERA_RUN_DIR/recovery/pending.json" > "$WORK/pending.next"
+        mv "$WORK/pending.next" "$PIM_CAMERA_RUN_DIR/recovery/pending.json"
+    fi
+    cam_request_claim || fail "the claim for '$1' was refused"
+    [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] || fail "the claim for '$1' left the pending request"
+    record=$(cat "$PIM_CAMERA_RUN_DIR/recovery/active.json")
+}
+# _cr_request_schema 의 프로그램을 필터 변수로 직접 만든다 — 라이브러리가 다른 문자열로 미리
+# 넣으면 키가 달라 아래 적중 검사가 실패한다.
+schema_program="if (length == 1) then .[0] | if (($_CR_REQUEST_SCHEMA_FILTER)) and (.owner | ($_CR_OWNER_SCHEMA_FILTER)) then .type else empty end else empty end"
+cam_owner_set_lifecycle ACTIVE
+claim_fresh '재시작 요청'
+want_schema=$(jq -r -s "$schema_program" <<<"$record"); want_type=$(jq -r .type <<<"$record"); want_reason=$(jq -r .reason <<<"$record")
+got_schema=; got_type=; got_reason=
+: > "$WORK/jq.log"
+_cr_request_schema "$record" || fail "the schema check refused the claimed record"
+_cr_jq_memo got_schema "$record" -r -s "$schema_program"; _cr_jq_memo got_type "$record" -r .type; _cr_jq_memo got_reason "$record" -r .reason
+expect_runs 0 'the claim did not leave the request check and .reason of the record it moved in the memo'
+[ "$got_schema" = "$want_schema" ] || fail "the memo holds another request check answer than jq prints: '$got_schema' vs '$want_schema'"
+[ "$got_type" = "$want_type" ] || fail "the memo holds another .type than jq prints: '$got_type' vs '$want_type'"
+[ "$got_reason" = "$want_reason" ] || fail "the memo holds another .reason than jq prints: '$got_reason' vs '$want_reason'"
+claim_fresh 'two lines' '.reason = "first line\nsecond line\n"'
+want_reason=$(jq -r .reason <<<"$record"); got_reason=
+: > "$WORK/jq.log"
+_cr_request_schema "$record" || fail "the schema check refused a claimed record whose reason has newlines"
+_cr_jq_memo got_reason "$record" -r .reason
+expect_runs 1 'a reason with newlines was put in the memo, or the request check was not'
+[ "$got_reason" = "$want_reason" ] || fail "a reason with newlines reads back as '$got_reason', jq prints '$want_reason'"
+# 끝 개행이 붙은 type 은 예전처럼 claim 과 스키마 검사를 통과한다. 줄 하나로 옮겨지지 않으므로
+# 미리 넣지 않는다 — 넣으면 claim 의 출력 줄이 늘어 claim 이 70 으로 거부한다.
+claim_fresh 'newline type' '.type = "gstapp_restart\n"'
+want_type=$(jq -r .type <<<"$record"); got_type=
+: > "$WORK/jq.log"
+_cr_request_schema "$record" || fail "the schema check refused a claimed record whose type ends in a newline"
+expect_runs 1 'a type ending in a newline was put in the memo'
+_cr_jq_memo got_type "$record" -r .type
+[ "$got_type" = "$want_type" ] || fail "a type ending in a newline reads back as '$got_type', jq prints '$want_type'"
+# 스키마를 통과하지 못하는 요청도 claim 은 예전처럼 받아 옮긴다 — 거부는 poll 의 스키마 검사가
+# 한다. claim 의 jq 가 더 내는 줄 때문에 판정이 앞당겨지지 않는다.
+claim_fresh 'bad created_at' '.created_at = "x"'
+rc=0; _cr_request_schema "$record" || rc=$?
+[ "$rc" -eq 1 ] || fail "the schema check accepted a claimed record with a string created_at (rc $rc)"
+
 echo "jq memo: PASS"

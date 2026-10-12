@@ -292,6 +292,9 @@ _cr_mutation_guard() {
 }
 
 _CR_REQUEST_SCHEMA_FILTER='type=="object" and (.id|type=="string" and test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")) and (.type|type=="string") and (.source|type=="string" and length>0) and (.reason|type=="string" and length>0) and (.status|type=="string") and (.created_at|type=="number" and floor==. and .>0) and (.owner|type=="object") and ((has("source_path")|not) or (.source_path|type=="string" and length>0)) and ((has("source_mtime")|not) or (.source_mtime|type=="number" and floor==. and .>=0))'
+# _cr_request_schema 의 jq 프로그램. claim 도 같은 문자열로 답을 미리 넣으므로 변수로 둔다 —
+# 메모 키는 이 문자열 그대로다.
+_CR_REQUEST_SCHEMA_PROGRAM="if (length == 1) then .[0] | if (($_CR_REQUEST_SCHEMA_FILTER)) and (.owner | ($_CR_OWNER_SCHEMA_FILTER)) then .type else empty end else empty end"
 _cr_request_schema() {
     local request=$1 type
     # One jq instead of four.  The request schema, the owner schema applied to
@@ -310,7 +313,7 @@ _cr_request_schema() {
     # 메모로 부른다 (이슈 #150): 같은 프로세스가 같은 요청을 여러 번 검증한다(poll·실행·
     # finish). 출력이 있으면 문서는 하나이고 그 .type 을 jq -r 로 찍은 것이므로, 같은
     # 텍스트의 jq -r .type 출력과 바이트까지 같다 — 그 메모도 미리 넣는다.
-    _cr_jq_memo type "$request" -r -s "if (length == 1) then .[0] | if (($_CR_REQUEST_SCHEMA_FILTER)) and (.owner | ($_CR_OWNER_SCHEMA_FILTER)) then .type else empty end else empty end" || return 1
+    _cr_jq_memo type "$request" -r -s "$_CR_REQUEST_SCHEMA_PROGRAM" || return 1
     [ -n "$type" ] || return 1
     _cr_jq_memo_put "$type" "$request" -r .type
     _cr_request_type "$type"
@@ -823,6 +826,13 @@ _cr_history_request() {
 # 출력은 줄마다: 판정(ok|multi|69|70), id(UUID 가 아니면 "-"), owner(jq -c .owner 와 같은
 # 직렬화), history. id 와 owner 는 메모에 미리 넣어 owner 대조와 claim 직후의 첫 전이가 jq 를
 # 다시 띄우지 않는다(active 는 pending 을 옮긴 같은 바이트다). 문서는 argv 로 넘기지 않는다.
+# ok 이면 두 줄을 더 낸다 — poll 이 같은 텍스트로 띄우던 jq 의 답이다: 5 _cr_request_schema 의
+# 프로그램(같은 문자열)이 -r 로 찍는 값, 6 jq -r .reason 의 값. 값이 줄 하나로 바이트까지 같게
+# 옮겨질 때만 "+값"이고(type 은 소문자·밑줄, reason 은 개행·NUL 없는 문자열) 아니면 "-" 다 —
+# "-" 면 메모에 넣지 않으므로 poll 이 예전처럼 jq 를 띄운다. 이 두 줄은 오류를 내지 않는다:
+# 오류가 나면 claim 이 옮기기 전에 70 이 되어, 옮긴 뒤 poll 이 70 을 내던 예전과 디스크가
+# 달라진다. 스키마 프로그램은 try 로 감싸 배열 안에 가둔다(jq 1.6 은 뒤에서 난 오류를 이미
+# 지나간 try 로 되돌아가 잡는다).
 _CR_CLAIM_FILTER='[ .[] | try (.id and .type and .source and .reason and .owner) catch "error" ] as $shape
   | [ .[] | try (.owner | tojson) catch empty ] as $owners
   | if ($shape | length) > 0 and ($shape[-1] == "error" or ($shape[-1] | not)) then "70"
@@ -831,7 +841,10 @@ _CR_CLAIM_FILTER='[ .[] | try (.id and .type and .source and .reason and .owner)
     else "ok",
       (.[0].id | if type == "string" and test("\\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\z") then . else "-" end),
       (.[0].owner | tojson),
-      ({request: .[0], actions: []} | tojson)
+      ({request: .[0], actions: []} | tojson),
+      (([ try [ '"$_CR_REQUEST_SCHEMA_PROGRAM"' ] catch null ] | .[0]) as $s
+       | if ($s | type) == "array" and ($s | length) == 1 and ($s[0] | type == "string" and test("\\A[a-z_]+\\z")) then "+" + $s[0] else "-" end),
+      (.[0].reason | if type == "string" and (explode | all(. != 0 and . != 10)) then "+" + . else "-" end)
     end'
 _cr_claim_locked() {
     local pending out pending_bytes plan=()
@@ -840,12 +853,14 @@ _cr_claim_locked() {
     pending=$(cat "$(_cr_pending_file)") || return 70
     out=$(jq -rs "$_CR_CLAIM_FILTER" <<<"$pending") || return 70
     mapfile -t plan <<<"$out"
-    case "${plan[0]}:${#plan[@]}" in 69:1|70:1|ok:4|multi:4) ;; *) return 70;; esac
+    case "${plan[0]}:${#plan[@]}" in 69:1|70:1|ok:6|multi:4) ;; *) return 70;; esac
     [ "${plan[0]}" != 70 ] || return 70
     [ "${plan[0]}" != 69 ] || return 69
     _cr_jq_memo_put "${plan[2]}" "$pending" -c .owner
     [ "${plan[0]}" = ok ] || { _cr_record_owner_matches "$pending" || return 69; return 70; }
     [ "${plan[1]}" = - ] || _cr_jq_memo_put "${plan[1]}" "$pending" -r .id
+    [ "${plan[4]}" = - ] || _cr_jq_memo_put "${plan[4]#+}" "$pending" -r -s "$_CR_REQUEST_SCHEMA_PROGRAM"
+    [ "${plan[5]}" = - ] || _cr_jq_memo_put "${plan[5]#+}" "$pending" -r .reason
     _cr_record_owner_matches "$pending" || return 69
     # history 경로는 UUID 인 id 로만 만든다 — 아니면 아무것도 쓰지 않고 70 이다(전이와 같은
     # 규칙: 저장 디렉터리 밖을 가리키는 경로를 열지 않는다).
