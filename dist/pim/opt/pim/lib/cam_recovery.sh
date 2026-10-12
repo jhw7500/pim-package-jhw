@@ -247,6 +247,10 @@ _CR_OWNER_GUARD_ANSWERS='([ try [ $o | '"$_CR_OWNER_LIVE_PROGRAM"' ] catch null 
 _CR_OWNER_GUARD_FOLD_FILTER='if length != 1 then "-", "-" else .[0] as $o | '"$_CR_OWNER_GUARD_ANSWERS"' end'
 _cr_owner_guard_put() {
     local owner=$1 boot=$2 live_answer=$3 lifecycle_answer=$4 live
+    # 두 답은 함께 남아야 한다: 메모가 상한 바로 아래면 두 번째 넣기가 메모를 비워 첫 답을
+    # 지운다 — 그러면 lifecycle 답만 남아 접기는 건너뛰고 live 가드가 jq 를 띄운다. 둘을 넣을
+    # 자리가 없으면 먼저 비운다.
+    [ "${#_CR_JQ_MEMO[@]}" -lt 63 ] || _CR_JQ_MEMO=()
     case "$live_answer" in
         0) _cr_jq_memo_put "" "$owner" -r --arg boot "$boot" --arg ei "" --arg et "" "$_CR_OWNER_LIVE_PROGRAM" ;;
         +*:*) live=${live_answer#+}

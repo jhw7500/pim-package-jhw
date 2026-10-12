@@ -304,5 +304,12 @@ _CR_JQ_MEMO=()
 fresh=0; _cr_owner_lifecycle_in RECOVERING || fresh=$?
 [ "$rc" -eq "$fresh" ] || fail "a shifted line of the lifecycle write was put in the memo (rc $rc, $fresh without the memo)"
 printf '%s\n' "$owner" > "$owner_file"
+# 두 답은 함께 남는다: 메모가 상한 바로 아래(63개)여도 lifecycle 답을 넣으며 메모를 비워 먼저
+# 넣은 live 답을 지우지 않는다(지우면 접기는 건너뛰고 live 가드가 jq 를 띄운다).
+_CR_JQ_MEMO=(); for ((i = 0; i < 63; i++)); do _cr_jq_memo_put x "filler$i" -r .; done
+[ "${#_CR_JQ_MEMO[@]}" -eq 63 ] || fail "the memo was not filled to 63 entries (${#_CR_JQ_MEMO[@]})"
+_cr_owner_guard_put "$owner" "$boot" "+4242:111" "+ACTIVE"
+_cr_jq_memo_has "$owner" -r --arg boot "$boot" --arg ei "" --arg et "" "$live_program" || fail 'the live answer was evicted by the lifecycle answer put after it'
+_cr_jq_memo_has "$owner" -r .lifecycle || fail 'the lifecycle answer was not kept'
 
 echo "jq memo: PASS"
