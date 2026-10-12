@@ -934,12 +934,14 @@ _cr_state_action_phase() {
       elif $a.last_status == "SUCCEEDED" or $a.last_status == "FAILED" then "TERMINAL"
       else "CONFLICT" end' <<<"$1"
 }
+_CR_HISTORY_SHAPE_FILTER='type=="object" and (.request|type=="object") and
+         (.actions|type=="array") and all(.actions[];type=="object")'
+_CR_OWN_ACTIONS_FILTER='[.actions[] | select(.action==$action and .request_id==$id)]'
 _cr_counter_finish_history_action() {
     jq -ce --arg action "$2" --arg id "$3" '
-      if type=="object" and (.request|type=="object") and
-         (.actions|type=="array") and all(.actions[];type=="object")
+      if '"$_CR_HISTORY_SHAPE_FILTER"'
       then
-        [.actions[] | select(.action==$action and .request_id==$id)] as $matches |
+        '"$_CR_OWN_ACTIONS_FILTER"' as $matches |
         if ($matches|length)==1 then $matches[0] else empty end
       else empty end
     ' <<<"$1"
@@ -990,19 +992,20 @@ _CR_STATE_ACTION_FILTER='
 _cr_counter_finish_state_action_valid() {
     jq -e --arg action "$2" --arg id "$3" "$_CR_STATE_ACTION_FILTER" >/dev/null <<<"$1"
 }
+_CR_COUNTER_FINISH_PAIR_FILTER='
+      $state.actions[$action] as $a |
+      ($history_action.status=="SUCCEEDED" or $history_action.status=="FAILED") and
+      $a.last_status==$history_action.status and $a.last_rc==$history_action.rc and
+      $a.last_started_at==$history_action.started_at and
+      $a.last_finished_at==$history_action.finished_at
+    '
 _cr_counter_finish_pair_valid() {
     local history=$1 state=$2 action=$3 id=$4 history_action
     _cr_state_valid <<<"$state" || return 1
     history_action=$(_cr_counter_finish_history_action "$history" "$action" "$id" 2>/dev/null) || return 1
     _cr_counter_finish_history_action_valid "$history_action" "$action" "$id" || return 1
     _cr_counter_finish_state_action_valid "$state" "$action" "$id" || return 1
-    jq -ne --argjson history_action "$history_action" --argjson state "$state" --arg action "$action" '
-      $state.actions[$action] as $a |
-      ($history_action.status=="SUCCEEDED" or $history_action.status=="FAILED") and
-      $a.last_status==$history_action.status and $a.last_rc==$history_action.rc and
-      $a.last_started_at==$history_action.started_at and
-      $a.last_finished_at==$history_action.finished_at
-    ' >/dev/null
+    jq -ne --argjson history_action "$history_action" --argjson state "$state" --arg action "$action" "$_CR_COUNTER_FINISH_PAIR_FILTER" >/dev/null
 }
 _cr_reconciled_owner_inactive() {
     local request=$1 owner boot owner_boot pid start actual
@@ -1113,12 +1116,19 @@ _CR_COUNTER_BEGIN_STATE_UPDATE='if $settle then .actions[$action].failed+=1 | .a
 # jq -r 출력을 $(...) 로 받아 개행·NUL 이 든 id 에서 갈렸다). 기준은 jq 1.6 의미다.
 # 세 문서는 --rawfile 로 받는다 — -R stdin 은 4095 바이트 조각 경계의 멀티바이트
 # 문자를 U+FFFD 로 바꿔, 예전이 파싱한 것과 다른 텍스트를 놓고 판정하게 된다.
-_CR_COUNTER_BEGIN_FAST_FILTER='
+# 두 빠른 경로가 함께 쓰는 정의. 판정은 예전 함수와 같은 필터 문자열로 한다. history 의
+# request 는 예전처럼 jq 가 다시 출력한 텍스트를 다시 파싱한 값으로 active 와 비교한다
+# (tojson|fromjson) — 1e1000 은 출력하면 최댓값이 되므로, 파싱한 값끼리 비교하면 예전이
+# 거부하던 입력을 통과시킨다(jq 1.6 실측).
+_CR_FAST_PRELUDE='
   def state_valid: '"$_CR_STATE_FILTER"';
   def state_action_valid($action; $id): '"$_CR_STATE_ACTION_FILTER"';
   def history_action_valid($action; $id): '"$_CR_HISTORY_ACTION_FILTER"';
   def argv_ok: utf8bytelength < 131072;
-  def own_actions($action; $id): [.actions[] | select(.action==$action and .request_id==$id)];
+  def own_actions($action; $id): '"$_CR_OWN_ACTIONS_FILTER"';
+  def history_shape: '"$_CR_HISTORY_SHAPE_FILTER"';
+'
+_CR_COUNTER_BEGIN_FAST_FILTER=$_CR_FAST_PRELUDE'
   try (
     ($sraw | fromjson) as $s
     | ($hraw | fromjson) as $h
@@ -1128,8 +1138,7 @@ _CR_COUNTER_BEGIN_FAST_FILTER='
     | $s.actions[$action] as $sa
     | $sa.last_request_id as $lri
     | if ($s | state_valid)
-         and ($h | type == "object") and ($h.request | type == "object")
-         and ($h.actions | type == "array") and all($h.actions[]; type == "object")
+         and ($h | history_shape)
          and ($h | own_actions($action; $id) | length) == 0
          and ($h.request | tojson | argv_ok)
          and ($h.request | tojson | fromjson) == $a
@@ -1146,10 +1155,9 @@ _CR_COUNTER_BEGIN_FAST_FILTER='
     | ($hns | fromjson) as $hn
     | ($sns | fromjson) as $sn
     | if ($sn | state_valid)
-         and ($hn | type == "object") and ($hn.request | type == "object")
+         and ($hn | history_shape)
          and ($hn.request | tojson | argv_ok)
          and ($hn.request | tojson | fromjson) == $a
-         and ($hn.actions | type == "array") and all($hn.actions[]; type == "object")
          and ($hn | own_actions($action; $id) | length) == 1
       then . else error("slow") end
     | ($hn | own_actions($action; $id) | .[0] | tojson) as $has
@@ -1228,15 +1236,85 @@ _cr_counter_begin_locked() {
     esac
 }
 cam_action_counter_begin() { [ $# -eq 2 ] || return 64; _cr_lock_call _cr_counter_begin_locked "$@"; }
+_CR_COUNTER_FINISH_HISTORY_UPDATE='.actions |= map(if .action==$action and .request_id==$id and .status=="RUNNING" then .status=$status | .rc=$rc | .finished_at=$now else . end)'
+_CR_COUNTER_FINISH_STATE_UPDATE='.actions[$action].last_request_id=$id | .actions[$action].last_finished_at=$now | .actions[$action].last_status=$status | .actions[$action].last_rc=$rc | if $status=="SUCCEEDED" then .actions[$action].succeeded+=1 | .actions[$action].consecutive_failures=0 else .actions[$action].failed+=1 | .actions[$action].consecutive_failures+=1 end'
+# counter_finish 의 빠른 경로 (이슈 #150, counter_begin 과 같은 틀). 일반 경로 — history 의
+# 이 요청 action 과 state 의 counter 가 둘 다 RUNNING — 에서 예전 코드가 rc 0 으로 끝날 때
+# 거치는 판정을 jq 한 번으로 하고 쓸 두 문서를 낸다. 하나라도 확인하지 못하면 "fallback"
+# 이고 예전 코드를 그대로 실행한다(재개 분기 RUNNING:TERMINAL·종결:RUNNING 포함). 예전의
+# bash 단계도 그대로 따른다: started_at 은 jq -r 이 출력한 텍스트로 비교했으므로 같은
+# jq 의 tostring 으로 비교한다(jq 1.7 은 수 리터럴을 보존해 1700000001.0 처럼 출력한다).
+# 시각과 started_at 의 [ -ge ] 비교, rc 의 --argjson 은 정규 10진수(15자리 이하, rc 는
+# 9자리 이하)일 때만 빠른 경로가 맡는다 — 그 밖의 표기는 예전 코드가 판정한다. 세
+# 문서는 --rawfile 로 받는다(-R 은 4095 바이트 조각 경계의 멀티바이트 문자를 깨뜨린다).
+_CR_COUNTER_FINISH_FAST_FILTER=$_CR_FAST_PRELUDE'
+  try (
+    ($sraw | fromjson) as $s
+    | ($hraw | fromjson) as $h
+    | ($araw | fromjson) as $a
+    | if ($now | test("\\A[1-9][0-9]{0,14}\\z")) and ($rcraw | test("\\A(0|[1-9][0-9]{0,8})\\z"))
+      then . else error("args") end
+    | ($now | fromjson) as $now
+    | ($rcraw | fromjson) as $rc
+    | if ($s | state_valid)
+         and ($h | history_shape)
+         and ($h.request | tojson | argv_ok)
+         and ($h.request | tojson | fromjson) == $a
+         and ($h | own_actions($action; $id) | length) == 1
+      then . else error("slow") end
+    | ($h | own_actions($action; $id) | .[0] | tojson | fromjson) as $ha
+    | $s.actions[$action] as $sa
+    | ($ha.started_at | tostring) as $started
+    | if ($ha | history_action_valid($action; $id)) and $ha.status == "RUNNING"
+         and ($s | state_action_valid($action; $id)) and $sa.last_status == "RUNNING"
+         and $started == ($sa.last_started_at | tostring)
+         and ($started | test("\\A[1-9][0-9]{0,14}\\z")) and $now >= ($started | tonumber)
+      then . else error("slow") end
+    | ($h | '"$_CR_COUNTER_FINISH_HISTORY_UPDATE"' | tojson) as $hns
+    | ($s | '"$_CR_COUNTER_FINISH_STATE_UPDATE"' | tojson) as $sns
+    | ($hns | fromjson) as $hn
+    | ($sns | fromjson) as $state
+    | if ($state | state_valid) and ($hn | history_shape)
+         and ($hn | own_actions($action; $id) | length) == 1
+      then . else error("slow") end
+    | ($hn | own_actions($action; $id) | .[0] | tojson) as $has
+    | ($has | fromjson) as $history_action
+    | if ($has | argv_ok) and ($sns | argv_ok)
+         and ($history_action | history_action_valid($action; $id))
+         and ($state | state_action_valid($action; $id))
+         and ('"$_CR_COUNTER_FINISH_PAIR_FILTER"')
+      then ["ok", $hns, $sns] else error("slow") end
+  ) catch ["fallback"]
+  | .[]'
 _cr_counter_finish_locked() {
     local action=$1 id=$2 status=$3 rc=$4 active state history history_request history_action history_next state_next
     local history_phase state_phase history_started state_started now phase active_id active_status
+    local history_read=true now_read=true fast_out fast_plan=()
     _cr_public_action "$action" || return 64; _cr_terminal_valid "$status" "$rc" || return 64
     _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69; _cr_record_owner_matches "$active" || return 69
     _cr_jq_memo active_id "$active" -r .id || active_id=""; [ "$active_id" = "$id" ] || return 64
     _cr_jq_memo active_status "$active" -r .status || active_status=""
     case "$active_status" in RUNNING|VERIFYING) ;; *) return 64;; esac
-    _cr_mutation_guard "$active" counter_init ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_state_init || return 70; state=$(cat "$(_cr_state_file)") || return 70; _cr_state_valid <<<"$state" || return 70; history=$(cat "$(_cr_history_file "$id")" 2>/dev/null) || return 70
+    _cr_mutation_guard "$active" counter_init ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_state_init || return 70; state=$(cat "$(_cr_state_file)") || return 70
+    # 빠른 경로는 판정 전에 아무것도 쓰지 않는다. 시계는 history 를 읽은 뒤 한 번만
+    # 읽고, 예전 코드로 가면 RUNNING:RUNNING 이 같은 값을 쓴다(예전이 시계를 읽던 곳).
+    history=$(cat "$(_cr_history_file "$id")" 2>/dev/null) || history_read=false
+    if [ "$history_read" = true ]; then
+        now=$(_cr_now) || now_read=false
+        if [ "$now_read" = true ] && fast_out=$(jq -nr --rawfile sraw <(printf '%s' "$state") --rawfile hraw <(printf '%s' "$history") \
+            --rawfile araw <(printf '%s' "$active") --arg action "$action" --arg id "$id" --arg status "$status" --arg rcraw "$rc" \
+            --arg now "$now" "$_CR_COUNTER_FINISH_FAST_FILTER" 2>/dev/null); then
+            mapfile -t fast_plan <<<"$fast_out"
+        fi
+    fi
+    if [ "${#fast_plan[@]}" -eq 3 ] && [ "${fast_plan[0]}" = ok ]; then
+        _cr_mutation_guard "$active" counter_history ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_history_file "$id")" "${fast_plan[1]}" || return 70
+        _cr_test_failpoint counter_finish_after_history || return 70
+        _cr_mutation_guard "$active" counter_state ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_state_file)" "${fast_plan[2]}" || return 70
+        return 0
+    fi
+    _cr_state_valid <<<"$state" || return 70
+    [ "$history_read" = true ] || return 70
     history_request=$(jq -ce '.request | select(type=="object")' <<<"$history") || return 70
     _cr_request_json_equal "$history_request" "$active" || return 70
     history_action=$(_cr_counter_finish_history_action "$history" "$action" "$id" 2>/dev/null) || return 70
@@ -1248,7 +1326,7 @@ _cr_counter_finish_locked() {
     [ "$history_started" = "$state_started" ] || return 70
     phase="$history_phase:$state_phase"
     case "$phase" in
-        RUNNING:RUNNING) now=$(_cr_now) || return 70 ;;
+        RUNNING:RUNNING) [ "$now_read" = true ] || return 70 ;;
         RUNNING:TERMINAL)
             jq -e --arg action "$action" --arg status "$status" --argjson rc "$rc" '.actions[$action].last_status==$status and .actions[$action].last_rc==$rc' >/dev/null <<<"$state" || return 70
             now=$(jq -r --arg action "$action" '.actions[$action].last_finished_at | select(type=="number" and floor==. and .>0)' <<<"$state") || return 70
@@ -1264,16 +1342,16 @@ _cr_counter_finish_locked() {
     [ "$now" -ge "$history_started" ] || return 70
     case "$phase" in
         RUNNING:RUNNING)
-            history_next=$(jq -c --arg action "$action" --arg id "$id" --arg status "$status" --argjson rc "$rc" --argjson now "$now" '.actions |= map(if .action==$action and .request_id==$id and .status=="RUNNING" then .status=$status | .rc=$rc | .finished_at=$now else . end)' <<<"$history") || return 70
-            state_next=$(jq -c --arg action "$action" --arg id "$id" --arg status "$status" --argjson rc "$rc" --argjson now "$now" '.actions[$action].last_request_id=$id | .actions[$action].last_finished_at=$now | .actions[$action].last_status=$status | .actions[$action].last_rc=$rc | if $status=="SUCCEEDED" then .actions[$action].succeeded+=1 | .actions[$action].consecutive_failures=0 else .actions[$action].failed+=1 | .actions[$action].consecutive_failures+=1 end' <<<"$state") || return 70
+            history_next=$(jq -c --arg action "$action" --arg id "$id" --arg status "$status" --argjson rc "$rc" --argjson now "$now" "$_CR_COUNTER_FINISH_HISTORY_UPDATE" <<<"$history") || return 70
+            state_next=$(jq -c --arg action "$action" --arg id "$id" --arg status "$status" --argjson rc "$rc" --argjson now "$now" "$_CR_COUNTER_FINISH_STATE_UPDATE" <<<"$state") || return 70
             ;;
         RUNNING:TERMINAL)
-            history_next=$(jq -c --arg action "$action" --arg id "$id" --arg status "$status" --argjson rc "$rc" --argjson now "$now" '.actions |= map(if .action==$action and .request_id==$id and .status=="RUNNING" then .status=$status | .rc=$rc | .finished_at=$now else . end)' <<<"$history") || return 70
+            history_next=$(jq -c --arg action "$action" --arg id "$id" --arg status "$status" --argjson rc "$rc" --argjson now "$now" "$_CR_COUNTER_FINISH_HISTORY_UPDATE" <<<"$history") || return 70
             state_next=$state
             ;;
         SUCCEEDED:RUNNING|FAILED:RUNNING)
             history_next=$history
-            state_next=$(jq -c --arg action "$action" --arg id "$id" --arg status "$status" --argjson rc "$rc" --argjson now "$now" '.actions[$action].last_request_id=$id | .actions[$action].last_finished_at=$now | .actions[$action].last_status=$status | .actions[$action].last_rc=$rc | if $status=="SUCCEEDED" then .actions[$action].succeeded+=1 | .actions[$action].consecutive_failures=0 else .actions[$action].failed+=1 | .actions[$action].consecutive_failures+=1 end' <<<"$state") || return 70
+            state_next=$(jq -c --arg action "$action" --arg id "$id" --arg status "$status" --argjson rc "$rc" --argjson now "$now" "$_CR_COUNTER_FINISH_STATE_UPDATE" <<<"$state") || return 70
             ;;
     esac
     _cr_counter_finish_pair_valid "$history_next" "$state_next" "$action" "$id" || return 70
