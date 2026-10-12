@@ -461,6 +461,36 @@ _cr_jq_memo_has "keep-me" -r . || fail 'putting one key 100 times cleared the me
 _cr_jq_memo_put yy "$big" -r .
 [ "$_CR_JQ_MEMO_BYTES" -eq $(( $(entry_bytes keep-me x) + $(entry_bytes "$big" yy) )) ] || fail "the size count after replacing a value is $_CR_JQ_MEMO_BYTES"
 _CR_JQ_MEMO=(); _CR_JQ_MEMO_BYTES=0
+# 빈 메모에도 들어가지 않는 항목은 담지 않는다: 누계는 늘 항목 크기의 합이고 상한을 넘지 않는다.
+memo_sum() { local LC_ALL=C k s=0; for k in "${!_CR_JQ_MEMO[@]}"; do s=$(( s + ${#k} + ${#_CR_JQ_MEMO[$k]} )); done; echo "$s"; }
+memo_sane() {
+    [ "$_CR_JQ_MEMO_BYTES" -eq "$(memo_sum)" ] && [ "$_CR_JQ_MEMO_BYTES" -le "$_CR_JQ_MEMO_BYTE_MAX" ] ||
+        fail "$1 (count $_CR_JQ_MEMO_BYTES, entries $(memo_sum), cap $_CR_JQ_MEMO_BYTE_MAX)"
+}
+huge=$(printf '%*s' "$_CR_JQ_MEMO_BYTE_MAX" '' | tr ' ' h)
+_cr_jq_memo_put x "keep-me" -r .
+_cr_jq_memo_put x "$huge" -r .
+_cr_jq_memo_has "keep-me" -r . || fail 'an entry larger than the size cap cleared the memo'
+! _cr_jq_memo_has "$huge" -r . || fail 'a put kept an entry larger than the size cap'
+memo_sane 'the size count after an oversized put'
+: > "$WORK/jq.log"
+got=; _cr_jq_memo got "\"$huge\"" -r length
+[ "$got" = "$_CR_JQ_MEMO_BYTE_MAX" ] || fail "an oversized jq call returned '$got'"
+_cr_jq_memo got "\"$huge\"" -r length
+expect_runs 2 'an oversized jq answer was cached'
+memo_sane 'the size count after an oversized jq call'
+# 이미 있는 키를 담을 수 없는 값으로 바꾸면 옛 값을 남기지 않는다.
+_cr_jq_memo_put x "dup" -r .
+_cr_jq_memo_put "$huge" "dup" -r .
+! _cr_jq_memo_has "dup" -r . || fail 'an old value stayed after its key got a value larger than the size cap'
+memo_sane 'the size count after replacing a value with an oversized one'
+# 두 답의 자리가 빈 메모에도 없으면 둘 다 넣지 않고 메모도 비우지 않는다(set -e 아래에서도 이어 간다).
+_cr_jq_memo_put x "keep-me" -r .
+_cr_owner_guard_put "${huge:0:1100000}" "$boot" "+4242:111" "+ACTIVE"
+_cr_jq_memo_has "keep-me" -r . || fail 'a pair larger than the size cap cleared the memo'
+! _cr_jq_memo_has "${huge:0:1100000}" -r .lifecycle || fail 'a pair larger than the size cap was put'
+memo_sane 'the size count after an oversized pair'
+_CR_JQ_MEMO=(); _CR_JQ_MEMO_BYTES=0
 
 # owner lifecycle 을 쓰면 _cr_load_owner_lifecycle 의 캐시(파일 정체)에 그 값을 둔다 (이슈 #168): repair
 # 확인·실행 진입·데몬 루프가 방금 쓴 owner 를 jq 로 다시 읽지 않는다. 값은 jq 가 읽는 것과 같다.

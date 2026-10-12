@@ -98,8 +98,10 @@ _CR_JQ_MEMO_MAX=512
 _CR_JQ_MEMO_BYTE_MAX=2097152
 _CR_JQ_MEMO_BYTES=0
 # n 개 항목, b 바이트를 더 넣을 자리가 없으면 비운다. 함께 남아야 하는 항목들은 넣기 전에 한 번에
-# 자리를 잡는다 — 그 사이에 비워지면 먼저 넣은 것이 사라진다.
+# 자리를 잡는다 — 그 사이에 비워지면 먼저 넣은 것이 사라진다. b 가 빈 메모에도 들어가지 않으면
+# 비우지 않고 1 이다 — 그 항목은 담지 않는다(담으면 누계가 상한을 넘는다). 1 은 if 나 || 로 받는다.
 _cr_jq_memo_room() {
+    [ "$2" -le "$_CR_JQ_MEMO_BYTE_MAX" ] || return 1
     if [ $(( ${#_CR_JQ_MEMO[@]} + $1 )) -gt "$_CR_JQ_MEMO_MAX" ] || [ $(( _CR_JQ_MEMO_BYTES + $2 )) -gt "$_CR_JQ_MEMO_BYTE_MAX" ]; then
         _CR_JQ_MEMO=(); _CR_JQ_MEMO_BYTES=0
     fi
@@ -117,9 +119,10 @@ _cr_jq_memo() {
     fi
     _cr_memo_out=$(jq "$@" <<<"$_cr_memo_input") || return $?
     _cr_byte_length _cr_memo_size "$_cr_memo_key$_cr_memo_out"
-    _cr_jq_memo_room 1 "$_cr_memo_size"
-    _CR_JQ_MEMO[$_cr_memo_key]=$_cr_memo_out
-    _CR_JQ_MEMO_BYTES=$(( _CR_JQ_MEMO_BYTES + _cr_memo_size ))
+    if _cr_jq_memo_room 1 "$_cr_memo_size"; then
+        _CR_JQ_MEMO[$_cr_memo_key]=$_cr_memo_out
+        _CR_JQ_MEMO_BYTES=$(( _CR_JQ_MEMO_BYTES + _cr_memo_size ))
+    fi
     printf -v "$_cr_memo_var" '%s' "$_cr_memo_out"
 }
 # 메모에 값을 미리 넣는다. 한 번의 jq 로 문서를 만든 연산이, 그 문서에 다음 연산이
@@ -138,9 +141,14 @@ _cr_jq_memo_put() {
         _cr_memo_new=0
     fi
     _cr_byte_length _cr_memo_size "$_cr_memo_key$_cr_memo_value"
-    _cr_jq_memo_room "$_cr_memo_new" "$_cr_memo_size"
-    _CR_JQ_MEMO[$_cr_memo_key]=$_cr_memo_value
-    _CR_JQ_MEMO_BYTES=$(( _CR_JQ_MEMO_BYTES + _cr_memo_size ))
+    if _cr_jq_memo_room "$_cr_memo_new" "$_cr_memo_size"; then
+        _CR_JQ_MEMO[$_cr_memo_key]=$_cr_memo_value
+        _CR_JQ_MEMO_BYTES=$(( _CR_JQ_MEMO_BYTES + _cr_memo_size ))
+    elif [ "$_cr_memo_new" -eq 0 ]; then
+        # 옛 항목은 누계에서 이미 뺐다 — 남기면 세지 않는 항목이 된다. 드문 길이라 통째로 비운다.
+        _CR_JQ_MEMO=(); _CR_JQ_MEMO_BYTES=0
+    fi
+    return 0
 }
 # 메모에 그 호출의 답이 있으면 0. 인자는 _cr_jq_memo_put 의 입력부터와 같다.
 _cr_jq_memo_has() {
@@ -281,7 +289,7 @@ _cr_owner_guard_put() {
     # 지운다 — 그러면 lifecycle 답만 남아 접기는 건너뛰고 live 가드가 jq 를 띄운다. 둘을 넣을
     # 자리를 먼저 잡는다(키는 owner 텍스트와 프로그램, 값은 몇 줄이다).
     _cr_byte_length need "$owner$owner$_CR_OWNER_LIVE_PROGRAM$boot"
-    _cr_jq_memo_room 2 $(( need + 256 ))
+    _cr_jq_memo_room 2 $(( need + 256 )) || return 0
     case "$live_answer" in
         0) _cr_jq_memo_put "" "$owner" -r --arg boot "$boot" --arg ei "" --arg et "" "$_CR_OWNER_LIVE_PROGRAM" ;;
         +*:*) live=${live_answer#+}
@@ -330,7 +338,7 @@ _cr_record_guard_fold() {
     mapfile -t plan <<<"$out"
     [ "${#plan[@]}" -eq 2 ] || return 0
     _cr_byte_length need "$saved$saved$current$current$_CR_OWNER_IMMUTABLE_PROGRAM$_CR_RECORD_READY_PROGRAM$boot"
-    _cr_jq_memo_room 2 $(( need + 256 ))
+    _cr_jq_memo_room 2 $(( need + 256 )) || return 0
     [ "${plan[0]}" != + ] || _cr_jq_memo_put true "" -e -n --argjson a "$saved" --argjson b "$current" "$_CR_OWNER_IMMUTABLE_PROGRAM"
     _cr_record_ready_put "$current" "$saved" "$boot" "${plan[1]}"
 }
