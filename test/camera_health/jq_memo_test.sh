@@ -312,4 +312,45 @@ _cr_owner_guard_put "$owner" "$boot" "+4242:111" "+ACTIVE"
 _cr_jq_memo_has "$owner" -r --arg boot "$boot" --arg ei "" --arg et "" "$live_program" || fail 'the live answer was evicted by the lifecycle answer put after it'
 _cr_jq_memo_has "$owner" -r .lifecycle || fail 'the lifecycle answer was not kept'
 
+# 레코드 가드 두 개(_cr_owner_immutable_equal, _cr_record_owner_ready)는 같은 두 owner 로 jq 를
+# 하나씩 띄운다. 그 쌍이 메모에 처음이면 jq 한 번으로 두 답을 구해 넣는다 (이슈 #168). 넣은 답은
+# 실제 jq 출력과 같아야 한다. 프로그램은 필터 변수로 직접 만든다 — 라이브러리가 다른 문자열로
+# 넣으면 키가 달라 적중 검사가 실패한다.
+record=$(cat "$PIM_CAMERA_RUN_DIR/recovery/active.json"); current=$(cat "$owner_file")
+imm_program="(\$a | ($_CR_OWNER_SCHEMA_FILTER)) and (\$b | ($_CR_OWNER_SCHEMA_FILTER)) and $_CR_OWNER_IMMUTABLE_EQ_FILTER"
+ready_program="if (length == 1) then .[0] | if ((\$a | ($_CR_OWNER_SCHEMA_FILTER)) and ($_CR_OWNER_SCHEMA_FILTER) and ($_CR_OWNER_LIVE_MATCH_FILTER) and (. as \$b | $_CR_OWNER_IMMUTABLE_EQ_FILTER)) then [.lifecycle, (.pid|tostring), .proc_start_time] | join(\"\\n\") else empty end else empty end"
+rec_owner=$(jq -c .owner <<<"$record")
+want_imm=$(jq -e -n --argjson a "$rec_owner" --argjson b "$current" "$imm_program")
+want_ready=$(jq -r -s --argjson a "$rec_owner" --arg boot "$boot" --arg ei "" --arg et "" "$ready_program" <<<"$current")
+_CR_JQ_MEMO=()
+_cr_owner_lifecycle_in ACTIVE DEGRADED || fail "the owner guard refused the live ACTIVE owner before the record guards"
+_cr_jq_memo got_owner "$record" -c .owner
+: > "$WORK/jq.log"
+_cr_record_owner_matches "$record" || fail "the record guard refused the active record"
+_cr_record_owner_ready "$record" ACTIVE DEGRADED || fail "the ready guard refused the active record"
+expect_runs 1 'the record guards ran two jq on an owner pair they met for the first time'
+got_imm=; got_ready=
+_cr_jq_memo got_imm "" -e -n --argjson a "$rec_owner" --argjson b "$current" "$imm_program"
+_cr_jq_memo got_ready "$current" -r -s --argjson a "$rec_owner" --arg boot "$boot" --arg ei "" --arg et "" "$ready_program"
+expect_runs 1 'the record guards did not leave both answers in the memo'
+[ "$got_imm" = "$want_imm" ] || fail "the memo holds another immutable answer than jq prints: '$got_imm' vs '$want_imm'"
+[ "$got_ready" = "$want_ready" ] || fail "the memo holds another ready answer than jq prints: '$got_ready' vs '$want_ready'"
+# 지금 owner 파일에 문서가 둘이면 넣지 않는다 — 가드가 예전처럼 jq 로 거부한다(접기 1 + 가드 1).
+printf '%s\n%s\n' "$owner" "$owner" > "$owner_file"
+_CR_JQ_MEMO=()
+_cr_jq_memo got_owner "$record" -c .owner
+: > "$WORK/jq.log"
+rc=0; _cr_record_owner_matches "$record" 2>/dev/null || rc=$?
+[ "$rc" -eq 1 ] || fail "the record guard accepted an owner file holding two documents (rc $rc)"
+expect_runs 2 'the record guard pair was put in the memo for an owner file holding two documents'
+printf '%s\n' "$owner" > "$owner_file"
+# 불변 필드가 다르면(owner 가 바뀜) immutable 답은 거짓이다 — 거짓은 넣지 않고, 가드는 예전처럼
+# 거부한다. 참으로 넣으면 다른 owner 의 레코드를 받아들인다(fail-open).
+jq -c '.created_at += 1' <<<"$owner" > "$owner_file"
+_CR_JQ_MEMO=()
+_cr_jq_memo got_owner "$record" -c .owner
+rc=0; _cr_record_owner_matches "$record" || rc=$?
+[ "$rc" -eq 1 ] || fail "the record guard accepted an owner whose created_at changed (rc $rc)"
+printf '%s\n' "$owner" > "$owner_file"
+
 echo "jq memo: PASS"
