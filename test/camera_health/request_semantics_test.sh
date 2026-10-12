@@ -787,4 +787,130 @@ jq -c --arg p "$(printf '%*s' "$(( 4094 - n ))" '' | tr ' ' a)가가가" '.actio
 first_ga_at "$(cat "$state_file")"; [ "$n" -eq 4094 ] || fail "the state does not start a character at byte 4094 ($n)"
 begin_writes_old_bytes
 
+# --- I. counter finish's common case in one jq writes what the old steps wrote
+# The same scheme as G: one jq decides the common case - this request's action
+# in the history and the counter both RUNNING - and everything else runs the old
+# steps unchanged.  The old steps compared started_at as the text jq -r printed
+# and against the clock with [ -ge ]; both must keep their verdicts.
+old_finish_history() { jq -c --arg action "$1" --arg id "$2" --arg status "$3" --argjson rc "$4" --argjson now "$5" '.actions |= map(if .action==$action and .request_id==$id and .status=="RUNNING" then .status=$status | .rc=$rc | .finished_at=$now else . end)' <<<"$6"; }
+old_finish_state() { jq -c --arg action "$1" --arg id "$2" --arg status "$3" --argjson rc "$4" --argjson now "$5" '.actions[$action].last_request_id=$id | .actions[$action].last_finished_at=$now | .actions[$action].last_status=$status | .actions[$action].last_rc=$rc | if $status=="SUCCEEDED" then .actions[$action].succeeded+=1 | .actions[$action].consecutive_failures=0 else .actions[$action].failed+=1 | .actions[$action].consecutive_failures+=1 end' <<<"$6"; }
+begun_request() { running_request; cam_action_counter_begin gstapp_restart "$id"; }
+# Counter finish $1 $2 on the begun request $id, checked against the old
+# filters with the clock value the call read.
+finish_writes_old_bytes() {
+    local status=$1 rc=$2 history_before state_before now
+    history_before=$(cat "$(history_file)"); state_before=$(cat "$state_file")
+    expect_rc 0 cam_action_counter_finish gstapp_restart "$id" "$status" "$rc"
+    now=$(cat "$WORK/clock")
+    [ "$(cat "$(history_file)")" = "$(old_finish_history gstapp_restart "$id" "$status" "$rc" "$now" "$history_before")" ] || fail "the history is not the old serialization"
+    [ "$(cat "$state_file")" = "$(old_finish_state gstapp_restart "$id" "$status" "$rc" "$now" "$state_before")" ] || fail "the state is not the old serialization"
+}
+label='counter finish of a success'
+begun_request; finish_writes_old_bytes SUCCEEDED 0
+label='counter finish of a failure'
+begun_request; finish_writes_old_bytes FAILED 3
+label='counter finish keeps a state across a jq raw-input chunk'
+begun_request
+first_ga_at "$(jq -c '.actions.reboot_fallback.last_request_id="가"' "$state_file")"
+jq -c --arg p "$(printf '%*s' "$(( 4094 - n ))" '' | tr ' ' a)가가가" '.actions.reboot_fallback.last_request_id=$p' "$state_file" > "$WORK/state.tmp"
+mv "$WORK/state.tmp" "$state_file"
+first_ga_at "$(cat "$state_file")"; [ "$n" -eq 4094 ] || fail "the state does not start a character at byte 4094 ($n)"
+finish_writes_old_bytes SUCCEEDED 0
+
+# The old pair check handed jq the new state as one argument.  Pads another
+# action's request id so the state counter finish writes is exactly $1 bytes.
+pad_finish_state() {
+    local target=$1 now base k
+    now=$(( $(cat "$WORK/clock") + 1 ))
+    base=$(jq -c '.actions.reboot_fallback.last_request_id=""' "$state_file")
+    k=$(( target - $(old_finish_state gstapp_restart "$id" SUCCEEDED 0 "$now" "$base" | wc -c) + 1 ))
+    jq -c --arg p "$(printf '%*s' "$k" '' | tr ' ' x)" '.actions.reboot_fallback.last_request_id=$p' <<<"$base" > "$state_file"
+    [ "$(( $(old_finish_state gstapp_restart "$id" SUCCEEDED 0 "$now" "$(cat "$state_file")" | wc -c) - 1 ))" -eq "$target" ] \
+        || fail "the state counter finish writes is not $target bytes"
+}
+label='counter finish writing a 131071-byte state'
+begun_request; pad_finish_state 131071
+expect_rc 0 argv_call cam_action_counter_finish gstapp_restart "$id" SUCCEEDED 0
+label='counter finish writing a 131072-byte state'
+begun_request; pad_finish_state 131072; snapshot; : > "$WORK/argv.err"
+expect_rc 70 argv_call cam_action_counter_finish gstapp_restart "$id" SUCCEEDED 0
+unchanged history state
+grep -q 'Argument list too long' "$WORK/argv.err" || fail "counter finish did not fail on exec's argument limit"
+label='counter finish with a request jq prints under the argument limit'
+begun_request; del_request 131000 10
+expect_rc 0 argv_call cam_action_counter_finish gstapp_restart "$id" SUCCEEDED 0
+label='counter finish with a request jq prints past the argument limit'
+begun_request; del_request 131000 20; snapshot; : > "$WORK/argv.err"
+expect_rc 70 argv_call cam_action_counter_finish gstapp_restart "$id" SUCCEEDED 0
+unchanged history state
+grep -q 'Argument list too long' "$WORK/argv.err" || fail "counter finish did not fail on exec's argument limit"
+
+label='counter finish with a clock that prints no number'
+begun_request
+# shellcheck disable=SC2317 # called by the library, not by this file
+_cr_now() { echo not-a-number; }
+snapshot
+expect_rc 70 cam_action_counter_finish gstapp_restart "$id" SUCCEEDED 0
+unchanged history state
+eval "$clock_fn"
+label='counter finish with a clock before the start'
+begun_request
+# shellcheck disable=SC2317 # called by the library, not by this file
+_cr_now() { echo 1; }
+snapshot
+expect_rc 70 cam_action_counter_finish gstapp_restart "$id" SUCCEEDED 0
+unchanged history state
+eval "$clock_fn"
+# Resuming after the history write takes the finish from the history; the old
+# steps never read the clock there.
+label='counter finish resumed after its history write'
+begun_request; snapshot
+PIM_CAMERA_TEST_FAILPOINT=counter_finish_after_history expect_rc 70 cam_action_counter_finish gstapp_restart "$id" FAILED 4
+unchanged state   # the history is written first, the state after the failpoint
+jq -e --arg id "$id" '[.actions[] | select(.request_id==$id and .status=="FAILED" and .rc==4)] | length == 1' "$(history_file)" >/dev/null \
+    || fail "the history was not written before the failpoint"
+# shellcheck disable=SC2317 # called by the library, not by this file
+_cr_now() { echo not-a-number; }
+expect_rc 0 cam_action_counter_finish gstapp_restart "$id" FAILED 4
+eval "$clock_fn"
+[ "$(jq --arg id "$id" '[.actions[] | select(.request_id==$id) | .finished_at][0]' "$(history_file)")" = "$(jq .actions.gstapp_restart.last_finished_at "$state_file")" ] \
+    || fail "the resumed counter does not finish where the history does"
+# Resuming in the same second the history was finished: the old steps took the
+# resume branch, which writes only the state and passes no failpoint.
+label='counter finish resumed in the same second'
+begun_request
+PIM_CAMERA_TEST_FAILPOINT=counter_finish_after_history expect_rc 70 cam_action_counter_finish gstapp_restart "$id" SUCCEEDED 0
+finished_at=$(jq --arg id "$id" '[.actions[] | select(.request_id==$id) | .finished_at][0]' "$(history_file)")
+# shellcheck disable=SC2317 # called by the library, not by this file
+_cr_now() { echo "$finished_at"; }
+snapshot
+PIM_CAMERA_TEST_FAILPOINT=counter_finish_after_history expect_rc 0 cam_action_counter_finish gstapp_restart "$id" SUCCEEDED 0
+unchanged history
+eval "$clock_fn"
+# The old steps compared the two starts as the text jq -r printed.  jq 1.7 keeps
+# a number's literal, so 1700000001.0 against 1700000001 is a mismatch there and
+# a match in jq 1.6; the expected rc follows the jq that runs the test.
+label='counter finish with a start written as a decimal'
+begun_request
+started=$(jq --arg id "$id" '[.actions[] | select(.request_id==$id) | .started_at][0]' "$(history_file)")
+sed "s/\"last_started_at\":$started,/\"last_started_at\":$started.0,/" "$state_file" > "$WORK/state.tmp"; mv "$WORK/state.tmp" "$state_file"
+grep -q "\"last_started_at\":$started.0," "$state_file" || fail "the state does not hold the decimal start"
+if [ "$(jq -r .actions.gstapp_restart.last_started_at "$state_file")" = "$started" ]; then want=0; else want=70; fi
+expect_rc "$want" cam_action_counter_finish gstapp_restart "$id" SUCCEEDED 0
+# Inputs the old steps refused.
+refused_finish() { # label, expected rc
+    label="counter finish $1"; snapshot
+    expect_rc "$2" cam_action_counter_finish gstapp_restart "$id" SUCCEEDED 0
+    unchanged history state
+}
+begun_request; jq -c '.request.reason="another"' "$(history_file)" > "$WORK/history.tmp"; mv "$WORK/history.tmp" "$(history_file)"
+refused_finish 'when the history holds another request' 70
+begun_request; jq -c '.actions.gstapp_restart.last_started_at+=1' "$state_file" > "$WORK/state.tmp"; mv "$WORK/state.tmp" "$state_file"
+refused_finish 'when the counter started at another time' 70
+begun_request; jq -c '.actions.gstapp_restart.last_request_id="11111111-2222-4333-8444-555555555555"' "$state_file" > "$WORK/state.tmp"; mv "$WORK/state.tmp" "$state_file"
+refused_finish 'when the counter holds another request' 70
+begun_request
+printf '%s\n%s\n' "$(cat "$(history_file)")" "$(cat "$(history_file)")" > "$WORK/history.tmp"; mv "$WORK/history.tmp" "$(history_file)"
+refused_finish 'with two history documents' 70
+
 echo "request semantics: PASS"
