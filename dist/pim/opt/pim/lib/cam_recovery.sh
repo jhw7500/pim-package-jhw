@@ -115,6 +115,14 @@ _cr_jq_memo_put() {
     [ "${#_CR_JQ_MEMO[@]}" -lt 64 ] || _CR_JQ_MEMO=()
     _CR_JQ_MEMO[$_cr_memo_key]=$_cr_memo_value
 }
+# 메모에 그 호출의 답이 있으면 0. 인자는 _cr_jq_memo_put 의 입력부터와 같다.
+_cr_jq_memo_has() {
+    local _cr_memo_input=$1 _cr_memo_key
+    shift
+    printf -v _cr_memo_key '%s\037' "$@"
+    _cr_memo_key+=$'\036'"$_cr_memo_input"
+    [ -n "${_CR_JQ_MEMO[$_cr_memo_key]+x}" ]
+}
 
 # jq 한 번이 보드(A53, loadavg 5.7)에서 412ms 다. 같은 문서를 필드마다 새 프로세스로
 # 파싱하면 owner 검증 한 번에 3초가 든다. 필터를 변수로 두고 한 번의 jq 로 합친다.
@@ -128,6 +136,9 @@ _cr_jq_memo_put() {
 # 막는다 (이슈 #150).
 _CR_OWNER_SCHEMA_FILTER='type == "object" and (.boot_id|type == "string" and test("^[A-Za-z0-9._:-]+$")) and (.invocation_id|type == "string" and test("^[A-Za-z0-9._:-]+$")) and (.pid|type == "number" and floor == . and . > 0) and (.proc_start_time|type == "string" and test("^[0-9]+$")) and (.token|type == "string" and test("^[A-Za-z0-9._:-]+$")) and (.created_at|type == "number" and floor == . and . > 0) and (.lifecycle as $l | ($l|type) == "string" and (["STARTING","ACTIVE","APPLYING_CONFIG","RECOVERING","DEGRADED","STOPPING"] | index($l) != null))'
 _CR_OWNER_LIVE_MATCH_FILTER='(.boot_id == $boot) and ($ei == "" or .invocation_id == $ei) and ($et == "" or .token == $et)'
+# _cr_owner_snapshot_live 의 jq 프로그램. 메모 키가 이 문자열 그대로이므로 접기 필터도 이
+# 변수로 같은 프로그램을 돌린다.
+_CR_OWNER_LIVE_PROGRAM="if (($_CR_OWNER_SCHEMA_FILTER) and ($_CR_OWNER_LIVE_MATCH_FILTER)) then [(.pid|tostring), .proc_start_time] | join(\"\\n\") else empty end"
 _CR_OWNER_EXPORTED_MATCH_FILTER='($b != "" and .boot_id == $b) and ($iv != "" and .invocation_id == $iv) and ($p != "" and (.pid|tostring) == $p) and ($ps != "" and .proc_start_time == $ps) and ($tk != "" and .token == $tk) and ($ca != "" and (.created_at|tostring) == $ca)'
 # cam_executor_assert_context 의 루프는 빈 값 검사 없이 동등 비교만 한다. 그 의미를
 # 그대로 옮기려면 non-empty 조건이 없는 필터가 따로 필요하다.
@@ -140,7 +151,7 @@ _cr_owner_snapshot_live() {
     local owner=$1 expected_invocation=${2:-} expected_token=${3:-} boot fields pid start actual
     boot=$(cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null) || return 69
     _cr_jq_memo fields "$owner" -r --arg boot "$boot" --arg ei "$expected_invocation" --arg et "$expected_token" \
-        "if (($_CR_OWNER_SCHEMA_FILTER) and ($_CR_OWNER_LIVE_MATCH_FILTER)) then [(.pid|tostring), .proc_start_time] | join(\"\\n\") else empty end" || return 69
+        "$_CR_OWNER_LIVE_PROGRAM" || return 69
     [ -n "$fields" ] || return 69
     { IFS= read -r pid; IFS= read -r start; } <<<"$fields"
     actual=$(_cr_proc_start "$pid")
@@ -218,7 +229,38 @@ _cr_load_owner_lifecycle() {
     _CR_LIFECYCLE_KEY=$stamp
 }
 cam_owner_assert() { local owner; owner=$(_cr_owner_json); _cr_owner_snapshot_live "$owner" "${1:-}" "${2:-}"; }
-_cr_owner_lifecycle_in() { local owner; owner=$(_cr_owner_json); _cr_owner_snapshot_live "$owner" || return 69; _cr_owner_snapshot_lifecycle_in "$owner" "$@"; }
+# _cr_owner_lifecycle_in 의 두 가드는 같은 owner 텍스트에 jq 를 하나씩 띄운다(live 판정, -r
+# .lifecycle). 이 owner 텍스트가 메모에 처음이면 — 새 프로세스(submit 의 cam-recoveryctl)이거나
+# owner 가 막 바뀐 경우 — 두 답을 jq 한 번으로 구해 메모에 넣는다 (이슈 #150). 가드는 그대로
+# 돌아 메모에서 찾는다. 판정은 바꾸지 않는다: 문서가 하나이고 답이 줄 하나로 바이트까지 같게
+# 옮겨질 때만 넣는다 — live 는 같은 프로그램($_CR_OWNER_LIVE_PROGRAM)을 돌려 출력이 없으면 빈
+# 값("0"), 하나이고 숫자\n숫자면 "+pid:start", lifecycle 은 대문자·밑줄 문자열이면 "+값", 그 밖은
+# "-"(넣지 않음). 넣지 못하면 가드가 예전처럼 jq 를 띄운다(이때 jq 1회가 더 든다). jq 가 실패해도
+# 넣지 않을 뿐이고 그 stderr 는 버린다 — 오류는 가드의 jq 가 예전처럼 낸다.
+_CR_OWNER_GUARD_FOLD_FILTER='if length != 1 then "-", "-" else
+    .[0] as $o
+    | ([ try [ $o | '"$_CR_OWNER_LIVE_PROGRAM"' ] catch null ] | .[0]) as $l
+    | (if ($l | type) == "array" and ($l | length) == 0 then "0"
+       elif ($l | type) == "array" and ($l | length) == 1 and ($l[0] | type == "string" and test("\\A[0-9]+\\n[0-9]+\\z")) then "+" + ($l[0] | split("\n") | join(":"))
+       else "-" end),
+      ($o | if type == "object" and (.lifecycle | type == "string" and test("\\A[A-Z_]+\\z")) then "+" + .lifecycle else "-" end)
+  end'
+_cr_owner_guard_fold() {
+    local owner=$1 boot out plan=() live
+    [ -n "$owner" ] || return 0
+    ! _cr_jq_memo_has "$owner" -r .lifecycle || return 0
+    boot=$(cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null) || return 0
+    out=$(jq -rs --arg boot "$boot" --arg ei "" --arg et "" "$_CR_OWNER_GUARD_FOLD_FILTER" <<<"$owner" 2>/dev/null) || return 0
+    mapfile -t plan <<<"$out"
+    [ "${#plan[@]}" -eq 2 ] || return 0
+    case "${plan[0]}" in
+        0) _cr_jq_memo_put "" "$owner" -r --arg boot "$boot" --arg ei "" --arg et "" "$_CR_OWNER_LIVE_PROGRAM" ;;
+        +*:*) live=${plan[0]#+}
+              _cr_jq_memo_put "${live%%:*}"$'\n'"${live#*:}" "$owner" -r --arg boot "$boot" --arg ei "" --arg et "" "$_CR_OWNER_LIVE_PROGRAM" ;;
+    esac
+    [ "${plan[1]}" = - ] || _cr_jq_memo_put "${plan[1]#+}" "$owner" -r .lifecycle
+}
+_cr_owner_lifecycle_in() { local owner; owner=$(_cr_owner_json); _cr_owner_guard_fold "$owner"; _cr_owner_snapshot_live "$owner" || return 69; _cr_owner_snapshot_lifecycle_in "$owner" "$@"; }
 _cr_record_owner_matches() { local saved current; _cr_jq_memo saved "$1" -c .owner || return 1; current=$(_cr_owner_json) || return 1; _cr_owner_immutable_equal "$saved" "$current" && _cr_owner_snapshot_live "$current"; }
 # 이 가드는 호출부 31곳을 지난다 (camera_hard_reset 은 25회 부른다). 예전에는
 # .owner 추출 + immutable_equal + snapshot_live + lifecycle_in 으로 jq 를 네 번
