@@ -913,4 +913,148 @@ begun_request
 printf '%s\n%s\n' "$(cat "$(history_file)")" "$(cat "$(history_file)")" > "$WORK/history.tmp"; mv "$WORK/history.tmp" "$(history_file)"
 refused_finish 'with two history documents' 70
 
+# --- J. finish's common case in one jq writes what the old steps wrote -------
+# The same scheme as G and I: one jq decides the common case - no result yet and
+# a history request that is not terminal - and everything else runs the old
+# steps unchanged.  Documents go to the helpers through files, not arguments,
+# so the size cases below do not trip exec here.
+old_terminal() { jq -c --arg status "$1" --argjson rc "$2" --argjson now "$3" '.status=$status | .rc=$rc | .finished_at=$now' <<<"$4"; }
+old_result() { jq -c '{id,type,status,rc,source,reason,created_at,finished_at} + (if has("source_path") then {source_path} else {} end) + (if has("source_mtime") then {source_mtime} else {} end)' <<<"$1"; }
+old_history_finished() { jq -c --slurpfile terminal <(printf '%s' "$1") '.request=$terminal[0]' <<<"$2"; }
+# Finish $1 $2 on the VERIFYING request $id, checked against the old filters
+# with the clock value the call read.
+request_finish_writes_old_bytes() {
+    local status=$1 rc=$2 active_before history_before now terminal
+    active_before=$(cat "$active_file"); history_before=$(cat "$(history_file)")
+    expect_rc 0 cam_request_finish "$status" "$rc"
+    now=$(cat "$WORK/clock")
+    terminal=$(old_terminal "$status" "$rc" "$now" "$active_before")
+    [ "$(cat "$(result_file)")" = "$(old_result "$terminal")" ] || fail "the result is not the old serialization"
+    [ "$(cat "$(history_file)")" = "$(old_history_finished "$terminal" "$history_before")" ] || fail "the history is not the old serialization"
+    [ ! -e "$active_file" ] || fail "active survived finish"
+}
+# Rewrites the active request's reason and the history's copy of it.
+set_reason() {
+    jq -c --arg r "$1" '.reason=$r' "$active_file" > "$WORK/active.tmp"; mv "$WORK/active.tmp" "$active_file"
+    jq -c --slurpfile a "$active_file" '.request=$a[0]' "$(history_file)" > "$WORK/history.tmp"; mv "$WORK/history.tmp" "$(history_file)"
+}
+label='finish without counted actions'
+to_verifying gstapp_restart none; request_finish_writes_old_bytes SUCCEEDED 0
+label='finish after an uncounted step'
+to_verifying gstapp_stop uncountered; request_finish_writes_old_bytes SUCCEEDED 0
+label='finish after a counted action'
+to_verifying gstapp_restart countered; request_finish_writes_old_bytes SUCCEEDED 0
+label='finish of a failure after a counted action'
+to_verifying gstapp_restart countered; request_finish_writes_old_bytes FAILED 5
+label='finish keeps a request across a jq raw-input chunk'
+to_verifying gstapp_restart none
+set_reason '가'; first_ga_at "$(cat "$active_file")"
+set_reason "$(printf '%*s' "$(( 4094 - n ))" '' | tr ' ' a)가가가"
+first_ga_at "$(cat "$active_file")"; [ "$n" -eq 4094 ] || fail "the request does not start a character at byte 4094 ($n)"
+request_finish_writes_old_bytes SUCCEEDED 0
+# Read raw, a broken copy in active alone would differ from the history's copy
+# and fall back; both copies break the same way when the history's copy sits at
+# the same place in its chunk: an 8178-byte active puts it at byte 12284 of the
+# active+history stream, 4094 past a 4095-byte boundary.
+label='finish keeps a request across a jq raw-input chunk in both copies'
+to_verifying gstapp_restart none
+set_reason '가'; first_ga_at "$(cat "$active_file")"
+reason="$(printf '%*s' "$(( 4094 - n ))" '' | tr ' ' a)가가가"
+set_reason "$reason"; _cr_byte_length n "$(cat "$active_file")"
+set_reason "$reason$(printf '%*s' "$(( 8178 - n ))" '' | tr ' ' b)"
+_cr_byte_length n "$(cat "$active_file")"; [ "$n" -eq 8178 ] || fail "the active request is not 8178 bytes ($n)"
+first_ga_at "$(cat "$active_file")"; [ "$n" -eq 4094 ] || fail "the request does not start a character at byte 4094 ($n)"
+request_finish_writes_old_bytes SUCCEEDED 0
+# A request whose copy in active and in the history already reads terminal is a
+# resume: the old steps took its finish time, not the clock.
+label='finish of a request already terminal in active and history'
+to_verifying gstapp_restart none
+jq -c '.status="SUCCEEDED" | .rc=0 | .finished_at=123' "$active_file" > "$WORK/active.tmp"; mv "$WORK/active.tmp" "$active_file"
+jq -c --slurpfile a "$active_file" '.request=$a[0]' "$(history_file)" > "$WORK/history.tmp"; mv "$WORK/history.tmp" "$(history_file)"
+expect_rc 0 cam_request_finish SUCCEEDED 0
+[ "$(jq .finished_at "$(result_file)")" = 123 ] || fail "the result does not keep the request's finish time"
+
+# The old attribution check handed jq the finished history as one argument.
+# Pads the reason so the history finish writes is exactly $1 bytes.
+pad_finished_history() {
+    local target=$1 now len
+    now=$(( $(cat "$WORK/clock") + 1 ))
+    set_reason x
+    len=$(old_history_finished "$(old_terminal SUCCEEDED 0 "$now" "$(cat "$active_file")")" "$(cat "$(history_file)")" | wc -c)
+    set_reason "$(printf '%*s' "$(( target - len + 2 ))" '' | tr ' ' x)"
+    len=$(old_history_finished "$(old_terminal SUCCEEDED 0 "$now" "$(cat "$active_file")")" "$(cat "$(history_file)")" | wc -c)
+    [ "$(( len - 1 ))" -eq "$target" ] || fail "the history finish writes is not $target bytes"
+}
+label='finish writing a 131071-byte history'
+to_verifying gstapp_restart none; pad_finished_history 131071
+expect_rc 0 argv_call cam_request_finish SUCCEEDED 0
+label='finish writing a 131072-byte history'
+to_verifying gstapp_restart none; pad_finished_history 131072; snapshot; : > "$WORK/argv.err"
+expect_rc 70 argv_call cam_request_finish SUCCEEDED 0
+unchanged active history result
+grep -q 'Argument list too long' "$WORK/argv.err" || fail "finish did not fail on exec's argument limit"
+
+# The old steps also handed jq the active request as it is on disk, and
+# nothing before them bounds its size.  Pads active.json with whitespace after
+# the opening brace, so the request reads the same at $1 bytes on disk.
+pad_active_on_disk() {
+    local text
+    text=$(cat "$active_file"); _cr_byte_length n "$text"
+    printf '{%*s%s\n' "$(( $1 - n ))" '' "${text#\{}" > "$active_file"
+    _cr_byte_length n "$(cat "$active_file")"; [ "$n" -eq "$1" ] || fail "active.json is not $1 bytes ($n)"
+}
+label='finish of a 131071-byte active request'
+to_verifying gstapp_restart none; pad_active_on_disk 131071
+expect_rc 0 argv_call cam_request_finish SUCCEEDED 0
+label='finish of a 131072-byte active request'
+to_verifying gstapp_restart none; pad_active_on_disk 131072; snapshot; : > "$WORK/argv.err"
+expect_rc 70 argv_call cam_request_finish SUCCEEDED 0
+unchanged active history result
+grep -q 'Argument list too long' "$WORK/argv.err" || fail "finish did not fail on exec's argument limit"
+
+label='finish with a clock that prints no number'
+to_verifying gstapp_restart none
+# shellcheck disable=SC2317 # called by the library, not by this file
+_cr_now() { echo not-a-number; }
+snapshot
+expect_rc 70 cam_request_finish SUCCEEDED 0
+unchanged active history result
+eval "$clock_fn"
+# A reboot empties /run and with it the result; the history already holds the
+# terminal request, and the old steps rebuilt the result from it without the
+# clock.
+label='finish resumed after its result was lost'
+to_verifying gstapp_restart none
+PIM_CAMERA_TEST_FAILPOINT=request_finish_after_history expect_rc 70 cam_request_finish SUCCEEDED 0
+rm -f "$(result_file)"
+# shellcheck disable=SC2317 # called by the library, not by this file
+_cr_now() { echo not-a-number; }
+expect_rc 0 cam_request_finish SUCCEEDED 0
+eval "$clock_fn"
+assert_finished
+# Inputs the old steps refused.
+refused_request_finish() { # label, expected rc
+    label="finish $1"; snapshot
+    expect_rc "$2" cam_request_finish SUCCEEDED 0
+    unchanged active history result state
+}
+to_verifying gstapp_restart none
+jq -c '.request.reason="another"' "$(history_file)" > "$WORK/history.tmp"; mv "$WORK/history.tmp" "$(history_file)"
+refused_request_finish 'when the history holds another request' 70
+to_verifying gstapp_restart none
+jq -c '.interrupted=true' "$active_file" > "$WORK/active.tmp"; mv "$WORK/active.tmp" "$active_file"
+jq -c --slurpfile a "$active_file" '.request=$a[0]' "$(history_file)" > "$WORK/history.tmp"; mv "$WORK/history.tmp" "$(history_file)"
+refused_request_finish 'of a request marked interrupted' 70
+to_verifying gstapp_restart none; printf '[]\n' > "$PIM_CAMERA_STATE_DIR/service-state.json"
+refused_request_finish 'with a service state that is not an object' 70
+to_verifying gstapp_restart countered; rm -f "$state_file"
+refused_request_finish 'after a counted action without a counter' 70
+to_verifying gstapp_restart countered
+jq -c '.actions.gstapp_restart.last_rc=9' "$state_file" > "$WORK/state.tmp"; mv "$WORK/state.tmp" "$state_file"
+refused_request_finish 'when the counter records another result' 70
+to_verifying gstapp_restart none
+jq -c '.type="bogus"' "$active_file" > "$WORK/active.tmp"; mv "$WORK/active.tmp" "$active_file"
+jq -c --slurpfile a "$active_file" '.request=$a[0]' "$(history_file)" > "$WORK/history.tmp"; mv "$WORK/history.tmp" "$(history_file)"
+refused_request_finish 'of a request of an unknown type' 70
+
 echo "request semantics: PASS"

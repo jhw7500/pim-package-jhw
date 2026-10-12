@@ -27,18 +27,19 @@ set -euo pipefail
 # one jq per claim and per submit request (#150 PR2) 49/100/102/102/178;
 # counter_begin's common case in one jq (#150) 49/84/86/86/130.  restart_again
 # (an earlier request in the counter, as on a board): 101 before, 84 after;
-# counter_finish's common case in one jq (#150) 49/68/70/70/82, restart_again 68.
+# counter_finish's common case in one jq (#150) 49/68/70/70/82, restart_again 68;
+# finish's common case in one jq (#150) 29/43/45/45/55, restart_again 43.
 # flow                   ceiling   measured        terminal state the flow must reach
 declare -A CEILING=(
-    [gstapp_stop]=49           #   4 + 45          SUCCEEDED
-    [gstapp_restart]=68        #   4 + 60 + 4      SUCCEEDED
-    [camera_hard_reset]=70     #   4 + 62 + 4      SUCCEEDED
-    [module_reload]=70         #   4 + 62 + 4      SUCCEEDED
-    [module_reload_fails]=82   #   4 + 78          FAILED rc=1: module_reload and
+    [gstapp_stop]=29           #   4 + 25          SUCCEEDED
+    [gstapp_restart]=43        #   4 + 35 + 4      SUCCEEDED
+    [camera_hard_reset]=45     #   4 + 37 + 4      SUCCEEDED
+    [module_reload]=45         #   4 + 37 + 4      SUCCEEDED
+    [module_reload_fails]=55   #   4 + 51          FAILED rc=1: module_reload and
                                #                   camera_hard_reset fail at modprobe
                                #                   (rc 23) before the app starts,
                                #                   reboot_fallback is refused (rc 1)
-    [gstapp_restart_again]=68  #   4 + 60 + 4      SUCCEEDED after an earlier
+    [gstapp_restart_again]=43  #   4 + 35 + 4      SUCCEEDED after an earlier
                                #                   gstapp_restart that succeeded
 )
 FLOWS=(gstapp_stop gstapp_restart camera_hard_reset module_reload module_reload_fails gstapp_restart_again)
