@@ -495,7 +495,8 @@ cam_apply_config_transaction() {
 _coc_execute_recovery_active() {
     local active type reason rc=0 dirty=false target=camera_health projection entry_lifecycle followup_rc
     active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69
-    type=$(jq -r .type <<<"$active") || return 70
+    # poll 이 같은 active 를 이미 검증·추출했다 — 메모로 jq 를 다시 띄우지 않는다 (이슈 #150).
+    _cr_jq_memo type "$active" -r .type || return 70
     reason=$(jq -r .reason <<<"$active") || return 70
     if ! cam_validate_runtime "$PIM_CAMERA_RUNTIME_JSON"; then
         cam_request_finish FAILED 64 || return $?
@@ -598,8 +599,17 @@ _coc_execute_recovery_active() {
 }
 
 cam_execute_pending_request() {
-    local type
-    type=$(jq -r .type "$(_cr_active_file)" 2>/dev/null) || return 69
+    local file active type
+    file=$(_cr_active_file)
+    # NUL 바이트가 든 active 는 예전처럼 파일을 jq 로 읽는다: $(cat) 은 NUL 을 지우므로 그
+    # 텍스트로는 jq 가 파일을 거부하던 판정(69)을 재현할 수 없다. read -d '' 는 NUL 을
+    # 만났을 때만 0 이고 프로세스를 띄우지 않는다.
+    if { IFS= read -r -d '' _ < "$file"; } 2>/dev/null; then
+        type=$(jq -r .type "$file" 2>/dev/null) || return 69
+    else
+        active=$(cat "$file" 2>/dev/null) || return 69
+        _cr_jq_memo type "$active" -r .type 2>/dev/null || return 69
+    fi
     if [ "$type" = apply_config ]; then cam_apply_config_transaction; else _coc_execute_recovery_active; fi
 }
 
@@ -617,7 +627,7 @@ cam_poll_pending_request() {
     active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69
     _cr_request_schema "$active" || return 70
     _cr_record_owner_matches "$active" || return 69
-    type=$(jq -r .type <<<"$active") || return 70
+    _cr_jq_memo type "$active" -r .type || return 70
     PIM_CAMERA_POLL_WORK_TYPE=$type
     cam_execute_pending_request
 }
