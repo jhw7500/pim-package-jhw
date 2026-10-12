@@ -352,5 +352,21 @@ _cr_jq_memo got_owner "$record" -c .owner
 rc=0; _cr_record_owner_matches "$record" || rc=$?
 [ "$rc" -eq 1 ] || fail "the record guard accepted an owner whose created_at changed (rc $rc)"
 printf '%s\n' "$owner" > "$owner_file"
+# submit 의 jq 는 쓰기 가드(_cr_record_owner_ready)가 같은 owner 텍스트로 낼 답도 내어 넣는다
+# (이슈 #168): submit 은 jq 두 번(owner 가드 접기, submit)으로 끝난다. 넣은 답은 실제 jq 출력과 같다.
+rm -f "$PIM_CAMERA_RUN_DIR/recovery/active.json" "$PIM_CAMERA_RUN_DIR/recovery/pending.json"
+_CR_JQ_MEMO=()
+: > "$WORK/jq.log"
+# cam-recoveryctl 처럼 owner 컨텍스트를 물려받지 않은 submit 이다(물려받으면 그 대조에 jq 1회가 더 든다).
+PIM_CAMERA_OWNER_INVOCATION='' cam_request_submit gstapp_restart operator 'submit ready' >/dev/null || fail "the submit for the write guard check was refused"
+expect_runs 2 'the submit ran the write guard jq itself'
+pending=$(cat "$PIM_CAMERA_RUN_DIR/recovery/pending.json"); current=$(cat "$owner_file")
+rec_owner=$(jq -c .owner <<<"$pending")
+want_ready=$(jq -r -s --argjson a "$rec_owner" --arg boot "$boot" --arg ei "" --arg et "" "$ready_program" <<<"$current")
+: > "$WORK/jq.log"
+got_ready=; _cr_jq_memo got_ready "$current" -r -s --argjson a "$rec_owner" --arg boot "$boot" --arg ei "" --arg et "" "$ready_program"
+expect_runs 0 'the submit did not leave the write guard answer in the memo'
+[ "$got_ready" = "$want_ready" ] || fail "the submit put another write guard answer than jq prints: '$got_ready' vs '$want_ready'"
+rm -f "$PIM_CAMERA_RUN_DIR/recovery/pending.json"
 
 echo "jq memo: PASS"
