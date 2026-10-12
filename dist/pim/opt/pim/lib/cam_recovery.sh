@@ -1315,7 +1315,7 @@ _CR_FAST_PRELUDE='
 '
 _CR_COUNTER_BEGIN_FAST_FILTER=$_CR_FAST_PRELUDE'
   try (
-    ($sraw | fromjson) as $s
+    (if ($sraw | index("\u0000")) != null then error("nul") else $sraw | fromjson end) as $s
     | ($hraw | fromjson) as $h
     | ($araw | fromjson) as $a
     | ([ $now | try [fromjson] catch null ] | .[0]) as $t
@@ -1358,18 +1358,23 @@ _CR_COUNTER_BEGIN_FAST_FILTER=$_CR_FAST_PRELUDE'
 _cr_counter_begin_locked() {
     local action=$1 id=$2 active state history history_request history_action history_next state_next
     local history_count history_phase state_phase state_mode settle=false now active_status active_id
-    local history_read=true now_read=true fast_out fast_plan=()
+    local history_read=true now_read=true fast_out fast_plan=() state_file
     _cr_public_action "$action" || return 64; _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69
     active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69; _cr_record_owner_matches "$active" || return 69
     _cr_jq_memo active_status "$active" -r .status || active_status=""; [ "$active_status" = RUNNING ] || return 64
     _cr_jq_memo active_id "$active" -r .id || active_id=""; [ "$active_id" = "$id" ] || return 64
-    _cr_mutation_guard "$active" counter_init ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_state_init || return 70; state=$(cat "$(_cr_state_file)") || return 70
+    _cr_mutation_guard "$active" counter_init ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69
+    # state 파일이 있으면 그 검증(_cr_state_init 의 jq)은 빠른 경로가 같은 필터로 파일 바이트를
+    # 직접 읽어 한다(이슈 #168, _cr_finish_locked 와 같은 방식). 파일 바이트에 NUL 이 있으면 예전이
+    # $(cat) 으로 읽은 값과 다를 수 있어(jq 1.6 은 문자열 안 NUL 을 받는다) 빠른 경로가 거절한다.
+    # 빠른 경로가 ok 가 아니면(시도하지 않은 경우 포함) 아래에서 예전 순서로 검증하고 읽는다.
+    state_file=$(_cr_state_file); [ -f "$state_file" ] || { _cr_state_init || return 70; }
     # 빠른 경로는 판정 전에 아무것도 쓰지 않는다. 시계는 history 를 읽은 뒤 한 번만
     # 읽고, 예전 코드로 가면 ABSENT:ABSENT 가 같은 값을 쓴다(예전이 시계를 읽던 곳).
     history=$(cat "$(_cr_history_file "$id")" 2>/dev/null) || history_read=false
     if [ "$history_read" = true ]; then
         now=$(_cr_now) || now_read=false
-        if [ "$now_read" = true ] && fast_out=$(jq -nr --rawfile sraw <(printf '%s' "$state") --rawfile hraw <(printf '%s' "$history") \
+        if [ "$now_read" = true ] && fast_out=$(jq -nr --rawfile sraw "$state_file" --rawfile hraw <(printf '%s' "$history") \
             --rawfile araw <(printf '%s' "$active") --arg action "$action" --arg id "$id" --arg now "$now" "$_CR_COUNTER_BEGIN_FAST_FILTER" 2>/dev/null); then
             mapfile -t fast_plan <<<"$fast_out"
         fi
@@ -1380,6 +1385,7 @@ _cr_counter_begin_locked() {
         _cr_mutation_guard "$active" counter_state ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_state_file)" "${fast_plan[2]}" || return 70
         return 0
     fi
+    _cr_state_init || return 70; state=$(cat "$state_file") || return 70
     _cr_state_valid <<<"$state" || return 70
     [ "$history_read" = true ] || return 70
     history_request=$(jq -ce '.request | select(type=="object")' <<<"$history") || return 70
@@ -1435,7 +1441,7 @@ _CR_COUNTER_FINISH_STATE_UPDATE='.actions[$action].last_request_id=$id | .action
 # 필터 안의 $state 는 갱신한 뒤의 state 다(원본은 $s) — 짝 검증 필터가 이 이름을 쓴다.
 _CR_COUNTER_FINISH_FAST_FILTER=$_CR_FAST_PRELUDE'
   try (
-    ($sraw | fromjson) as $s
+    (if ($sraw | index("\u0000")) != null then error("nul") else $sraw | fromjson end) as $s
     | ($hraw | fromjson) as $h
     | ($araw | fromjson) as $a
     | if ($now | test("\\A[1-9][0-9]{0,14}\\z")) and ($rcraw | test("\\A(0|[1-9][0-9]{0,8})\\z"))
@@ -1475,19 +1481,24 @@ _CR_COUNTER_FINISH_FAST_FILTER=$_CR_FAST_PRELUDE'
 _cr_counter_finish_locked() {
     local action=$1 id=$2 status=$3 rc=$4 active state history history_request history_action history_next state_next
     local history_phase state_phase history_started state_started now phase active_id active_status
-    local history_read=true now_read=true fast_out fast_plan=()
+    local history_read=true now_read=true fast_out fast_plan=() state_file
     _cr_public_action "$action" || return 64; _cr_terminal_valid "$status" "$rc" || return 64
     _cr_owner_lifecycle_in ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69; _cr_record_owner_matches "$active" || return 69
     _cr_jq_memo active_id "$active" -r .id || active_id=""; [ "$active_id" = "$id" ] || return 64
     _cr_jq_memo active_status "$active" -r .status || active_status=""
     case "$active_status" in RUNNING|VERIFYING) ;; *) return 64;; esac
-    _cr_mutation_guard "$active" counter_init ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_state_init || return 70; state=$(cat "$(_cr_state_file)") || return 70
+    _cr_mutation_guard "$active" counter_init ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69
+    # state 파일이 있으면 그 검증(_cr_state_init 의 jq)은 빠른 경로가 같은 필터로 파일 바이트를
+    # 직접 읽어 한다(이슈 #168, _cr_finish_locked 와 같은 방식). 파일 바이트에 NUL 이 있으면 예전이
+    # $(cat) 으로 읽은 값과 다를 수 있어(jq 1.6 은 문자열 안 NUL 을 받는다) 빠른 경로가 거절한다.
+    # 빠른 경로가 ok 가 아니면(시도하지 않은 경우 포함) 아래에서 예전 순서로 검증하고 읽는다.
+    state_file=$(_cr_state_file); [ -f "$state_file" ] || { _cr_state_init || return 70; }
     # 빠른 경로는 판정 전에 아무것도 쓰지 않는다. 시계는 history 를 읽은 뒤 한 번만
     # 읽고, 예전 코드로 가면 RUNNING:RUNNING 이 같은 값을 쓴다(예전이 시계를 읽던 곳).
     history=$(cat "$(_cr_history_file "$id")" 2>/dev/null) || history_read=false
     if [ "$history_read" = true ]; then
         now=$(_cr_now) || now_read=false
-        if [ "$now_read" = true ] && fast_out=$(jq -nr --rawfile sraw <(printf '%s' "$state") --rawfile hraw <(printf '%s' "$history") \
+        if [ "$now_read" = true ] && fast_out=$(jq -nr --rawfile sraw "$state_file" --rawfile hraw <(printf '%s' "$history") \
             --rawfile araw <(printf '%s' "$active") --arg action "$action" --arg id "$id" --arg status "$status" --arg rcraw "$rc" \
             --arg now "$now" "$_CR_COUNTER_FINISH_FAST_FILTER" 2>/dev/null); then
             mapfile -t fast_plan <<<"$fast_out"
@@ -1499,6 +1510,7 @@ _cr_counter_finish_locked() {
         _cr_mutation_guard "$active" counter_state ACTIVE DEGRADED APPLYING_CONFIG RECOVERING || return 69; _cr_atomic_write "$(_cr_state_file)" "${fast_plan[2]}" || return 70
         return 0
     fi
+    _cr_state_init || return 70; state=$(cat "$state_file") || return 70
     _cr_state_valid <<<"$state" || return 70
     [ "$history_read" = true ] || return 70
     history_request=$(jq -ce '.request | select(type=="object")' <<<"$history") || return 70
