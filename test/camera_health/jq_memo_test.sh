@@ -425,6 +425,24 @@ _CR_JQ_MEMO=(); for ((i = 0; i < 100; i++)); do _cr_jq_memo_put x "keep$i" -r .;
 for ((i = 100; i < memo_max; i++)); do _cr_jq_memo_put x "keep$i" -r .; done
 _cr_jq_memo_put x "one-more" -r .
 [ "${#_CR_JQ_MEMO[@]}" -eq 1 ] || fail "the memo was not cleared at its cap (${#_CR_JQ_MEMO[@]})"
+# 크기 상한 (이슈 #168): 키에는 입력 문서가 통째로 들어간다. 큰 문서가 이어지면 항목 수가 아니라
+# 문자 수로 비워, 오래 도는 데몬이 수십 MiB 를 붙들지 않는다.
+big=$(printf '%*s' 30000 '' | tr ' ' x)
+_CR_JQ_MEMO=(); _CR_JQ_MEMO_CHARS=0
+for ((i = 0; i < 100; i++)); do _cr_jq_memo_put x "$big$i" -r .; done
+[ "${#_CR_JQ_MEMO[@]}" -lt 100 ] || fail "the memo kept 100 entries of 30000 characters each (no size bound)"
+_CR_JQ_MEMO=(); _CR_JQ_MEMO_CHARS=0
+# 크기 상한에서도 두 답은 함께 남는다: 첫 답은 들어가고 둘째 답은 넘치게 문자 수를 채워도,
+# 넣기 전에 둘의 자리를 함께 잡으므로 둘째 넣기가 첫 답을 지우지 않는다.
+printf -v k1 '%s\037' -r --arg boot "$boot" --arg ei "" --arg et "" "$live_program"; k1+=$'\036'"$owner"
+pad_len=$(( _CR_JQ_MEMO_CHAR_MAX - ${#k1} - 8 - 1 - 7 ))
+pad=$(printf '%*s' "$pad_len" '' | tr ' ' p)
+_CR_JQ_MEMO=(); _CR_JQ_MEMO_CHARS=0
+_cr_jq_memo_put x "$pad" -r .
+_cr_owner_guard_put "$owner" "$boot" "+4242:111" "+ACTIVE"
+_cr_jq_memo_has "$owner" -r --arg boot "$boot" --arg ei "" --arg et "" "$live_program" || fail 'the live answer was evicted by the size bound between the two puts'
+_cr_jq_memo_has "$owner" -r .lifecycle || fail 'the lifecycle answer was not kept at the size bound'
+_CR_JQ_MEMO=(); _CR_JQ_MEMO_CHARS=0
 
 # owner lifecycle 을 쓰면 _cr_load_owner_lifecycle 의 캐시(파일 정체)에 그 값을 둔다 (이슈 #168): repair
 # 확인·실행 진입·데몬 루프가 방금 쓴 owner 를 jq 로 다시 읽지 않는다. 값은 jq 가 읽는 것과 같다.
