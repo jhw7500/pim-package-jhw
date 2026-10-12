@@ -497,7 +497,8 @@ _coc_execute_recovery_active() {
     active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69
     # poll 이 같은 active 를 이미 검증·추출했다 — 메모로 jq 를 다시 띄우지 않는다 (이슈 #150).
     _cr_jq_memo type "$active" -r .type || return 70
-    reason=$(jq -r .reason <<<"$active") || return 70
+    # claim 이 같은 텍스트의 .reason 을 미리 넣었다(이슈 #150). 없으면 예전과 같은 jq 다.
+    _cr_jq_memo reason "$active" -r .reason || return 70
     if ! cam_validate_runtime "$PIM_CAMERA_RUNTIME_JSON"; then
         cam_request_finish FAILED 64 || return $?
         cam_mark_degraded CONFIG_INVALID config false || return $?
