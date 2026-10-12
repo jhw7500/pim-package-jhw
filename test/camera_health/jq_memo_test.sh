@@ -352,10 +352,11 @@ _CR_JQ_MEMO=()
 fresh=0; _cr_owner_lifecycle_in RECOVERING || fresh=$?
 [ "$rc" -eq "$fresh" ] || fail "a shifted line of the lifecycle write was put in the memo (rc $rc, $fresh without the memo)"
 printf '%s\n' "$owner" > "$owner_file"
-# 두 답은 함께 남는다: 메모가 상한 바로 아래(63개)여도 lifecycle 답을 넣으며 메모를 비워 먼저
+# 두 답은 함께 남는다: 메모가 상한 바로 아래여도 lifecycle 답을 넣으며 메모를 비워 먼저
 # 넣은 live 답을 지우지 않는다(지우면 접기는 건너뛰고 live 가드가 jq 를 띄운다).
-_CR_JQ_MEMO=(); for ((i = 0; i < 63; i++)); do _cr_jq_memo_put x "filler$i" -r .; done
-[ "${#_CR_JQ_MEMO[@]}" -eq 63 ] || fail "the memo was not filled to 63 entries (${#_CR_JQ_MEMO[@]})"
+memo_max=${_CR_JQ_MEMO_MAX:-64}
+_CR_JQ_MEMO=(); for ((i = 0; i < memo_max - 1; i++)); do _cr_jq_memo_put x "filler$i" -r .; done
+[ "${#_CR_JQ_MEMO[@]}" -eq "$((memo_max - 1))" ] || fail "the memo was not filled to one below its cap (${#_CR_JQ_MEMO[@]})"
 _cr_owner_guard_put "$owner" "$boot" "+4242:111" "+ACTIVE"
 _cr_jq_memo_has "$owner" -r --arg boot "$boot" --arg ei "" --arg et "" "$live_program" || fail 'the live answer was evicted by the lifecycle answer put after it'
 _cr_jq_memo_has "$owner" -r .lifecycle || fail 'the lifecycle answer was not kept'
@@ -416,5 +417,29 @@ got_ready=; _cr_jq_memo got_ready "$current" -r -s --argjson a "$rec_owner" --ar
 expect_runs 0 'the submit did not leave the write guard answer in the memo'
 [ "$got_ready" = "$want_ready" ] || fail "the submit put another write guard answer than jq prints: '$got_ready' vs '$want_ready'"
 rm -f "$PIM_CAMERA_RUN_DIR/recovery/pending.json"
+
+# 메모 상한 (이슈 #168): 요청 한 건이 항목을 20여 개 남긴다 — 오래 도는 데몬이 몇 건마다 메모를
+# 통째로 비우지 않도록 상한은 100 건을 넘게 담는다. 상한에 닿으면 비우고 새 항목 하나만 남는다.
+_CR_JQ_MEMO=(); for ((i = 0; i < 100; i++)); do _cr_jq_memo_put x "keep$i" -r .; done
+[ "${#_CR_JQ_MEMO[@]}" -eq 100 ] || fail "the memo did not keep 100 entries (${#_CR_JQ_MEMO[@]}) - a long-running daemon would clear it every few requests"
+for ((i = 100; i < memo_max; i++)); do _cr_jq_memo_put x "keep$i" -r .; done
+_cr_jq_memo_put x "one-more" -r .
+[ "${#_CR_JQ_MEMO[@]}" -eq 1 ] || fail "the memo was not cleared at its cap (${#_CR_JQ_MEMO[@]})"
+
+# owner lifecycle 을 쓰면 _cr_load_owner_lifecycle 의 캐시(파일 정체)에 그 값을 둔다 (이슈 #168): repair
+# 확인·실행 진입·데몬 루프가 방금 쓴 owner 를 jq 로 다시 읽지 않는다. 값은 jq 가 읽는 것과 같다.
+cam_owner_set_lifecycle RECOVERING || fail "the lifecycle write to RECOVERING for the cache check was refused"
+: > "$WORK/jq.log"
+_cr_load_owner_lifecycle || fail "the owner lifecycle could not be loaded after a lifecycle write"
+expect_runs 0 'the owner lifecycle written by this process was read again by jq'
+[ "$_CR_LIFECYCLE_VAL" = "$(jq -r '.lifecycle // empty' "$owner_file")" ] || fail "the cached lifecycle '$_CR_LIFECYCLE_VAL' differs from the file"
+cam_owner_set_lifecycle ACTIVE || fail "the lifecycle write back to ACTIVE was refused"
+# 다른 쓰기(이 함수를 거치지 않음)는 새 파일이라 키가 달라 다시 읽는다.
+jq -c '.lifecycle = "DEGRADED"' "$owner_file" > "$owner_file.next" && mv -f "$owner_file.next" "$owner_file"
+: > "$WORK/jq.log"
+_cr_load_owner_lifecycle || fail "the owner lifecycle could not be loaded after an outside write"
+expect_runs 1 'an owner file replaced outside the lifecycle write was served from the cache'
+[ "$_CR_LIFECYCLE_VAL" = DEGRADED ] || fail "the lifecycle after an outside write read '$_CR_LIFECYCLE_VAL'"
+printf '%s\n' "$owner" > "$owner_file"
 
 echo "jq memo: PASS"

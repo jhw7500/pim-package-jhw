@@ -88,6 +88,10 @@ _cr_owner_json() { cat "$(_cr_owner_file)" 2>/dev/null; }
 # rc 0 결과만 저장한다: 일시적 실패를 캐시하면 장수 데몬의 가드가 owner 가 바뀔 때까지
 # 굳는다. 항목이 상한을 넘으면 비운다. /proc 생존 확인은 호출부에서 매번 그대로 한다.
 declare -gA _CR_JQ_MEMO=()
+# 항목 상한. 요청 한 건이 항목을 20여 개 남기므로, 64 이면 오래 도는 데몬이 2~3건마다 메모를
+# 통째로 비워 그 요청에서 owner·런타임 가드의 jq 를 3~5회 다시 띄웠다(이슈 #168, 같은 데몬에서
+# 연속 12건 실측). 키에 든 입력은 가드가 128KiB 미만으로 제한한다.
+_CR_JQ_MEMO_MAX=512
 # 결과는 출력하지 않고 첫 인자로 받은 변수에 넣는다. $(...) 로 부르면 서브셸이라 저장한
 # 메모가 부모 셸에 남지 않는다(실측: 36회 중 33회가 다시 jq 를 띄웠다).
 _cr_jq_memo() {
@@ -100,7 +104,7 @@ _cr_jq_memo() {
         return 0
     fi
     _cr_memo_out=$(jq "$@" <<<"$_cr_memo_input") || return $?
-    [ "${#_CR_JQ_MEMO[@]}" -lt 64 ] || _CR_JQ_MEMO=()
+    [ "${#_CR_JQ_MEMO[@]}" -lt "$_CR_JQ_MEMO_MAX" ] || _CR_JQ_MEMO=()
     _CR_JQ_MEMO[$_cr_memo_key]=$_cr_memo_out
     printf -v "$_cr_memo_var" '%s' "$_cr_memo_out"
 }
@@ -112,7 +116,7 @@ _cr_jq_memo_put() {
     shift 2
     printf -v _cr_memo_key '%s\037' "$@"
     _cr_memo_key+=$'\036'"$_cr_memo_input"
-    [ "${#_CR_JQ_MEMO[@]}" -lt 64 ] || _CR_JQ_MEMO=()
+    [ "${#_CR_JQ_MEMO[@]}" -lt "$_CR_JQ_MEMO_MAX" ] || _CR_JQ_MEMO=()
     _CR_JQ_MEMO[$_cr_memo_key]=$_cr_memo_value
 }
 # 메모에 그 호출의 답이 있으면 0. 인자는 _cr_jq_memo_put 의 입력부터와 같다.
@@ -253,7 +257,7 @@ _cr_owner_guard_put() {
     # 두 답은 함께 남아야 한다: 메모가 상한 바로 아래면 두 번째 넣기가 메모를 비워 첫 답을
     # 지운다 — 그러면 lifecycle 답만 남아 접기는 건너뛰고 live 가드가 jq 를 띄운다. 둘을 넣을
     # 자리가 없으면 먼저 비운다.
-    [ "${#_CR_JQ_MEMO[@]}" -lt 63 ] || _CR_JQ_MEMO=()
+    [ "${#_CR_JQ_MEMO[@]}" -lt "$((_CR_JQ_MEMO_MAX - 1))" ] || _CR_JQ_MEMO=()
     case "$live_answer" in
         0) _cr_jq_memo_put "" "$owner" -r --arg boot "$boot" --arg ei "" --arg et "" "$_CR_OWNER_LIVE_PROGRAM" ;;
         +*:*) live=${live_answer#+}
@@ -301,7 +305,7 @@ _cr_record_guard_fold() {
     out=$(jq -rs --argjson a "$saved" --arg boot "$boot" --arg ei "" --arg et "" "$_CR_RECORD_GUARD_FOLD_FILTER" <<<"$current" 2>/dev/null) || return 0
     mapfile -t plan <<<"$out"
     [ "${#plan[@]}" -eq 2 ] || return 0
-    [ "${#_CR_JQ_MEMO[@]}" -lt 63 ] || _CR_JQ_MEMO=()
+    [ "${#_CR_JQ_MEMO[@]}" -lt "$((_CR_JQ_MEMO_MAX - 1))" ] || _CR_JQ_MEMO=()
     [ "${plan[0]}" != + ] || _cr_jq_memo_put true "" -e -n --argjson a "$saved" --argjson b "$current" "$_CR_OWNER_IMMUTABLE_PROGRAM"
     _cr_record_ready_put "$current" "$saved" "$boot" "${plan[1]}"
 }
@@ -795,7 +799,7 @@ _cr_lifecycle_allowed() {
     case "$1:$2" in STARTING:ACTIVE|STARTING:DEGRADED|STARTING:STOPPING|ACTIVE:APPLYING_CONFIG|ACTIVE:RECOVERING|ACTIVE:DEGRADED|ACTIVE:STOPPING|APPLYING_CONFIG:ACTIVE|APPLYING_CONFIG:DEGRADED|APPLYING_CONFIG:STOPPING|RECOVERING:ACTIVE|RECOVERING:DEGRADED|RECOVERING:STOPPING|DEGRADED:APPLYING_CONFIG|DEGRADED:RECOVERING|DEGRADED:STOPPING) return 0;; esac; return 1
 }
 _cr_owner_set_lifecycle_locked() {
-    local next=$1 owner current updated pair boot lines=()
+    local next=$1 owner current updated pair boot stamp lines=()
     owner=$(_cr_owner_json); _cr_owner_snapshot_live "$owner" || return 69
     # 현재 lifecycle 조회와 갱신본 생성을 한 번의 jq 로. 갱신본은 검사 통과 후에만 쓴다.
     # 같은 jq 가 갱신본의 두 가드 답(_CR_OWNER_GUARD_ANSWERS)도 낸다 (이슈 #150): 쓴 직후의 가드가
@@ -808,6 +812,13 @@ _cr_owner_set_lifecycle_locked() {
     { IFS= read -r current; IFS= read -r updated; } <<<"$pair"
     _cr_lifecycle_allowed "$current" "$next" || return 64
     _cr_owner_snapshot_live "$owner" || return 69; _cr_atomic_write "$(_cr_owner_file)" "$updated" || return 70
+    # 방금 쓴 owner 의 lifecycle 을 _cr_load_owner_lifecycle 의 캐시에 둔다 (이슈 #168). 그 함수가
+    # 이 파일에 띄울 jq(.lifecycle // empty)의 답은 $next 다 — 쓴 텍스트는 문서 하나이고 lifecycle 은
+    # 전이표가 허용한 토큰이다. 쓰기는 잠금 안이므로 지금의 파일 정체(stat)가 이 쓰기의 것이고,
+    # 다른 쓰기는 새 파일(새 inode)이라 키가 달라 다시 읽는다. stat 이 실패하면 두지 않는다.
+    if stamp=$(stat -c '%d:%i:%s:%y' "$(_cr_owner_file)" 2>/dev/null); then
+        _CR_LIFECYCLE_KEY=$stamp; _CR_LIFECYCLE_VAL=$next
+    fi
     mapfile -t lines <<<"$pair"
     [ -z "$boot" ] || [ "${#lines[@]}" -ne 4 ] || _cr_owner_guard_put "$updated" "$boot" "${lines[2]}" "${lines[3]}"
 }
