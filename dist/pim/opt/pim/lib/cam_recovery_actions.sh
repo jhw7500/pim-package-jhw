@@ -223,8 +223,49 @@ cam_effect() {
 # 이유는 .VHL_CAM.app 에 런타임 검증기(camera_runtime_config.py)가 아무 제약도
 # 걸지 않아 개행·탭이 든 값이 설정으로 들어올 수 있기 때문이다 — 셸에서 필드를
 # 재조립하면 그런 값이 잘려 allowlist 를 통과한다.
+# 런타임 문서 한 번 읽기 (이슈 #168). 액션 하나가 같은 런타임 문서를 jq 로 네 번 읽었다 —
+# 앱(_cam_runtime_app_into), 녹화 임시 경로·차량 이름(cam_cleanup_recording_orphans),
+# 시작 지연(cam_runtime_app_delay). 처음 읽을 때 jq 한 번으로 넷을 구해 문서 경로·파일 정체
+# (stat)·기본 지연 정책을 키로 둔다. 키가 다르면(문서 교체, 정책 변경) 다시 읽는다.
+# 값은 각 함수의 jq 가 내던 것과 같다 — 앱 선택·지연 식은 cam_runtime_app·cam_runtime_app_delay 와
+# 같은 식을 옮겨 적은 것이고(그 둘은 혼자 떼어 쓰이므로 이 파일의 변수에 기대지 않는다),
+# jq_memo_test 가 셋의 결과를 대조한다. 문서가 하나이고 값이 줄 하나로 그대로 옮겨질 때만
+# 둔다(임시 경로·차량 이름은 개행·NUL 없는 문자열이거나 없음/null/false). 아니면 각 함수가
+# 예전처럼 jq 를 띄운다 — 못 둔 것도 같은 키로 기억해, 그 파일에서 다시 시도하지 않는다.
+# $(...) 로 불리는 함수도 부모가 둔 값을 읽는다(서브셸이 물려받는다).
+_CAM_RUNTIME_DOC_KEY=""
+_CAM_RUNTIME_DOC_OK=0
+_CAM_RUNTIME_DOC=()
+_CAM_RUNTIME_DOC_FILTER='if length != 1 then "-" else .[0]
+    | (.VHL_CAM.app // "gstApp") as $a
+    | ((.VHL_CAM.capture.enable // false) | tostring) as $c
+    | (if $c == "true" then "gstApp" elif $a == "streamApp" then "PIMCAM" else $a end) as $app
+    | ((.VHL_CAM.app_delay // $default_delay) | tostring) as $d
+    | (if ($d | test("^[0-9]+$")) then $d else "" end) as $delay
+    | [ .VHL_CAM.tmp_path, .VHL_CAM.vhl_name ] as $paths
+    | if ($delay | explode | all(. != 0 and . != 10))
+         and all($paths[]; . == null or . == false or (type == "string" and (explode | all(. != 0 and . != 10))))
+      then "ok",
+           "+" + (if $app == "gstApp" or $app == "PIMCAM" then $app else "" end),
+           "+" + $delay,
+           ($paths[] | "+" + (if type == "string" then . else "" end))
+      else "-" end
+  end'
+_cam_runtime_doc() {
+    local _crd_runtime=$1 _crd_stamp _crd_key _crd_out _crd_lines=()
+    _crd_stamp=$(stat -c '%d:%i:%s:%y' "$_crd_runtime" 2>/dev/null) || return 1
+    _crd_key="$_crd_runtime|$_crd_stamp|${CAM_APP_PLAY_DELAY_SEC_DEFAULT-}"
+    if [ "$_crd_key" = "$_CAM_RUNTIME_DOC_KEY" ]; then [ "$_CAM_RUNTIME_DOC_OK" = 1 ]; return $?; fi
+    [[ ${CAM_APP_PLAY_DELAY_SEC_DEFAULT-} =~ ^[0-9]+$ ]] || return 1
+    _CAM_RUNTIME_DOC_KEY=$_crd_key; _CAM_RUNTIME_DOC_OK=0; _CAM_RUNTIME_DOC=()
+    _crd_out=$(jq -rs --argjson default_delay "$CAM_APP_PLAY_DELAY_SEC_DEFAULT" "$_CAM_RUNTIME_DOC_FILTER" "$_crd_runtime" 2>/dev/null) || return 1
+    mapfile -t _crd_lines <<<"$_crd_out"
+    [ "${#_crd_lines[@]}" -eq 5 ] && [ "${_crd_lines[0]}" = ok ] || return 1
+    _CAM_RUNTIME_DOC=("${_crd_lines[1]#+}" "${_crd_lines[2]#+}" "${_crd_lines[3]#+}" "${_crd_lines[4]#+}")
+    _CAM_RUNTIME_DOC_OK=1
+}
 cam_runtime_app_delay() {
-    local runtime=$1 app delay fields
+    local runtime=$1 app delay fields stamp
     # 정책이 로드되지 않았으면 여기서 닫는다. 빈 값이나 정수가 아닌 값을 --argjson 에
     # 넘기면 jq 가 usage 텍스트만 남겨 원인이 보이지 않고, 무엇보다 환경에서 온 값을
     # 정책으로 쓰게 된다. 위 unset 과 이 검사가 한 쌍이다.
@@ -232,6 +273,13 @@ cam_runtime_app_delay() {
         _cra_log err "app play delay policy unavailable: cam_start_policy.sh did not define a bare integer"
         return 64
     fi
+    # 액션이 런타임 문서를 이미 읽어 두었으면(_cam_runtime_doc, 이슈 #168) 그 값을 쓴다. 키는
+    # _cam_runtime_doc 와 같은 식으로 다시 만들어 비교하고, 직접 읽지는 않는다 — 이 함수는 혼자
+    # 떼어 쓰이므로(startup_timing_policy_test) 둔 값이 없으면 예전 jq 그대로다.
+    if [ "${_CAM_RUNTIME_DOC_OK:-0}" = 1 ] && stamp=$(stat -c '%d:%i:%s:%y' "$runtime" 2>/dev/null) \
+        && [ "$runtime|$stamp|$CAM_APP_PLAY_DELAY_SEC_DEFAULT" = "${_CAM_RUNTIME_DOC_KEY:-}" ]; then
+        app=${_CAM_RUNTIME_DOC[0]}; delay=${_CAM_RUNTIME_DOC[1]}
+    else
     fields=$(jq -r --argjson default_delay "$CAM_APP_PLAY_DELAY_SEC_DEFAULT" '
         (.VHL_CAM.app // "gstApp") as $a
         | ((.VHL_CAM.capture.enable // false) | tostring) as $c
@@ -240,6 +288,7 @@ cam_runtime_app_delay() {
         | [ (if $app == "gstApp" or $app == "PIMCAM" then $app else "" end),
             (if ($d | test("^[0-9]+$")) then $d else "" end) ] | join("\n")' "$runtime") || return 64
     { IFS= read -r app; IFS= read -r delay; } <<<"$fields"
+    fi
     [ -n "$app" ] || return 64
     [[ $delay =~ ^[0-9]+$ ]] || return 64
     printf '%s\t%s\n' "$app" "$delay"
@@ -274,7 +323,12 @@ _cam_runtime_app_into() {
         printf -v "$_cra_var" '%s' "$_CAM_RUNTIME_APP_VAL"
         return 0
     fi
-    _cra_app=$(cam_runtime_app "$_cra_runtime") || return $?
+    if _cam_runtime_doc "$_cra_runtime"; then
+        _cra_app=${_CAM_RUNTIME_DOC[0]}
+        [ -n "$_cra_app" ] || return 64
+    else
+        _cra_app=$(cam_runtime_app "$_cra_runtime") || return $?
+    fi
     if [ -n "$_cra_stamp" ]; then
         _CAM_RUNTIME_APP_KEY="$_cra_runtime|$_cra_stamp"
         _CAM_RUNTIME_APP_VAL=$_cra_app
@@ -284,8 +338,12 @@ _cam_runtime_app_into() {
 
 cam_cleanup_recording_orphans() {
     local runtime=$1 dir canonical vehicle started normalized prefix f marker=${PIM_CAMERA_SESSION_TIME_FILE:-/tmp/start_video_time_chk}
-    dir=$(jq -r '.VHL_CAM.tmp_path // empty' "$runtime") || return 64
-    vehicle=$(jq -r '.VHL_CAM.vhl_name // empty' "$runtime") || return 64
+    if _cam_runtime_doc "$runtime"; then
+        dir=${_CAM_RUNTIME_DOC[2]}; vehicle=${_CAM_RUNTIME_DOC[3]}
+    else
+        dir=$(jq -r '.VHL_CAM.tmp_path // empty' "$runtime") || return 64
+        vehicle=$(jq -r '.VHL_CAM.vhl_name // empty' "$runtime") || return 64
+    fi
     [[ $dir = /* && $dir != / && $dir != *'..'* && $vehicle =~ ^[A-Za-z0-9_-]+$ ]] || return 64
     [ -L "$dir" ] && return 64
     canonical=$(readlink -f -- "$dir" 2>/dev/null) || return 64
