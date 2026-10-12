@@ -168,11 +168,14 @@ _cr_owner_snapshot_lifecycle_in() {
 # 키마다 2회 = 14회였고, 이 함수는 _cr_record_owner_ready 를 통해 recovery 경로의
 # 모든 가드가 지난다 (camera_hard_reset 은 가드를 25회 부른다).
 _CR_OWNER_IMMUTABLE_EQ_FILTER='($a.boot_id == $b.boot_id) and ($a.invocation_id == $b.invocation_id) and ($a.pid == $b.pid) and ($a.proc_start_time == $b.proc_start_time) and ($a.token == $b.token) and ($a.created_at == $b.created_at)'
+# _cr_owner_immutable_equal 의 jq 프로그램. 메모 키가 이 문자열 그대로이므로 레코드 가드 접기도
+# 이 변수로 같은 프로그램을 돌린다.
+_CR_OWNER_IMMUTABLE_PROGRAM="(\$a | ($_CR_OWNER_SCHEMA_FILTER)) and (\$b | ($_CR_OWNER_SCHEMA_FILTER)) and $_CR_OWNER_IMMUTABLE_EQ_FILTER"
 _cr_owner_immutable_equal() {
     local saved=$1 current=$2
     local _verdict
     _cr_jq_memo _verdict "" -e -n --argjson a "$saved" --argjson b "$current" \
-      "(\$a | ($_CR_OWNER_SCHEMA_FILTER)) and (\$b | ($_CR_OWNER_SCHEMA_FILTER)) and $_CR_OWNER_IMMUTABLE_EQ_FILTER" \
+      "$_CR_OWNER_IMMUTABLE_PROGRAM" \
       >/dev/null 2>&1 || return 1
 }
 # cam_executor_assert_context 전용. schema + live(boot/invocation/token) + exported 6필드
@@ -269,7 +272,41 @@ _cr_owner_guard_fold() {
     _cr_owner_guard_put "$owner" "$boot" "${plan[0]}" "${plan[1]}"
 }
 _cr_owner_lifecycle_in() { local owner; owner=$(_cr_owner_json); _cr_owner_guard_fold "$owner"; _cr_owner_snapshot_live "$owner" || return 69; _cr_owner_snapshot_lifecycle_in "$owner" "$@"; }
-_cr_record_owner_matches() { local saved current; _cr_jq_memo saved "$1" -c .owner || return 1; current=$(_cr_owner_json) || return 1; _cr_owner_immutable_equal "$saved" "$current" && _cr_owner_snapshot_live "$current"; }
+# _cr_record_owner_ready 의 jq 프로그램(메모 키가 이 문자열 그대로다).
+_CR_RECORD_READY_PROGRAM="if (length == 1) then .[0] | if ((\$a | ($_CR_OWNER_SCHEMA_FILTER)) and ($_CR_OWNER_SCHEMA_FILTER) and ($_CR_OWNER_LIVE_MATCH_FILTER) and (. as \$b | $_CR_OWNER_IMMUTABLE_EQ_FILTER)) then [.lifecycle, (.pid|tostring), .proc_start_time] | join(\"\\n\") else empty end else empty end"
+# 레코드 가드 두 개 — _cr_owner_immutable_equal(레코드의 owner 대 지금 owner)과
+# _cr_record_owner_ready — 는 같은 두 owner 로 jq 를 하나씩 띄운다. 이 쌍이 메모에 처음이면 —
+# claim, owner 를 쓴 직후의 전이 — 두 답을 jq 한 번으로 구해 넣는다 (이슈 #168). 가드는 그대로
+# 돌아 메모에서 찾는다. 판정은 바꾸지 않는다: 지금 owner 가 문서 하나일 때만, 같은 프로그램을
+# 돌려 immutable 은 참일 때만("+", jq -e 가 rc 0 으로 찍는 true), ready 는 출력이 없으면 빈 값
+# ("0"), 하나이고 대문자\n숫자\n숫자면 "+lifecycle:pid:start" 로 넣는다. 그 밖과 jq 실패는 넣지
+# 않는다(stderr 는 버린다 — 오류는 가드의 jq 가 예전처럼 낸다). 두 답은 함께 남도록 자리를 먼저
+# 확보한다.
+_CR_RECORD_GUARD_FOLD_FILTER='if length != 1 then "-", "-" else
+    ([ .[0] as $b | try ('"$_CR_OWNER_IMMUTABLE_PROGRAM"') catch null ] | .[0]) as $i
+    | ([ try [ '"$_CR_RECORD_READY_PROGRAM"' ] catch null ] | .[0]) as $r
+    | (if $i == true then "+" else "-" end),
+      (if ($r | type) == "array" and ($r | length) == 0 then "0"
+       elif ($r | type) == "array" and ($r | length) == 1 and ($r[0] | type == "string" and test("\\A[A-Z_]+\\n[0-9]+\\n[0-9]+\\z")) then "+" + ($r[0] | split("\n") | join(":"))
+       else "-" end)
+  end'
+_cr_record_guard_fold() {
+    local saved=$1 current=$2 boot out plan=() ready
+    [ -n "$current" ] || return 0
+    ! _cr_jq_memo_has "" -e -n --argjson a "$saved" --argjson b "$current" "$_CR_OWNER_IMMUTABLE_PROGRAM" || return 0
+    boot=$(cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null) || return 0
+    out=$(jq -rs --argjson a "$saved" --arg boot "$boot" --arg ei "" --arg et "" "$_CR_RECORD_GUARD_FOLD_FILTER" <<<"$current" 2>/dev/null) || return 0
+    mapfile -t plan <<<"$out"
+    [ "${#plan[@]}" -eq 2 ] || return 0
+    [ "${#_CR_JQ_MEMO[@]}" -lt 63 ] || _CR_JQ_MEMO=()
+    [ "${plan[0]}" != + ] || _cr_jq_memo_put true "" -e -n --argjson a "$saved" --argjson b "$current" "$_CR_OWNER_IMMUTABLE_PROGRAM"
+    case "${plan[1]}" in
+        0) _cr_jq_memo_put "" "$current" -r -s --argjson a "$saved" --arg boot "$boot" --arg ei "" --arg et "" "$_CR_RECORD_READY_PROGRAM" ;;
+        +*:*:*) ready=${plan[1]#+}
+                _cr_jq_memo_put "${ready//:/$'\n'}" "$current" -r -s --argjson a "$saved" --arg boot "$boot" --arg ei "" --arg et "" "$_CR_RECORD_READY_PROGRAM" ;;
+    esac
+}
+_cr_record_owner_matches() { local saved current; _cr_jq_memo saved "$1" -c .owner || return 1; current=$(_cr_owner_json) || return 1; _cr_record_guard_fold "$saved" "$current"; _cr_owner_immutable_equal "$saved" "$current" && _cr_owner_snapshot_live "$current"; }
 # 이 가드는 호출부 31곳을 지난다 (camera_hard_reset 은 25회 부른다). 예전에는
 # .owner 추출 + immutable_equal + snapshot_live + lifecycle_in 으로 jq 를 네 번
 # 띄웠다. 보드에서 jq 한 번이 307ms 이므로 호출마다 1.2초다. 조건은 그대로 두고
@@ -310,8 +347,7 @@ _cr_record_owner_ready() {
     # lifecycle 은 첫 줄로 내보내고 허용 여부는 아래 shell 에서 비교한다. 두
     # 문서 모두 lifecycle 이 문자열임은 스키마 필터가 보장한다.
     _cr_jq_memo fields "$current" -r -s --argjson a "$rec_owner" --arg boot "$boot" --arg ei "" --arg et "" \
-        "if (length == 1) then .[0] | if ((\$a | ($_CR_OWNER_SCHEMA_FILTER)) and ($_CR_OWNER_SCHEMA_FILTER) and ($_CR_OWNER_LIVE_MATCH_FILTER) and (. as \$b | $_CR_OWNER_IMMUTABLE_EQ_FILTER)) then [.lifecycle, (.pid|tostring), .proc_start_time] | join(\"\\n\") else empty end else empty end" \
-         || return 69
+        "$_CR_RECORD_READY_PROGRAM" || return 69
     [ -n "$fields" ] || return 69
     { IFS= read -r lifecycle; IFS= read -r pid; IFS= read -r start; } <<<"$fields"
     actual=$(_cr_proc_start "$pid")
