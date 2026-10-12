@@ -300,7 +300,9 @@ fake_bg_process 6099
 : > "$PIM_CAMERA_JQ_LOG"
 expect_rc 1 cam_monitor_control_iteration monitor_config_reload
 cold_jq_spawns=$(wc -l < "$PIM_CAMERA_JQ_LOG")
-[ "$cold_jq_spawns" -eq 3 ] || fail "cold monitor iteration spawned jq $cold_jq_spawns times instead of 3"
+# owner_at 의 lifecycle 쓰기가 같은 프로세스의 lifecycle 캐시를 채우므로(이슈 #168) 반복은 owner
+# 파일을 jq 로 다시 읽지 않는다 — 예전에는 3 이었다.
+[ "$cold_jq_spawns" -eq 2 ] || fail "cold monitor iteration spawned jq $cold_jq_spawns times instead of 2"
 expect_rc 1 cam_monitor_control_iteration monitor_config_reload
 warm_jq_spawns=$(wc -l < "$PIM_CAMERA_JQ_LOG")
 [ "$warm_jq_spawns" -eq "$cold_jq_spawns" ] || fail 'warm monitor iteration spawned periodic jq'

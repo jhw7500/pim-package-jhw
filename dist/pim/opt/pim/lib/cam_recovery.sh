@@ -88,10 +88,28 @@ _cr_owner_json() { cat "$(_cr_owner_file)" 2>/dev/null; }
 # rc 0 결과만 저장한다: 일시적 실패를 캐시하면 장수 데몬의 가드가 owner 가 바뀔 때까지
 # 굳는다. 항목이 상한을 넘으면 비운다. /proc 생존 확인은 호출부에서 매번 그대로 한다.
 declare -gA _CR_JQ_MEMO=()
+# 상한 두 개 — 어느 쪽이든 넘으면 비운다. 항목: 요청 한 건이 항목을 20여 개 남기므로, 64 이면
+# 오래 도는 데몬이 2~3건마다 메모를 통째로 비워 그 요청에서 owner·런타임 가드의 jq 를 3~5회 다시
+# 띄웠다(이슈 #168, 같은 데몬에서 연속 12건 실측). 크기: 키에는 입력 문서가 통째로 들어간다 —
+# 큰 필드(예: 100KiB reason)가 든 요청이 이어지면 항목 상한만으로는 수십 MiB 를 붙들 수 있어,
+# 키·값의 바이트 수 합을 따로 묶는다(평소 요청 한 건은 수십 KiB 다). 문자 수가 아니라 바이트로
+# 센다 — UTF-8 로케일에서 한글·이모지는 한 글자가 3~4 바이트다.
+_CR_JQ_MEMO_MAX=512
+_CR_JQ_MEMO_BYTE_MAX=2097152
+_CR_JQ_MEMO_BYTES=0
+# n 개 항목, b 바이트를 더 넣을 자리가 없으면 비운다. 함께 남아야 하는 항목들은 넣기 전에 한 번에
+# 자리를 잡는다 — 그 사이에 비워지면 먼저 넣은 것이 사라진다. b 가 빈 메모에도 들어가지 않으면
+# 비우지 않고 1 이다 — 그 항목은 담지 않는다(담으면 누계가 상한을 넘는다). 1 은 if 나 || 로 받는다.
+_cr_jq_memo_room() {
+    [ "$2" -le "$_CR_JQ_MEMO_BYTE_MAX" ] || return 1
+    if [ $(( ${#_CR_JQ_MEMO[@]} + $1 )) -gt "$_CR_JQ_MEMO_MAX" ] || [ $(( _CR_JQ_MEMO_BYTES + $2 )) -gt "$_CR_JQ_MEMO_BYTE_MAX" ]; then
+        _CR_JQ_MEMO=(); _CR_JQ_MEMO_BYTES=0
+    fi
+}
 # 결과는 출력하지 않고 첫 인자로 받은 변수에 넣는다. $(...) 로 부르면 서브셸이라 저장한
 # 메모가 부모 셸에 남지 않는다(실측: 36회 중 33회가 다시 jq 를 띄웠다).
 _cr_jq_memo() {
-    local _cr_memo_var=$1 _cr_memo_input=$2 _cr_memo_key _cr_memo_out
+    local _cr_memo_var=$1 _cr_memo_input=$2 _cr_memo_key _cr_memo_out _cr_memo_size
     shift 2
     printf -v _cr_memo_key '%s\037' "$@"
     _cr_memo_key+=$'\036'"$_cr_memo_input"
@@ -100,20 +118,37 @@ _cr_jq_memo() {
         return 0
     fi
     _cr_memo_out=$(jq "$@" <<<"$_cr_memo_input") || return $?
-    [ "${#_CR_JQ_MEMO[@]}" -lt 64 ] || _CR_JQ_MEMO=()
-    _CR_JQ_MEMO[$_cr_memo_key]=$_cr_memo_out
+    _cr_byte_length _cr_memo_size "$_cr_memo_key$_cr_memo_out"
+    if _cr_jq_memo_room 1 "$_cr_memo_size"; then
+        _CR_JQ_MEMO[$_cr_memo_key]=$_cr_memo_out
+        _CR_JQ_MEMO_BYTES=$(( _CR_JQ_MEMO_BYTES + _cr_memo_size ))
+    fi
     printf -v "$_cr_memo_var" '%s' "$_cr_memo_out"
 }
 # 메모에 값을 미리 넣는다. 한 번의 jq 로 문서를 만든 연산이, 그 문서에 다음 연산이
 # 부를 추출(.id, .owner)의 답도 같은 jq 에서 계산해 넣는다. 값은 그 jq 호출이 냈을
 # 출력과 바이트까지 같아야 한다 — tojson 은 jq -c 와 같은 직렬화를 쓴다.
 _cr_jq_memo_put() {
-    local _cr_memo_value=$1 _cr_memo_input=$2 _cr_memo_key
+    local _cr_memo_value=$1 _cr_memo_input=$2 _cr_memo_key _cr_memo_size _cr_memo_old _cr_memo_new=1
     shift 2
     printf -v _cr_memo_key '%s\037' "$@"
     _cr_memo_key+=$'\036'"$_cr_memo_input"
-    [ "${#_CR_JQ_MEMO[@]}" -lt 64 ] || _CR_JQ_MEMO=()
-    _CR_JQ_MEMO[$_cr_memo_key]=$_cr_memo_value
+    # 이미 있는 키는 값만 바뀐다 — 옛 항목의 크기를 빼고 센다. 같은 요청을 검증할 때마다 다시
+    # 넣는 곳(_cr_request_schema 의 .type)이 있어, 두 번 세면 크기 상한에 헛닿아 메모를 비운다.
+    if [ -n "${_CR_JQ_MEMO[$_cr_memo_key]+x}" ]; then
+        _cr_byte_length _cr_memo_old "$_cr_memo_key${_CR_JQ_MEMO[$_cr_memo_key]}"
+        _CR_JQ_MEMO_BYTES=$(( _CR_JQ_MEMO_BYTES - _cr_memo_old ))
+        _cr_memo_new=0
+    fi
+    _cr_byte_length _cr_memo_size "$_cr_memo_key$_cr_memo_value"
+    if _cr_jq_memo_room "$_cr_memo_new" "$_cr_memo_size"; then
+        _CR_JQ_MEMO[$_cr_memo_key]=$_cr_memo_value
+        _CR_JQ_MEMO_BYTES=$(( _CR_JQ_MEMO_BYTES + _cr_memo_size ))
+    elif [ "$_cr_memo_new" -eq 0 ]; then
+        # 옛 항목은 누계에서 이미 뺐다 — 남기면 세지 않는 항목이 된다. 드문 길이라 통째로 비운다.
+        _CR_JQ_MEMO=(); _CR_JQ_MEMO_BYTES=0
+    fi
+    return 0
 }
 # 메모에 그 호출의 답이 있으면 0. 인자는 _cr_jq_memo_put 의 입력부터와 같다.
 _cr_jq_memo_has() {
@@ -249,11 +284,12 @@ _CR_OWNER_GUARD_ANSWERS='([ try [ $o | '"$_CR_OWNER_LIVE_PROGRAM"' ] catch null 
       ($o | if type == "object" and (.lifecycle | type == "string" and test("\\A[A-Z_]+\\z")) then "+" + .lifecycle else "-" end)'
 _CR_OWNER_GUARD_FOLD_FILTER='if length != 1 then "-", "-" else .[0] as $o | '"$_CR_OWNER_GUARD_ANSWERS"' end'
 _cr_owner_guard_put() {
-    local owner=$1 boot=$2 live_answer=$3 lifecycle_answer=$4 live
+    local owner=$1 boot=$2 live_answer=$3 lifecycle_answer=$4 live need
     # 두 답은 함께 남아야 한다: 메모가 상한 바로 아래면 두 번째 넣기가 메모를 비워 첫 답을
     # 지운다 — 그러면 lifecycle 답만 남아 접기는 건너뛰고 live 가드가 jq 를 띄운다. 둘을 넣을
-    # 자리가 없으면 먼저 비운다.
-    [ "${#_CR_JQ_MEMO[@]}" -lt 63 ] || _CR_JQ_MEMO=()
+    # 자리를 먼저 잡는다(키는 owner 텍스트와 프로그램, 값은 몇 줄이다).
+    _cr_byte_length need "$owner$owner$_CR_OWNER_LIVE_PROGRAM$boot"
+    _cr_jq_memo_room 2 $(( need + 256 )) || return 0
     case "$live_answer" in
         0) _cr_jq_memo_put "" "$owner" -r --arg boot "$boot" --arg ei "" --arg et "" "$_CR_OWNER_LIVE_PROGRAM" ;;
         +*:*) live=${live_answer#+}
@@ -294,14 +330,15 @@ _CR_RECORD_GUARD_FOLD_FILTER='if length != 1 then "-", "-" else
       '"$_CR_RECORD_READY_ANSWER"'
   end'
 _cr_record_guard_fold() {
-    local saved=$1 current=$2 boot out plan=() ready
+    local saved=$1 current=$2 boot out need plan=() ready
     [ -n "$current" ] || return 0
     ! _cr_jq_memo_has "" -e -n --argjson a "$saved" --argjson b "$current" "$_CR_OWNER_IMMUTABLE_PROGRAM" || return 0
     boot=$(cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null) || return 0
     out=$(jq -rs --argjson a "$saved" --arg boot "$boot" --arg ei "" --arg et "" "$_CR_RECORD_GUARD_FOLD_FILTER" <<<"$current" 2>/dev/null) || return 0
     mapfile -t plan <<<"$out"
     [ "${#plan[@]}" -eq 2 ] || return 0
-    [ "${#_CR_JQ_MEMO[@]}" -lt 63 ] || _CR_JQ_MEMO=()
+    _cr_byte_length need "$saved$saved$current$current$_CR_OWNER_IMMUTABLE_PROGRAM$_CR_RECORD_READY_PROGRAM$boot"
+    _cr_jq_memo_room 2 $(( need + 256 )) || return 0
     [ "${plan[0]}" != + ] || _cr_jq_memo_put true "" -e -n --argjson a "$saved" --argjson b "$current" "$_CR_OWNER_IMMUTABLE_PROGRAM"
     _cr_record_ready_put "$current" "$saved" "$boot" "${plan[1]}"
 }
@@ -795,7 +832,7 @@ _cr_lifecycle_allowed() {
     case "$1:$2" in STARTING:ACTIVE|STARTING:DEGRADED|STARTING:STOPPING|ACTIVE:APPLYING_CONFIG|ACTIVE:RECOVERING|ACTIVE:DEGRADED|ACTIVE:STOPPING|APPLYING_CONFIG:ACTIVE|APPLYING_CONFIG:DEGRADED|APPLYING_CONFIG:STOPPING|RECOVERING:ACTIVE|RECOVERING:DEGRADED|RECOVERING:STOPPING|DEGRADED:APPLYING_CONFIG|DEGRADED:RECOVERING|DEGRADED:STOPPING) return 0;; esac; return 1
 }
 _cr_owner_set_lifecycle_locked() {
-    local next=$1 owner current updated pair boot lines=()
+    local next=$1 owner current updated pair boot stamp lines=()
     owner=$(_cr_owner_json); _cr_owner_snapshot_live "$owner" || return 69
     # 현재 lifecycle 조회와 갱신본 생성을 한 번의 jq 로. 갱신본은 검사 통과 후에만 쓴다.
     # 같은 jq 가 갱신본의 두 가드 답(_CR_OWNER_GUARD_ANSWERS)도 낸다 (이슈 #150): 쓴 직후의 가드가
@@ -808,6 +845,13 @@ _cr_owner_set_lifecycle_locked() {
     { IFS= read -r current; IFS= read -r updated; } <<<"$pair"
     _cr_lifecycle_allowed "$current" "$next" || return 64
     _cr_owner_snapshot_live "$owner" || return 69; _cr_atomic_write "$(_cr_owner_file)" "$updated" || return 70
+    # 방금 쓴 owner 의 lifecycle 을 _cr_load_owner_lifecycle 의 캐시에 둔다 (이슈 #168). 그 함수가
+    # 이 파일에 띄울 jq(.lifecycle // empty)의 답은 $next 다 — 쓴 텍스트는 문서 하나이고 lifecycle 은
+    # 전이표가 허용한 토큰이다. 쓰기는 잠금 안이므로 지금의 파일 정체(stat)가 이 쓰기의 것이고,
+    # 다른 쓰기는 새 파일(새 inode)이라 키가 달라 다시 읽는다. stat 이 실패하면 두지 않는다.
+    if stamp=$(stat -c '%d:%i:%s:%y' "$(_cr_owner_file)" 2>/dev/null); then
+        _CR_LIFECYCLE_KEY=$stamp; _CR_LIFECYCLE_VAL=$next
+    fi
     mapfile -t lines <<<"$pair"
     [ -z "$boot" ] || [ "${#lines[@]}" -ne 4 ] || _cr_owner_guard_put "$updated" "$boot" "${lines[2]}" "${lines[3]}"
 }

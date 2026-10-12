@@ -352,10 +352,11 @@ _CR_JQ_MEMO=()
 fresh=0; _cr_owner_lifecycle_in RECOVERING || fresh=$?
 [ "$rc" -eq "$fresh" ] || fail "a shifted line of the lifecycle write was put in the memo (rc $rc, $fresh without the memo)"
 printf '%s\n' "$owner" > "$owner_file"
-# 두 답은 함께 남는다: 메모가 상한 바로 아래(63개)여도 lifecycle 답을 넣으며 메모를 비워 먼저
+# 두 답은 함께 남는다: 메모가 상한 바로 아래여도 lifecycle 답을 넣으며 메모를 비워 먼저
 # 넣은 live 답을 지우지 않는다(지우면 접기는 건너뛰고 live 가드가 jq 를 띄운다).
-_CR_JQ_MEMO=(); for ((i = 0; i < 63; i++)); do _cr_jq_memo_put x "filler$i" -r .; done
-[ "${#_CR_JQ_MEMO[@]}" -eq 63 ] || fail "the memo was not filled to 63 entries (${#_CR_JQ_MEMO[@]})"
+memo_max=${_CR_JQ_MEMO_MAX:-64}
+_CR_JQ_MEMO=(); for ((i = 0; i < memo_max - 1; i++)); do _cr_jq_memo_put x "filler$i" -r .; done
+[ "${#_CR_JQ_MEMO[@]}" -eq "$((memo_max - 1))" ] || fail "the memo was not filled to one below its cap (${#_CR_JQ_MEMO[@]})"
 _cr_owner_guard_put "$owner" "$boot" "+4242:111" "+ACTIVE"
 _cr_jq_memo_has "$owner" -r --arg boot "$boot" --arg ei "" --arg et "" "$live_program" || fail 'the live answer was evicted by the lifecycle answer put after it'
 _cr_jq_memo_has "$owner" -r .lifecycle || fail 'the lifecycle answer was not kept'
@@ -416,5 +417,95 @@ got_ready=; _cr_jq_memo got_ready "$current" -r -s --argjson a "$rec_owner" --ar
 expect_runs 0 'the submit did not leave the write guard answer in the memo'
 [ "$got_ready" = "$want_ready" ] || fail "the submit put another write guard answer than jq prints: '$got_ready' vs '$want_ready'"
 rm -f "$PIM_CAMERA_RUN_DIR/recovery/pending.json"
+
+# 메모 상한 (이슈 #168): 요청 한 건이 항목을 20여 개 남긴다 — 오래 도는 데몬이 몇 건마다 메모를
+# 통째로 비우지 않도록 상한은 100 건을 넘게 담는다. 상한에 닿으면 비우고 새 항목 하나만 남는다.
+_CR_JQ_MEMO=(); for ((i = 0; i < 100; i++)); do _cr_jq_memo_put x "keep$i" -r .; done
+[ "${#_CR_JQ_MEMO[@]}" -eq 100 ] || fail "the memo did not keep 100 entries (${#_CR_JQ_MEMO[@]}) - a long-running daemon would clear it every few requests"
+for ((i = 100; i < memo_max; i++)); do _cr_jq_memo_put x "keep$i" -r .; done
+_cr_jq_memo_put x "one-more" -r .
+[ "${#_CR_JQ_MEMO[@]}" -eq 1 ] || fail "the memo was not cleared at its cap (${#_CR_JQ_MEMO[@]})"
+# 크기 상한 (이슈 #168): 키에는 입력 문서가 통째로 들어간다. 큰 문서가 이어지면 항목 수가 아니라
+# 문자 수로 비워, 오래 도는 데몬이 수십 MiB 를 붙들지 않는다.
+big=$(printf '%*s' 30000 '' | tr ' ' x)
+_CR_JQ_MEMO=(); _CR_JQ_MEMO_BYTES=0
+for ((i = 0; i < 100; i++)); do _cr_jq_memo_put x "$big$i" -r .; done
+[ "${#_CR_JQ_MEMO[@]}" -lt 100 ] || fail "the memo kept 100 entries of 30000 characters each (no size bound)"
+# 크기는 바이트로 센다: UTF-8 로케일에서 한글 3만 자는 9만 바이트다. 40 개(약 3.6MB)를 담으면 안 된다.
+saved_lc_all=${LC_ALL-}; LC_ALL=C.UTF-8
+printf -v wide '%*s' 30000 ''; wide=${wide// /가}
+_CR_JQ_MEMO=(); _CR_JQ_MEMO_BYTES=0
+for ((i = 0; i < 40; i++)); do _cr_jq_memo_put x "$wide$i" -r .; done
+wide_kept=${#_CR_JQ_MEMO[@]}
+LC_ALL=$saved_lc_all
+[ "$wide_kept" -lt 40 ] || fail "the memo kept 40 entries of 30000 Korean characters (about 3.6 MB) - the size bound counted characters, not bytes"
+_CR_JQ_MEMO=(); _CR_JQ_MEMO_BYTES=0
+# 크기 상한에서도 두 답은 함께 남는다: 첫 답은 들어가고 둘째 답은 넘치게 문자 수를 채워도,
+# 넣기 전에 둘의 자리를 함께 잡으므로 둘째 넣기가 첫 답을 지우지 않는다.
+printf -v k1 '%s\037' -r --arg boot "$boot" --arg ei "" --arg et "" "$live_program"; k1+=$'\036'"$owner"
+pad_len=$(( _CR_JQ_MEMO_BYTE_MAX - ${#k1} - 8 - 1 - 7 ))
+pad=$(printf '%*s' "$pad_len" '' | tr ' ' p)
+_CR_JQ_MEMO=(); _CR_JQ_MEMO_BYTES=0
+_cr_jq_memo_put x "$pad" -r .
+_cr_owner_guard_put "$owner" "$boot" "+4242:111" "+ACTIVE"
+_cr_jq_memo_has "$owner" -r --arg boot "$boot" --arg ei "" --arg et "" "$live_program" || fail 'the live answer was evicted by the size bound between the two puts'
+_cr_jq_memo_has "$owner" -r .lifecycle || fail 'the lifecycle answer was not kept at the size bound'
+_CR_JQ_MEMO=(); _CR_JQ_MEMO_BYTES=0
+# 이미 있는 키를 다시 넣어도 크기는 그 항목 하나만큼이다: _cr_request_schema 는 같은 요청을 검증할 때마다
+# .type 답을 다시 넣는다. 3만 자 키를 100 번 넣어도(두 번 세면 약 3MB) 메모가 비워지면 안 된다.
+entry_bytes() { local LC_ALL=C k; printf -v k '%s\037' -r .; k+=$'\036'"$1"; echo $(( ${#k} + ${#2} )); }
+_cr_jq_memo_put x "keep-me" -r .
+for ((i = 0; i < 100; i++)); do _cr_jq_memo_put x "$big" -r .; done
+_cr_jq_memo_has "keep-me" -r . || fail 'putting one key 100 times cleared the memo - the size bound counted the same entry on every put'
+[ "$_CR_JQ_MEMO_BYTES" -eq $(( $(entry_bytes keep-me x) + $(entry_bytes "$big" x) )) ] || fail "the size count after re-puts is $_CR_JQ_MEMO_BYTES, not the two entries"
+_cr_jq_memo_put yy "$big" -r .
+[ "$_CR_JQ_MEMO_BYTES" -eq $(( $(entry_bytes keep-me x) + $(entry_bytes "$big" yy) )) ] || fail "the size count after replacing a value is $_CR_JQ_MEMO_BYTES"
+_CR_JQ_MEMO=(); _CR_JQ_MEMO_BYTES=0
+# 빈 메모에도 들어가지 않는 항목은 담지 않는다: 누계는 늘 항목 크기의 합이고 상한을 넘지 않는다.
+memo_sum() { local LC_ALL=C k s=0; for k in "${!_CR_JQ_MEMO[@]}"; do s=$(( s + ${#k} + ${#_CR_JQ_MEMO[$k]} )); done; echo "$s"; }
+memo_sane() {
+    [ "$_CR_JQ_MEMO_BYTES" -eq "$(memo_sum)" ] && [ "$_CR_JQ_MEMO_BYTES" -le "$_CR_JQ_MEMO_BYTE_MAX" ] ||
+        fail "$1 (count $_CR_JQ_MEMO_BYTES, entries $(memo_sum), cap $_CR_JQ_MEMO_BYTE_MAX)"
+}
+huge=$(printf '%*s' "$_CR_JQ_MEMO_BYTE_MAX" '' | tr ' ' h)
+_cr_jq_memo_put x "keep-me" -r .
+_cr_jq_memo_put x "$huge" -r .
+_cr_jq_memo_has "keep-me" -r . || fail 'an entry larger than the size cap cleared the memo'
+! _cr_jq_memo_has "$huge" -r . || fail 'a put kept an entry larger than the size cap'
+memo_sane 'the size count after an oversized put'
+: > "$WORK/jq.log"
+got=; _cr_jq_memo got "\"$huge\"" -r length
+[ "$got" = "$_CR_JQ_MEMO_BYTE_MAX" ] || fail "an oversized jq call returned '$got'"
+_cr_jq_memo got "\"$huge\"" -r length
+expect_runs 2 'an oversized jq answer was cached'
+memo_sane 'the size count after an oversized jq call'
+# 이미 있는 키를 담을 수 없는 값으로 바꾸면 옛 값을 남기지 않는다.
+_cr_jq_memo_put x "dup" -r .
+_cr_jq_memo_put "$huge" "dup" -r .
+! _cr_jq_memo_has "dup" -r . || fail 'an old value stayed after its key got a value larger than the size cap'
+memo_sane 'the size count after replacing a value with an oversized one'
+# 두 답의 자리가 빈 메모에도 없으면 둘 다 넣지 않고 메모도 비우지 않는다(set -e 아래에서도 이어 간다).
+_cr_jq_memo_put x "keep-me" -r .
+_cr_owner_guard_put "${huge:0:1100000}" "$boot" "+4242:111" "+ACTIVE"
+_cr_jq_memo_has "keep-me" -r . || fail 'a pair larger than the size cap cleared the memo'
+! _cr_jq_memo_has "${huge:0:1100000}" -r .lifecycle || fail 'a pair larger than the size cap was put'
+memo_sane 'the size count after an oversized pair'
+_CR_JQ_MEMO=(); _CR_JQ_MEMO_BYTES=0
+
+# owner lifecycle 을 쓰면 _cr_load_owner_lifecycle 의 캐시(파일 정체)에 그 값을 둔다 (이슈 #168): repair
+# 확인·실행 진입·데몬 루프가 방금 쓴 owner 를 jq 로 다시 읽지 않는다. 값은 jq 가 읽는 것과 같다.
+cam_owner_set_lifecycle RECOVERING || fail "the lifecycle write to RECOVERING for the cache check was refused"
+: > "$WORK/jq.log"
+_cr_load_owner_lifecycle || fail "the owner lifecycle could not be loaded after a lifecycle write"
+expect_runs 0 'the owner lifecycle written by this process was read again by jq'
+[ "$_CR_LIFECYCLE_VAL" = "$(jq -r '.lifecycle // empty' "$owner_file")" ] || fail "the cached lifecycle '$_CR_LIFECYCLE_VAL' differs from the file"
+cam_owner_set_lifecycle ACTIVE || fail "the lifecycle write back to ACTIVE was refused"
+# 다른 쓰기(이 함수를 거치지 않음)는 새 파일이라 키가 달라 다시 읽는다.
+jq -c '.lifecycle = "DEGRADED"' "$owner_file" > "$owner_file.next" && mv -f "$owner_file.next" "$owner_file"
+: > "$WORK/jq.log"
+_cr_load_owner_lifecycle || fail "the owner lifecycle could not be loaded after an outside write"
+expect_runs 1 'an owner file replaced outside the lifecycle write was served from the cache'
+[ "$_CR_LIFECYCLE_VAL" = DEGRADED ] || fail "the lifecycle after an outside write read '$_CR_LIFECYCLE_VAL'"
+printf '%s\n' "$owner" > "$owner_file"
 
 echo "jq memo: PASS"
