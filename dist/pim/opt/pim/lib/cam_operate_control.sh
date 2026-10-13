@@ -61,17 +61,24 @@ _coc_state_current() {
 # canonical 추출과 스키마 검증을 한 번의 jq 로 합친다. select 는 조건이 참일 때
 # 파이프 입력을 그대로 흘리므로, 검증 대상은 여전히 '추출된 canonical' 이다.
 #
-# 조건을 _coc_state_schema 와 공유하지 않고 인라인으로 적는 이유:
+# 조건을 _coc_state_schema 와 공유하지 않고 이 변수에 따로 적는 이유:
 # runtime_consumer_path_test.py 의 proven_helpers() 가 _coc_state_current 의
 # 출처를 증명할 때 _coc_state_schema 를 quiet_validator 로 인정하는데, 그
 # 정규식(:1018)이 그 함수 본문을 jq -e '<단일따옴표 리터럴>' >/dev/null 2>&1
-# 형태로 못박는다. 따라서 변수화가 막히는 곳은 _coc_state_schema 하나뿐이고,
-# jq 필터 안의 셸 변수 확장 일반이 거부되는 것은 아니다 (cam_recovery.sh 는
-# 같은 소비자 목록에 있으면서 6곳에서 확장하고 통과한다).
+# 형태로 못박는다. 따라서 변수화가 막히는 곳은 _coc_state_schema 하나뿐이다.
 # 두 사본이 어긋나지 않는지는 state_schema_parity_test.py 가 기계적으로 본다.
+#
+# service-state 를 쓰는 곳(_coc_write_state, _coc_set_dirty, _coc_persist_success,
+# cam_mark_degraded)은 모두 이 필터로 끝나는 jq 하나로 쓸 문서를 만든다 (이슈 #168:
+# 예전에는 생성·병합 jq 와 이 필터의 jq 가 따로 떴다). 앞 단계의 결과는 tojson|fromjson
+# 으로 한 번 왕복한다 — 예전에 그 결과를 텍스트로 찍고 이 필터가 다시 읽던 것과 같은 값이
+# 되게(jq 1.7 의 nan 은 텍스트로 찍으면 null 이다). 필터는 큰따옴표 안에서 이 변수로
+# 붙이고 jq 변수는 \$ 로 적는다. 이 변수는 최상위에서 한 번만 대입한다 — 비면 jq 1.6 은
+# 빈 프로그램을 . 로 돌려 검증 없이 쓴다. 이것도 parity 테스트가 본다.
+_COC_STATE_CANONICAL_FILTER='{schema,last_boot_id,last_successful_hardware_projection,dirty,degraded_reason,degraded_target,last_invocation_id} | select(type == "object" and .schema == 1 and (.last_boot_id | type == "string" and length > 0) and (.last_successful_hardware_projection | type == "object") and (.dirty | type == "boolean") and (.degraded_reason == null or (.degraded_reason | type == "string")) and (.degraded_target == null or (.degraded_target | type == "string")) and (.last_invocation_id | type == "string" and length > 0))'
 _coc_write_state() {
     local state=$1 canonical
-    canonical=$(jq -c '{schema,last_boot_id,last_successful_hardware_projection,dirty,degraded_reason,degraded_target,last_invocation_id} | select(type == "object" and .schema == 1 and (.last_boot_id | type == "string" and length > 0) and (.last_successful_hardware_projection | type == "object") and (.dirty | type == "boolean") and (.degraded_reason == null or (.degraded_reason | type == "string")) and (.degraded_target == null or (.degraded_target | type == "string")) and (.last_invocation_id | type == "string" and length > 0))' <<<"$state") || return 70
+    canonical=$(jq -c "$_COC_STATE_CANONICAL_FILTER" <<<"$state") || return 70
     [ -n "$canonical" ] || return 70
     _cr_atomic_write "$(_cr_service_file)" "$canonical" || return 70
 }
@@ -82,8 +89,9 @@ _coc_set_dirty() {
     boot=$(_coc_boot_id) || return 70
     invocation=$(_coc_invocation_id) || return 69
     next=$(jq -c --arg boot "$boot" --arg invocation "$invocation" --argjson dirty "$dirty" \
-      '.schema=1 | .last_boot_id=$boot | .last_invocation_id=$invocation | .dirty=$dirty' <<<"$state") || return 70
-    _coc_write_state "$next"
+      ".schema=1 | .last_boot_id=\$boot | .last_invocation_id=\$invocation | .dirty=\$dirty | tojson | fromjson | $_COC_STATE_CANONICAL_FILTER" <<<"$state") || return 70
+    [ -n "$next" ] || return 70
+    _cr_atomic_write "$(_cr_service_file)" "$next" || return 70
 }
 
 _coc_persist_success() {
@@ -91,8 +99,9 @@ _coc_persist_success() {
     boot=$(_coc_boot_id) || return 70
     invocation=$(_coc_invocation_id) || return 69
     state=$(jq -cn --arg boot "$boot" --arg invocation "$invocation" --argjson projection "$projection" \
-      '{schema:1,last_boot_id:$boot,last_successful_hardware_projection:$projection,dirty:false,degraded_reason:null,degraded_target:null,last_invocation_id:$invocation}') || return 70
-    _coc_write_state "$state"
+      "{schema:1,last_boot_id:\$boot,last_successful_hardware_projection:\$projection,dirty:false,degraded_reason:null,degraded_target:null,last_invocation_id:\$invocation} | tojson | fromjson | $_COC_STATE_CANONICAL_FILTER") || return 70
+    [ -n "$state" ] || return 70
+    _cr_atomic_write "$(_cr_service_file)" "$state" || return 70
 }
 
 cam_stage_source_candidate() {
@@ -199,8 +208,9 @@ cam_mark_degraded() {
     boot=$(_coc_boot_id) || return 70
     invocation=$(_coc_invocation_id) || return 69
     next=$(jq -c --arg boot "$boot" --arg invocation "$invocation" --arg reason "$reason" --arg target "$target" --argjson dirty "$dirty" \
-      '.schema=1 | .last_boot_id=$boot | .last_invocation_id=$invocation | .dirty=$dirty | .degraded_reason=$reason | .degraded_target=$target' <<<"$state") || return 70
-    _coc_write_state "$next" || return $?
+      ".schema=1 | .last_boot_id=\$boot | .last_invocation_id=\$invocation | .dirty=\$dirty | .degraded_reason=\$reason | .degraded_target=\$target | tojson | fromjson | $_COC_STATE_CANONICAL_FILTER" <<<"$state") || return 70
+    [ -n "$next" ] || return 70
+    _cr_atomic_write "$(_cr_service_file)" "$next" || return 70
     lifecycle=$(jq -r .lifecycle "$(_cr_owner_file)" 2>/dev/null) || return 69
     [ "$lifecycle" = DEGRADED ] || cam_owner_set_lifecycle DEGRADED
 }
