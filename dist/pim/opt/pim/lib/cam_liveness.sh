@@ -745,8 +745,23 @@ _cl_ordered_stop_systemd_locked() {
     return 75
 }
 
+# ExecStop[1]. 데몬이 루프 끝 전경 sleep 에 있으면 ExecStop[0] 의 TERM 은 그 sleep 이 끝날 때까지 밀리고, 그
+# 사이 여기가 복구 잠금을 먼저 잡으면 데몬 trap 의 정지는 잠금을 못 잡아(75) 그냥 끝나고, 여기가 jq 가 많은
+# handoff 경로로 정지한다(보드 restart 35.5초, 데몬이 맡으면 17.1초). 그래서 ExecStop[0] 이 TERM 을 보낸 그 주
+# pid($MAINPID)의 게시된 sleep 을 먼저 끝내고 0.5초 양보한다 — trap 이 잠금에 닿기까지 보드 실측 10ms 안팎.
+# 데몬이 잠금을 잡으면 여기는 그것이 풀릴 때까지 기다린다. 데몬의 정지가 끝났으면 owner 가 없음을 보고 끝나고,
+# 아니면 이어받아 마무리한다. 양보한 0.5초보다 넉넉히 잠금 대기를 1초 줄인다(정리 예비 45초 유지).
+# 끝낸 sleep 이 없으면(데몬이 sleep 중이 아님, MAINPID 없음) 예전 그대로다.
 cam_liveness_ordered_stop_systemd() {
-    _cr_lock_call_wait 75 _cl_ordered_stop_systemd_locked
+    local _CR_MONITOR_WOKEN=0 lock_wait=75
+    if [ -n "${MAINPID:-}" ]; then
+        _cr_wake_monitor_wait "$MAINPID"
+        if [ "$_CR_MONITOR_WOKEN" = 1 ]; then
+            sleep 0.5
+            lock_wait=74
+        fi
+    fi
+    _cr_lock_call_wait "$lock_wait" _cl_ordered_stop_systemd_locked
 }
 
 _cl_trap_signal() {

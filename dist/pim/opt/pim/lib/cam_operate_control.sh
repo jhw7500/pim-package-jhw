@@ -683,9 +683,10 @@ cam_monitor_control_iteration() {
 # wait)를 쓰지 않는 이유: 보드의 bash 5.0.17 은 trap 걸린 신호로 끊긴 wait 뒤 그 자식의 끝을 놓쳐,
 # 같은 pid 를 다시 wait 하면 영원히 멈추고(오래 사는 자식 vcm 이 있을 때) 그렇지 않아도 작업 표에
 # job 이 쌓인다(닫힌 PR #181). 내장 read -t 도 TERM trap 을 알람으로 끊는다(10/10 재현). 전경 sleep
-# 동안 bash 는 trap 을 sleep 이 끝날 때까지 미룬다 — ExecStop 의 TERM 은 주 pid 에만 가므로 정지는
-# 최대 상한만큼 늦고, 외부 정지가 데몬에 신호할 때는 게시된 sleep 도 끝낸다(_cl_signal_daemon_locked;
-# 남은 pending 으로 다 기다리는 sleep 은 게시하지 않아 예전처럼 상한까지 간다). 끊긴 sleep 의
+# 동안 bash 는 trap 을 sleep 이 끝날 때까지 미룬다 — ExecStop[0] 의 TERM 은 주 pid 에만 간다. 그래서
+# ExecStop[1] 은 잠금을 잡기 전에 게시된 sleep 을 끝내 데몬 trap 이 정지를 맡게 하고
+# (cam_liveness_ordered_stop_systemd), 외부 정지가 데몬에 신호할 때도 그 sleep 을 끝낸다
+# (_cl_signal_daemon_locked; 남은 pending 으로 다 기다리는 sleep 은 게시하지 않아 상한까지 간다). 끊긴 sleep 의
 # "Terminated" 줄은 2>/dev/null 로 막는다. sleep 을 띄우지 못하면(0·99·신호가 아닌 값) 숨기지 않은
 # sleep 으로 다시 기다린다 — 오류를 숨기지 않고, 그 sleep 이 뜨면 상한만큼 쉰다.
 # 돌려주는 값: 0 이면 새 pending 으로 일찍 끝남, 1 이면 상한까지 기다림(또는 pending 없이 끊김).

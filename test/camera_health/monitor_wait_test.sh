@@ -234,8 +234,9 @@ rm -f "$wake_file"
 _cr_wake_monitor_wait || fail 'a missing monitor-wait file made the wake fail'
 
 # A process that waits like the daemon: sources the libraries, keeps a long-lived child (vcm),
-# optionally sets a TERM trap that spends 0.4s in a command substitution (like the ordered stop),
-# then one wait on the real pending path.  It writes "rc elapsed_ms" to $1 and touches $1.ready
+# optionally sets a TERM trap that spends 0.4s in a command substitution (like the ordered stop)
+# or one that holds the recovery lock for 1s and touches $1.won (like the daemon's own ordered
+# stop, longer than the 0.5s yield so the systemd side really waits on the lock), then one wait on the real pending path.  It writes "rc elapsed_ms" to $1 and touches $1.ready
 # before waiting.
 start_waiter() {
     bash -c '
@@ -243,6 +244,9 @@ start_waiter() {
         sleep 300 & long=$!
         if [ "$2" = trap ]; then
             trap "out=\$(sleep 0.4; echo ok); [ \"\$out\" = ok ] && : > \"$1.trap\"; kill \$long; exit 143" TERM
+        elif [ "$2" = locktrap ]; then
+            hold() { : > "$1.won"; sleep 1; }
+            trap "_cr_lock_call hold \"$1\"; kill \$long; exit 143" TERM
         fi
         : > "$1.ready"
         s=${EPOCHREALTIME/./}; rc=0
@@ -321,5 +325,54 @@ rm -f "$pending"
 { PATH="$WORK/no-such-dir" timed_wait 2 "$pending" 0 "$wake_file"; } 2> "$WORK/nosleep.err"
 [ "$wait_rc" -eq 1 ] || fail "a sleep that could not start returned $wait_rc, not 1"
 grep -q sleep "$WORK/nosleep.err" || fail "a sleep that could not start left no error: $(head -c 200 "$WORK/nosleep.err")"
+
+# 15. ExecStop[1] (cam_liveness_ordered_stop_systemd) ends the published sleep of $MAINPID - the
+# daemon ExecStop[0] has just sent TERM - before it takes the recovery lock, and yields, so the
+# daemon's trap takes the lock first and runs the stop itself; the lock wait then gives back the
+# yield (74s, not 75s).  Without MAINPID, or for another pid, nothing is woken and it is as before.
+race_case() {
+    local what=$1 mainpid=$2 want=$3 got
+    rm -f "$WORK/race" "$WORK/race.won" "$WORK/race.ready" "$WORK/order"
+    start_waiter "$WORK/race" locktrap
+    [ "$mainpid" != daemon ] || mainpid=$waiter
+    kill -TERM "$waiter"
+    (
+        # the stop itself is stubbed: it records who held the lock first.
+        # shellcheck disable=SC2317
+        _cl_ordered_stop_systemd_locked() {
+            if [ -e "$WORK/race.won" ]; then echo daemon; else echo systemd; fi > "$WORK/order"
+        }
+        MAINPID=$mainpid cam_liveness_ordered_stop_systemd
+    ) || fail "$what: the systemd stop failed"
+    wait "$waiter" || :
+    got=$(cat "$WORK/order")
+    [ "$got" = "$want" ] || fail "$what: the $got took the lock first, not the $want"
+}
+race_case 'the stopped daemon' daemon daemon
+race_case 'no MAINPID' '' systemd
+race_case 'another MAINPID' "$$" systemd
+# the lock wait and the yield before it: woken, 74s after about 0.5s; otherwise 75s at once.  The
+# waiter is left to end its own wait (it then ends its long-lived child too).
+budget_case() {
+    local what=$1 mainpid=$2 want=$3 lo=$4 hi=$5 got ms
+    rm -f "$WORK/budget" "$WORK/budget.ready" "$WORK/lockwait"
+    start_waiter "$WORK/budget"
+    [ "$mainpid" != daemon ] || mainpid=$waiter
+    (
+        began=$(now_ms)
+        # shellcheck disable=SC2317
+        _cr_lock_call_wait() { echo "$1 $(( $(now_ms) - began ))" > "$WORK/lockwait"; }
+        MAINPID=$mainpid cam_liveness_ordered_stop_systemd
+    )
+    read -r got ms < "$WORK/lockwait"
+    [ "$got" = "$want" ] || fail "$what: the lock wait was ${got}s, not ${want}s"
+    if [ "$ms" -lt "$lo" ] || [ "$ms" -gt "$hi" ]; then
+        fail "$what: the lock wait began ${ms}ms after the stop, not ${lo}-${hi}ms"
+    fi
+    wait "$waiter" || :
+}
+budget_case 'a woken sleep' daemon 74 400 1000
+budget_case 'nothing woken' '' 75 0 300
+budget_case 'another MAINPID' "$$" 75 0 300
 
 echo "monitor wait: PASS"

@@ -1051,7 +1051,8 @@ cam_request_submit() {
 # 끝나면 남지만 정지 때 RuntimeDirectory 가 지워지고 아래 대조가 막는다). 그 pid 가 지금도 sleep 이고
 # 부모가 적힌 데몬일 때만(기대 부모 $1 이 주어지면 그것과도 같을 때만) TERM 을 보낸다 — 그 밖의
 # 프로세스에는 보내지 않는다. 가짜 proc root(테스트)에서는 보내지 않는다. jq 없이 내장 read 로 읽는다.
-# 보내지 못해도 데몬은 2초 안에 pending 을 본다. 언제나 0.
+# 보내지 못해도 데몬은 2초 안에 pending 을 본다. 언제나 0 — 보냈는지는 _CR_MONITOR_WOKEN=1 로 남긴다
+# (호출부가 local 로 두면 그 안에만 남는다).
 _cr_wake_monitor_wait() {
     local expect=${1:-} pid parent stat
     [ "$PIM_CAMERA_PROC_ROOT" = /proc ] || return 0
@@ -1060,7 +1061,7 @@ _cr_wake_monitor_wait() {
     [ -z "$expect" ] || [ "$parent" = "$expect" ] || return 0
     { read -r stat < "/proc/$pid/stat"; } 2>/dev/null || return 0
     [[ $stat == "$pid (sleep) "[A-Za-z]" $parent "* ]] || return 0
-    kill -TERM "$pid" 2>/dev/null || :
+    kill -TERM "$pid" 2>/dev/null && _CR_MONITOR_WOKEN=1
     return 0
 }
 _cr_history_request() {
