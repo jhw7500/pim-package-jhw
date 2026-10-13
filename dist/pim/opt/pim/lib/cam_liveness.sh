@@ -461,21 +461,15 @@ cam_liveness_tick() {
     _cl_request_gstapp_recovery
 }
 
+# owner 가 이 실행 맥락(PIM_CAMERA_OWNER_* 6값)의 것인가. 예전에는 스키마 jq 1번과 필드마다 1번씩 jq 6번을
+# 띄웠다(정지 경로에서 여러 번 불려 보드 정지 한 번에 jq 수십 번). 같은 스키마·6필드 비교(비어 있지 않음, 같음,
+# 숫자는 tostring)를 jq 한 번으로 하고 메모에 두는 _cr_owner_matches_exported_context 를 쓴다. 손상된 owner 는
+# 예전보다 엄격하게 거른다: 문자열 필드 끝에 개행이 붙어 있으면(예전에는 명령 치환이 깎아 통과) 69, 문서가
+# 여러 개인 owner 를 넘겨받은 두 줄 맥락도 69. 정상 기록기(_cr_atomic_write 로 쓰는 한 문서)는 그런 owner 를
+# 만들지 않는다. 반대로 맥락 값 자체가 개행으로 끝나면 같은 개행의 owner 를 통과시키는데, 맥락을 세우는 곳
+# (_cr_owner_export_fields 의 read -r, adopt 의 $(...), start_cam 전달)은 끝 개행 없이 세운다.
 _cl_owner_matches_context() {
-    local owner=$1 key expected actual
-    _cr_owner_schema <<<"$owner" || return 69
-    for key in boot_id invocation_id pid proc_start_time token created_at; do
-        expected=$(jq -r --arg key "$key" '.[$key]' <<<"$owner") || return 69
-        case "$key" in
-            boot_id) actual=${PIM_CAMERA_OWNER_BOOT_ID:-} ;;
-            invocation_id) actual=${PIM_CAMERA_OWNER_INVOCATION:-} ;;
-            pid) actual=${PIM_CAMERA_OWNER_PID:-} ;;
-            proc_start_time) actual=${PIM_CAMERA_OWNER_PROC_START_TIME:-} ;;
-            token) actual=${PIM_CAMERA_OWNER_TOKEN:-} ;;
-            created_at) actual=${PIM_CAMERA_OWNER_CREATED_AT:-} ;;
-        esac
-        [ -n "$actual" ] && [ "$expected" = "$actual" ] || return 69
-    done
+    _cr_owner_matches_exported_context "$1"
 }
 
 _cl_current_boot_owner_process_state() {
@@ -501,7 +495,7 @@ _cl_capture_owner_context() {
     [ -e "$(_cr_owner_file)" ] || return 0
     owner=$(_cr_owner_json) || return 69
     _cr_owner_schema <<<"$owner" || return 69
-    lifecycle=$(jq -r .lifecycle <<<"$owner") || return 69
+    _cr_jq_memo lifecycle "$owner" -r .lifecycle || return 69
     if [ -n "${PIM_CAMERA_OWNER_INVOCATION:-}" ]; then
         _cl_owner_matches_context "$owner" || return 69
     else
@@ -527,7 +521,7 @@ _cl_stop_begin_locked() {
     [ -e "$(_cr_owner_file)" ] || { printf 'done\n'; return 0; }
     owner=$(_cr_owner_json) || return 69
     _cl_owner_matches_context "$owner" || return 69
-    lifecycle=$(jq -r .lifecycle <<<"$owner") || return 69
+    _cr_jq_memo lifecycle "$owner" -r .lifecycle || return 69
     if [ "$lifecycle" = STOPPING ]; then
         [ "$systemd_handoff" != 1 ] || _cl_current_boot_owner_process_state "$owner" >/dev/null || return $?
         printf 'coordinator\n'
@@ -539,7 +533,7 @@ _cl_stop_begin_locked() {
         updated=$(jq -c '.lifecycle="STOPPING" | .updated_at=(now|floor)' <<<"$owner") || return 70
         current=$(_cr_owner_json) || return 69
         _cl_owner_matches_context "$current" || return 69
-        current_lifecycle=$(jq -r .lifecycle <<<"$current") || return 69
+        _cr_jq_memo current_lifecycle "$current" -r .lifecycle || return 69
         [ "$current_lifecycle" = "$lifecycle" ] || return 69
         _cl_current_boot_owner_process_state "$current" >/dev/null || return $?
         _cr_atomic_write "$(_cr_owner_file)" "$updated" || return 70

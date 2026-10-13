@@ -542,6 +542,61 @@ assert_escalation_failed() {
 
 for flow in "${FLOWS[@]}"; do run_flow "$flow"; done
 
+# --- the service stop: jq spawns per ordered stop -----------------------------
+# A cam-operate restart first stops the old daemon, and on the board each of those
+# jq costs about as much as above, so this count is a floor under every restart.
+# Since #184 the daemon's own TERM trap usually runs the ordered stop
+# (service_stop_daemon); when the stop script takes the recovery lock first it runs
+# the systemd hand-off with the daemon already gone (service_stop_systemd).  Same
+# ratchet as above.  History (daemon/systemd): 9d7ca3d 34/93; the owner check in one
+# jq and the lifecycle reads through the memo 6/37.
+# flow                     ceiling   terminal state
+declare -A STOP_CEILING=(
+    [service_stop_daemon]=6    # rc 0, owner removed, every managed process stopped
+    [service_stop_systemd]=37  # the same, run by cam_operate_stop.sh --systemd
+)
+run_stop_flow() {
+    local flow=$1 rc=0 n
+    fresh_board
+    case "$flow" in
+        service_stop_daemon)
+            # The daemon created the owner and wrote ACTIVE itself, so its memo holds what
+            # that write put there: the same process does both uncounted (the shim is not
+            # on its PATH yet), then the stop is counted.  A daemon whose memo was emptied
+            # (it holds 512 entries) spends 8.
+            rm -f "$PIM_CAMERA_RUN_DIR/owner.json"
+            # shellcheck disable=SC2016 # expanded by the daemon shell
+            env PATH="$STUB_PATH" COUNT_PATH="$SHIM_PATH" JQ_BUDGET_LOG="$WORK/jq.$flow" flock -s "$WORK/flow.lock" bash -c '
+                enable -n kill
+                source "$PIM_LIB/cam_operate_control.sh"; source "$PIM_LIB/cam_liveness.sh"
+                cam_owner_create "$1" >/dev/null && cam_owner_set_lifecycle ACTIVE >/dev/null || exit 90
+                : > "$JQ_BUDGET_LOG"
+                PATH=$COUNT_PATH
+                cam_liveness_ordered_stop
+            ' "$flow" "$DAEMON_PID" 2> "$WORK/$flow.err" || rc=$?
+            flock -x -w 60 "$WORK/flow.lock" true || die "$flow: a child was left running for 60s"
+            ;;
+        service_stop_systemd)
+            # The daemon is gone (its TERM trap lost the lock and exited); systemd hands
+            # the stop script no owner context.  The script runs in a shell whose kill is
+            # the stub, as the daemon flows do: its BG stop signals the fixture's pid.
+            rm -f "$PIM_CAMERA_PROC_ROOT/$DAEMON_PID/stat"
+            # shellcheck disable=SC2016 # expanded by the stop shell
+            counted "$WORK/jq.$flow" bash -c 'enable -n kill; . "$PIM_BIN/cam_operate_stop.sh" --systemd' 2> "$WORK/$flow.err" || rc=$?
+            ;;
+    esac
+    [ "$rc" -eq 0 ] || fail "$flow: the ordered stop returned $rc ($(tail -n 3 "$WORK/$flow.err" | tr '\n' ' '))"
+    [ ! -e "$PIM_CAMERA_RUN_DIR/owner.json" ] || fail "$flow: the owner survived the stop"
+    # The app, ord and vcm are tracked in procs; the BG checker by its process record.
+    grep -Fqx -e gstApp -e ord -e vcm "$WORK/procs" && fail "$flow: managed processes survived the stop ($(tr '\n' ' ' < "$WORK/procs"))"
+    ! compgen -G "$PIM_CAMERA_PROCESS_ROOT/*/cmdline" >/dev/null || fail "$flow: the BG checker survived the stop"
+    n=$(lines "$WORK/jq.$flow")
+    printf 'jq budget: %-20s stop=%-4s ceiling=%s\n' "$flow" "$n" "${STOP_CEILING[$flow]}"
+    [ "$n" -gt 0 ] || fail "$flow: the shim counted nothing"
+    [ "$n" -le "${STOP_CEILING[$flow]}" ] || fail "$flow: $n jq spawns, ceiling ${STOP_CEILING[$flow]}"
+}
+for flow in service_stop_daemon service_stop_systemd; do run_stop_flow "$flow"; done
+
 # Positive control: one known jq through the same PATH adds exactly one line.
 : > "$WORK/jq.control"
 env PATH="$SHIM_PATH" JQ_BUDGET_LOG="$WORK/jq.control" jq -n 1 >/dev/null

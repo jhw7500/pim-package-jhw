@@ -236,7 +236,8 @@ _cr_wake_monitor_wait || fail 'a missing monitor-wait file made the wake fail'
 # A process that waits like the daemon: sources the libraries, keeps a long-lived child (vcm),
 # optionally sets a TERM trap that spends 0.4s in a command substitution (like the ordered stop)
 # or one that holds the recovery lock for 1s and touches $1.won (like the daemon's own ordered
-# stop, longer than the 0.5s yield so the systemd side really waits on the lock), then one wait on the real pending path.  It writes "rc elapsed_ms" to $1 and touches $1.ready
+# stop, longer than the 0.5s yield so the systemd side really waits on the lock), then one
+# wait on the real pending path.  It writes "rc elapsed_ms" to $1 and touches $1.ready
 # before waiting.
 start_waiter() {
     bash -c '
