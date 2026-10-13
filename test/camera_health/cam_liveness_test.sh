@@ -1023,4 +1023,54 @@ chmod +x "$WORK/stub/recoveryctl"
 PIM_CAMERA_RECOVERYCTL="$WORK/stub/recoveryctl" timeout 2 bash "$PIM_BIN/restart_app.sh"
 [ "$(count_log 'shim:request gstapp_restart --source legacy-restart-app --reason legacy-wrapper --wait 120')" -eq 1 ] || fail 'restart_app shim did not forward exactly once'
 
+echo '=== the owner context verdict ==='
+# _cl_owner_matches_context guards each step of the ordered stop.  It used to spawn a
+# schema jq and one jq per field; it is now _cr_owner_matches_exported_context (its jq
+# count is pinned by test/cam_link/jq_budget_test.sh).  The table pins the verdict: the
+# owner passes the schema and its six fields equal the context's (the schema already keeps
+# them non-empty).  A damaged owner is refused - several documents, also against the
+# two-line context an adopt of such an owner made, or a string field ending in a newline
+# (the old per-field command substitution trimmed that newline).
+ctx_owner='{"boot_id":"boot-a","invocation_id":"inv-1","pid":4242,"proc_start_time":"111","token":"tok-1","created_at":1700000000,"lifecycle":"ACTIVE"}'
+ctx_case() {
+    local want=$1 what=$2 owner=$3 got=0
+    shift 3
+    (
+        local kv
+        export PIM_CAMERA_OWNER_BOOT_ID=boot-a PIM_CAMERA_OWNER_INVOCATION=inv-1 PIM_CAMERA_OWNER_PID=4242 \
+            PIM_CAMERA_OWNER_PROC_START_TIME=111 PIM_CAMERA_OWNER_TOKEN=tok-1 PIM_CAMERA_OWNER_CREATED_AT=1700000000
+        for kv in "$@"; do export "${kv?}"; done
+        _CR_JQ_MEMO=(); _CR_JQ_MEMO_BYTES=0
+        _cl_owner_matches_context "$owner"
+    ) || got=$?
+    [ "$got" -eq "$want" ] || fail "owner context: $what returned $got, not $want"
+}
+ctx_case 0 'the owner' "$ctx_owner"
+ctx_case 0 'the owner while stopping' "${ctx_owner/ACTIVE/STOPPING}"
+ctx_case 69 'another boot' "${ctx_owner/boot-a/boot-b}"
+ctx_case 69 'another invocation' "${ctx_owner/inv-1/inv-2}"
+ctx_case 69 'another pid' "${ctx_owner/4242,/4243,}"
+ctx_case 69 'another start time' "${ctx_owner/\"111\"/\"112\"}"
+ctx_case 69 'another token' "${ctx_owner/tok-1/tok-2}"
+ctx_case 69 'another created_at' "${ctx_owner/1700000000/1700000001}"
+ctx_case 69 'an empty token in the context' "$ctx_owner" PIM_CAMERA_OWNER_TOKEN=
+ctx_case 69 'no created_at' "${ctx_owner/,\"created_at\":1700000000/}"
+ctx_case 69 'a pid written as a string' "${ctx_owner/\"pid\":4242,/\"pid\":\"4242\",}"
+ctx_case 69 'a lifecycle outside the schema' "${ctx_owner/ACTIVE/BOGUS}"
+ctx_case 69 'two documents' "$ctx_owner"$'\n'"$ctx_owner"
+ctx_case 69 'two documents against a two-line context' "$ctx_owner"$'\n'"$ctx_owner" \
+    PIM_CAMERA_OWNER_BOOT_ID=$'boot-a\nboot-a' PIM_CAMERA_OWNER_INVOCATION=$'inv-1\ninv-1' \
+    PIM_CAMERA_OWNER_PID=$'4242\n4242' PIM_CAMERA_OWNER_PROC_START_TIME=$'111\n111' \
+    PIM_CAMERA_OWNER_TOKEN=$'tok-1\ntok-1' PIM_CAMERA_OWNER_CREATED_AT=$'1700000000\n1700000000'
+ctx_case 69 'a token ending in a newline' "${ctx_owner/\"tok-1\"/\"tok-1\\n\"}"
+ctx_case 69 'a boot id ending in a newline' "${ctx_owner/\"boot-a\"/\"boot-a\\n\"}"
+ctx_case 69 'not JSON' 'not json'
+ctx_case 69 'an empty owner' ''
+# The daemon's ordered stop refuses an owner that is not its own before it writes anything.
+reset_case
+owner_at ACTIVE
+before=$(fingerprint "$PIM_CAMERA_RUN_DIR/owner.json")
+( PIM_CAMERA_OWNER_TOKEN=tok-other; expect_rc 69 cam_liveness_ordered_stop )
+[ "$(fingerprint "$PIM_CAMERA_RUN_DIR/owner.json")" = "$before" ] || fail 'owner context: a foreign stop changed the owner'
+
 echo 'cam liveness: PASS'
