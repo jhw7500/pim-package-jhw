@@ -352,6 +352,42 @@ _cr_record_ready_put() {
                 _cr_jq_memo_put "${ready//:/$'\n'}" "$current" -r -s --argjson a "$saved" --arg boot "$boot" --arg ei "" --arg et "" "$_CR_RECORD_READY_PROGRAM" ;;
     esac
 }
+# start_cam 처럼 메모가 빈 새 프로세스의 실행자 가드(cam_executor_assert_context)는 active 의 .id,
+# 레코드 가드의 .owner, 그 owner 로 본 지금 owner 의 ready 를 jq 세 번으로 구한다. 데몬은 같은
+# 요청에서 이미 넣었지만 프로세스가 달라 나누지 못한다. 셋을 jq 한 번으로 구해 넣는다 (이슈
+# #168). 판정은 가드가 그대로 메모에서 한다. active 가 문서 하나일 때만 넣고, .id 는 UUID 문자열일
+# 때만(전이와 같은 조건), ready 는 지금 owner 가 문서 하나일 때만 _cr_record_guard_fold 와 같은 답으로
+# 넣는다. $a 는 가드처럼 -c .owner 텍스트를 다시 파싱한 값이다 — 메모리의 값을 바로 쓰면 1e1000
+# 같은 수에서 판정이 갈린다(jq 1.6). ready 는 그 텍스트가 argv 한 칸(128KiB)에 들어갈 때만 넣는다
+# — 가드의 --argjson 이 실패하면 69 다.
+_CR_ACTIVE_GUARD_FOLD_FILTER='([ $araw | try (fromjson | [.id, (.owner | tojson)]) catch null ] | .[0]) as $x
+  | if $x == null then "-", "-", "-" else
+      ($x[0] | if type == "string" and test("\\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\z") then . else "-" end),
+      $x[1],
+      (if length != 1 then "-" else
+         ($x[1] | fromjson) as $a
+         | ([ try [ '"$_CR_RECORD_READY_PROGRAM"' ] catch null ] | .[0]) as $r
+         | '"$_CR_RECORD_READY_ANSWER"'
+       end)
+    end'
+_cr_active_guard_fold() {
+    local active=$1 current boot out need size plan=()
+    _cr_byte_length size "$active"
+    [ "$size" -lt 131072 ] || return 0
+    current=$(_cr_owner_json) || return 0
+    boot=$(cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null) || return 0
+    out=$(jq -rs --rawfile araw <(printf '%s' "$active") --arg boot "$boot" --arg ei "" --arg et "" "$_CR_ACTIVE_GUARD_FOLD_FILTER" <<<"$current" 2>/dev/null) || return 0
+    mapfile -t plan <<<"$out"
+    [ "${#plan[@]}" -eq 3 ] || return 0
+    _cr_byte_length need "$active$active$current${plan[1]}${plan[1]}$_CR_RECORD_READY_PROGRAM$boot"
+    _cr_jq_memo_room 3 $(( need + 512 )) || return 0
+    [ "${plan[0]}" = - ] || _cr_jq_memo_put "${plan[0]}" "$active" -r .id
+    [ "${plan[1]}" != - ] || return 0
+    _cr_jq_memo_put "${plan[1]}" "$active" -c .owner
+    _cr_byte_length size "${plan[1]}"
+    [ "$size" -lt 131072 ] || return 0
+    _cr_record_ready_put "$current" "${plan[1]}" "$boot" "${plan[2]}"
+}
 _cr_record_owner_matches() { local saved current; _cr_jq_memo saved "$1" -c .owner || return 1; current=$(_cr_owner_json) || return 1; _cr_record_guard_fold "$saved" "$current"; _cr_owner_immutable_equal "$saved" "$current" && _cr_owner_snapshot_live "$current"; }
 # 이 가드는 호출부 31곳을 지난다 (camera_hard_reset 은 25회 부른다). 예전에는
 # .owner 추출 + immutable_equal + snapshot_live + lifecycle_in 으로 jq 를 네 번

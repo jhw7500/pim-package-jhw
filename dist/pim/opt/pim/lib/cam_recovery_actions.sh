@@ -195,7 +195,9 @@ cam_executor_assert_context() {
     [ -n "${PIM_CAMERA_REQUEST_ID:-}" ] || return 69
     active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69
     # 부수 효과마다 불린다 (camera_hard_reset 은 27회). active 는 그동안 같은 바이트라
-    # id 추출을 메모하면 jq 는 한 번만 뜬다 (이슈 #150).
+    # id 추출을 메모하면 jq 는 한 번만 뜬다 (이슈 #150). 메모가 빈 새 프로세스(start_cam)면 이
+    # id 와 아래 레코드 가드의 jq 두 번의 답을 jq 한 번으로 미리 넣는다 (이슈 #168).
+    _cr_jq_memo_has "$active" -r .id || _cr_active_guard_fold "$active"
     _cr_jq_memo active_id "$active" -r .id || active_id=""
     [ "$active_id" = "$PIM_CAMERA_REQUEST_ID" ] || return 69
     _cr_record_owner_ready "$active" RECOVERING APPLYING_CONFIG || return 69
