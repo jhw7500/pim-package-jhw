@@ -42,18 +42,19 @@ set -euo pipefail
 # 17/25/29/29/33, restart_again 25; start_cam's executor guard puts the active id,
 # the record owner and its ready answer in one jq (#168) 17/23/27/27/33, restart_again 23;
 # service-state writes build and canonicalise the document in one jq (#168)
-# 17/22/25/25/31, restart_again 22.
+# 17/22/25/25/31, restart_again 22; the lifecycle write puts the export answer the
+# execution context reads (#168) 16/21/24/24/30, restart_again 21.
 # flow                   ceiling   measured        terminal state the flow must reach
 declare -A CEILING=(
-    [gstapp_stop]=17           #   2 + 15          SUCCEEDED
-    [gstapp_restart]=22        #   2 + 18 + 2      SUCCEEDED
-    [camera_hard_reset]=25     #   2 + 21 + 2      SUCCEEDED
-    [module_reload]=25         #   2 + 21 + 2      SUCCEEDED
-    [module_reload_fails]=31   #   2 + 29          FAILED rc=1: module_reload and
+    [gstapp_stop]=16           #   2 + 14          SUCCEEDED
+    [gstapp_restart]=21        #   2 + 17 + 2      SUCCEEDED
+    [camera_hard_reset]=24     #   2 + 20 + 2      SUCCEEDED
+    [module_reload]=24         #   2 + 20 + 2      SUCCEEDED
+    [module_reload_fails]=30   #   2 + 28          FAILED rc=1: module_reload and
                                #                   camera_hard_reset fail at modprobe
                                #                   (rc 23) before the app starts,
                                #                   reboot_fallback is refused (rc 1)
-    [gstapp_restart_again]=22  #   2 + 18 + 2      SUCCEEDED after an earlier
+    [gstapp_restart_again]=21  #   2 + 17 + 2      SUCCEEDED after an earlier
                                #                   gstapp_restart that succeeded
 )
 FLOWS=(gstapp_stop gstapp_restart camera_hard_reset module_reload module_reload_fails gstapp_restart_again)
