@@ -599,16 +599,20 @@ _cl_signal_daemon_locked() {
         process_state=$(_cl_current_boot_owner_process_state "$owner") || return $?
         case "$process_state" in
             absent|reused) return 0 ;;
-            live) "$PIM_CAMERA_KILL" -TERM "$PIM_CAMERA_OWNER_PID" ;;
+            live) "$PIM_CAMERA_KILL" -TERM "$PIM_CAMERA_OWNER_PID" || return $? ;;
             *) return 70 ;;
         esac
-        return $?
+        # 데몬이 루프 끝에 게시한 전경 sleep 에 있으면 trap 은 그 sleep 이 끝나야 돈다 — 그 sleep 도
+        # 끝낸다. TERM 이 먼저다: 거꾸로면 sleep 이 끝난 데몬이 trap 없이 다음 명령을 시작할 수 있다.
+        _cr_wake_monitor_wait "$PIM_CAMERA_OWNER_PID"
+        return 0
     fi
     stat_path="$PIM_CAMERA_PROC_ROOT/$PIM_CAMERA_OWNER_PID/stat"
     [ -e "$stat_path" ] || return 0
     actual=$(_cr_proc_start "$PIM_CAMERA_OWNER_PID" 2>/dev/null) || return 69
     [ "$actual" = "$PIM_CAMERA_OWNER_PROC_START_TIME" ] || return 69
-    "$PIM_CAMERA_KILL" -TERM "$PIM_CAMERA_OWNER_PID"
+    "$PIM_CAMERA_KILL" -TERM "$PIM_CAMERA_OWNER_PID" || return $?
+    _cr_wake_monitor_wait "$PIM_CAMERA_OWNER_PID"
 }
 cam_liveness_signal_daemon() { _cr_lock_call _cl_signal_daemon_locked; }
 

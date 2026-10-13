@@ -672,27 +672,37 @@ cam_monitor_control_iteration() {
 }
 
 # 데몬 루프 끝의 대기 (이슈 #168 후속). 예전에는 sleep 2 였다 — 그 사이에 들어온 요청은 대기가
-# 끝날 때까지(보드 실측 평균 1.35초, 작업 중에 오면 2.3초) claim 되지 않았다. 상한 $1 초(정수)를
-# 0.25초씩 외부 sleep 으로 기다리며, pending($2)이 새로 생기면 바로 돌아간다. $3 이 1 이면 poll 때부터
-# 있었는데 이번 반복이 집지 않은 pending 이다 — 그것으로 깨면 루프가 쉬지 않고 돌므로 예전처럼 다
-# 기다린다. 그 밖에 이미 있는 pending(poll 뒤에 생긴 것)이면 기다리지 않는다.
-# 내장 read -t 로 기다리지 않는 이유: TERM trap 이 read 안에서 돌다가 read 의 시간 초과 알람에 끊긴다
-# (bash 5.0.17 재현 10/10 — ordered stop 이 끝나지 않고 잠금을 쥔 채 루프가 계속 돈다). 외부 sleep 은
-# bash 가 그것이 끝날 때까지 trap 을 미루므로 trap 은 평소처럼 돌고, 늦어도 한 조각(0.25초)이다.
-# 남은 pending 으로 다 기다리는 경로는 예전처럼 sleep 한 번이라 trap 이 최대 상한만큼 늦는다.
-# 돌려주는 값: 0 이면 새 pending 으로 일찍 끝남, 1 이면 상한까지 기다림.
+# 끝날 때까지(보드 실측 평균 1.35초, 작업 중에 오면 2.3초) claim 되지 않았다. 상한 $1 초를 전경
+# sleep 하나로 기다리되, 그 sleep 의 pid 와 데몬 pid 를 $4 파일에 내놓는다. pending 을 쓴 submit 이
+# 그 sleep 만 끝낸다(_cr_wake_monitor_wait) — 쉬는 동안의 비용은 예전 sleep 2 와 같다.
+# $3 이 1 이면 poll 때부터 있었는데 이번 반복이 집지 않은 pending($2)이다 — 그것으로 깨면 루프가 쉬지
+# 않고 돌므로 예전처럼 다 기다린다. 그 밖에 이미 있는 pending(poll 뒤에 생긴 것)이면 기다리지 않는다.
+# pid 를 내놓은 뒤 pending 을 한 번 더 본다: 첫 확인과 게시 사이에 쓴 submit 은 아직 끝낼 pid 가
+# 없었다. 이 재확인은 놓치는 구간을 좁힐 뿐이다 — 재확인 뒤·exec 전에 쓴 submit 은 comm 이 아직
+# sleep 이 아니라 끝내지 못하고, 그 요청은 상한 안에 처리된다. 신호로 끊는 wait(sleep & + trap +
+# wait)를 쓰지 않는 이유: 보드의 bash 5.0.17 은 trap 걸린 신호로 끊긴 wait 뒤 그 자식의 끝을 놓쳐,
+# 같은 pid 를 다시 wait 하면 영원히 멈추고(오래 사는 자식 vcm 이 있을 때) 그렇지 않아도 작업 표에
+# job 이 쌓인다(닫힌 PR #181). 내장 read -t 도 TERM trap 을 알람으로 끊는다(10/10 재현). 전경 sleep
+# 동안 bash 는 trap 을 sleep 이 끝날 때까지 미룬다 — ExecStop 의 TERM 은 주 pid 에만 가므로 정지는
+# 최대 상한만큼 늦고, 외부 정지가 데몬에 신호할 때는 게시된 sleep 도 끝낸다(_cl_signal_daemon_locked;
+# 남은 pending 으로 다 기다리는 sleep 은 게시하지 않아 예전처럼 상한까지 간다). 끊긴 sleep 의
+# "Terminated" 줄은 2>/dev/null 로 막는다. sleep 을 띄우지 못하면(0·99·신호가 아닌 값) 숨기지 않은
+# sleep 으로 다시 기다린다 — 오류를 숨기지 않고, 그 sleep 이 뜨면 상한만큼 쉰다.
+# 돌려주는 값: 0 이면 새 pending 으로 일찍 끝남, 1 이면 상한까지 기다림(또는 pending 없이 끊김).
 cam_monitor_wait() {
-    local limit=$1 pending=$2 stale=$3 slices i
+    local limit=$1 pending=$2 stale=$3 wake=${4:-} rc=0
     if [ -f "$pending" ]; then
         [ "$stale" = 1 ] || return 0
         sleep "$limit"
         return 1
     fi
-    slices=$(( limit * 4 ))
-    for (( i = 0; i < slices; i++ )); do
-        sleep 0.25
-        [ ! -f "$pending" ] || return 0
-    done
+    { ( printf '%s %s\n' "$BASHPID" "$$" > "$wake"; [ ! -f "$pending" ] || exit 99; exec sleep "$limit" ); } 2>/dev/null || rc=$?
+    { : > "$wake"; } 2>/dev/null
+    if [ "$rc" -ne 0 ] && [ "$rc" -ne 99 ] && [ "$rc" -lt 128 ]; then
+        sleep "$limit"
+        return 1
+    fi
+    [ "$rc" -ne 0 ] && [ -f "$pending" ] && return 0
     return 1
 }
 # 대기가 그것으로 깨면 안 되는 pending 인가: poll 때부터 있었는데($1 = 1) 이번 반복이 집지 않았다 —
@@ -703,11 +713,11 @@ cam_monitor_pending_stale() {
     return 1
 }
 # 루프 끝에서 부른다: pending 경로($1), poll 직전에 pending 이 있었는가($2 = 1), 이번 반복의 rc($3)와
-# 일 종류($4)로 남은 pending 인지 정하고 2초까지 기다린다. 값은 cam_monitor_wait 와 같다.
+# 일 종류($4)로 남은 pending 인지 정하고 2초까지 기다린다. $5 는 대기 pid 파일. 값은 cam_monitor_wait 와 같다.
 cam_monitor_iteration_wait() {
     local stale=0
     ! cam_monitor_pending_stale "$2" "$3" "$4" || stale=1
-    cam_monitor_wait 2 "$1" "$stale"
+    cam_monitor_wait 2 "$1" "$stale" "${5:-}"
 }
 
 cam_daemon_begin_stop() {
