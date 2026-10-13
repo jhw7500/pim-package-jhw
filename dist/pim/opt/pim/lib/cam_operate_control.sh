@@ -671,6 +671,45 @@ cam_monitor_control_iteration() {
     return "$control_rc"
 }
 
+# 데몬 루프 끝의 대기 (이슈 #168 후속). 예전에는 sleep 2 였다 — 그 사이에 들어온 요청은 대기가
+# 끝날 때까지(보드 실측 평균 1.35초, 작업 중에 오면 2.3초) claim 되지 않았다. 상한 $1 초(정수)를
+# 0.25초씩 외부 sleep 으로 기다리며, pending($2)이 새로 생기면 바로 돌아간다. $3 이 1 이면 poll 때부터
+# 있었는데 이번 반복이 집지 않은 pending 이다 — 그것으로 깨면 루프가 쉬지 않고 돌므로 예전처럼 다
+# 기다린다. 그 밖에 이미 있는 pending(poll 뒤에 생긴 것)이면 기다리지 않는다.
+# 내장 read -t 로 기다리지 않는 이유: TERM trap 이 read 안에서 돌다가 read 의 시간 초과 알람에 끊긴다
+# (bash 5.0.17 재현 10/10 — ordered stop 이 끝나지 않고 잠금을 쥔 채 루프가 계속 돈다). 외부 sleep 은
+# bash 가 그것이 끝날 때까지 trap 을 미루므로 trap 은 평소처럼 돌고, 늦어도 한 조각(0.25초)이다.
+# 남은 pending 으로 다 기다리는 경로는 예전처럼 sleep 한 번이라 trap 이 최대 상한만큼 늦는다.
+# 돌려주는 값: 0 이면 새 pending 으로 일찍 끝남, 1 이면 상한까지 기다림.
+cam_monitor_wait() {
+    local limit=$1 pending=$2 stale=$3 slices i
+    if [ -f "$pending" ]; then
+        [ "$stale" = 1 ] || return 0
+        sleep "$limit"
+        return 1
+    fi
+    slices=$(( limit * 4 ))
+    for (( i = 0; i < slices; i++ )); do
+        sleep 0.25
+        [ ! -f "$pending" ] || return 0
+    done
+    return 1
+}
+# 대기가 그것으로 깨면 안 되는 pending 인가: poll 때부터 있었는데($1 = 1) 이번 반복이 집지 않았다 —
+# rc($2) 0 인데 일 종류($3)가 repair·빈 값이거나, rc 1(poll 이 pending 을 못 봄). 맞으면 0.
+cam_monitor_pending_stale() {
+    [ "$1" = 1 ] || return 1
+    case "$2:$3" in 0:repair|0:|1:*) return 0 ;; esac
+    return 1
+}
+# 루프 끝에서 부른다: pending 경로($1), poll 직전에 pending 이 있었는가($2 = 1), 이번 반복의 rc($3)와
+# 일 종류($4)로 남은 pending 인지 정하고 2초까지 기다린다. 값은 cam_monitor_wait 와 같다.
+cam_monitor_iteration_wait() {
+    local stale=0
+    ! cam_monitor_pending_stale "$2" "$3" "$4" || stale=1
+    cam_monitor_wait 2 "$1" "$stale"
+}
+
 cam_daemon_begin_stop() {
     cam_owner_set_lifecycle STOPPING
 }

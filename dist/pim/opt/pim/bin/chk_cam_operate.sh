@@ -1373,6 +1373,8 @@ cam_monitor_reload_config() {
     apply_storage_mode_overrides
 }
 
+# 루프 끝 대기(cam_monitor_wait)가 보는 pending 경로. 실행 중에는 바뀌지 않는다.
+pending_path=$(_cr_pending_file)
 while :
 do
 
@@ -1380,6 +1382,8 @@ do
     file_cnt=0
 
     request_rc=0
+    pending_before=0
+    [ ! -f "$pending_path" ] || pending_before=1
     cam_monitor_control_iteration cam_monitor_reload_config || request_rc=$?
     case "$request_rc" in
         0) [ "$PIM_CAMERA_MONITOR_DID_WORK" -eq 0 ] || timer=0 ;;
@@ -1767,8 +1771,10 @@ do
         CheckFinalArrival
     fi
 
-    sleep 2
-    ((timer+=2))
+    # 새 요청이 오면 대기를 끊는다(cam_monitor_iteration_wait). 일찍 끊긴 반복은 timer 를 늘리지 않는다.
+    if ! cam_monitor_iteration_wait "$pending_path" "$pending_before" "$request_rc" "${PIM_CAMERA_MONITOR_WORK_TYPE:-}"; then
+        ((timer+=2))
+    fi
     #GetConfig
     #logger -p local0.notice "[$KEY][$tag:$LINENO] timer:$timer"
 done

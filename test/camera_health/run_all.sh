@@ -22,6 +22,7 @@ bash ord_single_owner_test.sh
 bash cam_operate_control_test.sh
 bash cam_liveness_test.sh
 bash jq_memo_test.sh
+bash monitor_wait_test.sh
 bash request_semantics_test.sh
 bash request_parse_rc_test.sh
 bash cam_stop_order_test.sh
