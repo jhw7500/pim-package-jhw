@@ -12,6 +12,7 @@ _cr_pending_file() { printf '%s/pending.json' "$(_cr_recovery_dir)"; }
 _cr_active_file() { printf '%s/active.json' "$(_cr_recovery_dir)"; }
 _cr_result_file() { printf '%s/results/%s.json' "$(_cr_recovery_dir)" "$1"; }
 _cr_state_file() { printf '%s/recovery/state.json' "$PIM_CAMERA_STATE_DIR"; }
+_cr_monitor_wait_file() { printf '%s/monitor_wait.pid' "$PIM_CAMERA_RUN_DIR"; }
 _cr_history_file() { printf '%s/recovery/history/%s.json' "$PIM_CAMERA_STATE_DIR" "$1"; }
 _cr_service_file() { printf '%s/service-state.json' "$PIM_CAMERA_STATE_DIR"; }
 _cr_now() { date +%s; }
@@ -1042,7 +1043,25 @@ cam_request_submit() {
         return 75
     fi
     _cr_owner_lifecycle_in ACTIVE DEGRADED || return $?
-    _cr_lock_call _cr_request_new "$@"
+    _cr_lock_call _cr_request_new "$@" || return $?
+    _cr_wake_monitor_wait
+}
+# 데몬 루프 끝 대기(cam_monitor_wait)의 sleep 을 끝내 새 pending 을 바로 보게 한다 (이슈 #168).
+# 대기는 "sleep pid 데몬 pid" 를 _cr_monitor_wait_file 에 내놓고 정상으로 돌아올 때 비운다(TERM trap 으로
+# 끝나면 남지만 정지 때 RuntimeDirectory 가 지워지고 아래 대조가 막는다). 그 pid 가 지금도 sleep 이고
+# 부모가 적힌 데몬일 때만(기대 부모 $1 이 주어지면 그것과도 같을 때만) TERM 을 보낸다 — 그 밖의
+# 프로세스에는 보내지 않는다. 가짜 proc root(테스트)에서는 보내지 않는다. jq 없이 내장 read 로 읽는다.
+# 보내지 못해도 데몬은 2초 안에 pending 을 본다. 언제나 0.
+_cr_wake_monitor_wait() {
+    local expect=${1:-} pid parent stat
+    [ "$PIM_CAMERA_PROC_ROOT" = /proc ] || return 0
+    { read -r pid parent < "$(_cr_monitor_wait_file)"; } 2>/dev/null || return 0
+    [[ $pid =~ ^[0-9]+$ && $parent =~ ^[0-9]+$ ]] || return 0
+    [ -z "$expect" ] || [ "$parent" = "$expect" ] || return 0
+    { read -r stat < "/proc/$pid/stat"; } 2>/dev/null || return 0
+    [[ $stat == "$pid (sleep) "[A-Za-z]" $parent "* ]] || return 0
+    kill -TERM "$pid" 2>/dev/null || :
+    return 0
 }
 _cr_history_request() {
     local id=$1 request=$2 history updated
