@@ -217,18 +217,28 @@ _cr_owner_immutable_equal() {
 # 비교를 한 번의 jq 로 끝내고, /proc 확인에 필요한 pid·proc_start_time 과 분기에 쓸
 # lifecycle 만 돌려준다. 기존에는 snapshot_live / exported_fields_equal /
 # snapshot_lifecycle_in 이 각각 jq 를 띄워 호출당 3회였다.
-_cr_owner_executor_snapshot() {
-    local owner=$1 boot=$2 ei=$3 et=$4 skip_live=$5
-    jq -r --arg boot "$boot" --arg ei "$ei" --arg et "$et" --arg skip "$skip_live" \
-          --arg b "${PIM_CAMERA_OWNER_BOOT_ID:-}" --arg iv "${PIM_CAMERA_OWNER_INVOCATION:-}" \
-          --arg p "${PIM_CAMERA_OWNER_PID:-}" --arg ps "${PIM_CAMERA_OWNER_PROC_START_TIME:-}" \
-          --arg tk "${PIM_CAMERA_OWNER_TOKEN:-}" --arg ca "${PIM_CAMERA_OWNER_CREATED_AT:-}" \
-      "if ($_CR_OWNER_SCHEMA_FILTER)
+# 프로그램과 인자는 lifecycle 쓰기가 답을 메모에 넣을 때도 같은 것을 쓴다 (이슈 #168): 메모 키가
+# 인자 전부와 프로그램이다. 인자 헬퍼는 boot, ei, et, skip 을 받고 env 6필드는 지금 값을 넣어
+# _CR_EXECUTOR_ARGS 를 채운다.
+_CR_OWNER_EXECUTOR_PROGRAM="if ($_CR_OWNER_SCHEMA_FILTER)
           and ($_CR_OWNER_EXPORTED_EQ_FILTER)
           and (\$skip == \"1\" or ((.boot_id == \$boot)
                and (\$ei == \"\" or .invocation_id == \$ei)
                and (\$et == \"\" or .token == \$et)))
-       then [(.pid|tostring), .proc_start_time, .lifecycle] | join(\"\\n\") else empty end" <<<"$owner"
+       then [(.pid|tostring), .proc_start_time, .lifecycle] | join(\"\\n\") else empty end"
+_cr_executor_snapshot_args() {
+    _CR_EXECUTOR_ARGS=(-r --arg boot "$1" --arg ei "$2" --arg et "$3" --arg skip "$4"
+        --arg b "${PIM_CAMERA_OWNER_BOOT_ID:-}" --arg iv "${PIM_CAMERA_OWNER_INVOCATION:-}"
+        --arg p "${PIM_CAMERA_OWNER_PID:-}" --arg ps "${PIM_CAMERA_OWNER_PROC_START_TIME:-}"
+        --arg tk "${PIM_CAMERA_OWNER_TOKEN:-}" --arg ca "${PIM_CAMERA_OWNER_CREATED_AT:-}")
+}
+# 메모로 부르고 값을 출력한다. 호출자는 $(...) 로 받으므로 메모를 새로 넣지는 못하지만, 이 프로세스가
+# 미리 넣은 답(lifecycle 쓰기)은 서브셸에서도 읽힌다.
+_cr_owner_executor_snapshot() {
+    local owner=$1 out
+    _cr_executor_snapshot_args "$2" "$3" "$4" "$5"
+    _cr_jq_memo out "$owner" "${_CR_EXECUTOR_ARGS[@]}" "$_CR_OWNER_EXECUTOR_PROGRAM" || return $?
+    printf '%s' "$out"
 }
 # cam liveness 의 주기 guard 전용. schema + exported 6필드 + 현재 boot + ACTIVE 를
 # 한 번의 jq 로 판정하고, 매 호출마다 다시 확인할 /proc tuple 만 돌려준다.
@@ -288,6 +298,10 @@ _CR_OWNER_GUARD_FOLD_FILTER='if length != 1 then "-", "-" else .[0] as $o | '"$_
 _CR_OWNER_EXPORT_PROGRAM="if ($_CR_OWNER_SCHEMA_FILTER) then [.boot_id,.invocation_id,(.pid|tostring),.proc_start_time,.token,(.created_at|tostring)] | join(\"\\n\") else empty end"
 # 그 답을 한 줄로: 출력이 하나이고 여섯 줄 모두 공백 없는 출력 가능 ASCII 일 때만 "+" 와 탭으로 이은
 # 여섯 필드, 그 밖은 "-". 그러면 jq -r 출력을 $(...) 로 받은 값과 바이트까지 같고 줄 나눔도 같다.
+# executor 스냅샷의 답(이슈 #168): 가드는 ei·et 로 env 의 invocation·token 을 넘기므로 같은 값으로
+# 다시 묶어 같은 프로그램을 돈다. 출력이 하나이고 숫자\n숫자\n대문자 꼴일 때만 "+pid:start:lifecycle".
+_CR_OWNER_EXECUTOR_ANSWER='([ try [ $o | ($iv) as $ei | ($tk) as $et | '"$_CR_OWNER_EXECUTOR_PROGRAM"' ] catch null ] | .[0]) as $e
+    | if ($e | type) == "array" and ($e | length) == 1 and ($e[0] | type == "string" and test("\\A[0-9]+\\n[0-9]+\\n[A-Z_]+\\z")) then "+" + ($e[0] | split("\n") | join(":")) else "-" end'
 _CR_OWNER_EXPORT_ANSWER='([ try [ $o | '"$_CR_OWNER_EXPORT_PROGRAM"' ] catch null ] | .[0]) as $x
     | if ($x | type) == "array" and ($x | length) == 1 and ($x[0] | type == "string" and test("\\A[!-~]+(\\n[!-~]+){5}\\z")) then "+" + ($x[0] | split("\n") | join("\t")) else "-" end'
 _cr_owner_guard_put() {
@@ -876,7 +890,7 @@ _cr_lifecycle_allowed() {
     case "$1:$2" in STARTING:ACTIVE|STARTING:DEGRADED|STARTING:STOPPING|ACTIVE:APPLYING_CONFIG|ACTIVE:RECOVERING|ACTIVE:DEGRADED|ACTIVE:STOPPING|APPLYING_CONFIG:ACTIVE|APPLYING_CONFIG:DEGRADED|APPLYING_CONFIG:STOPPING|RECOVERING:ACTIVE|RECOVERING:DEGRADED|RECOVERING:STOPPING|DEGRADED:APPLYING_CONFIG|DEGRADED:RECOVERING|DEGRADED:STOPPING) return 0;; esac; return 1
 }
 _cr_owner_set_lifecycle_locked() {
-    local next=$1 owner current updated pair boot stamp need fields lines=()
+    local next=$1 owner current updated pair boot stamp need fields skip=0 lines=()
     owner=$(_cr_owner_json); _cr_owner_snapshot_live "$owner" || return 69
     # 현재 lifecycle 조회와 갱신본 생성을 한 번의 jq 로. 갱신본은 검사 통과 후에만 쓴다.
     # 같은 jq 가 갱신본의 두 가드 답(_CR_OWNER_GUARD_ANSWERS)도 낸다 (이슈 #150): 쓴 직후의 가드가
@@ -885,9 +899,13 @@ _cr_owner_set_lifecycle_locked() {
     # 파싱은 try 로 배열 안에 가둬 이 jq 가 새로 실패하지 않는다. boot 를 못 읽으면 넣지 않는다.
     # 다섯째 줄은 갱신본의 export 답(_CR_OWNER_EXPORT_ANSWER)이다 (이슈 #168): 실행 컨텍스트를 세우는
     # _cr_owner_export_fields 가 이 owner 로 jq 를 띄우지 않는다. 이것은 boot 와 무관하다.
+    # 여섯째 줄은 executor 스냅샷의 답(_CR_OWNER_EXECUTOR_ANSWER)이다 (이슈 #168): 인자는 가드와 같은
+    # 헬퍼로 만든다 — ei·et 는 가드 답이 쓰는 빈 값이고, executor 답은 그 안에서 env 값으로 다시 묶는다.
     boot=$(cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null) || boot=
-    pair=$(jq -r --arg next "$next" --arg boot "$boot" --arg ei "" --arg et "" '.lifecycle, (((.lifecycle=$next | .updated_at=(now|floor)) | tojson) as $u
-      | $u, ([ $u | try fromjson catch empty ] as $os | if ($os | length) == 1 then ($os[0] as $o | '"$_CR_OWNER_GUARD_ANSWERS"', '"$_CR_OWNER_EXPORT_ANSWER"') else "-", "-", "-" end))' <<<"$owner") || return 70
+    [ "${PIM_CAMERA_STOP_EXECUTOR:-}" != 1 ] || skip=1
+    _cr_executor_snapshot_args "$boot" "" "" "$skip"
+    pair=$(jq "${_CR_EXECUTOR_ARGS[@]}" --arg next "$next" '.lifecycle, (((.lifecycle=$next | .updated_at=(now|floor)) | tojson) as $u
+      | $u, ([ $u | try fromjson catch empty ] as $os | if ($os | length) == 1 then ($os[0] as $o | '"$_CR_OWNER_GUARD_ANSWERS"', '"$_CR_OWNER_EXPORT_ANSWER"', '"$_CR_OWNER_EXECUTOR_ANSWER"') else "-", "-", "-", "-" end))' <<<"$owner") || return 70
     { IFS= read -r current; IFS= read -r updated; } <<<"$pair"
     _cr_lifecycle_allowed "$current" "$next" || return 64
     _cr_owner_snapshot_live "$owner" || return 69; _cr_atomic_write "$(_cr_owner_file)" "$updated" || return 70
@@ -899,15 +917,24 @@ _cr_owner_set_lifecycle_locked() {
         _CR_LIFECYCLE_KEY=$stamp; _CR_LIFECYCLE_VAL=$next
     fi
     mapfile -t lines <<<"$pair"
-    [ "${#lines[@]}" -eq 5 ] || return 0
-    # 가드 두 답과 export 답이 함께 남게 자리를 먼저 잡는다. 못 잡으면 export 답만 넣지 않는다 —
-    # 가드 두 답은 _cr_owner_guard_put 이 예전처럼 자기 자리를 잡는다.
-    _cr_byte_length need "$updated$updated$updated$_CR_OWNER_LIVE_PROGRAM$_CR_OWNER_EXPORT_PROGRAM$boot"
-    _cr_jq_memo_room 3 $(( need + 512 )) || lines[4]=-
+    [ "${#lines[@]}" -eq 6 ] || return 0
+    # 가드 두 답, export 답, executor 답이 함께 남게 자리를 먼저 잡는다. 못 잡으면 뒤의 둘만 넣지
+    # 않는다 — 가드 두 답은 _cr_owner_guard_put 이 예전처럼 자기 자리를 잡는다.
+    _cr_byte_length need "$updated$updated$updated$updated$_CR_OWNER_LIVE_PROGRAM$_CR_OWNER_EXPORT_PROGRAM$_CR_OWNER_EXECUTOR_PROGRAM$boot"
+    _cr_jq_memo_room 4 $(( need + 1024 )) || { lines[4]=-; lines[5]=-; }
     [ -z "$boot" ] || _cr_owner_guard_put "$updated" "$boot" "${lines[2]}" "${lines[3]}"
     case "${lines[4]}" in
         +*) fields=${lines[4]#+}; _cr_jq_memo_put "${fields//$'\t'/$'\n'}" "$updated" -r "$_CR_OWNER_EXPORT_PROGRAM" ;;
     esac
+    # executor 답의 키는 가드가 부를 인자 그대로다: boot 는 파일에서 읽은 값, ei·et 는 env 의
+    # invocation·token. boot 를 못 읽었으면 가드도 69 이므로 넣지 않는다.
+    case "${lines[5]}" in
+        +*:*:*) [ -n "$boot" ] || return 0
+                _cr_executor_snapshot_args "$boot" "${PIM_CAMERA_OWNER_INVOCATION:-}" "${PIM_CAMERA_OWNER_TOKEN:-}" "$skip"
+                fields=${lines[5]#+}
+                _cr_jq_memo_put "${fields//:/$'\n'}" "$updated" "${_CR_EXECUTOR_ARGS[@]}" "$_CR_OWNER_EXECUTOR_PROGRAM" ;;
+    esac
+    return 0
 }
 cam_owner_set_lifecycle() { _cr_lock_call _cr_owner_set_lifecycle_locked "$@"; }
 

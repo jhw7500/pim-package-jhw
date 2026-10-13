@@ -558,6 +558,30 @@ want_fields=$(jq -r "$export_program" <<<"$written")
 got_fields=; _cr_jq_memo got_fields "$written" -r "$export_program"
 expect_runs 2 'the lifecycle write did not leave the export answer in the memo'
 [ "$got_fields" = "$want_fields" ] || fail "the lifecycle write put another export answer than jq prints: '$got_fields' vs '$want_fields'"
+# 같은 쓰기는 executor 스냅샷 답도 넣는다 (이슈 #168): env 에 이 owner 의 6필드가 있으면(데몬은 실행
+# 컨텍스트를 세운 상태다) 실행자 가드의 스냅샷이 jq 를 띄우지 않고, 넣은 답은 실제 jq 출력과 같다.
+# 서브셸에서 env 를 세우고 쓴 뒤 lifecycle 을 되돌린다 — 뒤의 절이 env·메모에 영향받지 않게.
+executor_program="if ($_CR_OWNER_SCHEMA_FILTER)
+          and ($_CR_OWNER_EXPORTED_EQ_FILTER)
+          and (\$skip == \"1\" or ((.boot_id == \$boot)
+               and (\$ei == \"\" or .invocation_id == \$ei)
+               and (\$et == \"\" or .token == \$et)))
+       then [(.pid|tostring), .proc_start_time, .lifecycle] | join(\"\\n\") else empty end"
+(
+    _cr_owner_export_fields "$(cat "$owner_file")" || fail 'the owner fields could not be exported for the executor check'
+    cam_owner_set_lifecycle ACTIVE || fail 'the lifecycle write to ACTIVE for the executor check was refused'
+    written=$(cat "$owner_file")
+    : > "$WORK/jq.log"
+    got=$(_cr_owner_executor_snapshot "$written" "$boot" "$PIM_CAMERA_OWNER_INVOCATION" "$PIM_CAMERA_OWNER_TOKEN" 0) ||
+        fail 'the executor snapshot refused the owner this process just wrote'
+    expect_runs 0 'the executor snapshot of the owner this process just wrote ran jq'
+    want=$(jq -r --arg boot "$boot" --arg ei "$PIM_CAMERA_OWNER_INVOCATION" --arg et "$PIM_CAMERA_OWNER_TOKEN" --arg skip 0 \
+        --arg b "$PIM_CAMERA_OWNER_BOOT_ID" --arg iv "$PIM_CAMERA_OWNER_INVOCATION" --arg p "$PIM_CAMERA_OWNER_PID" \
+        --arg ps "$PIM_CAMERA_OWNER_PROC_START_TIME" --arg tk "$PIM_CAMERA_OWNER_TOKEN" --arg ca "$PIM_CAMERA_OWNER_CREATED_AT" \
+        "$executor_program" <<<"$written")
+    [ -n "$want" ] && [ "$got" = "$want" ] || fail "the lifecycle write put another executor answer than jq prints: '$got' vs '$want'"
+    cam_owner_set_lifecycle RECOVERING || fail 'the lifecycle write back to RECOVERING was refused'
+) || exit 1
 cam_owner_set_lifecycle ACTIVE || fail "the lifecycle write back to ACTIVE was refused"
 # 다른 쓰기(이 함수를 거치지 않음)는 새 파일이라 키가 달라 다시 읽는다.
 jq -c '.lifecycle = "DEGRADED"' "$owner_file" > "$owner_file.next" && mv -f "$owner_file.next" "$owner_file"
