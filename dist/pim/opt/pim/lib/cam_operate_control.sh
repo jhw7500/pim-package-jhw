@@ -672,27 +672,44 @@ cam_monitor_control_iteration() {
 }
 
 # 데몬 루프 끝의 대기 (이슈 #168 후속). 예전에는 sleep 2 였다 — 그 사이에 들어온 요청은 대기가
-# 끝날 때까지(보드 실측 평균 1.35초, 작업 중에 오면 2.3초) claim 되지 않았다. 상한 $1 초(정수)를
-# 0.25초씩 외부 sleep 으로 기다리며, pending($2)이 새로 생기면 바로 돌아간다. $3 이 1 이면 poll 때부터
-# 있었는데 이번 반복이 집지 않은 pending 이다 — 그것으로 깨면 루프가 쉬지 않고 돌므로 예전처럼 다
-# 기다린다. 그 밖에 이미 있는 pending(poll 뒤에 생긴 것)이면 기다리지 않는다.
-# 내장 read -t 로 기다리지 않는 이유: TERM trap 이 read 안에서 돌다가 read 의 시간 초과 알람에 끊긴다
-# (bash 5.0.17 재현 10/10 — ordered stop 이 끝나지 않고 잠금을 쥔 채 루프가 계속 돈다). 외부 sleep 은
-# bash 가 그것이 끝날 때까지 trap 을 미루므로 trap 은 평소처럼 돌고, 늦어도 한 조각(0.25초)이다.
-# 남은 pending 으로 다 기다리는 경로는 예전처럼 sleep 한 번이라 trap 이 최대 상한만큼 늦는다.
-# 돌려주는 값: 0 이면 새 pending 으로 일찍 끝남, 1 이면 상한까지 기다림.
+# 끝날 때까지(보드 실측 평균 1.35초, 작업 중에 오면 2.3초) claim 되지 않았다. 상한 $1 초를 sleep 한
+# 번(백그라운드)과 wait 로 기다리고, submit 이 pending 을 쓴 뒤 보내는 WINCH(_cr_wake_daemon)를 받으면
+# 바로 돌아간다. 쉬는 동안 드는 것은 예전과 같은 sleep 한 번이다(0.25초 조각 폴링은 보드에서 코어
+# 하나의 약 1%p 를 늘 썼다).
+# - pending($2)이 이미 있으면: $3 이 1(poll 때부터 있었는데 이번 반복이 집지 않음)이면 그것으로 깨면
+#   루프가 쉬지 않고 돌므로 예전처럼 다 기다리고, 아니면(poll 뒤에 생김) 기다리지 않는다.
+# - 순서: sleep 을 띄우고 → 그 sleep 을 죽이는 WINCH trap → pending 을 다시 보고 → wait. trap 을 건 뒤의
+#   WINCH 는 wait 전이든 중이든 sleep 을 끝내고, 그 전에 온 것은 pending 재확인이 잡는다. trap 은 wait
+#   가 끝나면 바로 거둔다 — 다른 코드에서 WINCH 는 기본(무시) 그대로다. wait 의 인자를 펴는 순간에
+#   온 WINCH 는 bash 가 wait 가 끝날 때까지 미뤄 놓칠 수 있다 — 그때는 예전처럼 상한까지 기다린다.
+#   sleep 이 제때 끝나 거둬진 직후에 WINCH 가 오고 그 pid 가 다시 쓰였을 때만 trap 의 kill 이 빗나간다.
+#   (pid 는 한 바퀴를 돌아야 다시 쓰이므로 그 몇 마이크로초 안에는 사실상 없다.) TERM trap
+#   (_cl_trap_signal)은 이 trap 을 먼저 거둔다.
+# - sleep 은 KILL 로 끝낸다: EXIT trap 이 있는 셸(데몬)에서 fork 직후, sleep 을 exec 하기 전의 자식에
+#   보낸 TERM 은 bash 의 신호 처리기가 받아 버려 sleep 이 다 돈다(로컬 bash 5.1 실측 20회 중 1회).
+# - 내장 read -t 로 기다리지 않는다: TERM trap 이 read 안에서 돌다 read 의 알람에 끊긴다(bash 5.0.17
+#   재현). wait 는 trap 이 걸린 TERM 에 끊기고 trap 은 wait 밖에서 끝까지 돈다.
+# 돌려주는 값: 신호(또는 재확인)로 일찍 끝났고 pending 이 있으면 0, 그 밖(상한까지 기다림, 엉뚱한
+# WINCH)은 1 — 루프는 1 일 때만 timer 를 2 늘린다.
 cam_monitor_wait() {
-    local limit=$1 pending=$2 stale=$3 slices i
+    local limit=$1 pending=$2 stale=$3 sp early=0
     if [ -f "$pending" ]; then
         [ "$stale" = 1 ] || return 0
         sleep "$limit"
         return 1
     fi
-    slices=$(( limit * 4 ))
-    for (( i = 0; i < slices; i++ )); do
-        sleep 0.25
-        [ ! -f "$pending" ] || return 0
-    done
+    sleep "$limit" &
+    sp=$!
+    trap 'kill -KILL "$sp" 2>/dev/null' WINCH
+    if [ -f "$pending" ]; then
+        kill -KILL "$sp" 2>/dev/null
+        early=1
+    else
+        wait "$sp" || early=1
+    fi
+    trap - WINCH
+    wait "$sp" 2>/dev/null
+    [ "$early" = 1 ] && [ -f "$pending" ] && return 0
     return 1
 }
 # 대기가 그것으로 깨면 안 되는 pending 인가: poll 때부터 있었는데($1 = 1) 이번 반복이 집지 않았다 —

@@ -499,6 +499,10 @@ run_flow() {
     # no jq at all; zero means the shim was bypassed.
     if [ "$submit_n" -eq 0 ] || [ "$daemon_n" -eq 0 ]; then fail "$flow: the shim counted nothing (submit=$submit_n daemon=$daemon_n)"; fi
     [ "$total" -le "${CEILING[$flow]}" ] || fail "$flow: $total jq spawns, ceiling ${CEILING[$flow]}"
+    # submit 은 따로도 본다 (이슈 #168): submit 몫이 늘면 합계의 여유에 묻힌다. 데몬 깨우기
+    # (_cr_wake_daemon)는 이 테스트의 가짜 proc root 에서는 돌지 않는다 — 그 jq 0회는
+    # monitor_wait_test 가 본다.
+    [ "$submit_n" -le 2 ] || fail "$flow: the submit spawned $submit_n jq, more than 2"
 }
 
 # module_reload that succeeds: the modules are reloaded, the camera verified and

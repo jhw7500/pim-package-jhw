@@ -747,14 +747,15 @@ cam_liveness_ordered_stop_systemd() {
 
 _cl_trap_signal() {
     local rc=$1
-    trap - TERM INT EXIT
+    # WINCH 도 거둔다: 루프 끝 대기(cam_monitor_wait)의 sleep 을 죽이는 trap 이 정지 동안 남지 않게.
+    trap - TERM INT EXIT WINCH
     cam_liveness_ordered_stop >/dev/null 2>&1 || :
     exit "$rc"
 }
 
 _cl_trap_exit() {
     local rc=$?
-    trap - TERM INT EXIT
+    trap - TERM INT EXIT WINCH
     cam_liveness_ordered_stop >/dev/null 2>&1 || :
     return "$rc"
 }

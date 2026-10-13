@@ -1042,7 +1042,28 @@ cam_request_submit() {
         return 75
     fi
     _cr_owner_lifecycle_in ACTIVE DEGRADED || return $?
-    _cr_lock_call _cr_request_new "$@"
+    _cr_lock_call _cr_request_new "$@" || return $?
+    _cr_wake_daemon
+}
+# submit 이 pending 을 쓰고 잠금을 푼 뒤 데몬을 깨운다 (이슈 #168): 데몬은 루프 끝에서 WINCH 를 기다린다
+# (cam_monitor_wait). 받는 쪽은 owner(데몬)이고, 이 프로세스의 owner 가드가 메모에 넣은 live 답(pid·
+# 시작 시각)이 /proc 와 맞을 때만 보낸다 — 메모에 없으면 jq 를 띄우지 않고 보내지 않는다(데몬은 2초
+# 안에 본다). WINCH 의 기본 동작은 무시라 pid 가 낡아도 해가 작다. 가짜 proc root(테스트)에서는
+# 보내지 않는다 — 가짜 pid 로 실제 프로세스에 신호가 간다. 자기 자신(데몬 안의 요청)에게도 보내지
+# 않는다. 무엇이 실패해도 submit 의 결과는 그대로다.
+_cr_wake_daemon() {
+    local owner boot fields pid start
+    [ "$PIM_CAMERA_PROC_ROOT" = /proc ] || return 0
+    owner=$(_cr_owner_json) || return 0
+    boot=$(cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null) || return 0
+    _cr_jq_memo_has "$owner" -r --arg boot "$boot" --arg ei "" --arg et "" "$_CR_OWNER_LIVE_PROGRAM" || return 0
+    _cr_jq_memo fields "$owner" -r --arg boot "$boot" --arg ei "" --arg et "" "$_CR_OWNER_LIVE_PROGRAM" || return 0
+    [ -n "$fields" ] || return 0
+    { IFS= read -r pid; IFS= read -r start; } <<<"$fields"
+    [[ $pid =~ ^[0-9]+$ ]] && [ "$pid" != "$$" ] || return 0
+    [ "$(_cr_proc_start "$pid")" = "$start" ] || return 0
+    kill -WINCH "$pid" 2>/dev/null || :
+    return 0
 }
 _cr_history_request() {
     local id=$1 request=$2 history updated
