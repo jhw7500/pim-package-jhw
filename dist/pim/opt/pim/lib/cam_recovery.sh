@@ -283,6 +283,13 @@ _CR_OWNER_GUARD_ANSWERS='([ try [ $o | '"$_CR_OWNER_LIVE_PROGRAM"' ] catch null 
        else "-" end),
       ($o | if type == "object" and (.lifecycle | type == "string" and test("\\A[A-Z_]+\\z")) then "+" + .lifecycle else "-" end)'
 _CR_OWNER_GUARD_FOLD_FILTER='if length != 1 then "-", "-" else .[0] as $o | '"$_CR_OWNER_GUARD_ANSWERS"' end'
+# _cr_owner_export_fields 의 jq 프로그램. 메모 키가 이 문자열이므로 lifecycle 쓰기의 jq 도 이 변수로
+# 같은 프로그램을 돌려 답을 낸다 (이슈 #168).
+_CR_OWNER_EXPORT_PROGRAM="if ($_CR_OWNER_SCHEMA_FILTER) then [.boot_id,.invocation_id,(.pid|tostring),.proc_start_time,.token,(.created_at|tostring)] | join(\"\\n\") else empty end"
+# 그 답을 한 줄로: 출력이 하나이고 여섯 줄 모두 공백 없는 출력 가능 ASCII 일 때만 "+" 와 탭으로 이은
+# 여섯 필드, 그 밖은 "-". 그러면 jq -r 출력을 $(...) 로 받은 값과 바이트까지 같고 줄 나눔도 같다.
+_CR_OWNER_EXPORT_ANSWER='([ try [ $o | '"$_CR_OWNER_EXPORT_PROGRAM"' ] catch null ] | .[0]) as $x
+    | if ($x | type) == "array" and ($x | length) == 1 and ($x[0] | type == "string" and test("\\A[!-~]+(\\n[!-~]+){5}\\z")) then "+" + ($x[0] | split("\n") | join("\t")) else "-" end'
 _cr_owner_guard_put() {
     local owner=$1 boot=$2 live_answer=$3 lifecycle_answer=$4 live need
     # 두 답은 함께 남아야 한다: 메모가 상한 바로 아래면 두 번째 넣기가 메모를 비워 첫 답을
@@ -850,7 +857,8 @@ _cr_owner_create_locked() {
 # 스키마 검증과 6필드 추출을 한 번의 jq 로 합친다 (기존 jq 7회).
 _cr_owner_export_fields() {
     local owner=$1 fields
-    fields=$(jq -r "if ($_CR_OWNER_SCHEMA_FILTER) then [.boot_id,.invocation_id,(.pid|tostring),.proc_start_time,.token,(.created_at|tostring)] | join(\"\\n\") else empty end" <<<"$owner") || return 70
+    # 메모로 부른다 (이슈 #168): 실행 컨텍스트를 세우기 직전에 이 owner 를 쓴 lifecycle 쓰기가 답을 넣어 둔다.
+    _cr_jq_memo fields "$owner" -r "$_CR_OWNER_EXPORT_PROGRAM" || return 70
     [ -n "$fields" ] || return 70
     { IFS= read -r PIM_CAMERA_OWNER_BOOT_ID; IFS= read -r PIM_CAMERA_OWNER_INVOCATION
       IFS= read -r PIM_CAMERA_OWNER_PID; IFS= read -r PIM_CAMERA_OWNER_PROC_START_TIME
@@ -868,16 +876,18 @@ _cr_lifecycle_allowed() {
     case "$1:$2" in STARTING:ACTIVE|STARTING:DEGRADED|STARTING:STOPPING|ACTIVE:APPLYING_CONFIG|ACTIVE:RECOVERING|ACTIVE:DEGRADED|ACTIVE:STOPPING|APPLYING_CONFIG:ACTIVE|APPLYING_CONFIG:DEGRADED|APPLYING_CONFIG:STOPPING|RECOVERING:ACTIVE|RECOVERING:DEGRADED|RECOVERING:STOPPING|DEGRADED:APPLYING_CONFIG|DEGRADED:RECOVERING|DEGRADED:STOPPING) return 0;; esac; return 1
 }
 _cr_owner_set_lifecycle_locked() {
-    local next=$1 owner current updated pair boot stamp lines=()
+    local next=$1 owner current updated pair boot stamp need fields lines=()
     owner=$(_cr_owner_json); _cr_owner_snapshot_live "$owner" || return 69
     # 현재 lifecycle 조회와 갱신본 생성을 한 번의 jq 로. 갱신본은 검사 통과 후에만 쓴다.
     # 같은 jq 가 갱신본의 두 가드 답(_CR_OWNER_GUARD_ANSWERS)도 낸다 (이슈 #150): 쓴 직후의 가드가
     # jq 를 띄우지 않는다. 문서마다 네 줄 — lifecycle 을 먼저 내므로 예전과 같은 자리에서 실패한다
     # — 이고, 출력이 정확히 네 줄일 때(문서 하나, 한 줄짜리 lifecycle)만 쓴 뒤에 넣는다. 다시
     # 파싱은 try 로 배열 안에 가둬 이 jq 가 새로 실패하지 않는다. boot 를 못 읽으면 넣지 않는다.
+    # 다섯째 줄은 갱신본의 export 답(_CR_OWNER_EXPORT_ANSWER)이다 (이슈 #168): 실행 컨텍스트를 세우는
+    # _cr_owner_export_fields 가 이 owner 로 jq 를 띄우지 않는다. 이것은 boot 와 무관하다.
     boot=$(cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null) || boot=
     pair=$(jq -r --arg next "$next" --arg boot "$boot" --arg ei "" --arg et "" '.lifecycle, (((.lifecycle=$next | .updated_at=(now|floor)) | tojson) as $u
-      | $u, ([ $u | try fromjson catch empty ] as $os | if ($os | length) == 1 then ($os[0] as $o | '"$_CR_OWNER_GUARD_ANSWERS"') else "-", "-" end))' <<<"$owner") || return 70
+      | $u, ([ $u | try fromjson catch empty ] as $os | if ($os | length) == 1 then ($os[0] as $o | '"$_CR_OWNER_GUARD_ANSWERS"', '"$_CR_OWNER_EXPORT_ANSWER"') else "-", "-", "-" end))' <<<"$owner") || return 70
     { IFS= read -r current; IFS= read -r updated; } <<<"$pair"
     _cr_lifecycle_allowed "$current" "$next" || return 64
     _cr_owner_snapshot_live "$owner" || return 69; _cr_atomic_write "$(_cr_owner_file)" "$updated" || return 70
@@ -889,7 +899,15 @@ _cr_owner_set_lifecycle_locked() {
         _CR_LIFECYCLE_KEY=$stamp; _CR_LIFECYCLE_VAL=$next
     fi
     mapfile -t lines <<<"$pair"
-    [ -z "$boot" ] || [ "${#lines[@]}" -ne 4 ] || _cr_owner_guard_put "$updated" "$boot" "${lines[2]}" "${lines[3]}"
+    [ "${#lines[@]}" -eq 5 ] || return 0
+    # 가드 두 답과 export 답이 함께 남게 자리를 먼저 잡는다. 못 잡으면 export 답만 넣지 않는다 —
+    # 가드 두 답은 _cr_owner_guard_put 이 예전처럼 자기 자리를 잡는다.
+    _cr_byte_length need "$updated$updated$updated$_CR_OWNER_LIVE_PROGRAM$_CR_OWNER_EXPORT_PROGRAM$boot"
+    _cr_jq_memo_room 3 $(( need + 512 )) || lines[4]=-
+    [ -z "$boot" ] || _cr_owner_guard_put "$updated" "$boot" "${lines[2]}" "${lines[3]}"
+    case "${lines[4]}" in
+        +*) fields=${lines[4]#+}; _cr_jq_memo_put "${fields//$'\t'/$'\n'}" "$updated" -r "$_CR_OWNER_EXPORT_PROGRAM" ;;
+    esac
 }
 cam_owner_set_lifecycle() { _cr_lock_call _cr_owner_set_lifecycle_locked "$@"; }
 

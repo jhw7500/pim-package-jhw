@@ -545,6 +545,19 @@ cam_owner_set_lifecycle RECOVERING || fail "the lifecycle write to RECOVERING fo
 _cr_load_owner_lifecycle || fail "the owner lifecycle could not be loaded after a lifecycle write"
 expect_runs 0 'the owner lifecycle written by this process was read again by jq'
 [ "$_CR_LIFECYCLE_VAL" = "$(jq -r '.lifecycle // empty' "$owner_file")" ] || fail "the cached lifecycle '$_CR_LIFECYCLE_VAL' differs from the file"
+# 같은 쓰기는 갱신본의 export 답(실행 컨텍스트의 여섯 필드)도 넣는다 (이슈 #168): 바로 뒤의
+# _cr_owner_export_fields 는 jq 를 띄우지 않고, 넣은 답은 실제 jq 출력과 같다. 프로그램은 필터
+# 변수로 직접 만든다 — 라이브러리가 다른 문자열로 넣으면 키가 달라 적중 검사가 실패한다.
+export_program="if ($_CR_OWNER_SCHEMA_FILTER) then [.boot_id,.invocation_id,(.pid|tostring),.proc_start_time,.token,(.created_at|tostring)] | join(\"\\n\") else empty end"
+written=$(cat "$owner_file")
+: > "$WORK/jq.log"
+( _cr_owner_export_fields "$written" && [ "$PIM_CAMERA_OWNER_TOKEN" = "$(jq -r .token <<<"$written")" ] ) ||
+    fail 'the owner fields could not be exported after a lifecycle write'
+expect_runs 1 'the export of the owner this process just wrote ran jq (only the token check may)'
+want_fields=$(jq -r "$export_program" <<<"$written")
+got_fields=; _cr_jq_memo got_fields "$written" -r "$export_program"
+expect_runs 2 'the lifecycle write did not leave the export answer in the memo'
+[ "$got_fields" = "$want_fields" ] || fail "the lifecycle write put another export answer than jq prints: '$got_fields' vs '$want_fields'"
 cam_owner_set_lifecycle ACTIVE || fail "the lifecycle write back to ACTIVE was refused"
 # 다른 쓰기(이 함수를 거치지 않음)는 새 파일이라 키가 달라 다시 읽는다.
 jq -c '.lifecycle = "DEGRADED"' "$owner_file" > "$owner_file.next" && mv -f "$owner_file.next" "$owner_file"
