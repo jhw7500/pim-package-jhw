@@ -1,6 +1,6 @@
 # PIM Package Release Notes
 
-## Unreleased (2026-10-06)
+## Unreleased (2026-10-14)
 
 ### camera13 — recovery request and stop latency (issues #150, #168)
 
