@@ -472,14 +472,16 @@ _cl_owner_matches_context() {
     _cr_owner_matches_exported_context "$1"
 }
 
+# owner(이번 부팅의 것)의 프로세스가 살아 있는가: live / absent / reused, owner 가 맞지 않으면 69. 예전에는
+# 스키마·boot_id·pid·proc_start_time 을 jq 4번으로 읽었고 정지 handoff 경로에서 여러 번 불렸다. 같은 판정을
+# 메모된 jq 한 번(_CR_OWNER_PROCESS_PROGRAM)으로 하고, /proc 확인은 메모 밖에서 매번 한다. 손상된 owner 중
+# boot_id 끝에 개행이 붙은 것은 이제 69 다(예전에는 명령 치환이 깎아 통과).
 _cl_current_boot_owner_process_state() {
-    local owner=$1 boot owner_boot pid expected actual stat_path
-    _cr_owner_schema <<<"$owner" || return 69
+    local owner=$1 boot fields pid expected actual stat_path
     boot=$(cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null) || return 69
-    owner_boot=$(jq -r .boot_id <<<"$owner") || return 69
-    [ "$boot" = "$owner_boot" ] || return 69
-    pid=$(jq -r .pid <<<"$owner") || return 69
-    expected=$(jq -r .proc_start_time <<<"$owner") || return 69
+    _cr_jq_memo fields "$owner" -s -r --arg boot "$boot" "$_CR_OWNER_PROCESS_PROGRAM" || return 69
+    [ -n "$fields" ] || return 69
+    { IFS= read -r pid; IFS= read -r expected; } <<<"$fields"
     stat_path="$PIM_CAMERA_PROC_ROOT/$pid/stat"
     [ -e "$stat_path" ] || { printf 'absent\n'; return 0; }
     actual=$(_cr_proc_start "$pid" 2>/dev/null) || return 69

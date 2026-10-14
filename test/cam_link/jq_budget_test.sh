@@ -549,11 +549,12 @@ for flow in "${FLOWS[@]}"; do run_flow "$flow"; done
 # (service_stop_daemon); when the stop script takes the recovery lock first it runs
 # the systemd hand-off with the daemon already gone (service_stop_systemd).  Same
 # ratchet as above.  History (daemon/systemd): 9d7ca3d 34/93; the owner check in one
-# jq and the lifecycle reads through the memo 6/37.
+# jq and the lifecycle reads through the memo 6/37; the hand-off's owner process state
+# in one memoised jq 6/17.
 # flow                     ceiling   terminal state
 declare -A STOP_CEILING=(
     [service_stop_daemon]=6    # rc 0, owner removed, every managed process stopped
-    [service_stop_systemd]=37  # the same, run by cam_operate_stop.sh --systemd
+    [service_stop_systemd]=17  # the same, run by cam_operate_stop.sh --systemd
 )
 run_stop_flow() {
     local flow=$1 rc=0 n
