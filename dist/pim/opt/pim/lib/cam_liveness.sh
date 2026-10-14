@@ -758,15 +758,20 @@ cam_liveness_ordered_stop_systemd() {
     _cr_lock_call_wait "$lock_wait" _cl_ordered_stop_systemd_locked
 }
 
+# trap 이 read 같은 내장 명령(또는 VAR=x 함수 본문)을 끊으면 그 명령의 임시 환경 안에서 돈다. 데몬이
+# IFS=$'\t' read …(GetConfig 등) 도중에 TERM 을 받으면 정지 경로 전체가 탭 IFS 로 돌아, _cr_proc_start 의
+# 단어 분할이 /proc stat 을 쪼개지 못하고 빈 값을 낸다 — 살아 있는 데몬을 "owner 가 살아 있지 않음"(69)으로
+# 보고 데몬 쪽 정지가 실패했다(보드 재현, 시작 직후 정지 4/4). 정지 경로가 기대는 IFS 를 다 셀 수 없으므로
+# trap 에 들어오면 기본 IFS 로 되돌린다.
 _cl_trap_signal() {
-    local rc=$1
+    local rc=$1 IFS=$' \t\n'
     trap - TERM INT EXIT
     cam_liveness_ordered_stop >/dev/null 2>&1 || :
     exit "$rc"
 }
 
 _cl_trap_exit() {
-    local rc=$?
+    local rc=$? IFS=$' \t\n'
     trap - TERM INT EXIT
     cam_liveness_ordered_stop >/dev/null 2>&1 || :
     return "$rc"

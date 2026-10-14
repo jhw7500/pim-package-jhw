@@ -1073,4 +1073,47 @@ before=$(fingerprint "$PIM_CAMERA_RUN_DIR/owner.json")
 ( PIM_CAMERA_OWNER_TOKEN=tok-other; expect_rc 69 cam_liveness_ordered_stop )
 [ "$(fingerprint "$PIM_CAMERA_RUN_DIR/owner.json")" = "$before" ] || fail 'owner context: a foreign stop changed the owner'
 
+echo '=== the stop trap runs with the default IFS ==='
+# A trap that cuts short a builtin such as read (or the body of a function called as
+# VAR=x f) runs inside that command's temporary environment.  The daemon's
+# GetConfig reads its config with IFS=$'\t' read; a TERM there used to run the ordered stop
+# with a tab IFS, so _cr_proc_start could not split /proc stat and the daemon took its own
+# live owner for dead (69, the board's stop right after startup).  Here a process with the
+# daemon's traps waits in such a read and gets TERM; its stop must see the default IFS and
+# read a start time from /proc.
+rm -f "$WORK/trap-ifs" "$WORK/trap-ifs.ready" "$WORK/trap-ifs.fifo"
+# shellcheck disable=SC2016 # expanded by the waiting shell
+bash -c '
+    out=$1
+    source "$PIM_LIB/cam_recovery.sh"; source "$PIM_LIB/cam_recovery_actions.sh"
+    source "$PIM_LIB/cam_operate_control.sh"; source "$PIM_LIB/cam_liveness.sh"
+    PIM_CAMERA_PROC_ROOT=/proc
+    cam_liveness_ordered_stop() { { printf "%q\n" "$IFS"; _cr_proc_start "$$"; } > "$out"; }
+    cam_liveness_install_traps
+    # A FIFO held open for reading and writing blocks the read until the TERM (no
+    # external command: the PATH of this test stubs sleep).
+    mkfifo "$out.fifo"; exec 3<>"$out.fifo"
+    : > "$out.ready"
+    IFS=$'"'"'\t'"'"' read -r _ _ <&3
+' trap-ifs "$WORK/trap-ifs" &
+trap_ifs_child=$!
+# The PATH of this test stubs sleep (it sleeps 0.01s), so the waits here use /bin/sleep.
+for _ in $(seq 1 100); do [ -e "$WORK/trap-ifs.ready" ] && break; /bin/sleep 0.05; done
+[ -e "$WORK/trap-ifs.ready" ] || fail 'trap IFS: the waiting process did not start'
+/bin/sleep 0.3
+kill -TERM "$trap_ifs_child"
+# The trap exits; a trap that did not would leave the process waiting - bound the wait.
+for _ in $(seq 1 100); do kill -0 "$trap_ifs_child" 2>/dev/null || break; /bin/sleep 0.05; done
+if kill -0 "$trap_ifs_child" 2>/dev/null; then
+    kill -KILL "$trap_ifs_child" 2>/dev/null || :
+    fail 'trap IFS: the process did not end within 5s of the TERM'
+fi
+trap_ifs_rc=0; wait "$trap_ifs_child" || trap_ifs_rc=$?
+[ "$trap_ifs_rc" -eq 143 ] || fail "trap IFS: the TERM did not end the process through its trap (rc $trap_ifs_rc)"
+[ -s "$WORK/trap-ifs" ] || fail 'trap IFS: the trap did not run the stop'
+seen_ifs='' seen_start=''
+{ IFS= read -r seen_ifs; IFS= read -r seen_start; } < "$WORK/trap-ifs" || :
+[ "$seen_ifs" = "$(printf '%q' $' \t\n')" ] || fail "trap IFS: the stop ran with IFS $seen_ifs"
+[[ $seen_start =~ ^[0-9]+$ ]] || fail "trap IFS: the stop could not read a start time from /proc ('$seen_start')"
+
 echo 'cam liveness: PASS'
