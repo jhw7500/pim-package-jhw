@@ -1,5 +1,26 @@
 # PIM Package Changelog
 
+## 최신 변경사항 (2026-10-14) — camera13 / 복구 요청·정지 처리 시간 (이슈 #150·#168)
+
+- 전달 패키지를 `pim-mp 0.6.3+jhw.camera13`으로 올렸다. 보드에 패키지로 설치된 것은
+  `camera12`이고, 그 뒤 PR #153~#187 이 `cam_recovery.sh`·`cam_recovery_actions.sh`·
+  `cam_operate_control.sh`·`cam_liveness.sh`·`chk_cam_operate.sh`를 바꿨다.
+- **#150 복구 요청 처리 비용**(PR #153~#167): 요청 한 건이 띄우는 jq 를 줄였다(예산
+  테스트 기준 `gstapp_restart` 118→33회). 판정(69/70/75/64 거부)은 바꾸지 않았다.
+  보드에서 접수→액션 시작이 22~27초에서 10초로, 생성→완료가 49~50초에서 19~20초로
+  줄었다.
+- **#168 추가 단축**(PR #169~#183): 데몬 루프 대기를 전경 `sleep` 하나로 하고 그 pid 를
+  `/run/pim-camera/monitor_wait.pid`에 내놓는다. submit 이 그 sleep 만 끝내 새 요청을
+  바로 집는다(#183). 남은 jq 도 더 줄였다(`gstapp_restart` 예산 33→20회). 보드에서
+  접수→액션 시작 5.2초(4~7), 생성→완료 11.2초(10~13)다.
+- **정지 경로**(PR #184~#187): `systemctl restart cam-operate`가 데몬 TERM trap 과
+  `cam_operate_stop.sh --systemd` 중 누가 복구 잠금을 먼저 잡느냐에 따라 약 17초와 약
+  35초로 갈렸다(#183 뒤로는 대부분 35초). 정지 스크립트가 데몬의 대기 sleep 을 끝내고
+  양보해 데몬이 정지를 맡게 했고(#184), 정지 경로의 jq 를 줄였고(#185·#187), 시작 직후
+  정지에서 trap 이 끊긴 `read`의 탭 IFS 로 돌던 결함을 고쳤다(#186). 보드(master
+  `32b0b79`)에서 restart 10회 모두 데몬이 정지를 맡았고 9.6~9.8초였다.
+- 설치 후 재부팅이 필요하다(camera10 항목의 설치 주의와 같다).
+
 ## 최신 변경사항 (2026-10-07) — camera12 / 재부팅 뒤 liveness gstApp 재기동 (이슈 #149)
 
 - 전달 패키지를 `pim-mp 0.6.3+jhw.camera12`로 올렸다. 보드에 설치된 `camera11` 이후
