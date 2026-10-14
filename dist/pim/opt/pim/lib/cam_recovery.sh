@@ -175,11 +175,6 @@ _CR_OWNER_LIVE_MATCH_FILTER='(.boot_id == $boot) and ($ei == "" or .invocation_i
 # _cr_owner_snapshot_live 의 jq 프로그램. 메모 키가 이 문자열 그대로이므로 접기 필터도 이
 # 변수로 같은 프로그램을 돌린다.
 _CR_OWNER_LIVE_PROGRAM="if (($_CR_OWNER_SCHEMA_FILTER) and ($_CR_OWNER_LIVE_MATCH_FILTER)) then [(.pid|tostring), .proc_start_time] | join(\"\\n\") else empty end"
-# _cl_current_boot_owner_process_state 의 jq 프로그램(-s, --arg boot). 위 프로그램에서 ei·et 가 빈 경우와 판정은
-# 같되 문서가 정확히 하나일 때만 답한다 — 문서가 여럿인 owner 는 예전처럼(필드별 jq 가 여러 줄을 내 한 줄인
-# boot id 와의 대조가 실패) 거른다.
-# 답 "pid\nstart" 의 마지막 필드 끝 개행은 _cr_jq_memo 의 명령 치환이 깎는다(예전 $(jq -r …) 와 같음).
-_CR_OWNER_PROCESS_PROGRAM="if (length == 1) and (.[0] | ($_CR_OWNER_SCHEMA_FILTER) and .boot_id == \$boot) then .[0] | [(.pid|tostring), .proc_start_time] | join(\"\\n\") else empty end"
 _CR_OWNER_EXPORTED_MATCH_FILTER='($b != "" and .boot_id == $b) and ($iv != "" and .invocation_id == $iv) and ($p != "" and (.pid|tostring) == $p) and ($ps != "" and .proc_start_time == $ps) and ($tk != "" and .token == $tk) and ($ca != "" and (.created_at|tostring) == $ca)'
 # cam_executor_assert_context 의 루프는 빈 값 검사 없이 동등 비교만 한다. 그 의미를
 # 그대로 옮기려면 non-empty 조건이 없는 필터가 따로 필요하다.

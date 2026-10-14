@@ -1076,17 +1076,28 @@ before=$(fingerprint "$PIM_CAMERA_RUN_DIR/owner.json")
 echo '=== the owner process state verdict ==='
 # _cl_current_boot_owner_process_state tells the systemd hand-off whether the owner's
 # process is live, absent or reused.  It used to read the schema, boot_id, pid and
-# proc_start_time with four jq; it is now one memoised jq (its count is pinned by
-# test/cam_link/jq_budget_test.sh) and the /proc check outside the memo.  The table pins
-# the verdict: an owner of this boot that passes the schema, alone in the text, gets the
-# /proc answer; anything else is 69.  A boot id ending in a newline is refused (the old
-# per-field command substitution trimmed that newline); the start time with one passes the
-# schema and matches /proc as before.
+# proc_start_time with four jq.  It now runs the owner context check (one memoised jq,
+# the one each caller has just run on the same owner) and then uses the context's values:
+# the boot id file against the context's boot id, and /proc (outside the memo) for its pid
+# and start time.  The table pins the verdict: an owner that matches the context and is of
+# this boot gets the /proc answer; anything else is 69.  The owner's string fields must
+# equal the context byte for byte, so a boot id or start time ending in a newline is
+# refused (the old per-field command substitution trimmed that newline and passed it).
 ps_owner=$ctx_owner
+# Exports ctx_case's context, then the overrides given (callers run it in a subshell).
+ps_context() {
+    local kv
+    for kv in PIM_CAMERA_OWNER_BOOT_ID=boot-a PIM_CAMERA_OWNER_INVOCATION=inv-1 PIM_CAMERA_OWNER_PID=4242 \
+        PIM_CAMERA_OWNER_PROC_START_TIME=111 PIM_CAMERA_OWNER_TOKEN=tok-1 PIM_CAMERA_OWNER_CREATED_AT=1700000000 "$@"; do
+        export "${kv?}"
+    done
+    _CR_JQ_MEMO=(); _CR_JQ_MEMO_BYTES=0
+}
 ps_case() {
     local want=$1 what=$2 owner=$3 start=$4 got
+    shift 4
     if [ "$start" = none ]; then rm -f "$PIM_CAMERA_PROC_ROOT/$DAEMON_PID/stat"; else fake_stat "$start"; fi
-    got=$(_CR_JQ_MEMO=(); _CR_JQ_MEMO_BYTES=0; _cl_current_boot_owner_process_state "$owner") || got="rc $?"
+    got=$(ps_context "$@"; _cl_current_boot_owner_process_state "$owner") || got="rc $?"
     [ "$got" = "$want" ] || fail "owner process state: $what gave '$got', not '$want'"
 }
 reset_case
@@ -1094,9 +1105,10 @@ ps_case live 'the owner' "$ps_owner" 111
 ps_case live 'the owner while stopping' "${ps_owner/ACTIVE/STOPPING}" 111
 ps_case absent 'the owner without a process' "$ps_owner" none
 ps_case reused 'the owner whose pid now has another start time' "$ps_owner" 112
-ps_case 'rc 69' 'another boot' "${ps_owner/boot-a/boot-b}" 111
+ps_case 'rc 69' 'an owner of another boot' "${ps_owner/boot-a/boot-b}" 111 PIM_CAMERA_OWNER_BOOT_ID=boot-b
+ps_case 'rc 69' 'an owner that is not the context' "${ps_owner/tok-1/tok-2}" 111
 ps_case 'rc 69' 'a boot id ending in a newline' "${ps_owner/\"boot-a\"/\"boot-a\\n\"}" 111
-ps_case live 'a start time ending in a newline' "${ps_owner/\"111\"/\"111\\n\"}" 111
+ps_case 'rc 69' 'a start time ending in a newline' "${ps_owner/\"111\"/\"111\\n\"}" 111
 ps_case 'rc 69' 'a pid written as a string' "${ps_owner/\"pid\":4242,/\"pid\":\"4242\",}" 111
 ps_case 'rc 69' 'a lifecycle outside the schema' "${ps_owner/ACTIVE/BOGUS}" 111
 ps_case 'rc 69' 'two documents' "$ps_owner"$'\n'"$ps_owner" 111
@@ -1104,11 +1116,11 @@ ps_case 'rc 69' 'the owner then null' "$ps_owner"$'\n'null 111
 ps_case 'rc 69' 'null then the owner' null$'\n'"$ps_owner" 111
 ps_case 'rc 69' 'not JSON' 'not json' 111
 ps_case 'rc 69' 'an empty owner' '' 111
-# The memo holds the owner's fields, not the /proc answer: the same text asked again
-# after the process went away is absent, and the second ask did not run jq again.
+# The memo holds the owner check's answer, not the /proc answer: the same owner asked
+# again after the process went away is absent, and the second ask ran no jq.
 fake_stat 111
 (
-    _CR_JQ_MEMO=(); _CR_JQ_MEMO_BYTES=0
+    ps_context
     _cl_current_boot_owner_process_state "$ps_owner" > "$WORK/ps-first" || exit 91
     [ "${#_CR_JQ_MEMO[@]}" -eq 1 ] || exit 92
     rm -f "$PIM_CAMERA_PROC_ROOT/$DAEMON_PID/stat"
@@ -1118,11 +1130,21 @@ fake_stat 111
 ) || fail "owner process state: the memo case stopped with $?"
 [ "$(cat "$WORK/ps-first")/$(cat "$WORK/ps-second")" = live/absent ] \
     || fail "owner process state: the second ask gave '$(cat "$WORK/ps-second")' after '$(cat "$WORK/ps-first")', not absent after live"
-# The boot id is part of the memo key: the same text asked again after the boot id
-# changed is 69, not the memoised answer.
+# The hand-off asks inside $(...) right after its own owner check on the same owner, so a
+# poll of a live daemon reads the parent's memo and runs no jq.
 fake_stat 111
 (
-    _CR_JQ_MEMO=(); _CR_JQ_MEMO_BYTES=0
+    ps_context
+    _cl_owner_matches_context "$ps_owner" || exit 91
+    # shellcheck disable=SC2317 # called by _cr_jq_memo on a miss
+    jq() { exit 93; }
+    got=$(_cl_current_boot_owner_process_state "$ps_owner") || exit 92
+    [ "$got" = live ] || exit 94
+) || fail "owner process state: the poll after the owner check stopped with $?"
+# The boot id file is read on every ask: the same owner asked again after the boot id
+# changed is 69, not an earlier answer.
+(
+    ps_context
     _cl_current_boot_owner_process_state "$ps_owner" >/dev/null || exit 91
     printf 'boot-b\n' > "$PIM_CAMERA_BOOT_ID_FILE"
     rc=0; _cl_current_boot_owner_process_state "$ps_owner" >/dev/null || rc=$?

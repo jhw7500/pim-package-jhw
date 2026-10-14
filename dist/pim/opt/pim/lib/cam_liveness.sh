@@ -472,20 +472,21 @@ _cl_owner_matches_context() {
     _cr_owner_matches_exported_context "$1"
 }
 
-# owner(이번 부팅의 것)의 프로세스가 살아 있는가: live / absent / reused, owner 가 맞지 않으면 69. 예전에는
-# 스키마·boot_id·pid·proc_start_time 을 jq 4번으로 읽었고 정지 handoff 경로에서 여러 번 불렸다. 같은 판정을
-# 메모된 jq 한 번(_CR_OWNER_PROCESS_PROGRAM)으로 하고, /proc 확인은 메모 밖에서 매번 한다. 손상된 owner 중
-# boot_id 끝에 개행이 붙은 것은 이제 69 다(예전에는 명령 치환이 깎아 통과).
+# owner(이번 부팅의 것)의 프로세스가 살아 있는가: live / absent / reused, owner 가 맞지 않으면 69. 이 프로세스가
+# 내보낸 owner 맥락(PIM_CAMERA_OWNER_*)과 맞는지는 _cl_owner_matches_context 가 메모된 jq 한 번으로 본다 — 스키마,
+# 문서 하나, 여섯 필드가 맥락과 같다(문자열은 바이트까지, pid 는 tostring). 그 뒤로는 맥락 값만 쓴다: boot id
+# 파일과 비교하고 /proc 을 본다(메모 밖, 매번). 예전에는 같은 필드를 jq 4번으로 다시 읽었다. capture 의 adopt 를
+# 빼면 호출하는 곳은 모두 같은 owner 로 먼저 그 대조를 하므로 여기서는 메모 적중이고, $(...) 안에서도 부모의
+# 메모를 읽어 jq 를 띄우지 않는다.
 _cl_current_boot_owner_process_state() {
-    local owner=$1 boot fields pid expected actual stat_path
+    local owner=$1 boot actual stat_path
+    _cl_owner_matches_context "$owner" || return 69
     boot=$(cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null) || return 69
-    _cr_jq_memo fields "$owner" -s -r --arg boot "$boot" "$_CR_OWNER_PROCESS_PROGRAM" || return 69
-    [ -n "$fields" ] || return 69
-    { IFS= read -r pid; IFS= read -r expected; } <<<"$fields"
-    stat_path="$PIM_CAMERA_PROC_ROOT/$pid/stat"
+    [ "$boot" = "$PIM_CAMERA_OWNER_BOOT_ID" ] || return 69
+    stat_path="$PIM_CAMERA_PROC_ROOT/$PIM_CAMERA_OWNER_PID/stat"
     [ -e "$stat_path" ] || { printf 'absent\n'; return 0; }
-    actual=$(_cr_proc_start "$pid" 2>/dev/null) || return 69
-    if [ "$actual" = "$expected" ]; then
+    actual=$(_cr_proc_start "$PIM_CAMERA_OWNER_PID" 2>/dev/null) || return 69
+    if [ "$actual" = "$PIM_CAMERA_OWNER_PROC_START_TIME" ]; then
         printf 'live\n'
     else
         printf 'reused\n'
