@@ -549,11 +549,15 @@ for flow in "${FLOWS[@]}"; do run_flow "$flow"; done
 # (service_stop_daemon); when the stop script takes the recovery lock first it runs
 # the systemd hand-off with the daemon already gone (service_stop_systemd).  Same
 # ratchet as above.  History (daemon/systemd): 9d7ca3d 34/93; the owner check in one
-# jq and the lifecycle reads through the memo 6/37.
-# flow                     ceiling   terminal state
+# jq and the lifecycle reads through the memo 6/37; the hand-off's owner process state
+# reads the context the owner check matched 6/13.  service_stop_systemd_live is the
+# hand-off with the daemon still alive: it signals it and polls it three times before
+# it is gone, and the polls spend no jq (they find the owner check's answer in the memo).
+# flow                          ceiling   terminal state
 declare -A STOP_CEILING=(
-    [service_stop_daemon]=6    # rc 0, owner removed, every managed process stopped
-    [service_stop_systemd]=37  # the same, run by cam_operate_stop.sh --systemd
+    [service_stop_daemon]=6         # rc 0, owner removed, every managed process stopped
+    [service_stop_systemd]=13       # the same, run by cam_operate_stop.sh --systemd
+    [service_stop_systemd_live]=13  # the same, the daemon alive for three polls
 )
 run_stop_flow() {
     local flow=$1 rc=0 n
@@ -584,6 +588,30 @@ run_stop_flow() {
             # shellcheck disable=SC2016 # expanded by the stop shell
             counted "$WORK/jq.$flow" bash -c 'enable -n kill; . "$PIM_BIN/cam_operate_stop.sh" --systemd' 2> "$WORK/$flow.err" || rc=$?
             ;;
+        service_stop_systemd_live)
+            # The daemon is still alive (its TERM trap has not taken the lock): the hand-off
+            # signals it and waits for it.  This flow's sleep removes the daemon's stat at the
+            # third sleep 1, so the wait sees it alive three times.
+            mkdir -p "$WORK/livestub"
+            cat > "$WORK/livestub/sleep" <<'SH'
+#!/bin/sh
+printf "sleep %s\n" "$*" >> "$PIM_CAMERA_CALL_LOG"
+[ "$1" = 1 ] || exit 0
+[ "$(grep -c '^sleep 1$' "$PIM_CAMERA_CALL_LOG")" -lt 3 ] || rm -f "$LIVE_DAEMON_STAT"
+exit 0
+SH
+            chmod +x "$WORK/livestub/sleep"
+            # shellcheck disable=SC2016 # expanded by the stop shell
+            counted "$WORK/jq.$flow" env PATH="$WORK/livestub:$SHIM_PATH" \
+                LIVE_DAEMON_STAT="$PIM_CAMERA_PROC_ROOT/$DAEMON_PID/stat" \
+                bash -c 'enable -n kill; . "$PIM_BIN/cam_operate_stop.sh" --systemd' 2> "$WORK/$flow.err" || rc=$?
+            # Positive control: the daemon was signalled once, and the wait slept three times
+            # right after the signal (the stat was there for each of those polls).
+            [ "$(grep -c "^kill -TERM $DAEMON_PID\$" "$PIM_CAMERA_CALL_LOG" || true)" -eq 1 ] \
+                || fail "$flow: the hand-off did not signal the live daemon exactly once"
+            [ "$(grep -A3 "^kill -TERM $DAEMON_PID\$" "$PIM_CAMERA_CALL_LOG" | tail -n +2 | tr '\n' ' ')" = 'sleep 1 sleep 1 sleep 1 ' ] \
+                || fail "$flow: the wait did not poll the live daemon three times right after the signal"
+            ;;
     esac
     [ "$rc" -eq 0 ] || fail "$flow: the ordered stop returned $rc ($(tail -n 3 "$WORK/$flow.err" | tr '\n' ' '))"
     [ ! -e "$PIM_CAMERA_RUN_DIR/owner.json" ] || fail "$flow: the owner survived the stop"
@@ -595,7 +623,7 @@ run_stop_flow() {
     [ "$n" -gt 0 ] || fail "$flow: the shim counted nothing"
     [ "$n" -le "${STOP_CEILING[$flow]}" ] || fail "$flow: $n jq spawns, ceiling ${STOP_CEILING[$flow]}"
 }
-for flow in service_stop_daemon service_stop_systemd; do run_stop_flow "$flow"; done
+for flow in service_stop_daemon service_stop_systemd service_stop_systemd_live; do run_stop_flow "$flow"; done
 
 # Positive control: one known jq through the same PATH adds exactly one line.
 : > "$WORK/jq.control"
