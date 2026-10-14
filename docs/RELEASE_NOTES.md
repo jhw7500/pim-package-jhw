@@ -1,6 +1,30 @@
 # PIM Package Release Notes
 
-## Unreleased (2026-10-06)
+## Unreleased (2026-10-14)
+
+### camera13 — recovery request and stop latency (issues #150, #168)
+
+- Package version is `0.6.3+jhw.camera13`. `camera12` is the package installed on
+  the board; PRs #153–#187 changed `cam_recovery.sh`, `cam_recovery_actions.sh`,
+  `cam_operate_control.sh`, `cam_liveness.sh` and `chk_cam_operate.sh` afterwards.
+- **#150** (PRs #153–#167): a recovery request runs fewer jq processes (budget
+  test, `gstapp_restart`: 118 → 33). Decisions (69/70/75/64 refusals) are
+  unchanged. On the board, intake → action start went from 22–27 s to 10 s and
+  creation → completion from 49–50 s to 19–20 s.
+- **#168** (PRs #169–#183): the daemon loop waits in one foreground `sleep` and
+  publishes its pid in `/run/pim-camera/monitor_wait.pid`; `submit` ends only that
+  sleep, so a new request is claimed at once (#183). Remaining jq runs were cut
+  further (`gstapp_restart` budget 33 → 20). On the board, intake → action start
+  is 5.2 s (4–7) and creation → completion 11.2 s (10–13).
+- **Stop path** (PRs #184–#187): `systemctl restart cam-operate` took about 17 s
+  or about 35 s (mostly 35 s after #183), depending on whether the daemon's TERM
+  trap or `cam_operate_stop.sh --systemd` took the recovery lock first. The stop
+  script now ends the daemon's wait `sleep` and yields so the daemon takes the
+  stop (#184), the stop path runs fewer jq (#185, #187), and a trap fired right
+  after start no longer runs with the tab IFS of an interrupted `read` (#186). On
+  the board (master `32b0b79`), all 10 restarts were stopped by the daemon and
+  took 9.6–9.8 s.
+- Reboot after installing (same install note as camera10).
 
 ### camera12 — liveness gstApp restart after reboot (issue #149)
 
