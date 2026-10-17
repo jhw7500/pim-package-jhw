@@ -319,6 +319,7 @@ customctl() {
   customctl enable pim-camera-config
   customctl disable ord-operate
   customctl enable wpa-recovery
+  customctl enable pim-vpu-driver
   customctl enable cam-operate
   customctl enable vsd-operate
   customctl enable run-watchdog-custom

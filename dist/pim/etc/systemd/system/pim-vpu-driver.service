@@ -1,0 +1,16 @@
+[Unit]
+Description=PIM VPU encoder driver swap (built-in mxc_hantro_vc8000e -> imx-hantro fixed module)
+Before=cam-operate.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# 전환은 1~2초면 끝난다. 막히더라도 부팅을 오래 붙잡지 않는다. cam-operate 는 Before= 순서만
+# 받고 이 유닛에 Requires 하지 않으므로, 실패하거나 시간이 다 돼도 그대로 기동한다.
+TimeoutStartSec=30s
+ExecStart=/opt/pim/bin/vpu_driver_swap.sh
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
