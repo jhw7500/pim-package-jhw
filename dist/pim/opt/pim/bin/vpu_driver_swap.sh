@@ -17,6 +17,7 @@ SYSFS_ROOT="${PIM_VPU_SYSFS_ROOT:-/sys}"
 PROC_ROOT="${PIM_VPU_PROC_ROOT:-/proc}"
 MODULE="${PIM_VPU_MODULE:-/opt/pim/driver/hantro_vc8000e_ext.ko}"
 INSMOD="${PIM_VPU_INSMOD:-insmod}"
+SYSTEMCTL="${PIM_VPU_SYSTEMCTL:-systemctl}"
 DEVICE=38320000.vpu_vc8000e
 DEV_NODE=/dev/mxc_hantro_vc8000e
 BUILTIN=mxc_hantro_vc8000e
@@ -25,11 +26,17 @@ EXT=mxc_hantro_vc8000e_ext
 dev_dir="$SYSFS_ROOT/bus/platform/devices/$DEVICE"
 drv_dir="$SYSFS_ROOT/bus/platform/drivers"
 
-log() {  # log <level> <message>: local0 로그. warning 이상은 journal(stderr)에도 남긴다.
+log() {  # log <level> <message>: local0 로그(notice 이상만 local0.log 에 남는다). warning 이상은 journal 에도 남긴다.
     logger -p "local0.$1" "[$KEY][$tag] $2" 2>/dev/null || true
+    # <N> 접두는 journald 가 우선순위로 읽는다(SyslogLevelPrefix 기본값). 없으면 info 로 저장된다.
     case "$1" in
-        warning|err) printf '[%s][%s][%s] %s\n' "$KEY" "$tag" "$1" "$2" >&2 ;;
+        warning) printf '<4>[%s][%s][%s] %s\n' "$KEY" "$tag" "$1" "$2" >&2 ;;
+        err) printf '<3>[%s][%s][%s] %s\n' "$KEY" "$tag" "$1" "$2" >&2 ;;
     esac
+}
+
+cam_operate_active() {  # 부팅 때는 Before= 순서로 아직 기동 전이다. 수동 재실행만 여기에 걸린다.
+    "$SYSTEMCTL" is-active --quiet cam-operate.service 2>/dev/null
 }
 
 sysfs_write() {  # sysfs_write <file> <value>: 빈 값이면 개행만 써서 driver_override 를 비운다.
@@ -68,7 +75,7 @@ main() {
     [ -d "$dev_dir" ] || { log notice "skip: no device $DEVICE"; return 0; }
     cur=$(current_driver) || cur=""
     if [ "$cur" = "$EXT" ]; then
-        log info "already bound to $EXT"
+        log notice "already bound to $EXT"
         return 0
     fi
     if [ "$cur" != "$BUILTIN" ]; then
@@ -76,6 +83,11 @@ main() {
         return 0
     fi
     [ -f "$MODULE" ] || { log warning "skip: module missing $MODULE ($BUILTIN kept)"; return 0; }
+    # cam-operate 가 돌면 gstApp 이 언제든 장치를 열 수 있어, 보유자 검사와 unbind 사이가 안전하지 않다.
+    if cam_operate_active; then
+        log warning "skip: cam-operate is active — stop it first, or let the boot run this ($BUILTIN kept)"
+        return 0
+    fi
     owners=$(holders)
     if [ -n "$owners" ]; then
         log warning "skip: $DEV_NODE is open by pid $owners ($BUILTIN kept)"
@@ -90,6 +102,12 @@ main() {
             log warning "skip: driver $EXT not registered after insmod ($BUILTIN kept)"
             return 0
         fi
+    fi
+    # insmod 동안 누가 장치를 열었을 수 있으니 unbind 바로 앞에서 다시 본다.
+    owners=$(holders)
+    if [ -n "$owners" ]; then
+        log warning "skip: $DEV_NODE was opened by pid $owners before unbind ($BUILTIN kept)"
+        return 0
     fi
     if ! sysfs_write "$drv_dir/$BUILTIN/unbind" "$DEVICE"; then
         log warning "skip: unbind of $DEVICE from $BUILTIN failed ($BUILTIN kept)"

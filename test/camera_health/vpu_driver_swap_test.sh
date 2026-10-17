@@ -33,11 +33,17 @@ printf 'insmod %s\n' "$1" >> "$CASE/calls"
 case "${FAKE_INSMOD:-ok}" in
     fail) echo "insmod: ERROR: could not insert module: Invalid module format" >&2; exit 1 ;;
     noreg) exit 0 ;;
+    open) mkdir -p "$CASE/proc/999/fd"; ln -s /dev/mxc_hantro_vc8000e "$CASE/proc/999/fd/3" ;;
 esac
 d="$CASE/sys/bus/platform/drivers/mxc_hantro_vc8000e_ext"
 mkdir -p "$d"; : > "$d/bind"; : > "$d/unbind"
 EOF
-chmod +x "$WORK/bin/logger" "$WORK/bin/fake_insmod"
+cat > "$WORK/bin/fake_systemctl" <<'EOF'
+#!/bin/bash
+# is-active --quiet cam-operate.service: FAKE_CAM_ACTIVE=1 이면 active
+[ "${FAKE_CAM_ACTIVE:-0}" = 1 ]
+EOF
+chmod +x "$WORK/bin/logger" "$WORK/bin/fake_insmod" "$WORK/bin/fake_systemctl"
 
 setup() {  # setup <name>: 내장 드라이버에 붙은 장치, 모듈 파일, 빈 /proc
     CASE="$WORK/$1"
@@ -66,11 +72,13 @@ fake_kernel_write() {
     case "$file" in
         */driver_override) printf '%s\n' "$value" > "$file" ;;
         */unbind)
+            [ -e "$file" ] || return 1
             [ "${FAIL_UNBIND:-0}" = 1 ] && return 1
             drv=${file%/unbind}; drv=${drv##*/}
             [ "$(link_of)" = "$drv" ] || return 1
             rm -f "$devdir/driver" ;;
         */bind)
+            [ -e "$file" ] || return 1
             drv=${file%/bind}; drv=${drv##*/}
             local var="FAIL_BIND_$drv"
             [ "${!var:-0}" = 1 ] && return 1
@@ -84,7 +92,8 @@ run_sourced() {  # 스크립트를 source 하고 sysfs_write 를 가짜 커널�
     (
         set +e   # 운영 실행처럼 set -u 만 둔 채로 돈다(스크립트가 set -u 를 다시 켠다)
         export PATH="$WORK/bin:$PATH" PIM_VPU_SYSFS_ROOT="$CASE/sys" PIM_VPU_PROC_ROOT="$CASE/proc" \
-            PIM_VPU_MODULE="$CASE/hantro_vc8000e_ext.ko" PIM_VPU_INSMOD="$WORK/bin/fake_insmod"
+            PIM_VPU_MODULE="$CASE/hantro_vc8000e_ext.ko" PIM_VPU_INSMOD="$WORK/bin/fake_insmod" \
+            PIM_VPU_SYSTEMCTL="$WORK/bin/fake_systemctl"
         # shellcheck source=/dev/null
         . "$SCRIPT"
         sysfs_write() { fake_kernel_write "$@"; }
@@ -95,7 +104,7 @@ run_sourced() {  # 스크립트를 source 하고 sysfs_write 를 가짜 커널�
 run_exec() {  # 스크립트를 그대로 실행한다(실제 sysfs_write, 종료 코드)
     env PATH="$WORK/bin:$PATH" PIM_VPU_SYSFS_ROOT="$CASE/sys" PIM_VPU_PROC_ROOT="$CASE/proc" \
         PIM_VPU_MODULE="$CASE/hantro_vc8000e_ext.ko" PIM_VPU_INSMOD="$WORK/bin/fake_insmod" \
-        "$SCRIPT" 2> "$CASE/stderr"
+        PIM_VPU_SYSTEMCTL="$WORK/bin/fake_systemctl" "$SCRIPT" 2> "$CASE/stderr"
 }
 
 echo '=== vpu driver swap ==='
@@ -115,7 +124,7 @@ mkdir -p "$CASE/sys/bus/platform/drivers/$EXT"
 ln -s "../../../bus/platform/drivers/$EXT" "$CASE/sys/bus/platform/devices/$DEVICE/driver"
 run_sourced
 expect "already bound: nothing is touched" no_calls
-expect "already bound: logged" logged "already bound to $EXT"
+expect "already bound: logged at notice (reaches local0.log)" grep -qE "^-p local0\.notice \[VPU-DRV\]\[[^]]+\] already bound to $EXT$" "$CASE/logger.log"
 
 setup nodevice
 rm -rf "$CASE/sys/bus/platform/devices/$DEVICE"
@@ -144,6 +153,18 @@ expect "device open: no insmod, no unbind" no_calls
 expect "device open: builtin still bound" [ "$(link_of)" = "$BUILTIN" ]
 expect "device open: holder pid is logged" logged "is open by pid 4321"
 
+setup camactive
+FAKE_CAM_ACTIVE=1 run_sourced
+expect "cam-operate active: no insmod, no unbind" no_calls
+expect "cam-operate active: builtin still bound" [ "$(link_of)" = "$BUILTIN" ]
+expect "cam-operate active: logged" logged "skip: cam-operate is active"
+
+setup openedduringinsmod
+FAKE_INSMOD=open run_sourced
+expect "opened during insmod: rechecked before unbind, no unbind" calls_are "insmod $CASE/hantro_vc8000e_ext.ko"
+expect "opened during insmod: builtin still bound" [ "$(link_of)" = "$BUILTIN" ]
+expect "opened during insmod: logged with pid" logged "was opened by pid 999 before unbind"
+
 setup insmodfail
 FAKE_INSMOD=fail run_sourced
 expect "insmod fails: only the insmod call, no unbind" calls_are "insmod $CASE/hantro_vc8000e_ext.ko"
@@ -157,6 +178,7 @@ expect "driver not registered: builtin still bound" [ "$(link_of)" = "$BUILTIN" 
 
 setup loaded
 mkdir -p "$CASE/sys/bus/platform/drivers/$EXT"
+: > "$CASE/sys/bus/platform/drivers/$EXT/bind"; : > "$CASE/sys/bus/platform/drivers/$EXT/unbind"
 run_sourced
 expect "module already loaded: no second insmod" sh -c '! grep -q "^insmod" "$CASE/calls"'
 expect "module already loaded: device still moved" [ "$(link_of)" = "$EXT" ]
@@ -177,6 +199,7 @@ FAIL_BIND_mxc_hantro_vc8000e_ext=1 FAIL_BIND_mxc_hantro_vc8000e=1 run_sourced
 expect "both binds fail: device is left unbound" [ "$(link_of)" = none ]
 expect "both binds fail: the failure is logged loudly" logged "VPU encoder is unbound"
 expect "both binds fail: the failure also reaches the journal" grep -qF "VPU encoder is unbound" "$CASE/stderr"
+expect "both binds fail: journal line carries err priority <3>" grep -qE "^<3>\[VPU-DRV\].*VPU encoder is unbound" "$CASE/stderr"
 
 # 실제 실행: 진짜 sysfs_write 가 무엇을 쓰는지와 종료 코드. 보통 파일이라 링크가 바뀌지 않으므로
 # bind 확인에서 실패해 복구 경로까지 탄다.
@@ -192,6 +215,16 @@ setup execfail
 rc=0; FAKE_INSMOD=fail run_exec || rc=$?
 expect "executed insmod failure: exit code is 0" [ "$rc" -eq 0 ]
 expect "executed insmod failure: warning reaches the journal" grep -qF "insmod" "$CASE/stderr"
+expect "executed insmod failure: journal line carries warning priority <4>" grep -qE "^<4>\[VPU-DRV\].*insmod" "$CASE/stderr"
+
+# 실제 쓰기 실패: unbind 파일이 /dev/full 이면 printf 가 실패한다 → 감지하고 override 를 쓰지 않아야 한다
+setup execwritefail
+rm "$CASE/sys/bus/platform/drivers/$BUILTIN/unbind"
+ln -s /dev/full "$CASE/sys/bus/platform/drivers/$BUILTIN/unbind"
+rc=0; run_exec || rc=$?
+expect "executed write failure: exit code is 0" [ "$rc" -eq 0 ]
+expect "executed write failure: unbind failure detected and logged" logged "unbind of $DEVICE from $BUILTIN failed"
+expect "executed write failure: driver_override untouched" [ "$(cat "$CASE/sys/bus/platform/devices/$DEVICE/driver_override")" = "(null)" ]
 
 echo '=== packaging contract ==='
 UNIT="$ROOT/dist/pim/etc/systemd/system/pim-vpu-driver.service"

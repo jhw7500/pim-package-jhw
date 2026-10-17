@@ -38,6 +38,8 @@ python3 tools/verify_binaries.py --strict
 옮기지 못하면 내장 드라이버로 남긴다.
 
 - insmod 실패, 장치 사용 중, 모듈 없음 → 아무것도 바꾸지 않는다.
+- cam-operate 가 이미 돌고 있음 → 건너뛴다. gstApp 이 언제든 장치를 열 수 있어 보유자 검사와 unbind 사이가 안전하지 않기 때문이다. 부팅 때는 `Before=` 순서 덕분에 cam-operate 가 아직 기동 전이다.
+- insmod 를 하는 동안 누가 장치를 열었는지, unbind 바로 앞에서 보유자를 한 번 더 확인한다.
 - 모듈 bind 실패 → `driver_override` 를 비우고 내장 드라이버에 다시 bind 한다.
 - 스크립트는 항상 0 으로 끝나고, cam-operate 는 이 유닛을 Requires 하지 않는다. 그래서 전환이 실패해도 녹화는 평소대로 기동한다.
 
@@ -51,12 +53,16 @@ python3 tools/verify_binaries.py --strict
 
 ```bash
 basename "$(readlink /sys/bus/platform/devices/38320000.vpu_vc8000e/driver)"   # mxc_hantro_vc8000e_ext 이면 전환됨
-grep -a 'VPU-DRV' /var/log/cantops/local0.log | tail                          # 단계별 결과 ([VPU-DRV][vpu_driver_swap.sh])
+grep -a 'VPU-DRV' /var/log/cantops/local0.log | tail                          # 결과 ([VPU-DRV][vpu_driver_swap.sh])
 journalctl -u pim-vpu-driver -b                                               # 경고·오류는 journal 에도 남는다
 ```
 
-되돌리려면 `systemctl disable pim-vpu-driver` 를 하고 재부팅한다. 재부팅하면 내장 드라이버로 돌아간다.
-재부팅 없이 바로 되돌리려면 gstApp 을 멈춘 뒤 아래를 실행한다.
+local0.log 에는 rsyslog 설정(`local0.notice`)상 notice 이상만 남는다. 전환 성공·이미 전환됨은 notice, 건너뜀·복귀는 warning, 복귀 실패는 err 다. warning·err 는 journal 에도 `<4>`/`<3>` 우선순위로 남는다. 다만 eMMC 모드가 journald `MaxLevelStore` 를 낮추면 journal 사본은 빠질 수 있다.
+
+수동으로 다시 돌리려면 `systemctl stop cam-operate` 로 녹화를 멈춘 뒤 `systemctl restart pim-vpu-driver` 를 하고, 다시 `systemctl start cam-operate` 를 한다. cam-operate 가 돌고 있으면 스크립트가 건너뛴다.
+
+되돌리려면 `systemctl disable pim-vpu-driver` 를 하고 재부팅한다. 재부팅하면 내장 드라이버로 돌아간다. 단 패키지를 업그레이드하면 postinst(`customctl enable pim-vpu-driver`)가 다시 enable 하므로, 계속 끄려면 업그레이드 뒤에 다시 disable 한다.
+재부팅 없이 바로 되돌리려면 `systemctl stop cam-operate` 로 녹화를 멈춘다. gstApp 만 멈추면 cam-operate 가 곧 다시 띄워 장치를 연다. 그다음 `/proc/*/fd` 에 `/dev/mxc_hantro_vc8000e` 를 연 프로세스가 없는지 확인하고 아래를 실행한 뒤, `systemctl start cam-operate` 를 한다.
 
 ```bash
 echo 38320000.vpu_vc8000e > /sys/bus/platform/drivers/mxc_hantro_vc8000e_ext/unbind
