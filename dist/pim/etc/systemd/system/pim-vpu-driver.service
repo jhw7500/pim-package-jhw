@@ -6,9 +6,15 @@ Before=cam-operate.service
 Type=oneshot
 RemainAfterExit=yes
 # 전환은 1~2초면 끝난다. 막히더라도 부팅을 오래 붙잡지 않는다. cam-operate 는 Before= 순서만
-# 받고 이 유닛에 Requires 하지 않으므로, 실패하거나 시간이 다 돼도 그대로 기동한다.
+# 받고 이 유닛에 Requires 하지 않으므로, 실패하거나 시간이 다 돼도 ExecStopPost 가 끝난 뒤 그대로 기동한다.
 TimeoutStartSec=30s
+# 시간 초과 뒤 정지 단계(SIGTERM 대기, SIGKILL 대기, ExecStopPost 등)마다 이 값을 쓴다. 기본값(보드
+# DefaultTimeoutStopSec=30s)이면 커널에서 막힌 경우 cam-operate 가 몇 분을 기다리므로 짧게 둔다.
+TimeoutStopSec=10s
 ExecStart=/opt/pim/bin/vpu_driver_swap.sh
+# 시작이 시간 초과로 끊기거나 되돌리기까지 실패해 1 로 끝나면, 장치에 드라이버가 없을 때 내장 드라이버로
+# 되돌린다(#196). 정상 정지·재시작(SERVICE_RESULT=success)에는 아무것도 하지 않는다.
+ExecStopPost=/opt/pim/bin/vpu_driver_swap.sh --recover
 StandardOutput=journal
 StandardError=journal
 
