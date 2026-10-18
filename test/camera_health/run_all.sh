@@ -34,3 +34,4 @@ python3 package_executable_test.py
 python3 aggregator_test.py
 python3 shadow_compare_test.py
 bash config_bootstrap_test.sh
+bash vpu_driver_swap_test.sh
