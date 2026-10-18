@@ -45,7 +45,11 @@ cam_operate_state() {  # cam-operate 의 ActiveState 를 출력한다. 조회에
 }
 
 take_lock() {  # 전환이 겹쳐 돌지 않게 하고, --recover 가 아직 끝나지 않은 전환을 알아보게 한다.
-    { exec 9>"$LOCK"; } 2>/dev/null && flock -n 9
+    # 0: 잡음, 1: 다른 실행이 쥐고 있음, 2: 잠금 파일을 못 열었거나 flock 을 못 돌림
+    { exec 9>"$LOCK"; } 2>/dev/null || return 2
+    flock -n 9 && return 0
+    [ $? -eq 1 ] && return 1
+    return 2
 }
 
 sysfs_write() {  # sysfs_write <file> <value>: 빈 값이면 개행만 써서 driver_override 를 비운다.
@@ -66,20 +70,28 @@ dev_rdev() {  # 장치 노드의 major:minor(16진)를 출력한다. 문자 장�
 holders() {  # holders <rdev>: 장치를 fd 로 열었거나 메모리에 매핑한 프로세스 pid 를 공백으로 구분해 출력한다.
     # 경로가 아니라 장치 번호로 비교한다 — 다른 경로(다른 mount namespace 등)로 받은 장치도 잡는다.
     # fd 를 닫고 매핑만 남긴 프로세스는 map_files 로 잡는다. stat 을 돌리지 못하면 실패한다.
-    local rdev=$1 listing rc line pid out=""
-    listing=$(printf '%s\0' "$PROC_ROOT"/[0-9]*/fd/* "$PROC_ROOT"/[0-9]*/map_files/* |
-        xargs -0 "$STAT" -L -c '%t:%T %n' 2>/dev/null)
+    # 목록을 만드는 자식(/proc 를 읽는 glob 전개·xargs·stat)에는 잠금 fd(9)를 넘기지 않는다. 커널에서 막힌
+    # 자식이 잠금을 쥐면 --recover 가 전환이 아직 돈다고 본다.
+    local rdev=$1 listing rc line mode pid out=""
+    listing=$(exec 9>&-
+        printf '%s\0' "$PROC_ROOT"/[0-9]*/fd/* "$PROC_ROOT"/[0-9]*/map_files/* |
+        xargs -0 "$STAT" -L -c '%f %t:%T %n' 2>/dev/null)
     rc=$?
     # 123 은 사이에 사라진 프로세스 등으로 일부 stat 이 실패한 것이다. 그 밖의 값은 stat 을 못 돌린 것이다.
     [ "$rc" -eq 0 ] || [ "$rc" -eq 123 ] || return 1
     # 이 스크립트 자신의 fd 만으로도 목록은 비지 않는다. 비었으면 stat 이 모두 실패한 것이다.
     [ -n "$listing" ] || return 1
     while IFS= read -r line; do
+        mode=${line%% *}
+        line=${line#* }
         [ "${line%% *}" = "$rdev" ] || continue
+        # 같은 major:minor 의 블록 장치는 다른 장치다. %f 는 16진 st_mode 이고 0x2000 이 문자 장치다.
+        case "$mode" in '' | *[!0-9a-f]*) continue ;; esac
+        [ $((0x$mode & 0xF000)) -eq $((0x2000)) ] || continue
         pid=${line#*" $PROC_ROOT"/}
         pid=${pid%%/*}
         case " $out " in *" $pid "*) ;; *) out="${out:+$out }$pid" ;; esac
-    done <<< "$listing"
+    done <<< "$listing" || return 1   # here-string 임시 파일을 못 만들면 루프가 돌지 않으니 보유자를 모른다
     printf '%s' "$out"
 }
 
@@ -96,10 +108,12 @@ restore_builtin() {  # 되돌리지 못하면(장치에 드라이버가 없으�
 main() {
     local cur owners out state rdev
     [ -d "$dev_dir" ] || { log notice "skip: no device $DEVICE"; return 0; }
-    if ! take_lock; then
-        log warning "skip: another run holds $LOCK (driver left as is)"
-        return 0
-    fi
+    take_lock
+    case $? in
+        0) ;;
+        1) log warning "skip: another run holds $LOCK (driver left as is)"; return 0 ;;
+        *) log warning "skip: cannot take $LOCK (driver left as is)"; return 0 ;;
+    esac
     cur=$(current_driver) || cur=""
     if [ "$cur" = "$EXT" ]; then
         log notice "already bound to $EXT"
@@ -139,7 +153,7 @@ main() {
         return 0
     fi
     if [ ! -d "$drv_dir/$EXT" ]; then
-        if ! out=$("$INSMOD" "$MODULE" 2>&1); then
+        if ! out=$("$INSMOD" "$MODULE" 2>&1 9>&-); then   # 모듈 init 에서 막혀도 잠금을 쥐지 않게
             log warning "skip: insmod $MODULE failed: ${out:-no output} ($BUILTIN kept)"
             return 0
         fi
@@ -177,10 +191,18 @@ recover() {  # ExecStopPost 에서 돈다: 전환이 끊기거나 실패해 장�
     [ -d "$dev_dir" ] || return 0
     # driver 링크는 probe 가 끝나기 전에 생긴다. 전환이 아직 돌고 있으면(커널에서 막힌 bind 등) 링크만
     # 보고는 판단할 수 없으니 손대지 않고 알린다.
-    if ! take_lock; then
-        log err "recover: a swap still holds $LOCK (blocked in the kernel?) — $DEVICE driver=$(current_driver || echo none), state unknown; reboot to recover"
-        return 1
-    fi
+    take_lock
+    case $? in
+        0) ;;
+        1)
+            log err "recover: a swap still holds $LOCK (blocked in the kernel?) — $DEVICE driver=$(current_driver || echo none), state unknown; reboot to recover"
+            return 1
+            ;;
+        *)
+            log err "recover: cannot take $LOCK — $DEVICE driver=$(current_driver || echo none) left as is"
+            return 1
+            ;;
+    esac
     current_driver >/dev/null && return 0
     log warning "recover: $DEVICE has no driver after ${SERVICE_RESULT:-a manual run} — restoring $BUILTIN"
     restore_builtin
