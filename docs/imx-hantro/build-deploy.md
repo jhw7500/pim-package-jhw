@@ -45,7 +45,7 @@ python3 tools/verify_binaries.py --strict
 - 장치에 드라이버가 없음(앞선 전환이 끊겼거나 probe 실패) → 내장 드라이버에 다시 bind 한다.
 - 옮기지 못해 내장 드라이버로 남으면 0 으로 끝난다. 내장 드라이버로 되돌리기까지 실패하면 1 로 끝나 유닛이 failed 가 된다. cam-operate 는 이 유닛을 Requires 하지 않으므로 녹화는 어느 경우에도 기동한다. 전환이 성공하거나 건너뛰면 시작이 끝난 뒤, 1 로 끝나거나 시간이 다 되면 아래 `ExecStopPost` 가 끝난 뒤다.
 
-시작이 시간 초과(`TimeoutStartSec=30s`)로 끊기거나 1 로 끝나면 `ExecStopPost` 가 `vpu_driver_swap.sh --recover` 를 돌린다(#196). 장치에 드라이버가 없을 때만 `driver_override` 를 비우고 내장 드라이버에 다시 bind 한다. 정상 정지·재시작(`SERVICE_RESULT=success`)에는 아무것도 하지 않는다. 전환이 커널에서 막혀 아직 잠금을 쥐고 있으면 driver 링크만으로는 상태를 알 수 없으므로 손대지 않고 err 로그를 남긴다. 이때는 재부팅해야 한다. 잠금 파일을 열지 못하거나 flock 이 경합이 아닌 이유로 실패해도 손대지 않고 err 로그(`recover: cannot take ...`)를 남긴다. 이때는 로그의 `driver=` 를 본다. `none` 이면 장치에 드라이버가 없으니 재부팅하거나, 아래 "재부팅 없이 바로 되돌리려면" 문단의 명령 중 둘째·셋째 줄(override 비우기, 내장 드라이버 bind)로 복구한다. 정지 단계마다 `TimeoutStopSec=10s` 를 써서, 막힌 경우에도 cam-operate 가 기다리는 시간을 줄인다.
+시작이 시간 초과(`TimeoutStartSec=30s`)로 끊기거나 1 로 끝나면 `ExecStopPost` 가 `vpu_driver_swap.sh --recover` 를 돌린다(#196). 장치에 드라이버가 없을 때만 `driver_override` 를 비우고 내장 드라이버에 다시 bind 한다. 정상 정지·재시작(`SERVICE_RESULT=success`)에는 아무것도 하지 않는다. 전환이 커널에서 막혀 아직 잠금을 쥐고 있으면 driver 링크만으로는 상태를 알 수 없으므로 손대지 않고 err 로그를 남긴다. 이때는 재부팅해야 한다. 잠금 파일을 열지 못하거나 flock 이 경합이 아닌 이유로 실패해도 손대지 않고 err 로그(`recover: cannot take ...`)를 남긴다. 이때는 원래 전환이 아직 도는지 알 수 없으므로 손으로 sysfs 에 쓰지 말고 재부팅한다. 로그의 `driver=none` 은 driver 링크를 읽지 못했다는 뜻이기도 해서, 장치에 드라이버가 없다는 증거로 쓰지 않는다. 정지 단계마다 `TimeoutStopSec=10s` 를 써서, 막힌 경우에도 cam-operate 가 기다리는 시간을 줄인다.
 
 `.ko` 는 `/lib/modules` 에 넣지 않는다. compatible 이 내장 드라이버와 같아 udev 가 자동 적재하면 수동 전환과 겹치기 때문이다.
 
