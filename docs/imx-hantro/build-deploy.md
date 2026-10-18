@@ -29,7 +29,7 @@ python3 tools/verify_binaries.py --strict
 
 `/opt/pim/bin/vpu_driver_swap.sh` 가 한 번 돈다(`pim-vpu-driver.service`, `Before=cam-operate.service`). 순서는 이렇다.
 
-1. 장치 `38320000.vpu_vc8000e` 가 내장 드라이버에 붙어 있고, `/dev/mxc_hantro_vc8000e` 를 연 프로세스가 없는지 확인한다.
+1. 장치 `38320000.vpu_vc8000e` 가 내장 드라이버에 붙어 있고, `/dev/mxc_hantro_vc8000e` 를 열거나 메모리에 매핑한 프로세스가 없는지 확인한다. 경로가 아니라 장치 번호로 `/proc/*/fd` 와 `/proc/*/map_files` 를 비교하므로, 다른 경로로 받은 장치나 fd 를 닫고 매핑만 남긴 프로세스도 잡는다.
 2. `insmod /opt/pim/driver/hantro_vc8000e_ext.ko` 를 한다.
 3. 내장 드라이버에서 unbind 한다.
 4. `driver_override` 를 `mxc_hantro_vc8000e_ext` 로 쓴다.
@@ -37,11 +37,15 @@ python3 tools/verify_binaries.py --strict
 
 옮기지 못하면 내장 드라이버로 남긴다.
 
-- insmod 실패, 장치 사용 중, 모듈 없음 → 아무것도 바꾸지 않는다.
-- cam-operate 가 이미 돌고 있음 → 건너뛴다. gstApp 이 언제든 장치를 열 수 있어 보유자 검사와 unbind 사이가 안전하지 않기 때문이다. 부팅 때는 `Before=` 순서 덕분에 cam-operate 가 아직 기동 전이다.
+- insmod 실패, 장치 사용 중, 모듈 없음, 장치 번호나 보유자 목록을 읽지 못함 → 아무것도 바꾸지 않는다.
+- cam-operate 의 `ActiveState` 가 inactive·failed 가 아님(active 는 물론 activating·deactivating 과 상태 조회 실패도) → 건너뛴다. gstApp 이 언제든 장치를 열 수 있어 보유자 검사와 unbind 사이가 안전하지 않기 때문이다. 부팅 때는 `Before=` 순서로 cam-operate 의 시작 잡이 기다리는 중이라 inactive 다.
+- 같은 스크립트가 이미 돌고 있음(`/run/pim-vpu-driver.lock`) → 건너뛴다.
 - insmod 를 하는 동안 누가 장치를 열었는지, unbind 바로 앞에서 보유자를 한 번 더 확인한다.
 - 모듈 bind 실패 → `driver_override` 를 비우고 내장 드라이버에 다시 bind 한다.
-- 스크립트는 항상 0 으로 끝나고, cam-operate 는 이 유닛을 Requires 하지 않는다. 그래서 전환이 실패해도 녹화는 평소대로 기동한다.
+- 장치에 드라이버가 없음(앞선 전환이 끊겼거나 probe 실패) → 내장 드라이버에 다시 bind 한다.
+- 옮기지 못해 내장 드라이버로 남으면 0 으로 끝난다. 내장 드라이버로 되돌리기까지 실패하면 1 로 끝나 유닛이 failed 가 된다. cam-operate 는 이 유닛을 Requires 하지 않으므로 녹화는 어느 경우에도 기동한다. 전환이 성공하거나 건너뛰면 시작이 끝난 뒤, 1 로 끝나거나 시간이 다 되면 아래 `ExecStopPost` 가 끝난 뒤다.
+
+시작이 시간 초과(`TimeoutStartSec=30s`)로 끊기거나 1 로 끝나면 `ExecStopPost` 가 `vpu_driver_swap.sh --recover` 를 돌린다(#196). 장치에 드라이버가 없을 때만 `driver_override` 를 비우고 내장 드라이버에 다시 bind 한다. 정상 정지·재시작(`SERVICE_RESULT=success`)에는 아무것도 하지 않는다. 전환이 커널에서 막혀 아직 잠금을 쥐고 있으면 driver 링크만으로는 상태를 알 수 없으므로 손대지 않고 err 로그를 남긴다. 이때는 재부팅해야 한다. 정지 단계마다 `TimeoutStopSec=10s` 를 써서, 막힌 경우에도 cam-operate 가 기다리는 시간을 줄인다.
 
 `.ko` 는 `/lib/modules` 에 넣지 않는다. compatible 이 내장 드라이버와 같아 udev 가 자동 적재하면 수동 전환과 겹치기 때문이다.
 
@@ -57,12 +61,12 @@ grep -a 'VPU-DRV' /var/log/cantops/local0.log | tail                          # 
 journalctl -u pim-vpu-driver -b                                               # 경고·오류는 journal 에도 남는다
 ```
 
-local0.log 에는 rsyslog 설정(`local0.notice`)상 notice 이상만 남는다. 전환 성공·이미 전환됨은 notice, 건너뜀·복귀는 warning, 복귀 실패는 err 다. warning·err 는 journal 에도 `<4>`/`<3>` 우선순위로 남는다. 다만 eMMC 모드가 journald `MaxLevelStore` 를 낮추면 journal 사본은 빠질 수 있다.
+local0.log 에는 rsyslog 설정(`local0.notice`)상 notice 이상만 남는다. 전환 성공·이미 전환됨은 notice, 건너뜀·복귀는 warning, 복귀 실패와 `--recover` 가 아직 도는 전환을 만난 경우는 err 다. warning·err 는 journal 에도 `<4>`/`<3>` 우선순위로 남는다. 다만 eMMC 모드가 journald `MaxLevelStore` 를 낮추면 journal 사본은 빠질 수 있다.
 
-수동으로 다시 돌리려면 `systemctl stop cam-operate` 로 녹화를 멈춘 뒤 `systemctl restart pim-vpu-driver` 를 하고, 다시 `systemctl start cam-operate` 를 한다. cam-operate 가 돌고 있으면 스크립트가 건너뛴다.
+수동으로 다시 돌리려면 `systemctl stop cam-operate` 로 녹화를 멈춘 뒤 `systemctl restart pim-vpu-driver` 를 하고, 다시 `systemctl start cam-operate` 를 한다. cam-operate 가 inactive·failed 가 아니면 스크립트가 건너뛴다.
 
 되돌리려면 `systemctl disable pim-vpu-driver` 를 하고 재부팅한다. 재부팅하면 내장 드라이버로 돌아간다. 단 패키지를 업그레이드하면 postinst(`customctl enable pim-vpu-driver`)가 다시 enable 하므로, 계속 끄려면 업그레이드 뒤에 다시 disable 한다.
-재부팅 없이 바로 되돌리려면 `systemctl stop cam-operate` 로 녹화를 멈춘다. gstApp 만 멈추면 cam-operate 가 곧 다시 띄워 장치를 연다. 그다음 `/proc/*/fd` 에 `/dev/mxc_hantro_vc8000e` 를 연 프로세스가 없는지 확인하고 아래를 실행한 뒤, `systemctl start cam-operate` 를 한다.
+재부팅 없이 바로 되돌리려면 `systemctl stop cam-operate` 로 녹화를 멈춘다. gstApp 만 멈추면 cam-operate 가 곧 다시 띄워 장치를 연다. 그다음 `/dev/mxc_hantro_vc8000e` 를 열거나 매핑한 프로세스가 없는지(`/proc/*/fd`, `/proc/*/map_files`) 확인하고 아래를 실행한 뒤, `systemctl start cam-operate` 를 한다.
 
 ```bash
 echo 38320000.vpu_vc8000e > /sys/bus/platform/drivers/mxc_hantro_vc8000e_ext/unbind

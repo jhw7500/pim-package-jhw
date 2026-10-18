@@ -21,6 +21,9 @@ expect() {  # expect <description> <command...>
     if "$@"; then ok "$what"; else bad "$what"; fi
 }
 
+# 보유자 판정은 장치 번호로 비교하므로 VPU 장치 노드 대신 /dev/zero 를 쓴다. /dev/null 은 다른 장치다.
+VPU_NODE=/dev/zero
+
 # 외부 명령 스텁: logger 는 기록만, insmod 는 FAKE_INSMOD 로 동작을 고른다.
 mkdir -p "$WORK/bin"
 cat > "$WORK/bin/logger" <<'EOF'
@@ -33,17 +36,36 @@ printf 'insmod %s\n' "$1" >> "$CASE/calls"
 case "${FAKE_INSMOD:-ok}" in
     fail) echo "insmod: ERROR: could not insert module: Invalid module format" >&2; exit 1 ;;
     noreg) exit 0 ;;
-    open) mkdir -p "$CASE/proc/999/fd"; ln -s /dev/mxc_hantro_vc8000e "$CASE/proc/999/fd/3" ;;
+    open) mkdir -p "$CASE/proc/999/fd"; ln -s /dev/zero "$CASE/proc/999/fd/3" ;;
 esac
 d="$CASE/sys/bus/platform/drivers/mxc_hantro_vc8000e_ext"
 mkdir -p "$d"; : > "$d/bind"; : > "$d/unbind"
 EOF
 cat > "$WORK/bin/fake_systemctl" <<'EOF'
 #!/bin/bash
-# is-active --quiet cam-operate.service: FAKE_CAM_ACTIVE=1 이면 active
-[ "${FAKE_CAM_ACTIVE:-0}" = 1 ]
+# show -p ActiveState --value cam-operate.service: FAKE_CAM_STATE 를 출력한다(기본 inactive).
+# queryfail 이면 조회가 실패하고, empty 면 아무것도 출력하지 않는다.
+# is-active 는 그 값이 active 일 때만 성공한다(#194 판정과 같은 상태를 보인다).
+state=${FAKE_CAM_STATE:-inactive}
+case "$1" in
+    show) [ "$state" = queryfail ] && exit 1; [ "$state" = empty ] || printf '%s\n' "$state" ;;
+    is-active) [ "$state" = active ] ;;
+    *) exit 1 ;;
+esac
 EOF
-chmod +x "$WORK/bin/logger" "$WORK/bin/fake_insmod" "$WORK/bin/fake_systemctl"
+cat > "$WORK/bin/fake_stat" <<'EOF'
+#!/bin/bash
+# 여러 파일을 한 번에 묻는 호출(보유자 목록)만 바꾼다. 나머지는 진짜 stat 이다.
+# FAKE_STAT=broken 이면 255 로 끝나고(xargs 가 멈춘다), silent 면 출력 없이 1 로 끝난다(모든 stat 실패).
+if [ "$#" -gt 4 ]; then
+    case "${FAKE_STAT:-}" in
+        broken) exit 255 ;;
+        silent) exit 1 ;;
+    esac
+fi
+exec stat "$@"
+EOF
+chmod +x "$WORK/bin/logger" "$WORK/bin/fake_insmod" "$WORK/bin/fake_systemctl" "$WORK/bin/fake_stat"
 
 setup() {  # setup <name>: 내장 드라이버에 붙은 장치, 모듈 파일, 빈 /proc
     CASE="$WORK/$1"
@@ -61,6 +83,8 @@ setup() {  # setup <name>: 내장 드라이버에 붙은 장치, 모듈 파일, 
 }
 
 link_of() { local l; l=$(readlink "$CASE/sys/bus/platform/devices/$DEVICE/driver" 2>/dev/null) || { echo none; return; }; echo "${l##*/}"; }
+rc_is() { [ "$(cat "$CASE/rc")" = "$1" ]; }
+unbind_now() { rm -f "$CASE/sys/bus/platform/devices/$DEVICE/driver"; }
 calls_are() { [ "$(cat "$CASE/calls")" = "$1" ]; }
 no_calls() { [ ! -s "$CASE/calls" ]; }
 logged() { grep -qF -- "$1" "$CASE/logger.log"; }
@@ -88,24 +112,32 @@ fake_kernel_write() {
     esac
 }
 
-run_sourced() {  # 스크립트를 source 하고 sysfs_write 를 가짜 커널로 바꿔 main 을 돈다
+run_sourced() {  # run_sourced [main|recover]: 스크립트를 source 하고 sysfs_write 를 가짜 커널로 바꿔 돈다.
+    # 반환값은 $CASE/rc 에 남긴다(rc_is 로 본다). TEST_DEV_NODE·TEST_STAT 로 장치 노드와 stat 을 바꾼다.
+    local fn=${1:-main} rc=0
     (
         set +e   # 운영 실행처럼 set -u 만 둔 채로 돈다(스크립트가 set -u 를 다시 켠다)
         export PATH="$WORK/bin:$PATH" PIM_VPU_SYSFS_ROOT="$CASE/sys" PIM_VPU_PROC_ROOT="$CASE/proc" \
             PIM_VPU_MODULE="$CASE/hantro_vc8000e_ext.ko" PIM_VPU_INSMOD="$WORK/bin/fake_insmod" \
-            PIM_VPU_SYSTEMCTL="$WORK/bin/fake_systemctl"
+            PIM_VPU_SYSTEMCTL="$WORK/bin/fake_systemctl" PIM_VPU_DEV_NODE="${TEST_DEV_NODE:-$VPU_NODE}" \
+            PIM_VPU_STAT="${TEST_STAT:-stat}" PIM_VPU_LOCK="$CASE/lock"
         # shellcheck source=/dev/null
         . "$SCRIPT"
         sysfs_write() { fake_kernel_write "$@"; }
-        main
-    ) 2> "$CASE/stderr"
+        "$fn"
+    ) 2> "$CASE/stderr" || rc=$?
+    echo "$rc" > "$CASE/rc"
 }
 
-run_exec() {  # 스크립트를 그대로 실행한다(실제 sysfs_write, 종료 코드)
+run_exec() {  # run_exec [args...]: 스크립트를 그대로 실행한다(실제 sysfs_write, 종료 코드)
     env PATH="$WORK/bin:$PATH" PIM_VPU_SYSFS_ROOT="$CASE/sys" PIM_VPU_PROC_ROOT="$CASE/proc" \
         PIM_VPU_MODULE="$CASE/hantro_vc8000e_ext.ko" PIM_VPU_INSMOD="$WORK/bin/fake_insmod" \
-        PIM_VPU_SYSTEMCTL="$WORK/bin/fake_systemctl" "$SCRIPT" 2> "$CASE/stderr"
+        PIM_VPU_SYSTEMCTL="$WORK/bin/fake_systemctl" PIM_VPU_DEV_NODE="$VPU_NODE" \
+        PIM_VPU_LOCK="$CASE/lock" "$SCRIPT" "$@" 2> "$CASE/stderr"
 }
+
+hold_lock() { exec 8>"$CASE/lock"; flock -n 8; }   # 다른 전환이 잠금을 쥔 상태를 만든다
+drop_lock() { exec 8>&-; }
 
 echo '=== vpu driver swap ==='
 
@@ -132,6 +164,20 @@ run_sourced
 expect "no device: nothing is touched" no_calls
 expect "no device: logged" logged "skip: no device $DEVICE"
 
+# 드라이버가 없는 장치는 성공으로 넘기지 않고 내장 드라이버로 되돌린다(#196)
+setup nodriver
+unbind_now
+run_sourced
+expect "no driver at start: device goes back to $BUILTIN" [ "$(link_of)" = "$BUILTIN" ]
+expect "no driver at start: no insmod, no unbind" sh -c '! grep -qE "^insmod|/unbind " "$CASE/calls"'
+expect "no driver at start: returns 0 once restored" rc_is 0
+
+setup nodriverfail
+unbind_now
+FAIL_BIND_mxc_hantro_vc8000e=1 run_sourced
+expect "no driver at start, restore fails: returns 1" rc_is 1
+expect "no driver at start, restore fails: err logged" logged "VPU encoder is unbound"
+
 setup otherdrv
 rm "$CASE/sys/bus/platform/devices/$DEVICE/driver"
 ln -s "../../../bus/platform/drivers/somebody" "$CASE/sys/bus/platform/devices/$DEVICE/driver"
@@ -147,17 +193,77 @@ expect "module missing: builtin still bound" [ "$(link_of)" = "$BUILTIN" ]
 
 setup holder
 mkdir -p "$CASE/proc/4321/fd"
-ln -s /dev/mxc_hantro_vc8000e "$CASE/proc/4321/fd/7"
+ln -s "$VPU_NODE" "$CASE/proc/4321/fd/7"
 run_sourced
 expect "device open: no insmod, no unbind" no_calls
 expect "device open: builtin still bound" [ "$(link_of)" = "$BUILTIN" ]
 expect "device open: holder pid is logged" logged "is open by pid 4321"
 
+# 다른 mount namespace 처럼 다른 경로로 받은 같은 장치: 경로가 아니라 장치 번호로 잡아야 한다(#196)
+setup holderotherpath
+ln -s "$VPU_NODE" "$CASE/vpu-in-container"
+mkdir -p "$CASE/proc/4322/fd"
+ln -s "$CASE/vpu-in-container" "$CASE/proc/4322/fd/5"
+run_sourced
+expect "device open under another path: no insmod, no unbind" no_calls
+expect "device open under another path: holder pid is logged" logged "is open by pid 4322"
+
+# fd 를 닫고 매핑만 남긴 프로세스(#196)
+setup mmaponly
+mkdir -p "$CASE/proc/5555/map_files"
+ln -s "$VPU_NODE" "$CASE/proc/5555/map_files/ffff8000-ffff9000"
+run_sourced
+expect "device only mapped: no insmod, no unbind" no_calls
+expect "device only mapped: holder pid is logged" logged "is open by pid 5555"
+
+setup nodevnode
+TEST_DEV_NODE="$CASE/no-such-node" run_sourced
+expect "device node unreadable: no insmod, no unbind" no_calls
+expect "device node unreadable: logged" logged "cannot read the device number of $CASE/no-such-node"
+
+setup holderlistfail
+FAKE_STAT=broken TEST_STAT="$WORK/bin/fake_stat" run_sourced
+expect "holder listing fails: no insmod, no unbind" no_calls
+expect "holder listing fails: logged" logged "cannot list processes using $VPU_NODE"
+
+setup holderlistempty
+FAKE_STAT=silent TEST_STAT="$WORK/bin/fake_stat" run_sourced
+expect "holder listing empty (every stat failed): no insmod, no unbind" no_calls
+expect "holder listing empty (every stat failed): logged" logged "cannot list processes using $VPU_NODE"
+
 setup camactive
-FAKE_CAM_ACTIVE=1 run_sourced
+FAKE_CAM_STATE=active run_sourced
 expect "cam-operate active: no insmod, no unbind" no_calls
 expect "cam-operate active: builtin still bound" [ "$(link_of)" = "$BUILTIN" ]
 expect "cam-operate active: logged" logged "skip: cam-operate is active"
+
+# 시작 중(ExecStartPost 대기 등)이나 정지 중에도 gstApp 이 장치를 열 수 있다(#196)
+for state in activating deactivating reloading; do
+    setup "cam$state"
+    FAKE_CAM_STATE=$state run_sourced
+    expect "cam-operate $state: no insmod, no unbind" no_calls
+    expect "cam-operate $state: logged" logged "skip: cam-operate is $state"
+done
+
+setup camqueryfail
+FAKE_CAM_STATE=queryfail run_sourced
+expect "cam-operate state unknown (query fails): no insmod, no unbind" no_calls
+expect "cam-operate state unknown (query fails): logged" logged "skip: cam-operate is unknown"
+
+setup camempty
+FAKE_CAM_STATE=empty run_sourced
+expect "cam-operate state unknown (empty): no insmod, no unbind" no_calls
+
+setup camfailed
+FAKE_CAM_STATE=failed run_sourced
+expect "cam-operate failed (not running): device still moved" [ "$(link_of)" = "$EXT" ]
+
+setup locked
+hold_lock
+run_sourced
+drop_lock
+expect "another run holds the lock: nothing is touched" no_calls
+expect "another run holds the lock: logged" logged "skip: another run holds $CASE/lock"
 
 setup openedduringinsmod
 FAKE_INSMOD=open run_sourced
@@ -197,9 +303,56 @@ expect "ext bind fails: restore is logged" logged "restored $DEVICE to $BUILTIN"
 setup bothfail
 FAIL_BIND_mxc_hantro_vc8000e_ext=1 FAIL_BIND_mxc_hantro_vc8000e=1 run_sourced
 expect "both binds fail: device is left unbound" [ "$(link_of)" = none ]
+expect "both binds fail: main returns 1 so the unit fails and ExecStopPost retries (#196)" rc_is 1
 expect "both binds fail: the failure is logged loudly" logged "VPU encoder is unbound"
 expect "both binds fail: the failure also reaches the journal" grep -qF "VPU encoder is unbound" "$CASE/stderr"
 expect "both binds fail: journal line carries err priority <3>" grep -qE "^<3>\[VPU-DRV\].*VPU encoder is unbound" "$CASE/stderr"
+
+echo '=== recover (ExecStopPost) ==='
+
+# 시간 초과로 override 를 쓴 뒤 bind 전에 끊긴 상태
+setup recovertimeout
+unbind_now
+printf '%s\n' "$EXT" > "$CASE/sys/bus/platform/devices/$DEVICE/driver_override"
+SERVICE_RESULT=timeout run_sourced recover
+expect "recover after timeout: device goes back to $BUILTIN" [ "$(link_of)" = "$BUILTIN" ]
+expect "recover after timeout: override cleared, then builtin bound" calls_are \
+    "$(printf 'sysfs bus/platform/devices/%s/driver_override \nsysfs bus/platform/drivers/%s/bind %s' "$DEVICE" "$BUILTIN" "$DEVICE")"
+expect "recover after timeout: returns 0" rc_is 0
+expect "recover after timeout: logged with the service result" logged "recover: $DEVICE has no driver after timeout"
+
+setup recoverbound
+SERVICE_RESULT=exit-code run_sourced recover
+expect "recover with a driver bound: nothing is touched" no_calls
+expect "recover with a driver bound: returns 0" rc_is 0
+
+setup recoversuccess
+unbind_now
+SERVICE_RESULT=success run_sourced recover
+expect "recover on a normal stop (success): nothing is touched even if unbound" no_calls
+
+setup recovermanual
+unbind_now
+run_sourced recover
+expect "recover run by hand: device goes back to $BUILTIN" [ "$(link_of)" = "$BUILTIN" ]
+expect "recover run by hand: logged" logged "no driver after a manual run"
+
+setup recoverfails
+unbind_now
+FAIL_BIND_mxc_hantro_vc8000e=1 SERVICE_RESULT=exit-code run_sourced recover
+expect "recover fails: returns 1" rc_is 1
+expect "recover fails: err reaches the journal" grep -qE "^<3>\[VPU-DRV\].*VPU encoder is unbound" "$CASE/stderr"
+
+# 전환이 커널에서 막혀 아직 잠금을 쥔 상태: driver 링크는 probe 전에 생기므로 링크만 보고 판단하면 안 된다
+setup recoverlocked
+unbind_now
+hold_lock
+SERVICE_RESULT=timeout run_sourced recover
+drop_lock
+expect "recover while a swap still runs: nothing is touched even though unbound" no_calls
+expect "recover while a swap still runs: device left as found" [ "$(link_of)" = none ]
+expect "recover while a swap still runs: returns 1" rc_is 1
+expect "recover while a swap still runs: err reaches the journal" grep -qE "^<3>\[VPU-DRV\].*recover: a swap still holds" "$CASE/stderr"
 
 # 실제 실행: 진짜 sysfs_write 가 무엇을 쓰는지와 종료 코드. 보통 파일이라 링크가 바뀌지 않으므로
 # bind 확인에서 실패해 복구 경로까지 탄다.
@@ -226,6 +379,22 @@ expect "executed write failure: exit code is 0" [ "$rc" -eq 0 ]
 expect "executed write failure: unbind failure detected and logged" logged "unbind of $DEVICE from $BUILTIN failed"
 expect "executed write failure: driver_override untouched" [ "$(cat "$CASE/sys/bus/platform/devices/$DEVICE/driver_override")" = "(null)" ]
 
+# 실제 실행에서 되돌리기 쓰기까지 실패: 장치에 드라이버가 없을 수 있으니 1 로 끝나 유닛이 실패해야 한다(#196)
+setup execbothfail
+rm "$CASE/sys/bus/platform/drivers/$BUILTIN/bind"
+ln -s /dev/full "$CASE/sys/bus/platform/drivers/$BUILTIN/bind"
+rc=0; run_exec || rc=$?
+expect "executed restore failure: exit code is 1" [ "$rc" -eq 1 ]
+expect "executed restore failure: err reaches the journal" grep -qE "^<3>\[VPU-DRV\].*restore of $DEVICE to $BUILTIN failed" "$CASE/stderr"
+
+setup execrecover
+unbind_now
+rc=0; SERVICE_RESULT=exit-code run_exec --recover || rc=$?
+expect "executed --recover: builtin bind file received the device name" [ "$(cat "$CASE/sys/bus/platform/drivers/$BUILTIN/bind")" = "$DEVICE" ]
+expect "executed --recover: driver_override cleared" [ -z "$(cat "$CASE/sys/bus/platform/devices/$DEVICE/driver_override")" ]
+expect "executed --recover: exit code is 1 when the device still has no driver" [ "$rc" -eq 1 ]
+expect "executed --recover: does not run the swap (no unbind written)" [ ! -s "$CASE/sys/bus/platform/drivers/$BUILTIN/unbind" ]
+
 echo '=== packaging contract ==='
 UNIT="$ROOT/dist/pim/etc/systemd/system/pim-vpu-driver.service"
 CAM_UNIT="$ROOT/dist/pim/etc/systemd/system/cam-operate.service"
@@ -233,6 +402,9 @@ POSTINST="$ROOT/dist/pim/DEBIAN/postinst"
 expect "unit: ordered before cam-operate" grep -qx 'Before=cam-operate.service' "$UNIT"
 expect "unit: oneshot that stays active" sh -c 'grep -qx "Type=oneshot" "$1" && grep -qx "RemainAfterExit=yes" "$1"' _ "$UNIT"
 expect "unit: runs the swap script" grep -qx 'ExecStart=/opt/pim/bin/vpu_driver_swap.sh' "$UNIT"
+expect "unit: recovers an unbound device after a timeout or failure (#196)" \
+    grep -qx 'ExecStopPost=/opt/pim/bin/vpu_driver_swap.sh --recover' "$UNIT"
+expect "unit: short stop timeout so a hung swap does not hold cam-operate for minutes" grep -qx 'TimeoutStopSec=10s' "$UNIT"
 expect "unit: installed into multi-user.target" grep -qx 'WantedBy=multi-user.target' "$UNIT"
 expect "cam-operate does not require the swap unit (a failed swap must not block it)" \
     sh -c '! grep -E "^(Requires|BindsTo|Requisite)=.*pim-vpu-driver" "$1"' _ "$CAM_UNIT"
