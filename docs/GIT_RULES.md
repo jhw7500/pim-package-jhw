@@ -125,6 +125,11 @@ git commit -m "docs: GIT_RULES 문서 추가"
 바이너리와 함께 갱신하고 `tools/verify_binaries.py --strict`로 검증한다.
 `laird_backport.tar`는 이 매니페스트 검사와 양방향 동기화에서 모두 제외하며,
 GitHub·GitLab 패키지에 이미 있는 파일을 각각 그대로 보존한다.
+`hantro_vc8000e_ext.ko`(VPU 인코더 수정 모듈, 소스 `jhw7500/imx-hantro`)는 `dist/`의 다른
+드라이버처럼 GitLab으로 동기화한다. 사내 정식 패키지에도 #191 수정이 들어가야 하기 때문이다(#196).
+매니페스트는 동기화하지 않으므로, 처음 반영할 때 GitLab 쪽 `.github/binary-manifest.json`에 같은
+항목을 넣고 `tools/verify_binaries.py --strict`로 검증한다. 이 저장소는 이 파일을 LFS로 추적하므로,
+동기화된 파일이 LFS 포인터가 아니라 실제 ELF인지도 확인한다.
 
 ### 동기화 스크립트
 
