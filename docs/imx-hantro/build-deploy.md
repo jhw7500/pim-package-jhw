@@ -29,7 +29,7 @@ python3 tools/verify_binaries.py --strict
 
 `/opt/pim/bin/vpu_driver_swap.sh` 가 한 번 돈다(`pim-vpu-driver.service`, `Before=cam-operate.service`). 순서는 이렇다.
 
-1. 장치 `38320000.vpu_vc8000e` 가 내장 드라이버에 붙어 있고, `/dev/mxc_hantro_vc8000e` 를 열거나 메모리에 매핑한 프로세스가 없는지 확인한다. 경로가 아니라 장치 번호로 `/proc/*/fd` 와 `/proc/*/map_files` 를 비교하므로, 다른 경로로 받은 장치나 fd 를 닫고 매핑만 남긴 프로세스도 잡는다.
+1. 장치 `38320000.vpu_vc8000e` 가 내장 드라이버에 붙어 있고, `/dev/mxc_hantro_vc8000e` 를 열거나 메모리에 매핑한 프로세스가 없는지 확인한다. 경로가 아니라 문자 장치의 장치 번호로 `/proc/*/fd` 와 `/proc/*/map_files` 를 비교하므로(같은 번호의 블록 장치는 세지 않는다), 다른 경로로 받은 장치나 fd 를 닫고 매핑만 남긴 프로세스도 잡는다.
 2. `insmod /opt/pim/driver/hantro_vc8000e_ext.ko` 를 한다.
 3. 내장 드라이버에서 unbind 한다.
 4. `driver_override` 를 `mxc_hantro_vc8000e_ext` 로 쓴다.
@@ -39,7 +39,7 @@ python3 tools/verify_binaries.py --strict
 
 - insmod 실패, 장치 사용 중, 모듈 없음, 장치 번호나 보유자 목록을 읽지 못함 → 아무것도 바꾸지 않는다.
 - cam-operate 의 `ActiveState` 가 inactive·failed 가 아님(active 는 물론 activating·deactivating 과 상태 조회 실패도) → 건너뛴다. gstApp 이 언제든 장치를 열 수 있어 보유자 검사와 unbind 사이가 안전하지 않기 때문이다. 부팅 때는 `Before=` 순서로 cam-operate 의 시작 잡이 기다리는 중이라 inactive 다.
-- 같은 스크립트가 이미 돌고 있음(`/run/pim-vpu-driver.lock`) → 건너뛴다.
+- 잠금(`/run/pim-vpu-driver.lock`)을 잡지 못함 → 건너뛴다. 같은 스크립트가 이미 돌고 있는 경우와 잠금 파일을 열지 못한 경우는 로그를 따로 남긴다. 커널에서 막힐 수 있는 자식(insmod 와 보유자 목록을 만드는 `/proc` 조회)에게는 잠금을 넘기지 않는다.
 - insmod 를 하는 동안 누가 장치를 열었는지, unbind 바로 앞에서 보유자를 한 번 더 확인한다.
 - 모듈 bind 실패 → `driver_override` 를 비우고 내장 드라이버에 다시 bind 한다.
 - 장치에 드라이버가 없음(앞선 전환이 끊겼거나 probe 실패) → 내장 드라이버에 다시 bind 한다.

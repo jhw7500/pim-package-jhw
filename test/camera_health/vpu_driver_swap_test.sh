@@ -33,6 +33,9 @@ EOF
 cat > "$WORK/bin/fake_insmod" <<'EOF'
 #!/bin/bash
 printf 'insmod %s\n' "$1" >> "$CASE/calls"
+# 잠금 fd(9)를 물려받았는지와 그때 부모가 잠금을 쥐고 있는지 남긴다
+if [ -e /proc/self/fd/9 ]; then echo open; else echo closed; fi > "$CASE/insmod_fd9"
+if flock -n "$CASE/lock" true 2>/dev/null; then echo free; else echo held; fi > "$CASE/insmod_lock"
 case "${FAKE_INSMOD:-ok}" in
     fail) echo "insmod: ERROR: could not insert module: Invalid module format" >&2; exit 1 ;;
     noreg) exit 0 ;;
@@ -55,17 +58,34 @@ esac
 EOF
 cat > "$WORK/bin/fake_stat" <<'EOF'
 #!/bin/bash
-# 여러 파일을 한 번에 묻는 호출(보유자 목록)만 바꾼다. 나머지는 진짜 stat 이다.
+# 보유자 목록 호출(형식에 %n 이 있는 것)만 바꾼다. 나머지는 진짜 stat 이다.
 # FAKE_STAT=broken 이면 255 로 끝나고(xargs 가 멈춘다), silent 면 출력 없이 1 로 끝난다(모든 stat 실패).
-if [ "$#" -gt 4 ]; then
-    case "${FAKE_STAT:-}" in
-        broken) exit 255 ;;
-        silent) exit 1 ;;
-    esac
-fi
+# blockdev 면 .../7777/fd/ 경로를 같은 major:minor 의 블록 장치로 보이고, record 면 잠금 fd(9)가 열렸는지 남긴다.
+fmt="" prev=""
+for a in "$@"; do [ "$prev" = -c ] && fmt=$a; prev=$a; done
+case "$fmt" in
+    *%n*)
+        case "${FAKE_STAT:-}" in
+            broken) exit 255 ;;
+            silent) exit 1 ;;
+            blockdev)
+                stat "$@" | sed -E 's#^[0-9a-f]+ ([0-9a-f]+:[0-9a-f]+ .*/7777/fd/.*)$#61b6 \1#'
+                exit "${PIPESTATUS[0]}"
+                ;;
+            record) if [ -e /proc/self/fd/9 ]; then echo open; else echo closed; fi >> "$CASE/stat_fd9" ;;
+        esac
+        ;;
+esac
 exec stat "$@"
 EOF
-chmod +x "$WORK/bin/logger" "$WORK/bin/fake_insmod" "$WORK/bin/fake_systemctl" "$WORK/bin/fake_stat"
+# flock: FAKE_FLOCK=fail 이면 경합(1)이 아닌 실패(65)로 끝난다. 나머지는 진짜 flock 이다.
+REAL_FLOCK=$(command -v flock)
+cat > "$WORK/bin/flock" <<EOF
+#!/bin/bash
+[ "\${FAKE_FLOCK:-}" = fail ] && exit 65
+exec "$REAL_FLOCK" "\$@"
+EOF
+chmod +x "$WORK/bin/logger" "$WORK/bin/fake_insmod" "$WORK/bin/fake_systemctl" "$WORK/bin/fake_stat" "$WORK/bin/flock"
 
 setup() {  # setup <name>: 내장 드라이버에 붙은 장치, 모듈 파일, 빈 /proc
     CASE="$WORK/$1"
@@ -113,14 +133,14 @@ fake_kernel_write() {
 }
 
 run_sourced() {  # run_sourced [main|recover]: 스크립트를 source 하고 sysfs_write 를 가짜 커널로 바꿔 돈다.
-    # 반환값은 $CASE/rc 에 남긴다(rc_is 로 본다). TEST_DEV_NODE·TEST_STAT 로 장치 노드와 stat 을 바꾼다.
+    # 반환값은 $CASE/rc 에 남긴다(rc_is 로 본다). TEST_DEV_NODE·TEST_STAT·TEST_LOCK 으로 장치 노드·stat·잠금 파일을 바꾼다.
     local fn=${1:-main} rc=0
     (
         set +e   # 운영 실행처럼 set -u 만 둔 채로 돈다(스크립트가 set -u 를 다시 켠다)
         export PATH="$WORK/bin:$PATH" PIM_VPU_SYSFS_ROOT="$CASE/sys" PIM_VPU_PROC_ROOT="$CASE/proc" \
             PIM_VPU_MODULE="$CASE/hantro_vc8000e_ext.ko" PIM_VPU_INSMOD="$WORK/bin/fake_insmod" \
             PIM_VPU_SYSTEMCTL="$WORK/bin/fake_systemctl" PIM_VPU_DEV_NODE="${TEST_DEV_NODE:-$VPU_NODE}" \
-            PIM_VPU_STAT="${TEST_STAT:-stat}" PIM_VPU_LOCK="$CASE/lock"
+            PIM_VPU_STAT="${TEST_STAT:-stat}" PIM_VPU_LOCK="${TEST_LOCK:-$CASE/lock}"
         # shellcheck source=/dev/null
         . "$SCRIPT"
         sysfs_write() { fake_kernel_write "$@"; }
@@ -231,6 +251,38 @@ FAKE_STAT=silent TEST_STAT="$WORK/bin/fake_stat" run_sourced
 expect "holder listing empty (every stat failed): no insmod, no unbind" no_calls
 expect "holder listing empty (every stat failed): logged" logged "cannot list processes using $VPU_NODE"
 
+# here-string 임시 파일을 못 만들면 루프가 돌지 않으니 보유자를 모른다 → 건너뛴다(Tribunal A-R1-001).
+# 목록이 파이프 크기(64KiB)보다 커야 bash 5.1 도 임시 파일을 쓴다. 파일 크기 제한으로 그 쓰기만 실패시킨다.
+setup holderheredoc
+mkdir -p "$CASE/proc/4321/fd"
+ln -s "$VPU_NODE" "$CASE/proc/4321/fd/7"
+for i in $(seq 3 1502); do ln -s /dev/null "$CASE/proc/1/fd/$i"; done
+(trap '' XFSZ; ulimit -f 8; run_sourced)
+expect "here-string temp file fails: the failure really happened (precondition)" grep -q "here-document" "$CASE/stderr"
+expect "here-string temp file fails: no insmod, no unbind although pid 4321 holds the device" no_calls
+expect "here-string temp file fails: logged" logged "cannot list processes using $VPU_NODE"
+
+# 같은 major:minor 의 블록 장치를 연 프로세스는 VPU 보유자가 아니다
+setup blockdevcontrol
+mkdir -p "$CASE/proc/7777/fd"
+ln -s "$VPU_NODE" "$CASE/proc/7777/fd/3"
+TEST_STAT="$WORK/bin/fake_stat" run_sourced
+expect "char device through the stat stub (control): pid 7777 is a holder" logged "is open by pid 7777"
+
+setup blockdev
+mkdir -p "$CASE/proc/7777/fd"
+ln -s "$VPU_NODE" "$CASE/proc/7777/fd/3"
+FAKE_STAT=blockdev TEST_STAT="$WORK/bin/fake_stat" run_sourced
+expect "block device with the same major:minor: not a holder, device still moved" [ "$(link_of)" = "$EXT" ]
+
+# 자식(insmod·stat)에게 잠금 fd 를 넘기지 않는다. 커널에서 막힌 자식이 잠금을 쥐면 --recover 가 오판한다.
+setup lockfd
+FAKE_STAT=record TEST_STAT="$WORK/bin/fake_stat" run_sourced
+expect "lock fd: the swap held the lock while insmod ran (precondition)" grep -qx held "$CASE/insmod_lock"
+expect "lock fd: insmod did not inherit fd 9" grep -qx closed "$CASE/insmod_fd9"
+expect "lock fd: the holder listing stat ran (precondition)" grep -q . "$CASE/stat_fd9"
+expect "lock fd: the holder listing stat did not inherit fd 9" sh -c '! grep -qx open "$1"' _ "$CASE/stat_fd9"
+
 setup camactive
 FAKE_CAM_STATE=active run_sourced
 expect "cam-operate active: no insmod, no unbind" no_calls
@@ -264,6 +316,22 @@ run_sourced
 drop_lock
 expect "another run holds the lock: nothing is touched" no_calls
 expect "another run holds the lock: logged" logged "skip: another run holds $CASE/lock"
+
+setup lockopenfail
+TEST_LOCK="$CASE/no-such-dir/lock" run_sourced
+expect "lock file cannot be opened: nothing is touched" no_calls
+expect "lock file cannot be opened: logged apart from contention" logged "skip: cannot take $CASE/no-such-dir/lock"
+
+setup flockfail
+FAKE_FLOCK=fail run_sourced
+expect "flock fails for a reason other than contention: nothing is touched" no_calls
+expect "flock fails for a reason other than contention: logged apart from contention" logged "skip: cannot take $CASE/lock"
+
+setup recoverflockfail
+unbind_now
+FAKE_FLOCK=fail SERVICE_RESULT=timeout run_sourced recover
+expect "recover, flock fails for another reason: nothing is touched, returns 1" sh -c '[ ! -s "$1/calls" ] && [ "$(cat "$1/rc")" = 1 ]' _ "$CASE"
+expect "recover, flock fails for another reason: err apart from contention" grep -qE "^<3>\[VPU-DRV\].*recover: cannot take" "$CASE/stderr"
 
 setup openedduringinsmod
 FAKE_INSMOD=open run_sourced
@@ -353,6 +421,13 @@ expect "recover while a swap still runs: nothing is touched even though unbound"
 expect "recover while a swap still runs: device left as found" [ "$(link_of)" = none ]
 expect "recover while a swap still runs: returns 1" rc_is 1
 expect "recover while a swap still runs: err reaches the journal" grep -qE "^<3>\[VPU-DRV\].*recover: a swap still holds" "$CASE/stderr"
+
+setup recoverlockopenfail
+unbind_now
+TEST_LOCK="$CASE/no-such-dir/lock" SERVICE_RESULT=timeout run_sourced recover
+expect "recover, lock file cannot be opened: nothing is touched" no_calls
+expect "recover, lock file cannot be opened: returns 1" rc_is 1
+expect "recover, lock file cannot be opened: err apart from contention" grep -qE "^<3>\[VPU-DRV\].*recover: cannot take" "$CASE/stderr"
 
 # 실제 실행: 진짜 sysfs_write 가 무엇을 쓰는지와 종료 코드. 보통 파일이라 링크가 바뀌지 않으므로
 # bind 확인에서 실패해 복구 경로까지 탄다.
