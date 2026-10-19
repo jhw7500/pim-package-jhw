@@ -2,6 +2,39 @@
 
 ## Unreleased (2026-10-19)
 
+### camera15 — upstream fixes for the VPU module, gst-rtsp-server, splitmuxsink and the VPU plugin (PRs #202–#204; imx-hantro #1, imx-gst #1, #2, imx-vpu #47)
+
+- Package version is `0.6.3+jhw.camera15`.
+- **VPU encoder module** (PR #202, imx-hantro #1): `hantro_vc8000e_ext.ko` is now
+  built from imx-hantro `c37edf1`. It adds the upstream vc8000e fix (nxp-imx
+  linux-imx `9b03ccbcb27e`, LF-7711-7): the 200 ms encode-wait timeout path now
+  releases `core_suspend_sem`. Before, one missed interrupt made the next encode
+  start wait forever and stalled the other encoders too. The #191 fix is still in.
+- **gst-rtsp-server** (PR #203, imx-gst #1): the package ships
+  `libgstrtspserver-1.0.so.0.1800.0` built from imx-gst `5ea8b13`, the board's
+  1.18.0 with 11 upstream fixes from 1.18.1–1.18.6 (TCP TEARDOWN deadlock, session
+  timeout use-after-free and others). It is installed in `/usr/local/lib`, and the
+  ld.so config is renamed `pim.conf` → `00-pim.conf` so it is read before the
+  image's `01-yocto.conf` (`/usr/lib`). The stock `/usr/lib` copy is left
+  untouched because no dpkg package owns it. postrm runs `ldconfig` on remove and
+  purge, so the stock library is used again.
+- **splitmuxsink** (PR #204, imx-gst #2): the package ships `libgstmultifile.so`
+  built from imx-gst `ed36938`, the board's gst-plugins-good 1.18.0 multifile
+  plugin with 7 upstream splitmuxsink fixes (empty fragment split, EOS handling,
+  shutdown deadlock, assert → error, lock and reference leaks on the shutdown
+  path). It is installed in `/opt/pim/lib/gstreamer-1.0`, and `start_cam.sh`
+  starts gstApp/PIMCAM with `GST_PLUGIN_PATH` pointing there first. A process not
+  started through `start_cam.sh` (for example a manual run) uses the stock plugin.
+- **VPU GStreamer plugin** (imx-vpu PR #48, #47): `libgstvpu.so` is rebuilt from
+  imx-vpu `d61eaf9` with NXP upstream `85acd07` (MMFMWK-9055). The plugin passed a
+  non-GObject pointer to `GST_DEBUG_OBJECT`, so with GStreamer debug level 5 or
+  higher vpuenc crashed (SIGSEGV) at start. Without debug logging nothing changes.
+  `libfslvpuwrap` is unchanged (no wrapper source change since `1f55ed4`).
+- `gstApp` (`41b02dd`) and `max9296.ko` (`172a76a`) are unchanged.
+- Reboot after installing: the VPU module swap happens at boot (same install note
+  as camera14). Removing the package or going back to camera14 returns to the
+  stock gst-rtsp-server and multifile plugin.
+
 ### camera14 — VPU encoder leak fix and AP1302 boot check (issues #191, #194, #196; max9296 #110, #111)
 
 - Package version is `0.6.3+jhw.camera14`.
