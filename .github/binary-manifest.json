@@ -165,14 +165,14 @@
     },
     {
       "path": "dist/pim/usr/lib/gstreamer-1.0/libgstvpu.so",
-      "sha256": "d509fb1b98d733e2202fc07e4c722cff7164243cb52a0a6ba49e5dffa3b24702",
+      "sha256": "a121fe07253e2ecba495dadc21bce7eda8c51a40772dc96658308f7da6b08b56",
       "size": 111720,
       "mode": "100755",
       "arch": "aarch64",
       "source": {
         "repo": "jhw7500/imx-vpu",
-        "commit": "1f55ed4",
-        "build": "./setup-deps.sh && ./build.sh reconf; SDK strip --strip-unneeded"
+        "commit": "d61eaf9",
+        "build": "./make-for-imx8.sh; SDK strip --strip-unneeded"
       },
       "required_strings": [
         "qp-min",
@@ -180,7 +180,7 @@
         "H264 profile",
         "H264 level"
       ],
-      "note": "활성 GStreamer VPU 플러그인. wrapper와 같은 ABI 세트로 배포한다. 패키지 최초 반영 8328eea, GNU Build ID 0d13ca40d28a8f21c54d30f4a5f1032debac9f5b. 원본 빌드 시각을 고정한 재빌드와 비교하면 .note.gnu.build-id 20바이트만 달랐고, 해당 section 제거 후 공통 SHA-256은 e57a8655cf829dfe5874d1f812d815ba488d7fcce0e9cc6f7ae17db20355eb2f다."
+      "note": "활성 GStreamer VPU 플러그인. wrapper와 같은 ABI 세트로 배포한다. 패키지 최초 반영 8328eea, GNU Build ID 0d13ca40d28a8f21c54d30f4a5f1032debac9f5b. 원본 빌드 시각을 고정한 재빌드와 비교하면 .note.gnu.build-id 20바이트만 달랐고, 해당 section 제거 후 공통 SHA-256은 e57a8655cf829dfe5874d1f812d815ba488d7fcce0e9cc6f7ae17db20355eb2f다. PR #48(upstream 85acd07 백포트, imx-vpu #47): GST_DEBUG≥5 에서 vpuenc 시작 시 SIGSEGV 수정, 머지 d61eaf9, GNU Build ID e513579f1e5c38e730b46f4b276672f60d3e5733. wrapper 소스는 1f55ed4..d61eaf9 에서 바뀌지 않아 wrapper 는 그대로 둔다."
     },
     {
       "path": "dist/pim/usr/lib/libfslvpuwrap.so.3.0.0",

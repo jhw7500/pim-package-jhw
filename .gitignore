@@ -46,3 +46,6 @@ QODER.md
 
 # GitHub 100MB 제한 초과 — GitLab(pim-package)에는 정상 보관됨
 upgrade_file/dpkg/pimwebserver_*.deb
+
+# 세션별 로컬 문서(작업 메모·트리아지 기록) — 저장소에 올리지 않는다
+local-docs/

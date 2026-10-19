@@ -1,5 +1,30 @@
 # PIM Package Changelog
 
+## 최신 변경사항 (2026-10-19) — camera15 / VPU 모듈·gst-rtsp-server·splitmuxsink·VPU 플러그인 upstream 수정 (PR #202~#204, imx-hantro #1, imx-gst #1·#2, imx-vpu #47)
+
+- 전달 패키지를 `pim-mp 0.6.3+jhw.camera15`로 올렸다.
+- **VPU 인코더 모듈**(PR #202, imx-hantro #1): `hantro_vc8000e_ext.ko` 를 imx-hantro `c37edf1` 빌드로
+  바꿨다. upstream vc8000e 수정(nxp-imx linux-imx `9b03ccbcb27e`, LF-7711-7)이 들어 있어, 인코딩 완료
+  대기의 200ms timeout 경로에서 `core_suspend_sem` 을 푼다. 이전에는 인터럽트를 한 번 놓치면 다음
+  인코딩 시작이 무기한 기다렸고 다른 인코더도 멈췄다. #191 수정은 그대로 들어 있다.
+- **gst-rtsp-server**(PR #203, imx-gst #1): 보드 순정 1.18.0 에 upstream 1.18.1~1.18.6 수정 11건(TCP
+  TEARDOWN 데드락, 세션 timeout use-after-free 등)을 얹은 `libgstrtspserver-1.0.so.0.1800.0`(imx-gst
+  `5ea8b13`)을 싣는다. `/usr/local/lib` 에 두고, ld.so 설정을 `pim.conf` → `00-pim.conf` 로 바꿔 이미지의
+  `01-yocto.conf`(`/usr/lib`)보다 먼저 읽게 했다. 순정 `/usr/lib` 본은 dpkg 미소유라 건드리지 않는다.
+  postrm 이 remove·purge 때 `ldconfig` 를 돌려 순정본으로 돌아간다.
+- **splitmuxsink**(PR #204, imx-gst #2): 보드 순정 gst-plugins-good 1.18.0 multifile 플러그인에
+  upstream splitmuxsink 수정 7건(빈 조각 분할, EOS 처리, 종료 교착, assert→오류, 종료 경로 잠금·참조
+  누수)을 얹은 `libgstmultifile.so`(imx-gst `ed36938`)를 싣는다. `/opt/pim/lib/gstreamer-1.0` 에 두고,
+  `start_cam.sh` 가 gstApp·PIMCAM 을 `GST_PLUGIN_PATH` 로 그 디렉터리를 먼저 찾게 해서 띄운다.
+  `start_cam.sh` 를 거치지 않은 프로세스(수동 실행 등)는 순정 플러그인을 쓴다.
+- **VPU GStreamer 플러그인**(imx-vpu PR #48, #47): `libgstvpu.so` 를 NXP upstream `85acd07`
+  (MMFMWK-9055)을 백포트한 imx-vpu `d61eaf9` 로 다시 빌드했다. 플러그인이 GObject 가 아닌 포인터를
+  `GST_DEBUG_OBJECT` 에 넘겨, GStreamer 디버그 수준 5 이상에서 vpuenc 시작 시 SIGSEGV 가 났다. 디버그
+  로그를 쓰지 않으면 동작 변화는 없다. `libfslvpuwrap` 은 그대로다(`1f55ed4` 뒤 wrapper 소스 변경 없음).
+- `gstApp`(`41b02dd`)·`max9296.ko`(`172a76a`)는 그대로다.
+- 설치 뒤 재부팅한다. VPU 모듈 전환은 부팅 때 일어난다(camera14 와 같다). 패키지를 지우거나 camera14 로
+  되돌리면 순정 gst-rtsp-server·multifile 플러그인으로 돌아간다.
+
 ## 최신 변경사항 (2026-10-19) — camera14 / VPU 인코더 누수 수정·AP1302 기동 확인 (이슈 #191·#194·#196, max9296 #110·#111)
 
 - 전달 패키지를 `pim-mp 0.6.3+jhw.camera14`로 올렸다.
