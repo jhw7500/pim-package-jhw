@@ -1,6 +1,35 @@
 # PIM Package Release Notes
 
-## Unreleased (2026-10-14)
+## Unreleased (2026-10-19)
+
+### camera14 — VPU encoder leak fix and AP1302 boot check (issues #191, #194, #196; max9296 #110, #111)
+
+- Package version is `0.6.3+jhw.camera14`.
+- **VPU encoder reservation leak** (#191, #194, PR #195): the built-in VC8000E
+  encoder driver released a core reservation only when the reserving thread
+  closed the device, so after a forced gstApp kill the reservation could stay held
+  and every later encode waited until reboot. The package now ships
+  `hantro_vc8000e_ext.ko` (from `jhw7500/imx-hantro`, released by open file) and
+  `pim-vpu-driver.service`, which moves the encoder device to it at boot, before
+  cam-operate.
+- **Swap hardening** (#196, PRs #197–#200): the swap skips while any process has
+  the device open or mapped (character-device number over `/proc/*/fd` and
+  `/proc/*/map_files`), while cam-operate is not inactive/failed, or while another
+  run holds `/run/pim-vpu-driver.lock`. If the swap times out or ends with the
+  encoder unbound, `ExecStopPost=vpu_driver_swap.sh --recover` rebinds the
+  built-in driver; a failed restore makes the unit fail. See
+  `docs/imx-hantro/build-deploy.md`.
+- **max9296 `172a76a`** (max9296 PRs #112, #116): FSYNC state is recorded under the
+  pulse lock, so a stopped stream no longer comes back as RUNNING (#111). Cold init
+  checks each AP1302 boot (R0x2000 before download, after download and after
+  config) and fails prepare with a nonzero errno when an ISP did not boot (#110);
+  before, prepare reported success with zero output. New kernel log
+  `AP1302 boot check failed` / `boot check passed` and health_raw field
+  `isp_boot`. On a board whose camera ISP fails to boot this now shows up as a
+  prepare failure.
+- `gstApp` is unchanged (`41b02dd`).
+- postinst enables `pim-vpu-driver` without starting it, so the swap happens from
+  the next boot. Reboot after installing (same install note as camera10).
 
 ### camera13 — recovery request and stop latency (issues #150, #168)
 

@@ -1,5 +1,26 @@
 # PIM Package Changelog
 
+## 최신 변경사항 (2026-10-19) — camera14 / VPU 인코더 누수 수정·AP1302 기동 확인 (이슈 #191·#194·#196, max9296 #110·#111)
+
+- 전달 패키지를 `pim-mp 0.6.3+jhw.camera14`로 올렸다.
+- **VPU 인코더 예약 누수**(#191·#194, PR #195): 내장 VC8000E 인코더 드라이버는 예약한 스레드가
+  장치를 닫을 때만 코어 예약을 풀어, gstApp 을 강제 종료하면 예약이 남고 이후 인코딩이 재부팅
+  전까지 멈췄다. 열린 파일 기준으로 푸는 `hantro_vc8000e_ext.ko`(`jhw7500/imx-hantro`)와, 부팅 때
+  cam-operate 보다 먼저 인코더 장치를 그 모듈로 옮기는 `pim-vpu-driver.service`를 싣는다.
+- **전환 단계 보강**(#196, PR #197~#200): 장치를 열거나 매핑한 프로세스가 있으면(`/proc/*/fd`·
+  `/proc/*/map_files` 를 문자 장치 번호로 비교), cam-operate 가 inactive·failed 가 아니면,
+  `/run/pim-vpu-driver.lock` 을 다른 실행이 쥐고 있으면 건너뛴다. 전환이 시간 초과되거나 인코더가
+  드라이버 없이 남으면 `ExecStopPost=vpu_driver_swap.sh --recover` 가 내장 드라이버로 되돌리고,
+  되돌리기까지 실패하면 유닛이 실패로 끝난다. `docs/imx-hantro/build-deploy.md` 참조.
+- **max9296 `172a76a`**(max9296 PR #112·#116): FSYNC 상태를 펄스 잠금 안에서 기록해 정지한 스트림이
+  RUNNING 으로 되살아나지 않는다(#111). 콜드 초기화가 AP1302 기동을 ISP 마다 R0x2000 으로 다운로드
+  전·뒤·설정 뒤에 확인하고, 기동하지 않은 ISP 가 있으면 prepare 를 0 이 아닌 errno 로 실패시킨다
+  (#110, 이전에는 출력만 0 이고 성공 보고). 커널 로그 `AP1302 boot check failed`/`boot check passed`
+  와 health_raw 필드 `isp_boot` 가 생겼다. ISP 가 기동하지 않는 카메라가 달린 보드에서는 이제
+  prepare 실패로 드러난다.
+- `gstApp` 은 그대로다(`41b02dd`).
+- postinst 는 `pim-vpu-driver` 를 enable 만 하므로 전환은 다음 부팅부터 일어난다. 설치 뒤 재부팅한다.
+
 ## 최신 변경사항 (2026-10-14) — camera13 / 복구 요청·정지 처리 시간 (이슈 #150·#168)
 
 - 전달 패키지를 `pim-mp 0.6.3+jhw.camera13`으로 올렸다. 보드에 패키지로 설치된 것은
