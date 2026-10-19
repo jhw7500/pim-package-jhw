@@ -36,6 +36,8 @@ purge)
   cat /dev/null > /etc/rc.local
   systemctl disable cam-operate
   refresh_iim42652_depmod
+  # gst-rtsp-server 교체본이 /usr/local/lib 에서 사라졌으니 캐시를 다시 만든다(순정 /usr/lib 본으로 돌아간다).
+  ldconfig
   #systemctl set-default graphical.target
   ;;
 
@@ -47,6 +49,8 @@ upgrade)
 remove)
   echo "postrm remove ($model)"
   refresh_iim42652_depmod
+  # gst-rtsp-server 교체본이 /usr/local/lib 에서 사라졌으니 캐시를 다시 만든다(순정 /usr/lib 본으로 돌아간다).
+  ldconfig
   ;;
 
 *)

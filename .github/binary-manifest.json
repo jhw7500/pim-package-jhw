@@ -202,6 +202,24 @@
       "note": "활성 VPU wrapper. libfslvpuwrap.so.3 심볼릭 링크와 플러그인을 한 세트로 배포한다. 패키지 최초 반영 8328eea, GNU Build ID 1c5740bed9d68420fc690f8fa86724eae03b8a4c. 원본 빌드 시각을 고정한 재빌드와 비교하면 .note.gnu.build-id 20바이트만 달랐고, 해당 section 제거 후 공통 SHA-256은 3256a7d4ab7c56020e7c7a4a4a490e1dddffe1748993afb7ef8a3aae7c12e8f7다."
     },
     {
+      "path": "dist/pim/usr/local/lib/libgstrtspserver-1.0.so.0.1800.0",
+      "mode": "100755",
+      "arch": "aarch64",
+      "source": {
+        "repo": "jhw7500/imx-gst",
+        "commit": "5ea8b13",
+        "build": "./make-for-imx8 clean && ./make-for-imx8 (Yocto SDK 5.10-hardknott, cortexa53-crypto-poky-linux; meson cross, Yocto 와 같은 인자로 strip)"
+      },
+      "required_strings": [
+        "gst_rtsp_session_dup_media",
+        "removing bus watch",
+        "Now blocking on gap event"
+      ],
+      "note": "gst-rtsp-server 1.18.0 + upstream 1.18.1~1.18.6 결함 수정 11건(imx-gst#1). 보드 순정 /usr/lib/libgstrtspserver-1.0.so.0.1800.0 은 어느 dpkg 패키지도 소유하지 않아, 덮어쓰면 제거·다운그레이드 때 dpkg 가 지워 순정본까지 잃는다. 그래서 교체본은 /usr/local/lib 에 두고, /etc/ld.so.conf.d/00-pim.conf 가 이미지의 01-yocto.conf(/usr/lib)보다 먼저 처리되게 해 이쪽을 먼저 찾게 한다. 제거·다운그레이드 때는 이 파일만 사라지고 순정본으로 돌아간다. 이 라이브러리를 쓰는 gstApp·streamApp·libpirtspstream·libpiwriter·gst-variable-rtsp-server·libgstrtspclientsink 는 재시작해야 새 파일을 쓴다. required_strings 는 패치가 더한 심볼·로그 문자열로 순정에는 없다.",
+      "sha256": "533e6deffffc85a0aa0e8d712f0ec9b2d5c892543ede1cc0de432283b0786ee1",
+      "size": 424064
+    },
+    {
       "path": "dist/pim/usr/local/bin/streamApp",
       "sha256": "c221f5f6e816a807a3d3c191fea18a4cd1d0dcd6b61bba77bdf5abef43963e00",
       "size": 54536,

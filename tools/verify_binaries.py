@@ -52,6 +52,7 @@ TRACKED_EXACT_PATHS = {
     "dist/pim/opt/pim/boot/imx8mp-evk-pre-iim42652.dtb",
     "dist/pim/usr/lib/gstreamer-1.0/libgstvpu.so",
     "dist/pim/usr/lib/libfslvpuwrap.so.3.0.0",
+    "dist/pim/usr/local/lib/libgstrtspserver-1.0.so.0.1800.0",
 }
 
 LFS_POINTER_PREFIX = b"version https://git-lfs"
