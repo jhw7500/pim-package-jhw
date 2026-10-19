@@ -53,6 +53,7 @@ TRACKED_EXACT_PATHS = {
     "dist/pim/usr/lib/gstreamer-1.0/libgstvpu.so",
     "dist/pim/usr/lib/libfslvpuwrap.so.3.0.0",
     "dist/pim/usr/local/lib/libgstrtspserver-1.0.so.0.1800.0",
+    "dist/pim/opt/pim/lib/gstreamer-1.0/libgstmultifile.so",
 }
 
 LFS_POINTER_PREFIX = b"version https://git-lfs"

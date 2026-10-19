@@ -66,7 +66,9 @@ cam_process_present "$PIM_CAMERA_RUNTIME_JSON" bg; bg_rc=$?
 [ "$bg_rc" -eq 0 ] || [ "$bg_rc" -eq 1 ] || exit "$bg_rc"
 
 if [ "$app_rc" -eq 1 ]; then
-    ( _cr_test_owner_rollover launch_app && cam_side_effect_guard "$PIM_CAMERA_RUNTIME_JSON" && exec "$app" -d "$delay" -m 4 ) &
+    # 패키지가 고친 GStreamer 플러그인(/opt/pim/lib/gstreamer-1.0)을 순정 /usr/lib/gstreamer-1.0 보다 먼저 쓰게 한다.
+    # 순정은 dpkg 미소유라 덮어쓰지 않는다. 제거·다운그레이드 때는 이 줄과 그 디렉터리가 함께 사라져 순정으로 돌아간다.
+    ( _cr_test_owner_rollover launch_app && cam_side_effect_guard "$PIM_CAMERA_RUNTIME_JSON" && GST_PLUGIN_PATH="/opt/pim/lib/gstreamer-1.0${GST_PLUGIN_PATH:+:$GST_PLUGIN_PATH}" exec "$app" -d "$delay" -m 4 ) &
 fi
 if [ "$bg_rc" -eq 1 ]; then
     ( _cr_test_owner_rollover launch_bg && cam_side_effect_guard "$PIM_CAMERA_RUNTIME_JSON" && exec "${PIM_CAMERA_BG_CHECKER:-$PIM_BIN/BG_Check_for_pim.sh}" "$delay" >/dev/null 2>&1 ) &
