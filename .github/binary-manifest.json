@@ -220,6 +220,24 @@
       "size": 424064
     },
     {
+      "path": "dist/pim/opt/pim/lib/gstreamer-1.0/libgstmultifile.so",
+      "mode": "100755",
+      "arch": "aarch64",
+      "source": {
+        "repo": "jhw7500/imx-gst",
+        "commit": "ed36938",
+        "build": "./make-for-imx8 clean && ./make-for-imx8 (Yocto SDK 5.10-hardknott, cortexa53-crypto-poky-linux; meson -Dauto_features=disabled -Dmultifile=enabled, Yocto 와 같은 인자로 strip)"
+      },
+      "required_strings": [
+        "Timestamping error on input streams",
+        "Shutdown requested. Aborting fragment switch.",
+        "%s/%04d%02d%02d_%02d%02d%02d-%s"
+      ],
+      "note": "gst-plugins-good(NXP MM_04.06.01_2105, 1.18.0 기반) 의 multifile 플러그인에 보드 로컬 수정 2건(v4l2 own_min, multifilesink 파일명 시각 접두사)과 upstream splitmuxsink 결함 수정 7건(1.18.2~1.18.3 다섯, 1.19.2 둘: 빈 조각 분할·EOS 처리·종료 교착·assert→오류·종료 경로 잠금/참조 누수)을 얹은 교체본(imx-gst#2). 순정 /usr/lib/gstreamer-1.0/libgstmultifile.so 는 그대로 두고, start_cam.sh 가 앱 exec 에 GST_PLUGIN_PATH=/opt/pim/lib/gstreamer-1.0 을 붙여 이 파일을 먼저 적재한다(보드 .6 레지스트리 실험: 교체본 제거 시 순정 복귀, 환경 다른 프로세스 간 레지스트리 재작성 약 40 ms). splitmuxsink·multifilesink 를 쓰는 프로세스는 재시작해야 새 파일을 쓴다. required_strings 앞 둘은 upstream 수정이 더한 메시지(순정 0건), 셋째는 로컬 패치의 파일명 포맷(순정에도 있음 — 로컬 수정 유지 확인용).",
+      "sha256": "d51f32545c0cb23d0bd345316851a0a1419a95801d0eff4606f842e6a6e37320",
+      "size": 182880
+    },
+    {
       "path": "dist/pim/usr/local/bin/streamApp",
       "sha256": "c221f5f6e816a807a3d3c191fea18a4cd1d0dcd6b61bba77bdf5abef43963e00",
       "size": 54536,
