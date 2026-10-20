@@ -201,6 +201,40 @@ in_init_cooldown() {
     [ "$last" -gt 0 ] && [ $((now - last)) -lt "$init_cooldown_sec" ]
 }
 
+# 재기동 직후 파일 검사 보류(#190). 앱은 prepare 뒤에야 첫 조각을 열어, 분 경계 마커 기준으로 판정하면
+# 아직 만들 수 없던 파일을 누락으로 본다. 이 세션의 첫 조각 신호(먼저 조각을 연 채널이 쓰는 세션 파일)가
+# 없고 앱이 init_cooldown_sec 보다 어리면 0(보류)을 돌려준다. 실행기가 앱을 띄우기 직전에 세션 파일을
+# 비우므로(cam_start_gstapp) 이전 인스턴스가 쓴 값은 남지 않는다. 앱이 없으면 지금처럼 판정한다(1).
+# 보류가 init_cooldown_sec 넘게 이어지면 나이와 무관하게 판정해, 기동 직후 죽는 앱이 반복돼도 사다리가 돈다.
+# init_cooldown_sec 는 init 쿨다운 값이지만 여기서는 기동 판정 유예로도 쓴다.
+# 앱 나이와 보류 상한은 모두 /proc/uptime(단조 시계)으로 잰다. RTC 설정이 벽시계를 옮겨도 흔들리지 않는다.
+FILE_CHECK_HOLD_SINCE=0
+CLK_TCK=$(getconf CLK_TCK 2>/dev/null) || CLK_TCK=100
+file_check_startup_hold() {
+    local start=$1 session app="" proc=${PIM_CAMERA_PROCESS_ROOT:-/proc} p st youngest="" pid="" up age
+    session=$(cat "$SESSION_FILE_" 2>/dev/null | tr -d '\n')
+    if [ -z "$session" ] && read -r up _ < "$proc/uptime"; then
+        up=${up%.*}
+        _cam_runtime_app_into app "$PIM_CAMERA_RUNTIME_JSON" 2>/dev/null || app=gstApp
+        for p in $(pgrep -x "$app" 2>/dev/null); do
+            st=$(cam_process_start_time "$proc/$p/stat") || continue
+            if [ -z "$youngest" ] || [ "$st" -gt "$youngest" ]; then youngest=$st; pid=$p; fi
+        done
+        if [ -n "$youngest" ]; then
+            age=$(( up - youngest / CLK_TCK ))
+            if [ "$age" -lt "$init_cooldown_sec" ]; then
+                [ "$FILE_CHECK_HOLD_SINCE" -gt 0 ] || FILE_CHECK_HOLD_SINCE=$up
+                if [ $((up - FILE_CHECK_HOLD_SINCE)) -lt "$init_cooldown_sec" ]; then
+                    logger -p local0.notice "[$KEY][$tag:$LINENO] skip file check: $app pid=$pid age=${age}s < ${init_cooldown_sec}s, no fragment yet for start_video_time_:$start (held $((up - FILE_CHECK_HOLD_SINCE))s)"
+                    return 0
+                fi
+            fi
+        fi
+    fi
+    FILE_CHECK_HOLD_SINCE=0
+    return 1
+}
+
 maybe_init_cam_on_disconnect() {
     local cam_disconnect_flag now first_seen last_init
 
@@ -1518,7 +1552,11 @@ do
 		startTimeEpoch=$(date -d "$startTime" "+%s")
 		diffEpoch=$(echo "$curTimeEpoch - $startTimeEpoch" |bc)
         #logger -p local0.info "[$KEY][$tag:$LINENO] start_video_time_:$startTime, cur_time:$(date '+%Y%m%d %H:%M:%S'), diff:$diffEpoch"
-		if [ "$diffEpoch" -ge "$file_check_delay" ]; then
+		if [ "$diffEpoch" -ge "$file_check_delay" ] && file_check_startup_hold "$startTime"; then
+            # 재기동 직후라 이 세션은 판정하지 않는다(#190). 마커와 세션 파일만 비워 다음 세션에서 다시 본다.
+			cat /dev/null > $FILE_
+            cat /dev/null > "$SESSION_FILE_" 2>/dev/null
+		elif [ "$diffEpoch" -ge "$file_check_delay" ]; then
             logger -p local0.info "[$KEY][$tag:$LINENO] start_video_time_:$startTime, cur_time:$(date '+%Y%m%d %H:%M:%S'), diff:$diffEpoch"
             #timer=0
 			cat /dev/null > $FILE_

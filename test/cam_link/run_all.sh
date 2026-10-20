@@ -13,6 +13,7 @@ TESTS=(
     ctrl3_classify_test.sh
     streak_test.sh
     escalation_test.sh
+    file_check_startup_hold_test.sh
     startup_timing_policy_test.sh
     config_default_test.sh
     recovery_actions_test.sh
