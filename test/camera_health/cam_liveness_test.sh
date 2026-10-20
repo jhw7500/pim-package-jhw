@@ -807,6 +807,36 @@ for prior in SUCCEEDED:0 FAILED:1; do
     jq -e '.type=="gstapp_restart" and .source=="liveness" and .reason=="gstapp process absent"' "$PIM_CAMERA_RUN_DIR/recovery/pending.json" >/dev/null \
         || fail "#149 liveness did not resubmit after a reboot dropped the ${prior%%:*} predecessor result"
 done
+echo '=== #193: counter SUCCEEDED + request FAILED rc 70 owner_stale still lets liveness resubmit ==='
+# The action finished (counter SUCCEEDED) but the owner died before the request was
+# finished; the next owner's reconcile then marked the request interrupted.  The
+# interruption keys made _cl_gstapp_failures return 70 on every tick (issue #193).
+interrupted_predecessor() {   # $1 = jq filter applied to history .request; leaves boot-b
+    local hist
+    finished_predecessor SUCCEEDED
+    simulate_reboot
+    hist="$PIM_CAMERA_STATE_DIR/recovery/history/$FINISHED_ID.json"
+    jq -c ".request |= (.status=\"FAILED\" | .rc=70 | .interrupted=true | .interrupted_reason=\"owner_stale\" | $1)" "$hist" > "$WORK/hist.next" \
+        && mv "$WORK/hist.next" "$hist"
+}
+interrupted_predecessor .
+: > "$PIM_CAMERA_CALL_LOG"
+expect_rc 0 cam_liveness_tick
+jq -e '.type=="gstapp_restart" and .source=="liveness"' "$PIM_CAMERA_RUN_DIR/recovery/pending.json" >/dev/null \
+    || fail '#193 liveness did not resubmit after an owner_stale interrupted request'
+# Fail-closed controls (the older "interrupted" reason shape, a SUCCEEDED or rc!=70 request
+# carrying interruption keys): each must keep failing closed and submit nothing.
+for mutate in '.interrupted_reason="interrupted"' '.status="SUCCEEDED"' '.rc=71'; do
+    interrupted_predecessor "$mutate"
+    : > "$PIM_CAMERA_CALL_LOG"
+    expect_rc 70 cam_liveness_tick
+    [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] || fail "#193 corrupt interrupted request ($mutate) submitted recovery"
+done
+finished_predecessor SUCCEEDED
+simulate_reboot
+jq '.actions.gstapp_restart.last_status="FAILED" | .actions.gstapp_restart.last_rc=1' "$PIM_CAMERA_STATE_DIR/recovery/state.json" > "$WORK/state.next" && mv "$WORK/state.next" "$PIM_CAMERA_STATE_DIR/recovery/state.json"
+expect_rc 70 cam_liveness_tick
+[ ! -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] || fail '#193 counter/history mismatch submitted recovery'
 # Negative control: same boot, owner still live, result missing.  That is not a reboot
 # and must keep failing closed.
 finished_predecessor SUCCEEDED

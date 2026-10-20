@@ -372,7 +372,7 @@ _cl_gstapp_failures() {
             history=$(cat "$(_cr_history_file "$id")" 2>/dev/null) || return 70
             terminal=$(jq -ce '.request | select(type=="object")' <<<"$history") || return 70
             _cr_terminal_request_valid "$terminal" || return 70
-            _cr_request_interruption_absent "$terminal" || return 70
+            _cr_terminal_interruption_valid "$terminal" || return 70
             # Results live under the RuntimeDirectory (/run, tmpfs) while state and
             # history persist, so a reboot drops exactly this file for the last
             # finished gstapp_restart.  Requiring it then returned 70 on every tick

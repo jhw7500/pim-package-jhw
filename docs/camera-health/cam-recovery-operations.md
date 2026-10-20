@@ -229,6 +229,10 @@ wrap 되므로(실측 약 38분) 사후 조회로는 놓칠 수 있다.
 terminal action 실패, post-publish readiness 실패, 또는 복구 불가능한 state 오류는 진단과
 history를 남기고 `DEGRADED`로 전이한다. `DEGRADED`에서는 임의 liveness restart가 금지되며
 operator가 status/history를 확인한 뒤 명시적 recovery 또는 `apply-config`를 수행한다.
+이 정책은 사다리 요청 `reboot_fallback`까지 포함해 `DEGRADED`의 모든 사다리 요청을 계속 거부한다
+(사용자 결정, 2026-10-20). 거부는 이제 `chk_cam_operate.sh`가 action과 lifecycle을 로그로 남기며,
+같은 owner 안에서 `DEGRADED`를 벗어나는 길은 명시적 recovery 또는 `apply-config`뿐이다. `gstapp_restart`의 성공 검증은
+ord/vcm을 요구하지 않는다 — 성공 후 `ACTIVE`로 복귀하면 같은 순회의 liveness가 둘을 되살린다.
 
 runtime 정책에는 config SHA, digest, immutable generation, runtime manifest가 없다.
 hardware 변경 판단은 정규화된 JSON value projection으로만 수행한다. package의 binary
