@@ -1,5 +1,40 @@
 # PIM Package Release Notes
 
+## Unreleased (2026-10-20)
+
+### camera16 — last fragment on gstApp stop, journal snapshot tail and file check after restart (issues #205, #190; gstApp #142, PRs #207, #208)
+
+- Package version is `0.6.3+jhw.camera16`.
+- **gstApp last fragment on stop** (gstApp #143, #144): `gstApp` is rebuilt from
+  gstApp `bfb3af7`. On SIGTERM it now sends EOS and waits up to 3 s
+  (`EOS_WAIT_SEC`, monotonic deadline) for it before going to NULL. While waiting
+  it passes `splitmuxsink-fragment-closed` to the normal handler, so the session
+  is marked complete and cam-operate moves the last fragment to `/mnt/sd_cam`.
+  Before, the last fragment stayed in `/dev/shm` as a `.part` without a moov box
+  and never reached `/mnt/sd_cam`. Measured on board .6 with the camera15 stack and
+  the PR head build of the same source: 5 of 5 stops (4 SIGTERM, 1 `gstapp_stop`)
+  put all four channels in `/mnt/sd_cam` with a playable file; SIGTERM-to-exit
+  stayed at about 0.45 s.
+- **Journal snapshot keeps the previous boot's tail** (#205, PR #207):
+  `journald-snapshot.sh` copies the live journal to a per-boot name
+  `<name>@live-<boot_id>.journal`, so the first copy after a reboot no longer
+  overwrites the previous boot's records after its last rotation. Both copies are
+  flushed together with one `sync -f`, and runs from cron, boot, shutdown and
+  creboot are serialized with `flock -w 20`.
+- **File check after a gstApp (re)start** (#190, PR #208): cam-operate no longer
+  judges a session as missing files while the app is younger than
+  `init_cooldown_sec` (40 s) and has not opened that session's first fragment.
+  The hold is capped at `init_cooldown_sec` and measured with the monotonic clock.
+  `cam_start_gstapp` clears the session file before launching the app. On board
+  .4 this removed the false `gstapp_restart` at about +26 s after cam-operate
+  start; recording started at +34.9 s instead of +43.4 s.
+- imx-gst (`libgstmultifile.so` `ed36938`, `libgstrtspserver` `5ea8b13`), imx-vpu
+  (`d61eaf9`), imx-hantro (`c37edf1`) and `max9296.ko` (`172a76a`) are unchanged.
+  They are already built from the latest source of their repositories (checked
+  2026-10-20 after fetch: imx-gst `gst-rtsp-server/` has no change from `5ea8b13`
+  to `ed36938`, and max9296 commits after `172a76a` change documents only).
+- Reboot after installing (same as camera15).
+
 ## Unreleased (2026-10-19)
 
 ### camera15 — upstream fixes for the VPU module, gst-rtsp-server, splitmuxsink and the VPU plugin (PRs #202–#204; imx-hantro #1, imx-gst #1, #2, imx-vpu #47)

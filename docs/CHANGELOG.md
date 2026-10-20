@@ -1,5 +1,28 @@
 # PIM Package Changelog
 
+## 최신 변경사항 (2026-10-20) — camera16 / gstApp 종료 마지막 조각·저널 사본 끝부분·재기동 직후 파일 검사 (이슈 #205·#190, gstApp #142, PR #207·#208)
+
+- 전달 패키지를 `pim-mp 0.6.3+jhw.camera16`으로 올렸다.
+- **gstApp 종료 때 마지막 조각**(gstApp #143·#144): `gstApp` 을 gstApp `bfb3af7` 로 다시 빌드했다.
+  SIGTERM 을 받으면 EOS 를 보내고 최대 3초(`EOS_WAIT_SEC`, 단조 시계 기한) 기다린 뒤 NULL 로 간다.
+  기다리는 동안 `splitmuxsink-fragment-closed` 를 평소 처리기로 넘겨 세션 완료 마커가 생기고,
+  cam-operate 가 마지막 조각을 `/mnt/sd_cam` 으로 옮긴다. 이전에는 마지막 조각이 moov 없는 `.part` 로
+  `/dev/shm` 에 남아 저장소에 들어가지 않았다. .6(camera15 스택, 같은 소스의 PR head 빌드)에서 5회
+  종료(SIGTERM 4, `gstapp_stop` 1) 모두 4채널이 재생 가능한 파일로 `/mnt/sd_cam` 에 들어갔고, SIGTERM
+  →종료는 약 0.45초로 그대로였다.
+- **저널 사본이 이전 부팅 끝부분을 지킨다**(#205, PR #207): `journald-snapshot.sh` 가 쓰는 중인 저널을
+  부팅마다 다른 이름 `<이름>@live-<boot_id>.journal` 로 복사한다. 재부팅 뒤 첫 복사가 이전 부팅의 마지막
+  회전 이후 기록을 덮지 않는다. 두 사본은 `sync -f` 한 번으로 함께 디스크에 내리고, cron·부팅·종료·creboot
+  실행은 `flock -w 20` 으로 겹치지 않게 한다.
+- **재기동 직후 파일 검사**(#190, PR #208): 앱이 `init_cooldown_sec`(40초)보다 어리고 그 세션의 첫 조각을
+  아직 열지 않았으면 누락으로 판정하지 않는다. 보류는 `init_cooldown_sec` 를 넘지 않고 단조 시계로 잰다.
+  `cam_start_gstapp` 이 앱을 띄우기 전에 세션 파일을 비운다. .4 에서 cam-operate 시작 +26초의 거짓
+  `gstapp_restart` 가 사라졌고, 녹화 시작이 +43.4초에서 +34.9초로 당겨졌다.
+- imx-gst(`libgstmultifile.so` `ed36938`, `libgstrtspserver` `5ea8b13`)·imx-vpu(`d61eaf9`)·
+  imx-hantro(`c37edf1`)·`max9296.ko`(`172a76a`)는 그대로다. 각 저장소 최신 소스의 빌드다(2026-10-20 fetch 뒤
+  확인: imx-gst `gst-rtsp-server/` 는 `5ea8b13`→`ed36938` 변경 없음, max9296 의 `172a76a` 뒤 커밋은 문서뿐).
+- 설치 뒤 재부팅한다(camera15 와 같다).
+
 ## 최신 변경사항 (2026-10-19) — camera15 / VPU 모듈·gst-rtsp-server·splitmuxsink·VPU 플러그인 upstream 수정 (PR #202~#204, imx-hantro #1, imx-gst #1·#2, imx-vpu #47)
 
 - 전달 패키지를 `pim-mp 0.6.3+jhw.camera15`로 올렸다.
