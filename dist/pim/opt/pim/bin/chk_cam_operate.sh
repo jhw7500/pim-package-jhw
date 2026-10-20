@@ -202,26 +202,26 @@ in_init_cooldown() {
 }
 
 # 재기동 직후 파일 검사 보류(#190). 앱은 prepare 뒤에야 첫 조각을 열어, 분 경계 마커 기준으로 판정하면
-# 아직 만들 수 없던 파일을 누락으로 본다. 앱이 init_cooldown_sec 보다 어리고, 지금 앱이 이 세션의 첫 조각을
-# 아직 열지 않았으면(먼저 조각을 연 채널이 쓰는 세션 파일이 비었거나 앱이 뜨기 전에 쓰였으면) 0(보류)을
-# 돌려준다. 재기동 정리가 마커 분의 파일을 지우므로 이전 인스턴스가 남긴 세션 값은 신호로 보지 않는다.
-# 앱이 없으면 지금처럼 판정한다(1). 보류가 init_cooldown_sec 넘게 이어지면 나이와 무관하게 판정해,
-# 기동 직후 죽는 앱이 반복돼도 사다리가 돈다. init_cooldown_sec 는 init 쿨다운 값이지만 여기서는 기동 판정 유예로도 쓴다.
+# 아직 만들 수 없던 파일을 누락으로 본다. 이 세션의 첫 조각 신호(먼저 조각을 연 채널이 쓰는 세션 파일)가
+# 없고 앱이 init_cooldown_sec 보다 어리면 0(보류)을 돌려준다. 실행기가 앱을 띄우기 직전에 세션 파일을
+# 비우므로(cam_start_gstapp) 이전 인스턴스가 쓴 값은 남지 않는다. 앱이 없으면 지금처럼 판정한다(1).
+# 보류가 init_cooldown_sec 넘게 이어지면 나이와 무관하게 판정해, 기동 직후 죽는 앱이 반복돼도 사다리가 돈다.
+# init_cooldown_sec 는 init 쿨다운 값이지만 여기서는 기동 판정 유예로도 쓴다.
 FILE_CHECK_HOLD_SINCE=0
 CLK_TCK=$(getconf CLK_TCK 2>/dev/null) || CLK_TCK=100
 file_check_startup_hold() {
-    local start=$1 app="" proc=${PIM_CAMERA_PROCESS_ROOT:-/proc} p st youngest="" pid="" up now age written=0
+    local start=$1 session app="" proc=${PIM_CAMERA_PROCESS_ROOT:-/proc} p st youngest="" pid="" up now age
+    session=$(cat "$SESSION_FILE_" 2>/dev/null | tr -d '\n')
     now=$(date +%s)
-    _cam_runtime_app_into app "$PIM_CAMERA_RUNTIME_JSON" 2>/dev/null || app=gstApp
-    for p in $(pgrep -x "$app" 2>/dev/null); do
-        st=$(cam_process_start_time "$proc/$p/stat") || continue
-        if [ -z "$youngest" ] || [ "$st" -gt "$youngest" ]; then youngest=$st; pid=$p; fi
-    done
-    if [ -n "$youngest" ] && read -r up _ < "$proc/uptime"; then
-        age=$(( ${up%.*} - youngest / CLK_TCK ))
-        if [ "$age" -lt "$init_cooldown_sec" ]; then
-            if [ -s "$SESSION_FILE_" ]; then written=$(stat -c %Y "$SESSION_FILE_" 2>/dev/null) || written=0; fi
-            if [ "$written" -lt $((now - age)) ]; then
+    if [ -z "$session" ]; then
+        _cam_runtime_app_into app "$PIM_CAMERA_RUNTIME_JSON" 2>/dev/null || app=gstApp
+        for p in $(pgrep -x "$app" 2>/dev/null); do
+            st=$(cam_process_start_time "$proc/$p/stat") || continue
+            if [ -z "$youngest" ] || [ "$st" -gt "$youngest" ]; then youngest=$st; pid=$p; fi
+        done
+        if [ -n "$youngest" ] && read -r up _ < "$proc/uptime"; then
+            age=$(( ${up%.*} - youngest / CLK_TCK ))
+            if [ "$age" -lt "$init_cooldown_sec" ]; then
                 [ "$FILE_CHECK_HOLD_SINCE" -gt 0 ] || FILE_CHECK_HOLD_SINCE=$now
                 if [ $((now - FILE_CHECK_HOLD_SINCE)) -lt "$init_cooldown_sec" ]; then
                     logger -p local0.notice "[$KEY][$tag:$LINENO] skip file check: $app pid=$pid age=${age}s < ${init_cooldown_sec}s, no fragment yet for start_video_time_:$start (held $((now - FILE_CHECK_HOLD_SINCE))s)"

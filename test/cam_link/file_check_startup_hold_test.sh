@@ -5,13 +5,15 @@
 # 배경: 파일 검사는 vcm 의 분 경계 마커 기준으로 판정해, prepare 중인 갓 뜬 gstApp 이 아직 만들 수 없던
 # 조각을 누락으로 보고 gstapp_restart → module_reload → reboot fallback 사다리를 탔다(.4 시작 +26초 판정).
 # 세션 파일(첫 조각 신호)이 없고 앱이 init_cooldown_sec 보다 어릴 때만 보류하고, 보류가 그보다 길게
-# 이어지면 판정해 진짜 누락 검출은 유지한다.
+# 이어지면 판정해 진짜 누락 검출은 유지한다. 이전 인스턴스가 쓴 세션 값이 남지 않도록 실행기가 앱을
+# 띄우기 직전에 세션 파일을 비운다(cam_start_gstapp).
 source "$(dirname "$0")/lib.sh"
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 t_extract_func "$PIM_BIN/chk_cam_operate.sh" file_check_startup_hold "$WORK/hold.sh" || exit 1
 t_extract_func "$PIM_LIB/cam_recovery_actions.sh" cam_process_start_time "$WORK/start.sh" || exit 1
+t_extract_func "$PIM_LIB/cam_recovery_actions.sh" cam_start_gstapp "$WORK/launch.sh" || exit 1
 
 # fake_proc <pid> <나이초> — uptime 1000초 기준, 나이만큼 늦게 시작한 프로세스의 stat 을 만든다
 fake_proc() {
@@ -19,7 +21,7 @@ fake_proc() {
     printf '%s (app) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 %s 20 21\n' "$1" "$(( (1000 - $2) * 100 ))" > "$WORK/proc/$1/stat"
 }
 
-# run_h <설명> <세션 파일 내용[@NOW-몇 초에 썼나]> <앱 이름> <pgrep 이 낼 pid 들> <HOLD_SINCE 오프셋(NOW-값, 0=없음)> <기대 rc> <기대 since(0|held)> [로그에 있어야 할 문자열]
+# run_h <설명> <세션 파일 내용> <앱 이름> <pgrep 이 낼 pid 들> <HOLD_SINCE 오프셋(NOW-값, 0=없음)> <기대 rc> <기대 since(0|held)> [로그에 있어야 할 문자열]
 # 시각은 NOW 로 고정한다(date +%s 스텁). 두 번 재면 초 경계에서 로그의 held 값이 1 어긋난다.
 NOW=1800000000
 run_h() {
@@ -27,8 +29,7 @@ run_h() {
     out=$(
         KEY=RST; tag=chk_cam_operate.sh; init_cooldown_sec=40; CLK_TCK=100
         PIM_CAMERA_PROCESS_ROOT="$WORK/proc"; PIM_CAMERA_RUNTIME_JSON="$WORK/runtime.json"
-        SESSION_FILE_="$WORK/session"; printf '%s' "${2%@*}" > "$SESSION_FILE_"
-        case "$2" in *@*) touch -d "@$((NOW - ${2##*@}))" "$SESSION_FILE_";; esac
+        SESSION_FILE_="$WORK/session"; printf '%s' "$2" > "$SESSION_FILE_"
         APP="$3"; PIDS="$4"
         date() { if [ "$1" = +%s ]; then echo "$NOW"; else command date "$@"; fi; }
         _cam_runtime_app_into() { printf -v "$1" '%s' "$APP"; }
@@ -56,12 +57,8 @@ fake_proc 101 10      # 갓 뜬 앱
 fake_proc 202 500     # 오래 산 앱
 
 echo "=== 재기동 직후 파일 검사 보류 ==="
-# 앱 101 은 NOW-10 에 떴다. 세션 파일을 그 뒤(NOW-5)에 썼으면 이 앱이 첫 조각을 연 것이다.
-run_h "앱이 뜬 뒤 쓴 세션 값(이미 녹화 중) → 판정"        "20261020_1035@5"  gstApp "101" 0  1 0
-run_h "앱이 뜬 뒤 쓴 세션 값 → 이전 보류 해제"            "20261020_1035@5"  gstApp "101" 30 1 0
-# 이전 인스턴스가 분 경계에 쓴 값이 남아 있다(재기동 정리가 그 분 파일을 지웠다) → 신호로 보지 않는다
-run_h "앱보다 먼저 쓴 세션 값(이전 인스턴스) → 보류"       "20261020_1035@60" gstApp "101" 0  0 held "skip file check: gstApp pid=101 age=10s < 40s"
-run_h "세션 값 있음 + 앱 500초 → 판정"                   "20261020_1035@60" gstApp "202" 0  1 0
+run_h "세션 파일 있음(이미 녹화 중) → 판정"              "20261020_1035" gstApp "101" 0  1 0
+run_h "세션 파일 있음 → 이전 보류 해제"                  "20261020_1035" gstApp "101" 30 1 0
 run_h "세션 파일 없음 + 앱 10초 → 보류"                  ""              gstApp "101" 0  0 held "skip file check: gstApp pid=101 age=10s < 40s"
 run_h "세션 파일 없음 + 앱 500초 → 판정"                 ""              gstApp "202" 0  1 0
 run_h "세션 파일 없음 + 앱 없음 → 판정(지금처럼)"         ""              gstApp ""    0  1 0
@@ -70,6 +67,32 @@ run_h "보류 30초째 → 계속 보류"                          ""           
 run_h "보류 50초째(상한 40 넘음) → 판정하고 해제"          ""              gstApp "101" 50 1 0
 run_h "앱 여럿이면 가장 어린 것 기준 → 보류"              ""              gstApp "202 101" 0 0 held "pid=101 age=10s"
 run_h "런타임 앱 이름(PIMCAM)을 쓴다 → 보류"              ""              PIMCAM "101" 0  0 held "skip file check: PIMCAM pid=101"
+
+echo "=== 기동 때 세션 파일 비움(cam_start_gstapp) ==="
+# run_l <설명> <부수효과 가드 rc> <기대: 런처가 본 세션 파일(absent|present|not-launched)> <기대: 끝난 뒤 세션 파일(absent|present)>
+run_l() {
+    local seen after
+    printf '20261020_1034' > "$WORK/sess"
+    rm -f "$WORK/launched"
+    (
+        PIM_CAMERA_SESSION_FILE="$WORK/sess"; GUARD_RC=$2
+        _cr_timing() { :; }
+        cam_runtime_app_delay() { printf 'gstApp\t5\n'; }
+        cam_bg_checker_path() { printf '%s\n' "$WORK/bg-check"; }
+        cam_side_effect_guard() { return "$GUARD_RC"; }
+        printf '#!/bin/sh\n[ -e "%s" ] && echo present > "%s" || echo absent > "%s"\n' "$WORK/sess" "$WORK/launched" "$WORK/launched" > "$WORK/launcher"
+        chmod +x "$WORK/launcher"
+        PIM_CAMERA_START_CAM="$WORK/launcher"
+        source "$WORK/launch.sh"
+        cam_start_gstapp "$WORK/runtime.json"
+    ) >/dev/null 2>&1
+    seen=$(cat "$WORK/launched" 2>/dev/null || echo not-launched)
+    [ -e "$WORK/sess" ] && after=present || after=absent
+    t_eq "$1 (런처가 본 세션 파일)" "$seen" "$3"
+    t_eq "$1 (끝난 뒤 세션 파일)" "$after" "$4"
+}
+run_l "이전 인스턴스가 남긴 세션 값은 앱을 띄우기 전에 지운다" 0 absent absent
+run_l "부수효과 가드가 막으면 지우지도 띄우지도 않는다"        3 not-launched present
 
 echo "=== 호출부 ==="
 # 보류 분기는 마커와 세션 파일을 비우고, 그 밖은 지금 판정 블록으로 간다(elif 가 원래 조건을 그대로 쓴다).

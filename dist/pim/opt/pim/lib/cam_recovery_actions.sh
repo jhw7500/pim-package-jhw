@@ -592,6 +592,9 @@ cam_start_gstapp() {
     IFS=$'\t' read -r app delay <<<"$info"
     bg=$(cam_bg_checker_path) || return $?
     cam_side_effect_guard "$runtime" || return $?
+    # 이전 인스턴스가 쓴 세션 값이 남으면 파일 검사가 갓 뜬 앱을 이미 첫 조각을 연 것으로 본다(#190).
+    # 지우지 못해도 기동은 막지 않는다.
+    rm -f -- "${PIM_CAMERA_SESSION_FILE:-/tmp/start_video_session_chk}" 2>/dev/null || :
     PIM_CAMERA_EXECUTOR=1 \
     PIM_CAMERA_REQUEST_ID="$PIM_CAMERA_REQUEST_ID" \
     PIM_CAMERA_OWNER_BOOT_ID="$PIM_CAMERA_OWNER_BOOT_ID" \
