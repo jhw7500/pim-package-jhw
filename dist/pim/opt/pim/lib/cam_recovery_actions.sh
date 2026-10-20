@@ -524,8 +524,11 @@ cam_signal_or_confirm_absent() {
     return "$rc"
 }
 cam_stop_process() {
-    local runtime=$1 kind=$2 timeout=${PIM_CAMERA_QUIESCE_TIMEOUT_SEC:-5} i=0 rc snapshot=
-    [[ $timeout =~ ^[0-9]+$ ]] || timeout=5
+    local runtime=$1 kind=$2 timeout default=5 i=0 rc snapshot=
+    # gstApp 은 SIGTERM 뒤 EOS(3초)와 NULL 전환(3초)을 기다리므로 5초면 그 사이에 SIGKILL 이 간다(#210).
+    case "$kind" in app|gstapp) default=10 ;; esac
+    timeout=${PIM_CAMERA_QUIESCE_TIMEOUT_SEC:-$default}
+    [[ $timeout =~ ^[0-9]+$ ]] || timeout=$default
     rc=0; cam_process_present "$runtime" "$kind" || rc=$?
     [ "$rc" -eq 0 ] || { [ "$rc" -eq 1 ] && return 0; return "$rc"; }
     [ "$kind" != bg ] || snapshot=$(cam_bg_checker_records "$(cam_bg_checker_path)") || return $?
