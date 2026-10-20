@@ -31,7 +31,7 @@ printf '#!/bin/sh\nprintf "kill %%s\\n" "$*" >> "$PIM_CAMERA_CALL_LOG"\nif [ "${
 printf '#!/bin/sh\nprintf "%%s\\n" "${LSMOD_ROWS:-}"\nexit "${LSMOD_RC:-0}"\n' > "$W/stub/lsmod"
 printf '#!/bin/sh\nprintf "rmmod %%s\\n" "$*" >> "$PIM_CAMERA_CALL_LOG"\nexit "${RMMOD_RC:-0}"\n' > "$W/stub/rmmod"
 printf '#!/bin/sh\nprintf "modprobe %%s\\n" "$*" >> "$PIM_CAMERA_CALL_LOG"\n' > "$W/stub/modprobe"
-printf '#!/bin/sh\nexit 0\n' > "$W/stub/sleep"
+printf '#!/bin/sh\n[ "${PIM_CAMERA_SLEEP_TRACE:-0}" != 1 ] || printf "sleep %%s\\n" "$*" >> "$PIM_CAMERA_CALL_LOG"\nexit 0\n' > "$W/stub/sleep"
 chmod +x "$W/stub"/*
 enable -n kill
 export PIM_CAMERA_BG_CHECKER="$PIM_BIN/BG_Check_for_pim.sh"
@@ -136,4 +136,20 @@ PIM_CAMERA_PGREP_MODE=after_signal_absent expect_rc 69 cam_stop_process "$PIM_CA
 [ "$(cat "$PIM_CAMERA_PGREP_STATE_DIR/gstApp")" -eq 1 ] || fail "owner error was reinterpreted by another probe"
 cam_executor_assert_context() { :; }
 unset PKILL_RC
+
+# gstApp may wait EOS 3 s + NULL 3 s after SIGTERM, so its default grace before
+# KILL must outlast that while other processes keep 5 s (#210). Counts the 1 s
+# polls between TERM and KILL; an explicit setting still applies to every kind.
+grace() {
+  rm -f "$PIM_CAMERA_PGREP_STATE_DIR"/*; : > "$PIM_CAMERA_CALL_LOG"
+  PIM_CAMERA_SLEEP_TRACE=1 PIM_CAMERA_PGREP_MODE=still_present expect_rc 1 cam_stop_process "$PIM_CAMERA_RUNTIME_JSON" "$1"
+  grep -q '^pkill -KILL ' "$PIM_CAMERA_CALL_LOG" || fail "$1 never escalated to KILL"
+  awk '/^pkill -KILL /{exit} /^sleep /{n++} END{print n+0}' "$PIM_CAMERA_CALL_LOG"
+}
+unset PIM_CAMERA_QUIESCE_TIMEOUT_SEC
+for kind in app gstapp; do [ "$(grace "$kind")" -eq 10 ] || fail "$kind default grace is not 10 s"; done
+[ "$(grace vcm)" -eq 5 ] || fail "vcm default grace is not 5 s"
+[ "$(PIM_CAMERA_QUIESCE_TIMEOUT_SEC=3 grace app)" -eq 3 ] || fail "explicit grace ignored for app"
+[ "$(PIM_CAMERA_QUIESCE_TIMEOUT_SEC=bad grace app)" -eq 10 ] || fail "invalid grace did not fall back to the app default"
+[ "$(PIM_CAMERA_QUIESCE_TIMEOUT_SEC=bad grace vcm)" -eq 5 ] || fail "invalid grace did not fall back to the vcm default"
 echo 'recovery actions safety: PASS'
