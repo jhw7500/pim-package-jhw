@@ -207,24 +207,25 @@ in_init_cooldown() {
 # 비우므로(cam_start_gstapp) 이전 인스턴스가 쓴 값은 남지 않는다. 앱이 없으면 지금처럼 판정한다(1).
 # 보류가 init_cooldown_sec 넘게 이어지면 나이와 무관하게 판정해, 기동 직후 죽는 앱이 반복돼도 사다리가 돈다.
 # init_cooldown_sec 는 init 쿨다운 값이지만 여기서는 기동 판정 유예로도 쓴다.
+# 앱 나이와 보류 상한은 모두 /proc/uptime(단조 시계)으로 잰다. RTC 설정이 벽시계를 옮겨도 흔들리지 않는다.
 FILE_CHECK_HOLD_SINCE=0
 CLK_TCK=$(getconf CLK_TCK 2>/dev/null) || CLK_TCK=100
 file_check_startup_hold() {
-    local start=$1 session app="" proc=${PIM_CAMERA_PROCESS_ROOT:-/proc} p st youngest="" pid="" up now age
+    local start=$1 session app="" proc=${PIM_CAMERA_PROCESS_ROOT:-/proc} p st youngest="" pid="" up age
     session=$(cat "$SESSION_FILE_" 2>/dev/null | tr -d '\n')
-    now=$(date +%s)
-    if [ -z "$session" ]; then
+    if [ -z "$session" ] && read -r up _ < "$proc/uptime"; then
+        up=${up%.*}
         _cam_runtime_app_into app "$PIM_CAMERA_RUNTIME_JSON" 2>/dev/null || app=gstApp
         for p in $(pgrep -x "$app" 2>/dev/null); do
             st=$(cam_process_start_time "$proc/$p/stat") || continue
             if [ -z "$youngest" ] || [ "$st" -gt "$youngest" ]; then youngest=$st; pid=$p; fi
         done
-        if [ -n "$youngest" ] && read -r up _ < "$proc/uptime"; then
-            age=$(( ${up%.*} - youngest / CLK_TCK ))
+        if [ -n "$youngest" ]; then
+            age=$(( up - youngest / CLK_TCK ))
             if [ "$age" -lt "$init_cooldown_sec" ]; then
-                [ "$FILE_CHECK_HOLD_SINCE" -gt 0 ] || FILE_CHECK_HOLD_SINCE=$now
-                if [ $((now - FILE_CHECK_HOLD_SINCE)) -lt "$init_cooldown_sec" ]; then
-                    logger -p local0.notice "[$KEY][$tag:$LINENO] skip file check: $app pid=$pid age=${age}s < ${init_cooldown_sec}s, no fragment yet for start_video_time_:$start (held $((now - FILE_CHECK_HOLD_SINCE))s)"
+                [ "$FILE_CHECK_HOLD_SINCE" -gt 0 ] || FILE_CHECK_HOLD_SINCE=$up
+                if [ $((up - FILE_CHECK_HOLD_SINCE)) -lt "$init_cooldown_sec" ]; then
+                    logger -p local0.notice "[$KEY][$tag:$LINENO] skip file check: $app pid=$pid age=${age}s < ${init_cooldown_sec}s, no fragment yet for start_video_time_:$start (held $((up - FILE_CHECK_HOLD_SINCE))s)"
                     return 0
                 fi
             fi

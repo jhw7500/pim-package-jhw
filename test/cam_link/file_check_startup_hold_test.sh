@@ -21,24 +21,23 @@ fake_proc() {
     printf '%s (app) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 %s 20 21\n' "$1" "$(( (1000 - $2) * 100 ))" > "$WORK/proc/$1/stat"
 }
 
-# run_h <설명> <세션 파일 내용> <앱 이름> <pgrep 이 낼 pid 들> <HOLD_SINCE 오프셋(NOW-값, 0=없음)> <기대 rc> <기대 since(0|held)> [로그에 있어야 할 문자열]
-# 시각은 NOW 로 고정한다(date +%s 스텁). 두 번 재면 초 경계에서 로그의 held 값이 1 어긋난다.
-NOW=1800000000
+# run_h <설명> <세션 파일 내용> <앱 이름> <pgrep 이 낼 pid 들> <HOLD_SINCE 오프셋(uptime-값, 0=없음)> <기대 rc> <기대 since(0|held)> [로그에 있어야 할 문자열] [벽시계(date +%s)]
+# 판정은 가짜 /proc/uptime(1000초)만 본다. 벽시계는 date 스텁으로 마음대로 옮겨 그것에 흔들리지 않는지 본다.
+UP=1000
 run_h() {
     local out rc since log
     out=$(
         KEY=RST; tag=chk_cam_operate.sh; init_cooldown_sec=40; CLK_TCK=100
         PIM_CAMERA_PROCESS_ROOT="$WORK/proc"; PIM_CAMERA_RUNTIME_JSON="$WORK/runtime.json"
         SESSION_FILE_="$WORK/session"; printf '%s' "$2" > "$SESSION_FILE_"
-        APP="$3"; PIDS="$4"
-        date() { if [ "$1" = +%s ]; then echo "$NOW"; else command date "$@"; fi; }
+        APP="$3"; PIDS="$4"; WALL=${9:-1800000000}
+        date() { if [ "$1" = +%s ]; then echo "$WALL"; else command date "$@"; fi; }
         _cam_runtime_app_into() { printf -v "$1" '%s' "$APP"; }
         pgrep() { [ "$1" = -x ] && [ "$2" = "$APP" ] && [ -n "$PIDS" ] && printf '%s\n' $PIDS; }
         logger() { printf '%s\n' "$*" >> "$WORK/log"; }
         : > "$WORK/log"
         source "$WORK/start.sh"; source "$WORK/hold.sh"
-        now=$NOW
-        if [ "$5" = 0 ]; then FILE_CHECK_HOLD_SINCE=0; else FILE_CHECK_HOLD_SINCE=$((now - $5)); fi
+        if [ "$5" = 0 ]; then FILE_CHECK_HOLD_SINCE=0; else FILE_CHECK_HOLD_SINCE=$((UP - $5)); fi
         file_check_startup_hold "20261020 10:35:00"; rc=$?
         [ "$FILE_CHECK_HOLD_SINCE" -gt 0 ] && s=held || s=0
         printf '%s %s\n' "$rc" "$s"
@@ -65,6 +64,8 @@ run_h "세션 파일 없음 + 앱 없음 → 판정(지금처럼)"         ""   
 run_h "stat 못 읽는 pid → 앱 없음과 같게 판정"            ""              gstApp "999" 0  1 0
 run_h "보류 30초째 → 계속 보류"                          ""              gstApp "101" 30 0 held "held 30s"
 run_h "보류 50초째(상한 40 넘음) → 판정하고 해제"          ""              gstApp "101" 50 1 0
+# 보류가 시작된 뒤 RTC 설정으로 벽시계가 하루 뒤로 가도, 상한은 단조 시계로 50초째라 판정한다
+run_h "벽시계가 뒤로 가도 상한은 단조 시계로 잰다"         ""              gstApp "101" 50 1 0 "" 1799913600
 run_h "앱 여럿이면 가장 어린 것 기준 → 보류"              ""              gstApp "202 101" 0 0 held "pid=101 age=10s"
 run_h "런타임 앱 이름(PIMCAM)을 쓴다 → 보류"              ""              PIMCAM "101" 0  0 held "skip file check: PIMCAM pid=101"
 
