@@ -824,14 +824,40 @@ interrupted_predecessor .
 expect_rc 0 cam_liveness_tick
 jq -e '.type=="gstapp_restart" and .source=="liveness"' "$PIM_CAMERA_RUN_DIR/recovery/pending.json" >/dev/null \
     || fail '#193 liveness did not resubmit after an owner_stale interrupted request'
-# Fail-closed controls (the older "interrupted" reason shape, a SUCCEEDED or rc!=70 request
+# Fail-closed controls (an unknown interruption reason, a SUCCEEDED or rc!=70 request
 # carrying interruption keys): each must keep failing closed and submit nothing.
-for mutate in '.interrupted_reason="interrupted"' '.status="SUCCEEDED"' '.rc=71'; do
+for mutate in '.interrupted_reason="bogus"' '.status="SUCCEEDED"' '.rc=71'; do
     interrupted_predecessor "$mutate"
     : > "$PIM_CAMERA_CALL_LOG"
     expect_rc 70 cam_liveness_tick
     [ ! -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] || fail "#193 corrupt interrupted request ($mutate) submitted recovery"
 done
+echo '=== #193: a reboot without ExecStop (startup sweep reason "interrupted") also lets liveness resubmit ==='
+# /run is lost, so the next owner's cam_reconcile_interrupted closes the VERIFYING request
+# with interrupted_reason "interrupted" rather than owner_stale.
+reset_case; owner_at ACTIVE
+printf 'vcm\n' > "$WORK/procs"; touch "$PIM_CAMERA_DEVICE_ROOT/video3"
+sweep_id=$(cam_request_submit gstapp_restart liveness 'verifying when power was lost')
+cam_request_claim; cam_request_transition QUIESCING; cam_request_transition RUNNING
+cam_action_counter_begin gstapp_restart "$sweep_id"
+cam_action_counter_finish gstapp_restart "$sweep_id" SUCCEEDED 0
+cam_request_transition VERIFYING
+simulate_reboot
+expect_rc 0 cam_reconcile_interrupted
+sweep_hist="$PIM_CAMERA_STATE_DIR/recovery/history/$sweep_id.json"
+jq -e '.request | .status=="FAILED" and .rc==70 and .interrupted==true and .interrupted_reason=="interrupted"' "$sweep_hist" >/dev/null \
+    || fail '#193 fixture did not produce the startup-sweep interruption shape'
+: > "$PIM_CAMERA_CALL_LOG"
+expect_rc 0 cam_liveness_tick
+jq -e '.type=="gstapp_restart" and .source=="liveness"' "$PIM_CAMERA_RUN_DIR/recovery/pending.json" >/dev/null \
+    || fail '#193 liveness did not resubmit after a startup-sweep interrupted request'
+# Control: the same shape with a result still present is not the lost-/run case.
+rm -f "$PIM_CAMERA_RUN_DIR/recovery/pending.json"
+mkdir -p "$PIM_CAMERA_RUN_DIR/recovery/results"
+_cr_result_from_terminal "$(jq -c .request "$sweep_hist")" > "$PIM_CAMERA_RUN_DIR/recovery/results/$sweep_id.json"
+: > "$PIM_CAMERA_CALL_LOG"
+expect_rc 70 cam_liveness_tick
+[ ! -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] || fail '#193 startup-sweep shape with a result submitted recovery'
 finished_predecessor SUCCEEDED
 simulate_reboot
 jq '.actions.gstapp_restart.last_status="FAILED" | .actions.gstapp_restart.last_rc=1' "$PIM_CAMERA_STATE_DIR/recovery/state.json" > "$WORK/state.next" && mv "$WORK/state.next" "$PIM_CAMERA_STATE_DIR/recovery/state.json"
