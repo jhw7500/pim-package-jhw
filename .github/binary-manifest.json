@@ -4,13 +4,13 @@
   "binaries": [
     {
       "path": "dist/pim/usr/local/bin/gstApp",
-      "sha256": "db3d2d4360cadb092483fcb75bc99f80e500fb5595d256f2b7e5a17d220b5c55",
-      "size": 2116936,
+      "sha256": "ea020a8cb1584a6337905751eaebef709bfe5e0b6f73fdad09368b56518d0d51",
+      "size": 2123528,
       "mode": "100755",
       "arch": "aarch64",
       "source": {
         "repo": "jhw7500/gstApp",
-        "commit": "41b02dd801b86a9a8a87fde60e0d1c39ce4a8d43",
+        "commit": "bfb3af7",
         "build": "./make-for-imx8 (Yocto SDK 5.10-hardknott, cortexa53-crypto-poky-linux)"
       },
       "required_strings": [

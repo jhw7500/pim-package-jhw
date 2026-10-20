@@ -1,5 +1,5 @@
 Package: pim-mp
-Version: 0.6.3+jhw.camera15
+Version: 0.6.3+jhw.camera16
 Replaces: cis
 Breaks: cis
 Section: test
