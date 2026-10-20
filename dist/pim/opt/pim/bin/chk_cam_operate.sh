@@ -184,9 +184,13 @@ modules_loaded() {
 cam_submit_internal_action() {
     local action=$1 reason=$2 rc lifecycle
     lifecycle=$(jq -r '.lifecycle // empty' "$PIM_CAMERA_RUN_DIR/owner.json" 2>/dev/null)
-    [ "$lifecycle" = ACTIVE ] || return 69
+    if [ "$lifecycle" != ACTIVE ]; then
+        logger -p local0.warning "[$KEY][$tag:$LINENO] request $action refused: lifecycle=${lifecycle:-unknown} (not ACTIVE): $reason"
+        return 69
+    fi
     cam_request_submit "$action" monitor "$reason" >/dev/null 2>&1
     rc=$?
+    [ "$rc" -eq 0 ] || logger -p local0.err "[$KEY][$tag:$LINENO] request $action submit failed rc=$rc: $reason"
     return "$rc"
 }
 

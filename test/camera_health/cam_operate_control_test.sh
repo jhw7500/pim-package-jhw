@@ -571,6 +571,26 @@ expected=$'quiesce:consumers\naction:camera_hard_reset\naction:policy_reload\nve
 jq -e '.lifecycle=="ACTIVE"' "$PIM_CAMERA_RUN_DIR/owner.json" >/dev/null || fail "hardware+policy retry owner lifecycle"
 jq -e '.dirty==false and .degraded_reason==null and .degraded_target==null' "$PIM_CAMERA_STATE_DIR/service-state.json" >/dev/null || fail "hardware+policy retry did not clear degradation after success"
 
+echo "=== #193: non-liveness gstapp_restart verifies without ord/vcm consumers ==="
+# ord/vcm 은 성공 뒤 같은 순회의 cam_liveness_tick 이 되살린다.  gstapp_restart 검증이 둘을
+# 요구하면 둘이 없는 보드에서 복구가 성공해도 DEGRADED 로 끝났다.
+reset_case boot-a
+write_source consumers 640 one one one
+cam_daemon_startup "$DAEMON_PID"
+: > "$PIM_CAMERA_CALL_LOG"
+cam_request_submit gstapp_restart operator "consumers absent" >/dev/null
+cam_poll_pending_request
+expect_log action:gstapp_restart
+expect_log verify:processes:0
+reject_log verify:processes:1
+jq -e '.lifecycle=="ACTIVE"' "$PIM_CAMERA_RUN_DIR/owner.json" >/dev/null || fail "#193 gstapp_restart without consumers did not end ACTIVE"
+: > "$PIM_CAMERA_CALL_LOG"
+cam_request_submit module_reload operator "consumers still required" >/dev/null
+cam_poll_pending_request
+expect_log action:module_reload
+expect_log verify:processes:1
+reject_log verify:processes:0
+
 echo "=== apply intake lifecycle guard ==="
 cam_owner_set_lifecycle STOPPING
 expect_rc 69 cam_request_submit apply_config test stopped

@@ -372,7 +372,15 @@ _cl_gstapp_failures() {
             history=$(cat "$(_cr_history_file "$id")" 2>/dev/null) || return 70
             terminal=$(jq -ce '.request | select(type=="object")' <<<"$history") || return 70
             _cr_terminal_request_valid "$terminal" || return 70
-            _cr_request_interruption_absent "$terminal" || return 70
+            # A reboot that skips ExecStop loses /run, so the startup sweep
+            # (cam_reconcile_interrupted) closes the same interruption with reason
+            # "interrupted" instead of owner_stale.  As in the RUNNING branch
+            # (_cr_counter_begin_prior_interruption_valid), accept it only without a
+            # result and with the recorded owner inactive, checked as owner_stale (#193).
+            if _cr_legacy_reconciled_interruption_valid "$terminal" && [ ! -e "$(_cr_result_file "$id")" ]; then
+                terminal=$(jq -c '.interrupted_reason="owner_stale"' <<<"$terminal") || return 70
+            fi
+            _cr_terminal_interruption_valid "$terminal" || return 70
             # Results live under the RuntimeDirectory (/run, tmpfs) while state and
             # history persist, so a reboot drops exactly this file for the last
             # finished gstapp_restart.  Requiring it then returned 70 on every tick

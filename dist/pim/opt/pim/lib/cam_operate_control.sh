@@ -199,7 +199,7 @@ _coc_start_all_consumers() {
 
 _coc_verify_all() {
     cam_verify_camera_ready "$PIM_CAMERA_RUNTIME_JSON" || return $?
-    cam_wait_process_ready "$PIM_CAMERA_RUNTIME_JSON" 1
+    cam_wait_process_ready "$PIM_CAMERA_RUNTIME_JSON" "${1:-1}"
 }
 
 cam_mark_degraded() {
@@ -602,7 +602,12 @@ _coc_execute_recovery_active() {
         fi
         return 0
     fi
-    _coc_verify_all || { rc=$?; _coc_fail_active "$rc" "$reason" camera_health "$dirty"; return $?; }
+    # gstapp_restart 는 ord/vcm 을 건드리지 않으므로 둘을 요구하지 않는다.  성공하면 ACTIVE 로
+    # 돌아가고 같은 순회의 cam_liveness_tick 이 없는 ord/vcm 을 되살린다 (이슈 #193).  다른
+    # action 은 스스로 consumer 를 기동하므로 그대로 요구한다.
+    local consumers=1
+    [ "$type" != gstapp_restart ] || consumers=0
+    _coc_verify_all "$consumers" || { rc=$?; _coc_fail_active "$rc" "$reason" camera_health "$dirty"; return $?; }
     projection=$(_coc_projection "$PIM_CAMERA_RUNTIME_JSON") || { rc=$?; _coc_fail_active "$rc" "$reason" camera_health "$dirty"; return $?; }
     _coc_persist_success "$projection" || { rc=$?; _coc_fail_active "$rc" "$reason" state true; return $?; }
     cam_request_finish SUCCEEDED 0 || return $?
