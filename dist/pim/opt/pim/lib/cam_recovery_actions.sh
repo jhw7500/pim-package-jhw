@@ -526,6 +526,7 @@ cam_signal_or_confirm_absent() {
 cam_stop_process() {
     local runtime=$1 kind=$2 timeout default=5 i=0 rc snapshot=
     # gstApp 은 SIGTERM 뒤 EOS(3초)와 NULL 전환(3초)을 기다리므로 5초면 그 사이에 SIGKILL 이 간다(#210).
+    # kind app 은 런타임 앱이라 streamApp 설정이면 PIMCAM 도 10초를 받는다. 같은 대기를 SIGKILL 뒤에도 쓴다.
     case "$kind" in app|gstapp) default=10 ;; esac
     timeout=${PIM_CAMERA_QUIESCE_TIMEOUT_SEC:-$default}
     [[ $timeout =~ ^[0-9]+$ ]] || timeout=$default

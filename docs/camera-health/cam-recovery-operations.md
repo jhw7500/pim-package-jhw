@@ -97,7 +97,7 @@ candidate publish 뒤 action이 실패하면 새 runtime을 유지하고 `DEGRAD
 `CAM_RECOVERY_RESULT`의 `type=`은 항상 위 정규명이다.
 
 `gstapp_stop`은 gstApp과 BG_Check를 정지시키고 부재를 확인하는 것까지만 한다 —
-SIGTERM 후 `PIM_CAMERA_QUIESCE_TIMEOUT_SEC`(기본값 gstApp 10초, 그 밖 5초)까지 대기하고, 남아 있으면 SIGKILL 후 다시
+SIGTERM 후 `PIM_CAMERA_QUIESCE_TIMEOUT_SEC`(기본값 10초. 대상은 런타임 앱이라 gstApp, streamApp 설정이면 PIMCAM)까지 대기하고, 남아 있으면 SIGKILL 후 다시
 대기해 부재를 확인한다. 다시 띄우지는 않는다. `cam_liveness_tick`이 이후 순회에서
 gstApp 부재를 보고 `source=liveness`로 `gstapp_restart`를 스스로 제출한다. 따라서 이
 요청의 rc 0은 "확인 시점에 부재"이고 "다시 실행 중"이 아니다. 재기동 결과는 그
