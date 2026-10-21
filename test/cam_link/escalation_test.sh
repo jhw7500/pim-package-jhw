@@ -72,4 +72,74 @@ run_b "max_sec 비정상값(공백) → 안전측 비활성" ""  99999 true  N N
 : > "$WORK/not-a-dir"
 run_b "플래그 쓰기 실패 → 리부팅 건너뜀"    1800 1900  true  N NONE "$WORK/not-a-dir/sub"
 
+# #213: gstApp 이 죽은 채 BG 플래그가 0 으로 내려가도 episode 이력을 지우면 안 된다.
+# $1=설명 $2=앱 상태(UP|DOWN) $3=상태 파일 선존재(Y/N) $4=기대 파일 유지(KEEP|CLEAR)
+t_extract_func "$PIM_BIN/chk_cam_operate.sh" cam_app_absent "$WORK/f_app" || exit 1
+t_extract_func "$PIM_BIN/chk_cam_operate.sh" disconnect_episode_open "$WORK/f_ep" || exit 1
+t_extract_func "$PIM_BIN/chk_cam_operate.sh" start_marker_disconnect_path "$WORK/f_sm" || exit 1
+run_c() {
+    local out got
+    out=$(
+        KEY=RST; tag=chk_cam_operate.sh
+        DISCONNECT_INIT_CAM_STATE_FILE="$WORK/state_c"
+        DISCONNECT_REBOOT_FLAG="$WORK/reboot_c.flag"
+        init_cooldown_sec=40
+        PIM_CAMERA_RUNTIME_JSON="$WORK/runtime.json"
+        rm -f "$DISCONNECT_INIT_CAM_STATE_FILE" "$DISCONNECT_REBOOT_FLAG"
+        [ "$3" = "Y" ] && printf '1,2' > "$DISCONNECT_INIT_CAM_STATE_FILE"
+        printf '1' > "$DISCONNECT_REBOOT_FLAG"
+        get_cam_disconnect_flag() { echo 0; }
+        read_driver_disconnect()  { echo 0; }
+        in_init_cooldown()        { return 1; }
+        cam_in_init_cooldown()    { return 1; }
+        _cam_runtime_app_into()   { printf -v "$1" '%s' gstApp; }
+        pgrep() { [ "$2" = gstApp ] && [ "$APP" = UP ]; }
+        cam_submit_internal_action() { echo "SUBMIT:$1"; return 0; }
+        logger() { echo "LOG:$*"; }
+        APP="$2"
+        # shellcheck disable=SC1090
+        source "$WORK/f_app"; source "$WORK/f_ep"; source "$FN"
+        maybe_init_cam_on_disconnect && echo "RC0" || echo "RC1"
+        [ -f "$DISCONNECT_INIT_CAM_STATE_FILE" ] && echo "STATE_KEPT"
+        [ -f "$DISCONNECT_REBOOT_FLAG" ] && echo "FLAG_KEPT"
+    ) 2>&1
+    got="CLEAR"
+    grep -q STATE_KEPT <<<"$out" && grep -q FLAG_KEPT <<<"$out" && got="KEEP"
+    if [ "$4" = KEEP ] && { grep -q 'cleared' <<<"$out" || grep -q 'SUBMIT:' <<<"$out"; }; then
+        got="KEEP+LOGGED"
+    fi
+    t_eq "$1" "$got" "$4"
+}
+
+echo "=== 플래그 0 에서 episode 이력 보존 (#213) ==="
+run_c "상태 파일 있음·앱 없음 → 이력 유지, 조치·cleared 로그 없음" DOWN Y KEEP
+run_c "상태 파일 있음·앱 있음 → 지금처럼 지움"                     UP   Y CLEAR
+run_c "상태 파일 없음·앱 없음 → 지금처럼(이력 없음)"               DOWN N CLEAR
+
+# $1=설명 $2=플래그 $3=앱 상태 $4=상태 파일 선존재(Y/N) $5=기대(DISC|LADDER)
+run_s() {
+    local got
+    got=$(
+        DISCONNECT_INIT_CAM_STATE_FILE="$WORK/state_s"
+        PIM_CAMERA_RUNTIME_JSON="$WORK/runtime.json"
+        rm -f "$DISCONNECT_INIT_CAM_STATE_FILE"
+        [ "$4" = "Y" ] && : > "$DISCONNECT_INIT_CAM_STATE_FILE"
+        _cam_runtime_app_into()   { printf -v "$1" '%s' gstApp; }
+        pgrep() { [ "$2" = gstApp ] && [ "$APP" = UP ]; }
+        APP="$3"
+        # shellcheck disable=SC1090
+        source "$WORK/f_app"; source "$WORK/f_ep"; source "$WORK/f_sm"
+        if start_marker_disconnect_path "$2"; then echo DISC; else echo LADDER; fi
+    )
+    t_eq "$1" "$got" "$5"
+}
+
+echo "=== 시작 마커 부재 경로 판정 (#213) ==="
+run_s "플래그 ≠ 0 → 끊김"                          3 DOWN N DISC
+run_s "플래그 0·episode 열림(상태 파일+앱 없음) → 끊김" 0 DOWN Y DISC
+run_s "플래그 0·상태 파일 있으나 앱 있음 → 일반 사다리" 0 UP   Y LADDER
+run_s "플래그 0·episode 없음 → 일반 사다리"         0 DOWN N LADDER
+t_eq "시작 마커 경로가 판정 함수를 쓴다" \
+     "$(grep -c 'elif ! start_marker_disconnect_path' "$PIM_BIN/chk_cam_operate.sh")" 1
+
 t_summary "에스컬레이션"

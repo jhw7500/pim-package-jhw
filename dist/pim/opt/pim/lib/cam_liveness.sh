@@ -30,6 +30,10 @@ _CL_BG_SCAN_ERROR=0
 # cannot serve as that flag: a refused launch deliberately leaves it at zero, so
 # gating the warning on it would re-announce the same absence on every tick.
 _CL_BG_ABSENT_LOGGED=0
+# Last BG disconnect flag value reported by the gate, and when.  The gate runs on
+# every tick, so a standing flag is reported once per repeat interval.
+_CL_DISCONNECT_LOG_RAW=""
+_CL_DISCONNECT_LOG_TS=0
 
 if ! declare -F cam_owner_assert >/dev/null 2>&1; then
     # shellcheck source=/dev/null
@@ -311,6 +315,20 @@ _cl_disconnect_clear() {
     [ $((raw & 15)) -eq 0 ]
 }
 
+# Leaves a trace when the BG disconnect flag is why the gate refuses (#213), so a
+# dead gstApp that is not being restarted is not silent.  Never changes a verdict.
+_cl_disconnect_log() {
+    local raw now repeat=${PIM_CAMERA_LIVENESS_DISCONNECT_LOG_REPEAT_SEC:-60}
+    raw=$(tr -d '\r\n' < "$PIM_CAMERA_BG_FLAG_FILE" 2>/dev/null) || raw=""
+    now=$(_cl_now) || now=0
+    if [ "$raw" != "$_CL_DISCONNECT_LOG_RAW" ] || [ $((now - _CL_DISCONNECT_LOG_TS)) -ge "$repeat" ]; then
+        _CL_DISCONNECT_LOG_RAW=$raw
+        _CL_DISCONNECT_LOG_TS=$now
+        logger -p local0.notice "[CAM][cam_liveness] skip gstApp recovery: BG disconnect flag=$raw" 2>/dev/null
+    fi
+    return 0
+}
+
 _cl_video_present() {
     [ -e "$PIM_CAMERA_DEVICE_ROOT/video3" ] || [ -e "$PIM_CAMERA_DEVICE_ROOT/video4" ]
 }
@@ -349,7 +367,7 @@ cam_liveness_gstapp_gate() {
     _cl_active_guard || return $?
     enabled=$(jq -r '[.VHL_CAM.i2c2.ch0.enable // false,.VHL_CAM.i2c2.ch1.enable // false,.VHL_CAM.i2c1.ch2.enable // false,.VHL_CAM.i2c1.ch3.enable // false] | any(. == true)' "$PIM_CAMERA_RUNTIME_JSON") || return 64
     [ "$enabled" = true ] || return 1
-    _cl_disconnect_clear || return 1
+    _cl_disconnect_clear || { _cl_disconnect_log; return 1; }
     _cl_video_present || return 1
     _cl_subdev_ready
 }

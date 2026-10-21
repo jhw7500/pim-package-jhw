@@ -239,6 +239,24 @@ file_check_startup_hold() {
     return 1
 }
 
+# 런타임 앱 프로세스가 없으면 0. file_check_startup_hold 와 같은 앱 이름 해석을 쓰되 전역 app 은 덮지 않는다.
+cam_app_absent() {
+    local runtime_app
+    _cam_runtime_app_into runtime_app "$PIM_CAMERA_RUNTIME_JSON" 2>/dev/null || runtime_app=gstApp
+    ! pgrep -x "$runtime_app" >/dev/null 2>&1
+}
+
+# 끊김 episode 가 열려 있으면 0(#213). 상태 파일은 끊김 처리 중에만 남는데, 앱이 죽은 채라면
+# 플래그가 0 으로 내려가도 연결이 회복된 것이 아니라 끊김이 이어진 것으로 본다.
+disconnect_episode_open() {
+    [ -f "$DISCONNECT_INIT_CAM_STATE_FILE" ] && cam_app_absent
+}
+
+# 시작 마커 부재 경로의 판정. 0 이면 끊김 분기, 1 이면 일반 사다리(#213).
+start_marker_disconnect_path() {
+    (( $1 != 0 )) || disconnect_episode_open
+}
+
 maybe_init_cam_on_disconnect() {
     local cam_disconnect_flag now first_seen last_init
 
@@ -246,6 +264,8 @@ maybe_init_cam_on_disconnect() {
     local drv_disc
     drv_disc=$(read_driver_disconnect)
     if (( cam_disconnect_flag == 0 )) && (( drv_disc == 0 )); then
+        # 앱이 죽은 채 열려 있는 episode 는 플래그가 내려가도 이력을 지우지 않는다.
+        disconnect_episode_open && return 1
         # init_cam 직후 cooldown 중에는 sysfs가 아직 -1(→0)이므로 상태 파일 보존
         if ! in_init_cooldown && ! cam_in_init_cooldown "$init_cooldown_sec"; then
             if [ -f "$DISCONNECT_INIT_CAM_STATE_FILE" ]; then
@@ -1760,7 +1780,7 @@ do
             cam_disconnect_flag=$(get_cam_disconnect_flag)
             if in_init_cooldown || cam_in_init_cooldown "$init_cooldown_sec"; then
                 logger -p local0.notice "[$KEY][$tag:$LINENO] skip retry_boot: in init cooldown (retry=$retry boot=$retry_boot total=$retry_total)"
-            elif (( cam_disconnect_flag == 0x0 )); then
+            elif ! start_marker_disconnect_path "$cam_disconnect_flag"; then
                 ((retry_boot++))
                 retry_total=$(($retry+$retry_boot))
                 if [ "$retry_total" -le 2 ]; then
