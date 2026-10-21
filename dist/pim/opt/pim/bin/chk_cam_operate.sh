@@ -89,6 +89,8 @@ FINAL_HEARTBEAT_FILE="/tmp/cam_last_final_ts"
 FINAL_HEALTH_FILE="/tmp/cam_final_health"
 
 DISCONNECT_INIT_CAM_STATE_FILE=${DISCONNECT_INIT_CAM_STATE_FILE_DEFAULT}
+# 재지 않은 플래그 0 으로 이력을 보존했다는 로그를 이미 남겼으면 1. 같은 창에서 매 회차 찍지 않는다(#216).
+DISCONNECT_UNMEASURED_LOGGED=0
 
 SYSFS_LINK_I2C2="/sys/bus/i2c/devices/2-0048/link_status"
 SYSFS_LINK_I2C1="/sys/bus/i2c/devices/1-0048/link_status"
@@ -254,8 +256,31 @@ start_marker_disconnect_path() {
     (( $1 != 0 )) || disconnect_episode_open
 }
 
+# BG 가 이번 플래그를 쓸 때 카메라 링크를 재지 않았으면 0(#216). 이유는 CAM_LINK_UNMEASURED_WHY 에 남긴다.
+# BG 는 des 가 아직 프로그램되지 않은 버스(link_status -1)를 빼고(drv_ready_mask), 시작 마커와 앱이 함께
+# 있을 때만 잰다(gstapp_playing). 그동안 쓴 플래그 0 은 연결 회복이 아니다. module_reload 직후에는 vcm 이
+# 이전 시작 시각으로 마커를 먼저 쓸 수 있어 마커만으로는 부족하다(.6 camera17, 조각 없이 마커 생김).
+# 녹화 없는 capture 구성은 마커가 생기지 않으므로 메인 루프의 녹화 비활성 조건과 같은 술어로 마커를 보지 않는다.
+# 빈 마커는 파일 검사가 비운 재생 중 상태라 BG 처럼 존재만 본다. csi1 은 ch0/ch1(i2c2), csi2 는 ch2/ch3(i2c1)이다.
+cam_link_unmeasured() {
+    local raw2="" raw1=""
+    CAM_LINK_UNMEASURED_WHY=""
+    [ "$csi1_en" != 1 ] || { read -r raw2 < "$SYSFS_LINK_I2C2"; } 2>/dev/null
+    [ "$csi2_en" != 1 ] || { read -r raw1 < "$SYSFS_LINK_I2C1"; } 2>/dev/null
+    if [ "$raw2" = "-1" ] || [ "$raw1" = "-1" ]; then
+        CAM_LINK_UNMEASURED_WHY="link_status i2c2=${raw2:-na} i2c1=${raw1:-na}"
+        return 0
+    fi
+    [[ "$cap_en" == *"$ENABLE_VAL"* && "$cap_record_en" != *"$ENABLE_VAL"* ]] && return 1
+    [ -f "$FILE_" ] && return 1
+    CAM_LINK_UNMEASURED_WHY="no start marker"
+    return 0
+}
+
 maybe_init_cam_on_disconnect() {
     local cam_disconnect_flag now first_seen last_init
+    local kept_logged=${DISCONNECT_UNMEASURED_LOGGED:-0}
+    DISCONNECT_UNMEASURED_LOGGED=0
 
     cam_disconnect_flag=$(get_cam_disconnect_flag)
     local drv_disc
@@ -266,7 +291,18 @@ maybe_init_cam_on_disconnect() {
             mark_disconnect_episode_held
             return 1
         fi
-        # module_reload 직후 BG 가 링크를 재기 전의 플래그 0 도 여기서 회복으로 지워진다(#216).
+        # BG 가 링크를 재지 않고 쓴 플래그 0 은 회복이 아니다(#216). 이력과 재부팅 플래그를 그대로 둔다.
+        # 조치 직후의 짧은 창이라 보류 표시는 붙이지 않는다 — first_seen 을 다시 열면 180초 간격은 지켜도
+        # DISCONNECT_MAX_SEC 가 쌓이지 않는다. 지울 것이 없으면 판정하지 않는다(평상시에는 파일 검사 두 번뿐).
+        if { [ -f "$DISCONNECT_INIT_CAM_STATE_FILE" ] || [ -f "$DISCONNECT_REBOOT_FLAG" ]; } &&
+           cam_link_unmeasured; then
+            if [ -f "$DISCONNECT_INIT_CAM_STATE_FILE" ]; then
+                (( kept_logged )) ||
+                    logger -p local0.notice "[$KEY][$tag:$LINENO] disconnect state kept: BG did not measure link ($CAM_LINK_UNMEASURED_WHY)"
+                DISCONNECT_UNMEASURED_LOGGED=1
+            fi
+            return 1
+        fi
         if [ -f "$DISCONNECT_INIT_CAM_STATE_FILE" ]; then
             logger -p local0.notice "[$KEY][$tag:$LINENO] disconnect state cleared (flag=$cam_disconnect_flag drv=$drv_disc)"
         fi
