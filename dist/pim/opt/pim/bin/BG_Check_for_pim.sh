@@ -118,11 +118,12 @@ mask_to_chs() {
     printf '%s' "${out% }"
 }
 
-# 시작 마커는 gstApp 이 쓰고 지우지 않는다. 재부팅 없이 gstApp 이 죽으면 마커만 남아
-# 있으므로, 마커가 있고 gstApp 프로세스도 있을 때만 재생 중으로 본다(#213).
+# 시작 마커는 카메라 앱(gstApp) 또는 vcm(PIMCAM 구성)이 쓰고 지우지 않는다. 재부팅 없이 앱이
+# 죽으면 마커만 남아 있으므로, 마커가 있고 앱 프로세스도 있을 때만 재생 중으로 본다(#213).
+# 앱 이름은 이 프로세스를 띄운 start_cam.sh 의 해석 결과(PIM_CAMERA_APP: gstApp|PIMCAM)를 쓴다.
 gstapp_playing() {
     [ -f "${PIM_CAMERA_SESSION_TIME_FILE:-/tmp/start_video_time_chk}" ] &&
-        pgrep -x gstApp >/dev/null 2>&1
+        pgrep -x "${PIM_CAMERA_APP:-gstApp}" >/dev/null 2>&1
 }
 
 # 에러 플래그 파일이 있는 채널을 "ch0 ch1" 형태로 나열한다.

@@ -195,17 +195,24 @@ t_extract_func "$SRC_BG" gstapp_playing "$WORK/f4" || exit 1
 # shellcheck disable=SC1090
 source "$WORK/f4"
 mkdir -p "$WORK/pgbin"
-printf '#!/bin/sh\n[ "$FAKE_GSTAPP" = 1 ] && [ "$2" = gstApp ]\n' > "$WORK/pgbin/pgrep"
+# 가짜 pgrep: FAKE_RUNNING 에 적힌 이름의 프로세스만 있다.
+printf '#!/bin/sh\n[ -n "$FAKE_RUNNING" ] && [ "$2" = "$FAKE_RUNNING" ]\n' > "$WORK/pgbin/pgrep"
 chmod +x "$WORK/pgbin/pgrep"
 export PIM_CAMERA_SESSION_TIME_FILE="$WORK/start_video_time_chk"
+unset PIM_CAMERA_APP
 rm -f "$PIM_CAMERA_SESSION_TIME_FILE"
-FAKE_GSTAPP=1 PATH="$WORK/pgbin:$PATH" gstapp_playing && rc=0 || rc=1
+FAKE_RUNNING=gstApp PATH="$WORK/pgbin:$PATH" gstapp_playing && rc=0 || rc=1
 t_eq "마커 없음(프로세스 있음) → 재생 아님" "$rc" "1"
 : > "$PIM_CAMERA_SESSION_TIME_FILE"
-FAKE_GSTAPP=1 PATH="$WORK/pgbin:$PATH" gstapp_playing && rc=0 || rc=1
+FAKE_RUNNING=gstApp PATH="$WORK/pgbin:$PATH" gstapp_playing && rc=0 || rc=1
 t_eq "마커+gstApp → 재생 중" "$rc" "0"
-FAKE_GSTAPP=0 PATH="$WORK/pgbin:$PATH" gstapp_playing && rc=0 || rc=1
+FAKE_RUNNING='' PATH="$WORK/pgbin:$PATH" gstapp_playing && rc=0 || rc=1
 t_eq "마커만 있고 gstApp 없음 → 재생 아님" "$rc" "1"
+# PIMCAM 구성: 마커는 vcm 이 쓰고, 런처(start_cam.sh)가 넘긴 PIM_CAMERA_APP 의 프로세스를 본다.
+FAKE_RUNNING=PIMCAM PIM_CAMERA_APP=PIMCAM PATH="$WORK/pgbin:$PATH" gstapp_playing && rc=0 || rc=1
+t_eq "PIMCAM 구성·마커+PIMCAM → 재생 중" "$rc" "0"
+FAKE_RUNNING=gstApp PIM_CAMERA_APP=PIMCAM PATH="$WORK/pgbin:$PATH" gstapp_playing && rc=0 || rc=1
+t_eq "PIMCAM 구성·마커+gstApp 만 → 재생 아님" "$rc" "1"
 t_eq "BG 분기가 gstapp_playing 을 쓴다" \
      "$(grep -c '^    elif ! gstapp_playing; then' "$SRC_BG")" 1
 t_eq "BG 분기가 마커 파일만 보지 않는다" \
