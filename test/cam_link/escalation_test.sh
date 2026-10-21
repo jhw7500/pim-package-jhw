@@ -78,9 +78,11 @@ run_b "플래그 쓰기 실패 → 리부팅 건너뜀"    1800 1900  true  N NO
 t_extract_func "$PIM_BIN/chk_cam_operate.sh" cam_app_absent "$WORK/f_app" || exit 1
 t_extract_func "$PIM_BIN/chk_cam_operate.sh" disconnect_episode_open "$WORK/f_ep" || exit 1
 t_extract_func "$PIM_BIN/chk_cam_operate.sh" start_marker_disconnect_path "$WORK/f_sm" || exit 1
+t_extract_func "$PIM_BIN/chk_cam_operate.sh" mark_disconnect_episode_held "$WORK/f_held" || exit 1
 run_c() {
     local out got
     out=$(
+        exec 2>&1
         KEY=RST; tag=chk_cam_operate.sh
         DISCONNECT_INIT_CAM_STATE_FILE="$WORK/state_c"
         DISCONNECT_REBOOT_FLAG="$WORK/reboot_c.flag"
@@ -99,25 +101,28 @@ run_c() {
         logger() { echo "LOG:$*"; }
         APP="$2"
         # shellcheck disable=SC1090
-        source "$WORK/f_app"; source "$WORK/f_ep"; source "$FN"
+        source "$WORK/f_app"; source "$WORK/f_ep"; source "$WORK/f_held"; source "$FN"
         maybe_init_cam_on_disconnect && echo "RC0" || echo "RC1"
-        [ -f "$DISCONNECT_INIT_CAM_STATE_FILE" ] && echo "STATE_KEPT"
+        [ -f "$DISCONNECT_INIT_CAM_STATE_FILE" ] && echo "STATE_KEPT=$(cat "$DISCONNECT_INIT_CAM_STATE_FILE")"
         [ -f "$DISCONNECT_REBOOT_FLAG" ] && echo "FLAG_KEPT"
     ) 2>&1
-    local s=GONE f=GONE c=N x=N
+    local s=GONE f=GONE c=N x=N h=N e=N
     grep -q STATE_KEPT <<<"$out" && s=KEEP
+    grep -q 'STATE_KEPT=.*,held$' <<<"$out" && h=Y
     grep -q FLAG_KEPT <<<"$out" && f=KEEP
     grep -q 'disconnect state cleared' <<<"$out" && c=Y
     grep -q 'SUBMIT:' <<<"$out" && x=Y
-    got="state=$s flag=$f cleared=$c submit=$x"
+    # 보존 경로가 부르는 도우미가 없으면 셸 오류만 남고 단언은 통과할 수 있으므로 따로 센다.
+    grep -q 'command not found' <<<"$out" && e=Y
+    got="state=$s held=$h flag=$f cleared=$c submit=$x error=$e"
     t_eq "$1" "$got" "$4"
 }
 
 echo "=== 플래그 0 에서 episode 이력 보존 (#213) ==="
-run_c "상태 파일 있음·앱 없음 → 이력 유지, 조치·cleared 로그 없음" DOWN Y "state=KEEP flag=KEEP cleared=N submit=N"
-run_c "상태 파일 있음·앱 있음 → 지금처럼 둘 다 지우고 cleared 로그" UP   Y "state=GONE flag=GONE cleared=Y submit=N"
+run_c "상태 파일 있음·앱 없음 → 이력 유지·보류 표시, 조치·cleared 로그 없음" DOWN Y "state=KEEP held=Y flag=KEEP cleared=N submit=N error=N"
+run_c "상태 파일 있음·앱 있음 → 지금처럼 둘 다 지우고 cleared 로그"        UP   Y "state=GONE held=N flag=GONE cleared=Y submit=N error=N"
 # 상태 파일이 처음부터 없으면 episode 도 없다 — 지금처럼 reboot 플래그를 지운다.
-run_c "상태 파일 없음·앱 없음 → 지금처럼 reboot 플래그 지움"      DOWN N "state=GONE flag=GONE cleared=N submit=N"
+run_c "상태 파일 없음·앱 없음 → 지금처럼 reboot 플래그 지움"             DOWN N "state=GONE held=N flag=GONE cleared=N submit=N error=N"
 
 # $1=설명 $2=플래그 $3=앱 상태 $4=상태 파일 선존재(Y/N) $5=기대(DISC|LADDER)
 run_s() {
@@ -148,7 +153,6 @@ t_eq "시작 마커 경로가 판정 함수를 쓴다" \
 # #213 A-R1-001: 앱이 없는 동안 보존한 episode 는 그 부재 시간을 grace·interval·max_sec 에 넣지 않는다.
 # 표본 1개 → 앱 부재(플래그 0) → 부재가 grace 를 넘긴 뒤 표본 1개. master 처럼 새 grace 를 열고 제출하지 않아야 한다.
 # $1=설명 $2=max_sec $3=마지막 표본 시각 $4=기대 제출(NONE 또는 action 이름)
-t_extract_func "$PIM_BIN/chk_cam_operate.sh" mark_disconnect_episode_held "$WORK/f_held" || exit 1
 run_h() {
     local got
     got=$(
