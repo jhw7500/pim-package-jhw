@@ -1,5 +1,36 @@
 # PIM Package Changelog
 
+## 최신 변경사항 (2026-10-21) — camera17 / gstApp 정지 대기·끊긴 재시작 뒤 복구·재생 뒤 liveness·죽은 기동 유예 제거 (이슈 #210·#193·#213·#214, PR #211·#212·#215·#217)
+
+- 전달 패키지를 `pim-mp 0.6.3+jhw.camera17`로 올렸다.
+- **gstApp 정지 대기**(#210, PR #211): gstApp 종류(kind `app`·`gstapp`)의 기본 정지 대기를 5초에서 10초로
+  늘렸다. gstApp 은 SIGTERM 뒤 EOS 를 최대 3초, NULL 전환을 최대 3초 기다려, 종료가 늦으면 마지막 조각을
+  마무리하는 중에 SIGKILL 로 죽었다. .6 에서 SIGTERM 7초 뒤까지 gstApp 을 붙잡아 두면 camera16 은 5.86초에
+  죽였고, 수정본은 8.25·8.18초에 정상 종료했다. gstApp 이 SIGTERM 에 끝내 응답하지 않으면 `gstapp_restart`
+  (20.99→26.43초)와 `module_reload`(26.45→31.88초)가 약 5.4초 길어진다.
+- **끊긴 재시작 뒤 복구**(#193, PR #212): `gstapp_restart` 도중 재부팅으로 "액션 SUCCEEDED + 요청 FAILED
+  rc 70 interrupted" 기록이 남아도 liveness 가 rc 70 으로 멈추지 않는다. `gstapp_restart` 성공 검증이 ord·vcm
+  을 요구하지 않아, 사다리·수동 요청이 먼저 돌아도 `DEGRADED` 가 되지 않는다. 거부된 내부 제출은 로그로
+  남긴다. .6 에서 그 기록을 만든 뒤 gstApp·ord·vcm 을 함께 죽이면 camera16 은 rc=70 을 8회 남기고 파일 감시
+  사다리가 47초 뒤 gstApp 을 띄울 때까지 조각이 없었다. 수정본은 ord·vcm(+10초)과 gstApp(+20초)을 되살렸고
+  `DEGRADED` 는 없었다. RUNNING 중 ord·vcm 을 죽인 수동 `gstapp_restart` 는 camera16 에서 `DEGRADED`, 수정본에서
+  `SUCCEEDED`(10초 안에 `ACTIVE`)였다.
+- **재생 뒤 liveness**(#213, PR #215): 앞선 재생이 남긴 시작 마커 때문에 BG 가 갓 뜬 gstApp 을 재생 중으로 보고
+  끊김 플래그 15 를 세워, liveness 가 물러나고 60/180초 끊김 사다리만 복구를 맡았다. 이제 `cam_start_gstapp` 이
+  앱을 띄우기 전에 마커를 지우고, BG 는 마커가 있고 카메라 앱 프로세스가 돌 때만 링크를 점검한다. 앱이 없는
+  동안 보존한 끊김 episode 는 다음 측정에서 grace 를 새로 연다. .6 에서 재생 뒤 prepare 가 실패하면 약 16초
+  뒤 liveness 가 gstApp 을 다시 띄웠다. camera16 은 74초 동안 재기동 없이 사다리의 `module_reload` 로만 회복했다.
+- **죽은 기동 유예·init 쿨다운 제거**(#214, PR #217): `BG_Check_for_pim.sh`·`chk_cam_operate.sh`·`cam_state.sh`·
+  guardian 의 유예·쿨다운 판정은 리팩터 b6b70a9 뒤로 아무도 쓰지 않는 타임스탬프를 읽어 늘 거짓이었다. 이를
+  지우고 이미 돌던 분기만 남겨 판정은 바뀌지 않는다(끊김 사다리 old/new 차등 504건 모두 같음).
+  `/tmp/cam_state/last_init_ts`·`last_start_ts` 는 더 만들지 않고 guardian 상태 보고는 여전히 0 을 낸다. 쿨다운이
+  원래 막으려던 두 창은 #216 에서 다룬다.
+- gstApp(`bfb3af7`)·imx-gst(`libgstmultifile.so` `ed36938`, `libgstrtspserver` `5ea8b13`)·imx-vpu(`libgstvpu.so`
+  `d61eaf9`, `libfslvpuwrap` `1f55ed4`)·imx-hantro(`c37edf1`)·`max9296.ko`(`172a76a`)는 그대로다. 각 저장소 최신
+  소스의 빌드다(2026-10-21 확인: 로컬 HEAD = `git ls-remote` 헤드, imx-gst `gst-rtsp-server/` 는 `5ea8b13`→`ed36938`
+  변경 없음, imx-vpu `imx-vpuwrap/` 는 `1f55ed4`→`d61eaf9` 변경 없음, max9296 의 `172a76a` 뒤 커밋은 문서·증적뿐).
+- 설치 뒤 재부팅한다(camera16 과 같다).
+
 ## 최신 변경사항 (2026-10-20) — camera16 / gstApp 종료 마지막 조각·저널 사본 끝부분·재기동 직후 파일 검사 (이슈 #205·#190, gstApp #142, PR #207·#208)
 
 - 전달 패키지를 `pim-mp 0.6.3+jhw.camera16`으로 올렸다.
