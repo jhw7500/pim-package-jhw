@@ -241,9 +241,11 @@ file_check_startup_hold() {
 
 # 런타임 앱 프로세스가 없으면 0. file_check_startup_hold 와 같은 앱 이름 해석을 쓰되 전역 app 은 덮지 않는다.
 cam_app_absent() {
-    local runtime_app
+    local runtime_app rc=0
     _cam_runtime_app_into runtime_app "$PIM_CAMERA_RUNTIME_JSON" 2>/dev/null || runtime_app=gstApp
-    ! pgrep -x "$runtime_app" >/dev/null 2>&1
+    pgrep -x "$runtime_app" >/dev/null 2>&1 || rc=$?
+    # pgrep 이 프로세스를 읽지 못하면(rc 2·3) 없다고 단정하지 않는다. episode 를 보존하지 않고 지금처럼 판정한다.
+    [ "$rc" -eq 1 ]
 }
 
 # 끊김 episode 가 열려 있으면 0(#213). 상태 파일은 끊김 처리 중에만 남는데, 앱이 죽은 채라면

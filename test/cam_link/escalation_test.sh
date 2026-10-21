@@ -96,7 +96,7 @@ run_c() {
         in_init_cooldown()        { return 1; }
         cam_in_init_cooldown()    { return 1; }
         _cam_runtime_app_into()   { printf -v "$1" '%s' gstApp; }
-        pgrep() { [ "$2" = gstApp ] && [ "$APP" = UP ]; }
+        pgrep() { case "$APP" in (UP) [ "$2" = gstApp ] ;; (ERR) return 2 ;; (*) return 1 ;; esac; }
         cam_submit_internal_action() { echo "SUBMIT:$1"; return 0; }
         logger() { echo "LOG:$*"; }
         APP="$2"
@@ -123,6 +123,8 @@ run_c "상태 파일 있음·앱 없음 → 이력 유지·보류 표시, 조치
 run_c "상태 파일 있음·앱 있음 → 지금처럼 둘 다 지우고 cleared 로그"        UP   Y "state=GONE held=N flag=GONE cleared=Y submit=N error=N"
 # 상태 파일이 처음부터 없으면 episode 도 없다 — 지금처럼 reboot 플래그를 지운다.
 run_c "상태 파일 없음·앱 없음 → 지금처럼 reboot 플래그 지움"             DOWN N "state=GONE held=N flag=GONE cleared=N submit=N error=N"
+# pgrep 이 프로세스를 읽지 못하면(rc 2) 앱이 없다고 단정하지 않는다 — 지금처럼 지운다.
+run_c "상태 파일 있음·pgrep 오류 → 보존하지 않고 지금처럼 지움"          ERR  Y "state=GONE held=N flag=GONE cleared=Y submit=N error=N"
 
 # $1=설명 $2=플래그 $3=앱 상태 $4=상태 파일 선존재(Y/N) $5=기대(DISC|LADDER)
 run_s() {
@@ -133,7 +135,7 @@ run_s() {
         rm -f "$DISCONNECT_INIT_CAM_STATE_FILE"
         [ "$4" = "Y" ] && : > "$DISCONNECT_INIT_CAM_STATE_FILE"
         _cam_runtime_app_into()   { printf -v "$1" '%s' gstApp; }
-        pgrep() { [ "$2" = gstApp ] && [ "$APP" = UP ]; }
+        pgrep() { case "$APP" in (UP) [ "$2" = gstApp ] ;; (ERR) return 2 ;; (*) return 1 ;; esac; }
         APP="$3"
         # shellcheck disable=SC1090
         source "$WORK/f_app"; source "$WORK/f_ep"; source "$WORK/f_sm"
@@ -147,6 +149,7 @@ run_s "플래그 ≠ 0 → 끊김"                          3 DOWN N DISC
 run_s "플래그 0·episode 열림(상태 파일+앱 없음) → 끊김" 0 DOWN Y DISC
 run_s "플래그 0·상태 파일 있으나 앱 있음 → 일반 사다리" 0 UP   Y LADDER
 run_s "플래그 0·episode 없음 → 일반 사다리"         0 DOWN N LADDER
+run_s "플래그 0·상태 파일 있음·pgrep 오류 → 일반 사다리" 0 ERR  Y LADDER
 t_eq "시작 마커 경로가 판정 함수를 쓴다" \
      "$(grep -c 'elif ! start_marker_disconnect_path' "$PIM_BIN/chk_cam_operate.sh")" 1
 
@@ -169,7 +172,7 @@ run_h() {
         date() { echo "$NOW"; }
         sync() { :; }; sleep() { :; }
         _cam_runtime_app_into()   { printf -v "$1" '%s' gstApp; }
-        pgrep() { [ "$2" = gstApp ] && [ "$APP" = UP ]; }
+        pgrep() { case "$APP" in (UP) [ "$2" = gstApp ] ;; (ERR) return 2 ;; (*) return 1 ;; esac; }
         cam_submit_internal_action() { echo "SUBMIT:$1"; return 0; }
         logger() { :; }
         # shellcheck disable=SC1090
