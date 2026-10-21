@@ -121,9 +121,12 @@ reboot monotonic 로그의 주요 시점은 다음과 같다.
     복구 요청 하나를 forward 할 뿐이고, `start_cam.sh`의 호환 분기는 positional
     인자를 세기만 하고 버린다.
   - `chk_cam_operate.sh`: `GetConfig`의 `app_delay`는 설정 요약 로그에만 쓰인다.
-- `BG_Check_for_pim.sh`, `pim_guardian.py`
-  - `/tmp/cam_state/last_start_ts`부터 총 `camera_startup_grace_sec`를 계산한다.
-  - `/tmp/pim_cam_start_delay`는 진단 정보로 남지만 grace 계산에는 사용하지 않는다.
+- `pim_guardian.py`
+  - guardian 자신이 뜬 시각부터 총 `camera_startup_grace_sec`를 계산한다. 카메라 기동 시각
+    (`/tmp/cam_state/last_start_ts`)은 b6b70a9 이후 기록하는 곳이 없어 쓰지 않는다(#214).
+  - `/tmp/pim_cam_start_delay`도 기록하는 곳이 없다. 상태 보고 필드로만 읽는다.
+- `BG_Check_for_pim.sh`는 `camera_startup_grace_sec`를 쓰지 않는다(#214). 기동 직후 구간은
+  재생 마커 게이트가 연결 점검을 건너뛰어 덮는다(#213).
 - `ord_vcm_conf.json`, `update_ordvcmconf.sh`
   - 기존 설치에도 `camera_startup_grace_sec: 25`를 보강한다.
 

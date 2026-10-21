@@ -48,15 +48,6 @@ cam_recording_set 'start_video_time_actual' '2026-04-01T10:00:00'
 r=$(cat /tmp/cam_state/recording/start_video_time_actual 2>/dev/null)
 [ "$r" = "2026-04-01T10:00:00" ] && echo "  recording_set: OK" || echo "  recording_set: FAIL (got $r)"
 
-# record_init / record_start
-cam_record_init
-state=$(cam_get_state)
-[ "$state" = "recovering" ] && echo "  record_init: OK" || echo "  record_init: FAIL (state=$state)"
-
-cam_record_start
-ts=$(cat /tmp/cam_state/last_start_ts 2>/dev/null)
-[ "$ts" -gt 0 ] 2>/dev/null && echo "  record_start: OK" || echo "  record_start: FAIL (ts=$ts)"
-
 # reset_state
 cam_reset_state
 state=$(cam_get_state)
@@ -78,7 +69,6 @@ loop_sim() {
     cam_state_get streak > /dev/null
     cam_state_get state > /dev/null
     cam_state_get timestamp > /dev/null
-    cam_state_get last_init_ts > /dev/null
 }
 
 echo "[성능 측정] 새 cam_state.sh (파일 기반)"

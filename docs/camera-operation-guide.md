@@ -591,10 +591,9 @@ init_cam.sh 호출 시 (모듈 재로드 전)
 
 | 파일 | 용도 | 값 형식 |
 |------|------|---------|
-| `/tmp/cam_state/last_start_ts` | camera startup grace의 기준 앱 시작 시각 | epoch (초) |
-| `/tmp/pim_cam_start_delay` | gstApp `-d` 진단값. grace 계산에는 사용하지 않음 | 정수 (초) |
+| `/tmp/cam_state/last_start_ts` | 기록하는 곳 없음(#214). guardian 상태 보고만 읽으며, 없으면 0 | epoch (초) |
+| `/tmp/pim_cam_start_delay` | 기록하는 곳 없음. guardian 상태 보고만 읽으며, grace 계산에는 사용하지 않음 | 정수 (초) |
 | `/tmp/pim_cam_stream_start_ts` | 스트림 실제 시작 시각 | epoch (초) |
-| `/tmp/last_init_cam_ts` | 마지막 init_cam 실행 시각 | epoch (초) |
 | `/tmp/start_video_time` | gstApp 녹화 시작 시각 | "YYYYMMDD HH:MM:SS" |
 | `/tmp/start_video_time_chk` | kill_test 파일 정리용 시작 시각 | "YYYYMMDD HH:MM:SS" |
 

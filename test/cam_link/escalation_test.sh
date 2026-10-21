@@ -40,8 +40,6 @@ run_b() {
 
         get_cam_disconnect_flag() { echo 1; }   # disconnect 상태로 고정
         read_driver_disconnect()  { echo 0; }
-        in_init_cooldown()        { return 1; }
-        cam_in_init_cooldown()    { return 1; }
         date()   { echo "$NOW"; }
         sync()   { :; }
         sleep()  { :; }
@@ -93,8 +91,6 @@ run_c() {
         printf '1' > "$DISCONNECT_REBOOT_FLAG"
         get_cam_disconnect_flag() { echo 0; }
         read_driver_disconnect()  { echo 0; }
-        in_init_cooldown()        { return 1; }
-        cam_in_init_cooldown()    { return 1; }
         _cam_runtime_app_into()   { printf -v "$1" '%s' gstApp; }
         pgrep() { case "$APP" in (UP) [ "$2" = gstApp ] ;; (ERR) return 2 ;; (*) return 1 ;; esac; }
         cam_submit_internal_action() { echo "SUBMIT:$1"; return 0; }
@@ -151,7 +147,7 @@ run_s "플래그 0·상태 파일 있으나 앱 있음 → 일반 사다리" 0 U
 run_s "플래그 0·episode 없음 → 일반 사다리"         0 DOWN N LADDER
 run_s "플래그 0·상태 파일 있음·pgrep 오류 → 일반 사다리" 0 ERR  Y LADDER
 t_eq "시작 마커 경로가 판정 함수를 쓴다" \
-     "$(grep -c 'elif ! start_marker_disconnect_path' "$PIM_BIN/chk_cam_operate.sh")" 1
+     "$(grep -c -F 'if ! start_marker_disconnect_path "$cam_disconnect_flag"; then' "$PIM_BIN/chk_cam_operate.sh")" 1
 
 # #213 A-R1-001: 앱이 없는 동안 보존한 episode 는 그 부재 시간을 grace·interval·max_sec 에 넣지 않는다.
 # 표본 1개 → 앱 부재(플래그 0) → 부재가 grace 를 넘긴 뒤 표본 1개. master 처럼 새 grace 를 열고 제출하지 않아야 한다.
@@ -167,8 +163,6 @@ run_h() {
         rm -rf "$DISCONNECT_INIT_CAM_STATE_FILE" "$DISCONNECT_REBOOT_FLAG_DIR"
         get_cam_disconnect_flag() { echo "$FLAG"; }
         read_driver_disconnect()  { echo 0; }
-        in_init_cooldown()        { return 1; }
-        cam_in_init_cooldown()    { return 1; }
         date() { echo "$NOW"; }
         sync() { :; }; sleep() { :; }
         _cam_runtime_app_into()   { printf -v "$1" '%s' gstApp; }

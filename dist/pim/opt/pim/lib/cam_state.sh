@@ -119,8 +119,6 @@ cam_state_init() {
         _cs_write timestamp 0
         _cs_write state healthy
         _cs_write streak 0
-        _cs_write last_init_ts 0
-        _cs_write last_start_ts 0
         for ch in 0 1 2 3; do
             _cs_write "channels/ch${ch}_error" false
         done
@@ -189,22 +187,6 @@ cam_recording_set() {
 # ─────────────────────────────────────────────
 # 상태 머신
 # ─────────────────────────────────────────────
-cam_in_startup_grace() {
-    local grace_sec="${1:-10}"
-    local start_ts=$(_cs_read last_start_ts)
-    local now=$(date +%s)
-    start_ts="${start_ts:-0}"
-    [ "$start_ts" -gt 0 ] && [ $((now - start_ts)) -lt "$grace_sec" ]
-}
-
-cam_in_init_cooldown() {
-    local cooldown_sec="${1:-40}"
-    local init_ts=$(_cs_read last_init_ts)
-    local now=$(date +%s)
-    init_ts="${init_ts:-0}"
-    [ "$init_ts" -gt 0 ] && [ $((now - init_ts)) -lt "$cooldown_sec" ]
-}
-
 cam_get_state() {
     local s=$(_cs_read state)
     echo "${s:-healthy}"
@@ -264,17 +246,6 @@ cam_has_channel_error() {
 # ─────────────────────────────────────────────
 # 복합 동작
 # ─────────────────────────────────────────────
-cam_record_init() {
-    _cs_write last_init_ts "$(date +%s)"
-    cam_reset_streak
-    cam_set_state "recovering"
-}
-
-cam_record_start() {
-    _cs_write last_start_ts "$(date +%s)"
-    cam_recording_set 'start_video_time_actual' ''
-}
-
 cam_reset_state() {
     cam_set_state "healthy"
     cam_reset_streak

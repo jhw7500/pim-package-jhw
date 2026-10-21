@@ -241,7 +241,6 @@ heartbeat가 없거나 stale이면 설정된 final 경로의 최근
 | `/tmp/chk_cam_operate.part_state` | `CleanupStalePartFiles()` | 파일 크기 추적 |
 | `/tmp/chk_cam_operate.disconnect_state` | `maybe_init_cam_on_disconnect()` | disconnect 최초 시각/마지막 init |
 | `/tmp/cam_disconnect_reboot.flag` | disconnect 에스컬레이션 | 같은 부팅의 재부팅 이력 |
-| `/tmp/last_init_cam_ts` | `init_cam.sh` | cooldown 기준 시각 |
 
 ## 9. 구현 기준점
 

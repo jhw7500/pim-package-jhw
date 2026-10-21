@@ -64,10 +64,18 @@ class Tests:
             obj.conf = {"ord": {"ETC": {"camera_startup_grace_sec": 25}}}
             obj.start_time = 1000.0
 
-            start_ts.write_text("1000\n", encoding="utf-8")
+            # last_start_ts 는 더 기록되지 않는다(#214). 남은 파일이 있어도 grace 는 guardian 기동
+            # 시각으로 잰다 — 파일 값을 기동 시각과 다르게 둬야 그 차이가 드러난다.
+            start_ts.write_text("1020\n", encoding="utf-8")
             start_delay.write_text("1\n", encoding="utf-8")
             original_time = guardian_module.time.time
             try:
+                guardian_module.time.time = lambda: 1030.0
+                self.check(
+                    not obj._in_startup_grace(),
+                    "a leftover last_start_ts file does not extend grace past guardian start + 25s",
+                )
+
                 guardian_module.time.time = lambda: 1024.0
                 self.check(
                     obj._in_startup_grace(),
