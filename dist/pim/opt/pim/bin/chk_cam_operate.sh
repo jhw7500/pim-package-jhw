@@ -239,6 +239,35 @@ file_check_startup_hold() {
     return 1
 }
 
+# 런타임 앱 프로세스가 없으면 0. file_check_startup_hold 와 같은 앱 이름 해석을 쓰되 전역 app 은 덮지 않는다.
+cam_app_absent() {
+    local runtime_app rc=0
+    _cam_runtime_app_into runtime_app "$PIM_CAMERA_RUNTIME_JSON" 2>/dev/null || runtime_app=gstApp
+    pgrep -x "$runtime_app" >/dev/null 2>&1 || rc=$?
+    # pgrep 이 프로세스를 읽지 못하면(rc 2·3) 없다고 단정하지 않는다. episode 를 보존하지 않고 지금처럼 판정한다.
+    [ "$rc" -eq 1 ]
+}
+
+# 끊김 episode 가 열려 있으면 0(#213). 상태 파일은 끊김 처리 중에만 남는데, 앱이 죽은 채라면
+# 플래그가 0 으로 내려가도 연결이 회복된 것이 아니라 끊김이 이어진 것으로 본다.
+disconnect_episode_open() {
+    [ -f "$DISCONNECT_INIT_CAM_STATE_FILE" ] && cam_app_absent
+}
+
+# 앱이 없는 동안 보존한 episode 에 보류 표시를 붙인다. 그동안은 측정이 없으므로 다시 측정되는
+# 첫 표본에서 grace 를 새로 연다(#213 A-R1-001). 읽는 쪽은 awk 로 첫 두 필드만 본다.
+mark_disconnect_episode_held() {
+    local state
+    state=$(cat "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null) || return 0
+    case "$state" in *,held) return 0 ;; esac
+    printf "%s,held" "$state" > "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
+}
+
+# 시작 마커 부재 경로의 판정. 0 이면 끊김 분기, 1 이면 일반 사다리(#213).
+start_marker_disconnect_path() {
+    (( $1 != 0 )) || disconnect_episode_open
+}
+
 maybe_init_cam_on_disconnect() {
     local cam_disconnect_flag now first_seen last_init
 
@@ -246,6 +275,11 @@ maybe_init_cam_on_disconnect() {
     local drv_disc
     drv_disc=$(read_driver_disconnect)
     if (( cam_disconnect_flag == 0 )) && (( drv_disc == 0 )); then
+        # 앱이 죽은 채 열려 있는 episode 는 플래그가 내려가도 이력을 지우지 않는다.
+        if disconnect_episode_open; then
+            mark_disconnect_episode_held
+            return 1
+        fi
         # init_cam 직후 cooldown 중에는 sysfs가 아직 -1(→0)이므로 상태 파일 보존
         if ! in_init_cooldown && ! cam_in_init_cooldown "$init_cooldown_sec"; then
             if [ -f "$DISCONNECT_INIT_CAM_STATE_FILE" ]; then
@@ -271,6 +305,8 @@ maybe_init_cam_on_disconnect() {
     if [[ ! "$last_init" =~ ^[0-9]+$ ]]; then
         last_init=0
     fi
+    # 보류됐던 episode 는 측정이 없던 앱 부재 시간을 grace·max_sec 에 넣지 않는다(#213 A-R1-001).
+    case "$(cat "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null)" in *,held) first_seen=$now ;; esac
 
     if (( (now - first_seen) < DISCONNECT_INIT_CAM_GRACE_SEC )); then
         printf "%s,%s" "$first_seen" "$last_init" > "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
@@ -1760,7 +1796,7 @@ do
             cam_disconnect_flag=$(get_cam_disconnect_flag)
             if in_init_cooldown || cam_in_init_cooldown "$init_cooldown_sec"; then
                 logger -p local0.notice "[$KEY][$tag:$LINENO] skip retry_boot: in init cooldown (retry=$retry boot=$retry_boot total=$retry_total)"
-            elif (( cam_disconnect_flag == 0x0 )); then
+            elif ! start_marker_disconnect_path "$cam_disconnect_flag"; then
                 ((retry_boot++))
                 retry_total=$(($retry+$retry_boot))
                 if [ "$retry_total" -le 2 ]; then
@@ -1784,11 +1820,14 @@ do
                     fi
                 fi
             else
+                # 플래그 0 으로 여기 왔다면 앱이 죽은 채 열린 episode 때문이다(#213). 로그에 사유를 남긴다.
+                disc_note=""
+                (( cam_disconnect_flag != 0 )) || disc_note=" episode=open(app absent)"
                 drv_disc=$(read_driver_disconnect)
                 if (( drv_disc != 0 )); then
-                    logger -p local0.notice "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag) drv_disc=$drv_disc: skip init_cam (periodic handles recovery)"
+                    logger -p local0.notice "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag)$disc_note drv_disc=$drv_disc: skip init_cam (periodic handles recovery)"
                 else
-                    logger -p local0.err  "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag): request module_reload"
+                    logger -p local0.err  "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag)$disc_note: request module_reload"
                     if ! in_init_cooldown && ! cam_in_init_cooldown "$init_cooldown_sec"; then
                         # periodic init_cam 간격 추적을 위해 last_init 갱신
                         now_ts=$(date +%s)

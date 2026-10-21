@@ -890,6 +890,35 @@ cam_liveness_tick; ! grep -q '^request:' "$PIM_CAMERA_CALL_LOG" || fail 'all-dis
 reset_case; owner_at ACTIVE; prepare_gst_missing 0; printf '3\n' > "$PIM_CAMERA_BG_FLAG_FILE"
 cam_liveness_tick; ! grep -q '^request:' "$PIM_CAMERA_CALL_LOG" || fail 'disconnect requested gstApp recovery'
 
+# #213: BG 끊김 플래그로 복구를 미룰 때 흔적을 남기되, 같은 값은 반복 시간 안에 다시 찍지 않는다.
+reset_case; owner_at ACTIVE; prepare_gst_missing 0; printf '3\n' > "$PIM_CAMERA_BG_FLAG_FILE"
+_CL_DISCONNECT_LOG_RAW=""; _CL_DISCONNECT_LOG_TS=0
+: > "$WORK/disconnect.log"
+logger() { printf '%s\n' "$*" >> "$WORK/disconnect.log"; }
+PIM_CAMERA_LIVENESS_NOW=100; cam_liveness_tick
+[ "$(grep -c 'BG disconnect flag=3' "$WORK/disconnect.log")" -eq 1 ] || fail 'disconnect skip was not logged once'
+PIM_CAMERA_LIVENESS_NOW=130; cam_liveness_tick
+[ "$(grep -c 'BG disconnect flag=3' "$WORK/disconnect.log")" -eq 1 ] || fail 'same disconnect flag was logged again inside the repeat interval'
+printf '5\n' > "$PIM_CAMERA_BG_FLAG_FILE"
+PIM_CAMERA_LIVENESS_NOW=131; cam_liveness_tick
+[ "$(grep -c 'BG disconnect flag=5' "$WORK/disconnect.log")" -eq 1 ] || fail 'changed disconnect flag was not logged immediately'
+PIM_CAMERA_LIVENESS_NOW=200; cam_liveness_tick
+[ "$(grep -c 'BG disconnect flag=5' "$WORK/disconnect.log")" -eq 2 ] || fail 'standing disconnect flag was not logged after the repeat interval'
+! grep -q '^request:' "$PIM_CAMERA_CALL_LOG" || fail 'logged disconnect skip requested gstApp recovery'
+# 반복 간격이 숫자가 아니면 기본 60초로 돌아간다 — 셸 산술 오류 없이 간격 안에서는 다시 찍지 않는다.
+PIM_CAMERA_LIVENESS_DISCONNECT_LOG_REPEAT_SEC=bogus
+PIM_CAMERA_LIVENESS_NOW=230; cam_liveness_tick 2> "$WORK/disconnect.err"
+[ ! -s "$WORK/disconnect.err" ] || fail 'non-numeric repeat interval produced shell errors'
+[ "$(grep -c 'BG disconnect flag=5' "$WORK/disconnect.log")" -eq 2 ] || fail 'non-numeric repeat interval did not fall back to 60 seconds'
+unset PIM_CAMERA_LIVENESS_DISCONNECT_LOG_REPEAT_SEC
+# 0 표본은 그 episode 를 끝낸다 — 같은 값이 반복 시간 안에 다시 서도 새 episode 로 다시 찍는다.
+reset_case; owner_at ACTIVE; prepare_gst_missing 0; printf '0\n' > "$PIM_CAMERA_BG_FLAG_FILE"
+PIM_CAMERA_LIVENESS_NOW=240; cam_liveness_tick
+reset_case; owner_at ACTIVE; prepare_gst_missing 0; printf '5\n' > "$PIM_CAMERA_BG_FLAG_FILE"
+PIM_CAMERA_LIVENESS_NOW=250; cam_liveness_tick
+[ "$(grep -c 'BG disconnect flag=5' "$WORK/disconnect.log")" -eq 3 ] || fail 'a recurring disconnect flag after a clear sample was not logged again'
+unset -f logger; PIM_CAMERA_LIVENESS_NOW=100
+
 reset_case; owner_at ACTIVE; printf 'vcm\n' > "$WORK/procs"; set_counter 0
 cam_liveness_tick; ! grep -q '^request:' "$PIM_CAMERA_CALL_LOG" || fail 'missing video node requested gstApp recovery'
 

@@ -188,4 +188,34 @@ t_eq "서명은 rx3_sig 를 쓴다" \
 t_eq "서명에 rx3_info 를 쓰지 않는다" \
      "$(grep -c 'drv_log_cur=.*\$rx3_info' "$SRC_BG")" 0
 
+echo
+echo "=== gstapp_playing — 마커만으로는 재생 중이 아니다 (#213) ==="
+# 재부팅 없이 gstApp 이 죽으면 시작 마커만 남는다. 마커와 프로세스가 둘 다 있어야 한다.
+t_extract_func "$SRC_BG" gstapp_playing "$WORK/f4" || exit 1
+# shellcheck disable=SC1090
+source "$WORK/f4"
+mkdir -p "$WORK/pgbin"
+# 가짜 pgrep: FAKE_RUNNING 에 적힌 이름의 프로세스만 있다.
+printf '#!/bin/sh\n[ -n "$FAKE_RUNNING" ] && [ "$2" = "$FAKE_RUNNING" ]\n' > "$WORK/pgbin/pgrep"
+chmod +x "$WORK/pgbin/pgrep"
+export PIM_CAMERA_SESSION_TIME_FILE="$WORK/start_video_time_chk"
+unset PIM_CAMERA_APP
+rm -f "$PIM_CAMERA_SESSION_TIME_FILE"
+FAKE_RUNNING=gstApp PATH="$WORK/pgbin:$PATH" gstapp_playing && rc=0 || rc=1
+t_eq "마커 없음(프로세스 있음) → 재생 아님" "$rc" "1"
+: > "$PIM_CAMERA_SESSION_TIME_FILE"
+FAKE_RUNNING=gstApp PATH="$WORK/pgbin:$PATH" gstapp_playing && rc=0 || rc=1
+t_eq "마커+gstApp → 재생 중" "$rc" "0"
+FAKE_RUNNING='' PATH="$WORK/pgbin:$PATH" gstapp_playing && rc=0 || rc=1
+t_eq "마커만 있고 gstApp 없음 → 재생 아님" "$rc" "1"
+# PIMCAM 구성: 마커는 vcm 이 쓰고, 런처(start_cam.sh)가 넘긴 PIM_CAMERA_APP 의 프로세스를 본다.
+FAKE_RUNNING=PIMCAM PIM_CAMERA_APP=PIMCAM PATH="$WORK/pgbin:$PATH" gstapp_playing && rc=0 || rc=1
+t_eq "PIMCAM 구성·마커+PIMCAM → 재생 중" "$rc" "0"
+FAKE_RUNNING=gstApp PIM_CAMERA_APP=PIMCAM PATH="$WORK/pgbin:$PATH" gstapp_playing && rc=0 || rc=1
+t_eq "PIMCAM 구성·마커+gstApp 만 → 재생 아님" "$rc" "1"
+t_eq "BG 분기가 gstapp_playing 을 쓴다" \
+     "$(grep -c '^    elif ! gstapp_playing; then' "$SRC_BG")" 1
+t_eq "BG 분기가 마커 파일만 보지 않는다" \
+     "$(grep -c "elif \[ ! -f /tmp/start_video_time_chk \]" "$SRC_BG")" 0
+
 t_summary "disconnect 로그 채널 표기"

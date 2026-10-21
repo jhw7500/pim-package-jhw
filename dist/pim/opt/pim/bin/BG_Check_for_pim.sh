@@ -118,6 +118,14 @@ mask_to_chs() {
     printf '%s' "${out% }"
 }
 
+# 시작 마커는 카메라 앱(gstApp) 또는 vcm(PIMCAM 구성)이 쓰고 지우지 않는다. 재부팅 없이 앱이
+# 죽으면 마커만 남아 있으므로, 마커가 있고 앱 프로세스도 있을 때만 재생 중으로 본다(#213).
+# 앱 이름은 이 프로세스를 띄운 start_cam.sh 의 해석 결과(PIM_CAMERA_APP: gstApp|PIMCAM)를 쓴다.
+gstapp_playing() {
+    [ -f "${PIM_CAMERA_SESSION_TIME_FILE:-/tmp/start_video_time_chk}" ] &&
+        pgrep -x "${PIM_CAMERA_APP:-gstApp}" >/dev/null 2>&1
+}
+
 # 에러 플래그 파일이 있는 채널을 "ch0 ch1" 형태로 나열한다.
 err_cam_chs() {
     local ch out=""
@@ -346,9 +354,13 @@ while true; do
             drv_log_sig="$drv_log_cur"
             drv_log_ts=$drv_log_now
         fi
-    elif [ ! -f /tmp/start_video_time_chk ]; then
+    elif ! gstapp_playing; then
         drv_log_sig=""
-        logger -p local0.info "[CHK][$tag:$LINENO] skip chk_cam_connect: gstApp not yet playing"
+        if [ -f "${PIM_CAMERA_SESSION_TIME_FILE:-/tmp/start_video_time_chk}" ]; then
+            logger -p local0.info "[CHK][$tag:$LINENO] skip chk_cam_connect: gstApp not running"
+        else
+            logger -p local0.info "[CHK][$tag:$LINENO] skip chk_cam_connect: gstApp not yet playing"
+        fi
     else
         # disconnect 가 풀렸다. 다음에 다시 빠지면 같은 값이라도 즉시 찍히도록
         # 억제 상태를 비운다. 안 그러면 짧게 붙었다 떨어질 때 로그가 통째로 빠진다.

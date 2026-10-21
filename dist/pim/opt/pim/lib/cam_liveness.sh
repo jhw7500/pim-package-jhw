@@ -30,6 +30,11 @@ _CL_BG_SCAN_ERROR=0
 # cannot serve as that flag: a refused launch deliberately leaves it at zero, so
 # gating the warning on it would re-announce the same absence on every tick.
 _CL_BG_ABSENT_LOGGED=0
+# Last BG disconnect flag value reported by the gate, and when.  The gate runs on
+# every tick, so a standing flag is reported once per repeat interval.
+_CL_DISCONNECT_LOG_RAW=""
+_CL_DISCONNECT_LOG_TS=0
+_CL_DISCONNECT_SEEN_RAW=""
 
 if ! declare -F cam_owner_assert >/dev/null 2>&1; then
     # shellcheck source=/dev/null
@@ -305,10 +310,29 @@ _cl_handle_operation_flags() {
 
 _cl_disconnect_clear() {
     local raw
-    [ -e "$PIM_CAMERA_BG_FLAG_FILE" ] || return 0
+    _CL_DISCONNECT_SEEN_RAW=""
+    [ -e "$PIM_CAMERA_BG_FLAG_FILE" ] || { _CL_DISCONNECT_LOG_RAW=""; return 0; }
     raw=$(tr -d '\r\n' < "$PIM_CAMERA_BG_FLAG_FILE") || return 1
+    _CL_DISCONNECT_SEEN_RAW=$raw
     [[ $raw =~ ^[0-9]+$ ]] || return 1
-    [ $((raw & 15)) -eq 0 ]
+    [ $((raw & 15)) -eq 0 ] || return 1
+    # A clear sample ends the reported episode, so the same value recurring is logged again.
+    _CL_DISCONNECT_LOG_RAW=""
+}
+
+# Leaves a trace when the BG disconnect flag is why the gate refuses (#213), so a
+# dead gstApp that is not being restarted is not silent.  Never changes a verdict.
+# Reports the value _cl_disconnect_clear judged, not a fresh read of the file.
+_cl_disconnect_log() {
+    local raw=$_CL_DISCONNECT_SEEN_RAW now repeat=${PIM_CAMERA_LIVENESS_DISCONNECT_LOG_REPEAT_SEC:-60}
+    [[ $repeat =~ ^[0-9]+$ ]] || repeat=60
+    now=$(_cl_now) || now=0
+    if [ "$raw" != "$_CL_DISCONNECT_LOG_RAW" ] || [ $((now - _CL_DISCONNECT_LOG_TS)) -ge "$repeat" ]; then
+        _CL_DISCONNECT_LOG_RAW=$raw
+        _CL_DISCONNECT_LOG_TS=$now
+        logger -p local0.notice "[CAM][cam_liveness] skip gstApp recovery: BG disconnect flag=$raw" 2>/dev/null
+    fi
+    return 0
 }
 
 _cl_video_present() {
@@ -349,7 +373,7 @@ cam_liveness_gstapp_gate() {
     _cl_active_guard || return $?
     enabled=$(jq -r '[.VHL_CAM.i2c2.ch0.enable // false,.VHL_CAM.i2c2.ch1.enable // false,.VHL_CAM.i2c1.ch2.enable // false,.VHL_CAM.i2c1.ch3.enable // false] | any(. == true)' "$PIM_CAMERA_RUNTIME_JSON") || return 64
     [ "$enabled" = true ] || return 1
-    _cl_disconnect_clear || return 1
+    _cl_disconnect_clear || { _cl_disconnect_log; return 1; }
     _cl_video_present || return 1
     _cl_subdev_ready
 }
