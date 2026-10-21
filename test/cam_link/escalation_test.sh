@@ -169,6 +169,8 @@ MK=A run_c "상태 파일 없음·앱 있음·마커 없음 → 재부팅 플래
 # 이미 보존 중이면 표시를 겹쳐 붙이지 않는다. 보류 뒤 보존이면 두 표시가 함께 남는다(보류의 새 grace 유지).
 ST=1,2,kept MK=A run_c "보존 중인 이력·여전히 재지 않음 → 표시 그대로"      UP   Y "state=KEEP mark=kept flag=KEEP cleared=N submit=N error=N log=Y"
 ST=1,2,held MK=A run_c "보류 이력·앱 다시 뜸·재지 않음 → 보류+보존"          UP   Y "state=KEEP mark=held,kept flag=KEEP cleared=N submit=N error=N log=Y"
+# 보존 중에 앱이 사라지면 #213 처럼 보류도 붙여 부재 시간을 빼야 한다(Codex P2, Tribunal A-R1-002).
+ST=1,2,kept MK=A run_c "보존 이력·앱 없음 → 보류도 붙임"                    DOWN Y "state=KEEP mark=kept,held flag=KEEP cleared=N submit=N error=N log=Y"
 # 녹화 없는 capture 구성은 마커가 생기지 않고 BG 는 드라이버 값만 본다. 마커·앱을 보면 episode 가 닫히지 않는다.
 CAP=caponly MK=A run_c "capture 전용·마커 없음 → 마커는 보지 않고 지움"     UP   Y "state=GONE mark=- flag=GONE cleared=Y submit=N error=N log=N"
 CAP=caponly MK=A run_c "capture 전용·앱 없음·상태 없음 → 앱은 보지 않고 지움" DOWN N "state=GONE mark=- flag=GONE cleared=N submit=N error=N log=N"
@@ -202,6 +204,7 @@ ST=1,2,held run_s "플래그 0·보류(held) 이력·앱 없음 → 끊김" 0 DO
 # #216 AC2: 재지 않은 0 으로 보존 중인 이력은 예전이면 지워졌을 것이다. 시작 마커 경로는 지금처럼 사다리를 탄다.
 ST=1,2,kept run_s "플래그 0·보존(kept) 이력·앱 없음 → 일반 사다리"      0 DOWN Y LADDER
 ST=1,2,held,kept run_s "플래그 0·보류 뒤 보존 이력·앱 없음 → 일반 사다리" 0 DOWN Y LADDER
+ST=1,2,kept,held run_s "플래그 0·보존 뒤 보류 이력·앱 없음 → 일반 사다리" 0 DOWN Y LADDER
 t_eq "시작 마커 경로가 판정 함수를 쓴다" \
      "$(grep -c -F 'if ! start_marker_disconnect_path "$cam_disconnect_flag"; then' "$PIM_BIN/chk_cam_operate.sh")" 1
 
@@ -309,6 +312,11 @@ R1=-1 run_f "한 버스가 영영 -1·다른 버스는 잰 0 → 이력 지움, 
 run_f "보류 뒤 보존 이력 → 다음 끊김 표본에서 새 grace" 0 \
       "NONE log=1 state=KEEP flag=GONE path=LADDER" \
       "1000 1 UP P 0" "1002 0 DOWN P 0" "1004 0 UP A 0" "1070 1 UP P 0"
+# 거꾸로 보존한 뒤 앱이 사라져도 마찬가지다(Codex P2 재현 그대로). 보류가 없으면 1300 표본이 1000 부터 센
+# max_sec 200 을 넘겨 곧바로 reboot_fallback 을 낸다.
+run_f "보존 뒤 앱 부재 → 다음 끊김 표본은 새 grace, reboot_fallback 없음" 200 \
+      "module_reload log=1 state=KEEP flag=GONE path=LADDER" \
+      "1000 1 UP P 0" "1060 1 UP P 0" "1062 0 UP A -1" "1064 0 DOWN A -1" "1300 1 UP P 0"
 
 # #216 A-R1-002: module_reload 뒤 앱이 재생 전에 죽기를 되풀이해도(플래그 0, drv 0, 버스 모두 -1) 시작 마커
 # 경로가 master 처럼 세는 사다리(gstapp_restart ×2 → module_reload ×2 → reboot_fallback)를 타 끝나는지 본다.
