@@ -905,6 +905,12 @@ PIM_CAMERA_LIVENESS_NOW=131; cam_liveness_tick
 PIM_CAMERA_LIVENESS_NOW=200; cam_liveness_tick
 [ "$(grep -c 'BG disconnect flag=5' "$WORK/disconnect.log")" -eq 2 ] || fail 'standing disconnect flag was not logged after the repeat interval'
 ! grep -q '^request:' "$PIM_CAMERA_CALL_LOG" || fail 'logged disconnect skip requested gstApp recovery'
+# 반복 간격이 숫자가 아니면 기본 60초로 돌아간다 — 셸 산술 오류 없이 간격 안에서는 다시 찍지 않는다.
+PIM_CAMERA_LIVENESS_DISCONNECT_LOG_REPEAT_SEC=bogus
+PIM_CAMERA_LIVENESS_NOW=230; cam_liveness_tick 2> "$WORK/disconnect.err"
+[ ! -s "$WORK/disconnect.err" ] || fail 'non-numeric repeat interval produced shell errors'
+[ "$(grep -c 'BG disconnect flag=5' "$WORK/disconnect.log")" -eq 2 ] || fail 'non-numeric repeat interval did not fall back to 60 seconds'
+unset PIM_CAMERA_LIVENESS_DISCONNECT_LOG_REPEAT_SEC
 unset -f logger; PIM_CAMERA_LIVENESS_NOW=100
 
 reset_case; owner_at ACTIVE; printf 'vcm\n' > "$WORK/procs"; set_counter 0

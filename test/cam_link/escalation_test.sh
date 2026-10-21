@@ -73,7 +73,8 @@ run_b "max_sec 비정상값(공백) → 안전측 비활성" ""  99999 true  N N
 run_b "플래그 쓰기 실패 → 리부팅 건너뜀"    1800 1900  true  N NONE "$WORK/not-a-dir/sub"
 
 # #213: gstApp 이 죽은 채 BG 플래그가 0 으로 내려가도 episode 이력을 지우면 안 된다.
-# $1=설명 $2=앱 상태(UP|DOWN) $3=상태 파일 선존재(Y/N) $4=기대 파일 유지(KEEP|CLEAR)
+# $1=설명 $2=앱 상태(UP|DOWN) $3=상태 파일 선존재(Y/N)
+# $4=기대 "state=<KEEP|GONE> flag=<KEEP|GONE> cleared=<Y|N> submit=<Y|N>" — 두 파일을 따로 단언한다.
 t_extract_func "$PIM_BIN/chk_cam_operate.sh" cam_app_absent "$WORK/f_app" || exit 1
 t_extract_func "$PIM_BIN/chk_cam_operate.sh" disconnect_episode_open "$WORK/f_ep" || exit 1
 t_extract_func "$PIM_BIN/chk_cam_operate.sh" start_marker_disconnect_path "$WORK/f_sm" || exit 1
@@ -103,18 +104,20 @@ run_c() {
         [ -f "$DISCONNECT_INIT_CAM_STATE_FILE" ] && echo "STATE_KEPT"
         [ -f "$DISCONNECT_REBOOT_FLAG" ] && echo "FLAG_KEPT"
     ) 2>&1
-    got="CLEAR"
-    grep -q STATE_KEPT <<<"$out" && grep -q FLAG_KEPT <<<"$out" && got="KEEP"
-    if [ "$4" = KEEP ] && { grep -q 'cleared' <<<"$out" || grep -q 'SUBMIT:' <<<"$out"; }; then
-        got="KEEP+LOGGED"
-    fi
+    local s=GONE f=GONE c=N x=N
+    grep -q STATE_KEPT <<<"$out" && s=KEEP
+    grep -q FLAG_KEPT <<<"$out" && f=KEEP
+    grep -q 'disconnect state cleared' <<<"$out" && c=Y
+    grep -q 'SUBMIT:' <<<"$out" && x=Y
+    got="state=$s flag=$f cleared=$c submit=$x"
     t_eq "$1" "$got" "$4"
 }
 
 echo "=== 플래그 0 에서 episode 이력 보존 (#213) ==="
-run_c "상태 파일 있음·앱 없음 → 이력 유지, 조치·cleared 로그 없음" DOWN Y KEEP
-run_c "상태 파일 있음·앱 있음 → 지금처럼 지움"                     UP   Y CLEAR
-run_c "상태 파일 없음·앱 없음 → 지금처럼(이력 없음)"               DOWN N CLEAR
+run_c "상태 파일 있음·앱 없음 → 이력 유지, 조치·cleared 로그 없음" DOWN Y "state=KEEP flag=KEEP cleared=N submit=N"
+run_c "상태 파일 있음·앱 있음 → 지금처럼 둘 다 지우고 cleared 로그" UP   Y "state=GONE flag=GONE cleared=Y submit=N"
+# 상태 파일이 처음부터 없으면 episode 도 없다 — 지금처럼 reboot 플래그를 지운다.
+run_c "상태 파일 없음·앱 없음 → 지금처럼 reboot 플래그 지움"      DOWN N "state=GONE flag=GONE cleared=N submit=N"
 
 # $1=설명 $2=플래그 $3=앱 상태 $4=상태 파일 선존재(Y/N) $5=기대(DISC|LADDER)
 run_s() {

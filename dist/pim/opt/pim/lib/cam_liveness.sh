@@ -34,6 +34,7 @@ _CL_BG_ABSENT_LOGGED=0
 # every tick, so a standing flag is reported once per repeat interval.
 _CL_DISCONNECT_LOG_RAW=""
 _CL_DISCONNECT_LOG_TS=0
+_CL_DISCONNECT_SEEN_RAW=""
 
 if ! declare -F cam_owner_assert >/dev/null 2>&1; then
     # shellcheck source=/dev/null
@@ -309,17 +310,20 @@ _cl_handle_operation_flags() {
 
 _cl_disconnect_clear() {
     local raw
+    _CL_DISCONNECT_SEEN_RAW=""
     [ -e "$PIM_CAMERA_BG_FLAG_FILE" ] || return 0
     raw=$(tr -d '\r\n' < "$PIM_CAMERA_BG_FLAG_FILE") || return 1
+    _CL_DISCONNECT_SEEN_RAW=$raw
     [[ $raw =~ ^[0-9]+$ ]] || return 1
     [ $((raw & 15)) -eq 0 ]
 }
 
 # Leaves a trace when the BG disconnect flag is why the gate refuses (#213), so a
 # dead gstApp that is not being restarted is not silent.  Never changes a verdict.
+# Reports the value _cl_disconnect_clear judged, not a fresh read of the file.
 _cl_disconnect_log() {
-    local raw now repeat=${PIM_CAMERA_LIVENESS_DISCONNECT_LOG_REPEAT_SEC:-60}
-    raw=$(tr -d '\r\n' < "$PIM_CAMERA_BG_FLAG_FILE" 2>/dev/null) || raw=""
+    local raw=$_CL_DISCONNECT_SEEN_RAW now repeat=${PIM_CAMERA_LIVENESS_DISCONNECT_LOG_REPEAT_SEC:-60}
+    [[ $repeat =~ ^[0-9]+$ ]] || repeat=60
     now=$(_cl_now) || now=0
     if [ "$raw" != "$_CL_DISCONNECT_LOG_RAW" ] || [ $((now - _CL_DISCONNECT_LOG_TS)) -ge "$repeat" ]; then
         _CL_DISCONNECT_LOG_RAW=$raw

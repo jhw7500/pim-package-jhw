@@ -1804,11 +1804,14 @@ do
                     fi
                 fi
             else
+                # 플래그 0 으로 여기 왔다면 앱이 죽은 채 열린 episode 때문이다(#213). 로그에 사유를 남긴다.
+                disc_note=""
+                (( cam_disconnect_flag != 0 )) || disc_note=" episode=open(app absent)"
                 drv_disc=$(read_driver_disconnect)
                 if (( drv_disc != 0 )); then
-                    logger -p local0.notice "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag) drv_disc=$drv_disc: skip init_cam (periodic handles recovery)"
+                    logger -p local0.notice "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag)$disc_note drv_disc=$drv_disc: skip init_cam (periodic handles recovery)"
                 else
-                    logger -p local0.err  "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag): request module_reload"
+                    logger -p local0.err  "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag)$disc_note: request module_reload"
                     if ! in_init_cooldown && ! cam_in_init_cooldown "$init_cooldown_sec"; then
                         # periodic init_cam 간격 추적을 위해 last_init 갱신
                         now_ts=$(date +%s)
