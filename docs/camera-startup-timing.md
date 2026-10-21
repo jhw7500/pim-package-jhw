@@ -22,7 +22,7 @@ gstApp의 `-d`는 드라이버 전원 시퀀스 전체를 기다리는 값이 �
 | 드라이버 board power | PWDN/RESET GPIO와 안정화 대기 | 약 5.02초 |
 | 드라이버 prepare | AP1302 초기화부터 CSI 출력까지 | 경로·펌웨어 상태에 따라 변동 |
 | gstApp `-d` | 준비 완료 후 PLAYING 전환 지연 | 5초 |
-| camera startup grace | BG_Check와 guardian의 cold-start 오류 무시 총 시간 | 25초 |
+| camera startup grace | guardian의 cold-start 오류 무시 총 시간(guardian 기동 시각 기준, BG_Check는 쓰지 않음 #214) | 25초 |
 
 이 값들은 직렬로 단순 합산하는 같은 종류의 timeout이 아니다. 특히 드라이버 prepare는
 gstApp의 V4L2 상태 전환 안에서 동기적으로 실행되며, 그 뒤에 `-d`가 적용된다.

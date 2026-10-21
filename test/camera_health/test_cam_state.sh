@@ -68,15 +68,20 @@ no_last_ok_files() {
 # (init_cam.sh's /tmp/last_init_cam_ts, start_cam.sh's last_start_ts) were lost
 # in the b6b70a9 refactor and nothing wrote the timestamps since, so every
 # reader was always false.  no_dead_grace_source keeps half of them from coming
-# back: a writer without the readers, or a reader without a writer.  It scans
+# back: a writer without the readers, or a reader without a writer.  It matches
+# the key names themselves, so a writer through any helper or a plain redirect
+# is caught, and it scans every shipped shell script under dist/.  It scans
 # shell only, because pim_guardian.py keeps its own live grace (measured from
 # the guardian's start) under similar names.  Same fail-closed rules as above.
 no_dead_grace_source() {
     local hits rc=0
+    [ -d "$ROOT/dist" ] || {
+        echo "no_dead_grace_source: search root is missing: $ROOT/dist" >&2
+        return 1
+    }
     hits=$(grep -rnIE --include='*.sh' \
-        'last_init_cam_ts|_cs_write +last_(init|start)_ts|cam_record_(init|start)|cam_in_(startup_grace|init_cooldown)|\bin_(startup_grace|init_cooldown)\b' \
-        "$ROOT/dist/pim/opt/pim/lib" \
-        "$ROOT/dist/pim/opt/pim/bin") || rc=$?
+        'last_init_cam_ts|last_(init|start)_ts|cam_record_(init|start)|cam_in_(startup_grace|init_cooldown)|\bin_(startup_grace|init_cooldown)\b' \
+        "$ROOT/dist") || rc=$?
     [ "$rc" -le 1 ] || {
         echo "no_dead_grace_source: grep failed with rc=$rc" >&2
         return 1

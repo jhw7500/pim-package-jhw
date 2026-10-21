@@ -1850,7 +1850,6 @@ exit 97
             CAMERA_STARTUP_GRACE_SEC_DEFAULT=25
             cam_policy_camera_startup_grace_sec() { printf '25\\n'; }
             cam_policy_nonnegative_or_default() { printf '%s\\n' "${1:-${2:-25}}"; }
-            cam_in_startup_grace() { return 1; }
             ;;
         *) builtin source "$@" ;;
     esac
