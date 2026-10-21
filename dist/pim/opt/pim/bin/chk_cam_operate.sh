@@ -238,8 +238,14 @@ cam_app_absent() {
 
 # 끊김 episode 가 열려 있으면 0(#213). 상태 파일은 끊김 처리 중에만 남는데, 앱이 죽은 채라면
 # 플래그가 0 으로 내려가도 연결이 회복된 것이 아니라 끊김이 이어진 것으로 본다.
+# 재지 않은 0 으로 보존 중인(kept) 이력은 열린 것으로 보지 않는다(#216). 예전에는 이 창에서 이력이 지워졌으므로
+# 시작 마커 경로가 지금처럼 일반 사다리를 타야 한다 — 끊김 분기로 가면 재기동마다 module_reload 가 끝없이 돈다.
 disconnect_episode_open() {
-    [ -f "$DISCONNECT_INIT_CAM_STATE_FILE" ] && cam_app_absent
+    local state=""
+    [ -f "$DISCONNECT_INIT_CAM_STATE_FILE" ] || return 1
+    { read -r state < "$DISCONNECT_INIT_CAM_STATE_FILE"; } 2>/dev/null
+    case "$state" in *,kept) return 1 ;; esac
+    cam_app_absent
 }
 
 # 앱이 없는 동안 보존한 episode 에 보류 표시를 붙인다. 그동안은 측정이 없으므로 다시 측정되는
@@ -251,29 +257,50 @@ mark_disconnect_episode_held() {
     printf "%s,held" "$state" > "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
 }
 
+# BG 가 재지 않은 플래그 0 으로 보존한 이력에 보존 표시를 붙인다(#216). first_seen·last_init 은 그대로 두고,
+# 다음 측정 표본이 이력을 다시 쓰면 표시는 사라진다.
+mark_disconnect_episode_kept() {
+    local state
+    state=$(cat "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null) || return 0
+    case "$state" in *,kept) return 0 ;; esac
+    printf "%s,kept" "$state" > "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
+}
+
 # 시작 마커 부재 경로의 판정. 0 이면 끊김 분기, 1 이면 일반 사다리(#213).
 start_marker_disconnect_path() {
     (( $1 != 0 )) || disconnect_episode_open
 }
 
 # BG 가 이번 플래그를 쓸 때 카메라 링크를 재지 않았으면 0(#216). 이유는 CAM_LINK_UNMEASURED_WHY 에 남긴다.
-# BG 는 des 가 아직 프로그램되지 않은 버스(link_status -1)를 빼고(drv_ready_mask), 시작 마커와 앱이 함께
-# 있을 때만 잰다(gstapp_playing). 그동안 쓴 플래그 0 은 연결 회복이 아니다. module_reload 직후에는 vcm 이
-# 이전 시작 시각으로 마커를 먼저 쓸 수 있어 마커만으로는 부족하다(.6 camera17, 조각 없이 마커 생김).
-# 녹화 없는 capture 구성은 마커가 생기지 않으므로 메인 루프의 녹화 비활성 조건과 같은 술어로 마커를 보지 않는다.
+# BG 는 des 가 아직 프로그램되지 않은 버스(link_status -1)를 빼고 재므로(drv_ready_mask), 활성 버스가 전부 -1 이면
+# 연결 검사를 통째로 건너뛴다. 한 버스만 -1 이면 나머지 버스는 쟀다 — 설정만 켜고 스트리밍하지 않는 버스는
+# 영영 -1 이라(BG 의 미초기화 로그 억제 주석) 그것까지 재지 않음으로 보면 이력이 끝내 지워지지 않는다.
+# 녹화 구성에서는 시작 마커와 앱이 함께 있을 때만 잰다(gstapp_playing). module_reload 직후에는 vcm 이 이전
+# 시작 시각으로 마커를 먼저 쓸 수 있어(.6 camera17, 조각 없이 마커 생김) -1 검사를 마커보다 먼저 한다.
+# 녹화 없는 capture 구성은 마커가 생기지 않으므로 메인 루프의 녹화 비활성 조건과 같은 술어로 마커·앱을 보지 않는다.
 # 빈 마커는 파일 검사가 비운 재생 중 상태라 BG 처럼 존재만 본다. csi1 은 ch0/ch1(i2c2), csi2 는 ch2/ch3(i2c1)이다.
 cam_link_unmeasured() {
-    local raw2="" raw1=""
+    local raw2="" raw1="" buses=0 uninit=0
     CAM_LINK_UNMEASURED_WHY=""
-    [ "$csi1_en" != 1 ] || { read -r raw2 < "$SYSFS_LINK_I2C2"; } 2>/dev/null
-    [ "$csi2_en" != 1 ] || { read -r raw1 < "$SYSFS_LINK_I2C1"; } 2>/dev/null
-    if [ "$raw2" = "-1" ] || [ "$raw1" = "-1" ]; then
+    if [ "$csi1_en" = 1 ]; then
+        buses=$((buses + 1)); { read -r raw2 < "$SYSFS_LINK_I2C2"; } 2>/dev/null
+        [ "$raw2" != "-1" ] || uninit=$((uninit + 1))
+    fi
+    if [ "$csi2_en" = 1 ]; then
+        buses=$((buses + 1)); { read -r raw1 < "$SYSFS_LINK_I2C1"; } 2>/dev/null
+        [ "$raw1" != "-1" ] || uninit=$((uninit + 1))
+    fi
+    if (( buses > 0 && uninit == buses )); then
         CAM_LINK_UNMEASURED_WHY="link_status i2c2=${raw2:-na} i2c1=${raw1:-na}"
         return 0
     fi
     [[ "$cap_en" == *"$ENABLE_VAL"* && "$cap_record_en" != *"$ENABLE_VAL"* ]] && return 1
-    [ -f "$FILE_" ] && return 1
-    CAM_LINK_UNMEASURED_WHY="no start marker"
+    if [ ! -f "$FILE_" ]; then
+        CAM_LINK_UNMEASURED_WHY="no start marker"
+        return 0
+    fi
+    cam_app_absent || return 1
+    CAM_LINK_UNMEASURED_WHY="app absent"
     return 0
 }
 
@@ -293,10 +320,12 @@ maybe_init_cam_on_disconnect() {
         fi
         # BG 가 링크를 재지 않고 쓴 플래그 0 은 회복이 아니다(#216). 이력과 재부팅 플래그를 그대로 둔다.
         # 조치 직후의 짧은 창이라 보류 표시는 붙이지 않는다 — first_seen 을 다시 열면 180초 간격은 지켜도
-        # DISCONNECT_MAX_SEC 가 쌓이지 않는다. 지울 것이 없으면 판정하지 않는다(평상시에는 파일 검사 두 번뿐).
+        # DISCONNECT_MAX_SEC 가 쌓이지 않는다. 대신 보존 표시를 붙여 episode 를 열린 것으로 보지 않게 한다.
+        # 지울 것이 없으면 판정하지 않는다(평상시에는 파일 검사 두 번뿐).
         if { [ -f "$DISCONNECT_INIT_CAM_STATE_FILE" ] || [ -f "$DISCONNECT_REBOOT_FLAG" ]; } &&
            cam_link_unmeasured; then
             if [ -f "$DISCONNECT_INIT_CAM_STATE_FILE" ]; then
+                mark_disconnect_episode_kept
                 (( kept_logged )) ||
                     logger -p local0.notice "[$KEY][$tag:$LINENO] disconnect state kept: BG did not measure link ($CAM_LINK_UNMEASURED_WHY)"
                 DISCONNECT_UNMEASURED_LOGGED=1
@@ -322,7 +351,7 @@ maybe_init_cam_on_disconnect() {
         last_init=0
     fi
     # 보류됐던 episode 는 측정이 없던 앱 부재 시간을 grace·max_sec 에 넣지 않는다(#213 A-R1-001).
-    case "$(cat "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null)" in *,held) first_seen=$now ;; esac
+    case "$(cat "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null)" in *,held|*,held,kept) first_seen=$now ;; esac
 
     if (( (now - first_seen) < DISCONNECT_INIT_CAM_GRACE_SEC )); then
         printf "%s,%s" "$first_seen" "$last_init" > "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
