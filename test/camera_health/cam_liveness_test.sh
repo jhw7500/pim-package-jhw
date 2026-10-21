@@ -911,6 +911,12 @@ PIM_CAMERA_LIVENESS_NOW=230; cam_liveness_tick 2> "$WORK/disconnect.err"
 [ ! -s "$WORK/disconnect.err" ] || fail 'non-numeric repeat interval produced shell errors'
 [ "$(grep -c 'BG disconnect flag=5' "$WORK/disconnect.log")" -eq 2 ] || fail 'non-numeric repeat interval did not fall back to 60 seconds'
 unset PIM_CAMERA_LIVENESS_DISCONNECT_LOG_REPEAT_SEC
+# 0 표본은 그 episode 를 끝낸다 — 같은 값이 반복 시간 안에 다시 서도 새 episode 로 다시 찍는다.
+reset_case; owner_at ACTIVE; prepare_gst_missing 0; printf '0\n' > "$PIM_CAMERA_BG_FLAG_FILE"
+PIM_CAMERA_LIVENESS_NOW=240; cam_liveness_tick
+reset_case; owner_at ACTIVE; prepare_gst_missing 0; printf '5\n' > "$PIM_CAMERA_BG_FLAG_FILE"
+PIM_CAMERA_LIVENESS_NOW=250; cam_liveness_tick
+[ "$(grep -c 'BG disconnect flag=5' "$WORK/disconnect.log")" -eq 3 ] || fail 'a recurring disconnect flag after a clear sample was not logged again'
 unset -f logger; PIM_CAMERA_LIVENESS_NOW=100
 
 reset_case; owner_at ACTIVE; printf 'vcm\n' > "$WORK/procs"; set_counter 0

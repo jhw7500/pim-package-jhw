@@ -95,6 +95,32 @@ run_l() {
 run_l "이전 인스턴스가 남긴 세션 값은 앱을 띄우기 전에 지운다" 0 absent absent
 run_l "부수효과 가드가 막으면 지우지도 띄우지도 않는다"        3 not-launched present
 
+# #213: 시작 마커도 같다. 남아 있으면 BG 가 prepare 중인 새 앱을 재생 중으로 보고 연결 점검을 돈다.
+# run_m <설명> <부수효과 가드 rc> <기대: 런처가 본 시작 마커> <기대: 끝난 뒤 시작 마커>
+run_m() {
+    local seen after
+    printf '20261020 10:34:12' > "$WORK/time-marker"
+    rm -f "$WORK/launched"
+    (
+        PIM_CAMERA_SESSION_FILE="$WORK/sess"; PIM_CAMERA_SESSION_TIME_FILE="$WORK/time-marker"; GUARD_RC=$2
+        _cr_timing() { :; }
+        cam_runtime_app_delay() { printf 'gstApp\t5\n'; }
+        cam_bg_checker_path() { printf '%s\n' "$WORK/bg-check"; }
+        cam_side_effect_guard() { return "$GUARD_RC"; }
+        printf '#!/bin/sh\n[ -e "%s" ] && echo present > "%s" || echo absent > "%s"\n' "$WORK/time-marker" "$WORK/launched" "$WORK/launched" > "$WORK/launcher"
+        chmod +x "$WORK/launcher"
+        PIM_CAMERA_START_CAM="$WORK/launcher"
+        source "$WORK/launch.sh"
+        cam_start_gstapp "$WORK/runtime.json"
+    ) >/dev/null 2>&1
+    seen=$(cat "$WORK/launched" 2>/dev/null || echo not-launched)
+    [ -e "$WORK/time-marker" ] && after=present || after=absent
+    t_eq "$1 (런처가 본 시작 마커)" "$seen" "$3"
+    t_eq "$1 (끝난 뒤 시작 마커)" "$after" "$4"
+}
+run_m "이전 인스턴스가 남긴 시작 마커는 앱을 띄우기 전에 지운다" 0 absent absent
+run_m "부수효과 가드가 막으면 시작 마커도 지우지 않는다"        3 not-launched present
+
 echo "=== 호출부 ==="
 # 보류 분기는 마커와 세션 파일을 비우고, 그 밖은 지금 판정 블록으로 간다(elif 가 원래 조건을 그대로 쓴다).
 call=$(grep -n -A4 '&& file_check_startup_hold "\$startTime"; then' "$PIM_BIN/chk_cam_operate.sh")

@@ -252,6 +252,15 @@ disconnect_episode_open() {
     [ -f "$DISCONNECT_INIT_CAM_STATE_FILE" ] && cam_app_absent
 }
 
+# 앱이 없는 동안 보존한 episode 에 보류 표시를 붙인다. 그동안은 측정이 없으므로 다시 측정되는
+# 첫 표본에서 grace 를 새로 연다(#213 A-R1-001). 읽는 쪽은 awk 로 첫 두 필드만 본다.
+mark_disconnect_episode_held() {
+    local state
+    state=$(cat "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null) || return 0
+    case "$state" in *,held) return 0 ;; esac
+    printf "%s,held" "$state" > "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
+}
+
 # 시작 마커 부재 경로의 판정. 0 이면 끊김 분기, 1 이면 일반 사다리(#213).
 start_marker_disconnect_path() {
     (( $1 != 0 )) || disconnect_episode_open
@@ -265,7 +274,10 @@ maybe_init_cam_on_disconnect() {
     drv_disc=$(read_driver_disconnect)
     if (( cam_disconnect_flag == 0 )) && (( drv_disc == 0 )); then
         # 앱이 죽은 채 열려 있는 episode 는 플래그가 내려가도 이력을 지우지 않는다.
-        disconnect_episode_open && return 1
+        if disconnect_episode_open; then
+            mark_disconnect_episode_held
+            return 1
+        fi
         # init_cam 직후 cooldown 중에는 sysfs가 아직 -1(→0)이므로 상태 파일 보존
         if ! in_init_cooldown && ! cam_in_init_cooldown "$init_cooldown_sec"; then
             if [ -f "$DISCONNECT_INIT_CAM_STATE_FILE" ]; then
@@ -291,6 +303,8 @@ maybe_init_cam_on_disconnect() {
     if [[ ! "$last_init" =~ ^[0-9]+$ ]]; then
         last_init=0
     fi
+    # 보류됐던 episode 는 측정이 없던 앱 부재 시간을 grace·max_sec 에 넣지 않는다(#213 A-R1-001).
+    case "$(cat "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null)" in *,held) first_seen=$now ;; esac
 
     if (( (now - first_seen) < DISCONNECT_INIT_CAM_GRACE_SEC )); then
         printf "%s,%s" "$first_seen" "$last_init" > "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null

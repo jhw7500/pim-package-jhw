@@ -145,4 +145,41 @@ run_s "플래그 0·episode 없음 → 일반 사다리"         0 DOWN N LADDER
 t_eq "시작 마커 경로가 판정 함수를 쓴다" \
      "$(grep -c 'elif ! start_marker_disconnect_path' "$PIM_BIN/chk_cam_operate.sh")" 1
 
+# #213 A-R1-001: 앱이 없는 동안 보존한 episode 는 그 부재 시간을 grace·interval·max_sec 에 넣지 않는다.
+# 표본 1개 → 앱 부재(플래그 0) → 부재가 grace 를 넘긴 뒤 표본 1개. master 처럼 새 grace 를 열고 제출하지 않아야 한다.
+# $1=설명 $2=max_sec $3=마지막 표본 시각 $4=기대 제출(NONE 또는 action 이름)
+t_extract_func "$PIM_BIN/chk_cam_operate.sh" mark_disconnect_episode_held "$WORK/f_held" || exit 1
+run_h() {
+    local got
+    got=$(
+        KEY=RST; tag=chk_cam_operate.sh; ENABLE_VAL="true"; file_chk_reboot=true
+        DISCONNECT_INIT_CAM_GRACE_SEC=60; DISCONNECT_INIT_CAM_INTERVAL_SEC=180; DISCONNECT_MAX_SEC="$2"
+        DISCONNECT_INIT_CAM_STATE_FILE="$WORK/state_h"
+        DISCONNECT_REBOOT_FLAG_DIR="$WORK/flag_h"; DISCONNECT_REBOOT_FLAG="$WORK/flag_h/reboot.flag"
+        init_cooldown_sec=40; PIM_CAMERA_RUNTIME_JSON="$WORK/runtime.json"
+        rm -rf "$DISCONNECT_INIT_CAM_STATE_FILE" "$DISCONNECT_REBOOT_FLAG_DIR"
+        get_cam_disconnect_flag() { echo "$FLAG"; }
+        read_driver_disconnect()  { echo 0; }
+        in_init_cooldown()        { return 1; }
+        cam_in_init_cooldown()    { return 1; }
+        date() { echo "$NOW"; }
+        sync() { :; }; sleep() { :; }
+        _cam_runtime_app_into()   { printf -v "$1" '%s' gstApp; }
+        pgrep() { [ "$2" = gstApp ] && [ "$APP" = UP ]; }
+        cam_submit_internal_action() { echo "SUBMIT:$1"; return 0; }
+        logger() { :; }
+        # shellcheck disable=SC1090
+        source "$WORK/f_app"; source "$WORK/f_ep"; source "$WORK/f_held"; source "$FN"
+        for s in "1000 1 UP" "1002 0 DOWN" "$3 1 UP"; do
+            set -- $s; NOW=$1; FLAG=$2; APP=$3
+            maybe_init_cam_on_disconnect
+        done
+    )
+    got=$(grep -o 'SUBMIT:[a-z_]*' <<<"$got" | sed 's/SUBMIT://' | tr '\n' ' ' | sed 's/ $//')
+    t_eq "$1" "${got:-NONE}" "$4"
+}
+echo "=== 보존된 episode 는 부재 시간을 세지 않는다 (#213 A-R1-001) ==="
+run_h "부재가 grace 를 넘긴 뒤 표본 1개 → 새 grace, 제출 없음"            0    1070 NONE
+run_h "max_sec 설정·부재 2000초 뒤 표본 1개 → reboot_fallback 없음"      1800 3000 NONE
+
 t_summary "에스컬레이션"

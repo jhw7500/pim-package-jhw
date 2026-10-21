@@ -311,11 +311,13 @@ _cl_handle_operation_flags() {
 _cl_disconnect_clear() {
     local raw
     _CL_DISCONNECT_SEEN_RAW=""
-    [ -e "$PIM_CAMERA_BG_FLAG_FILE" ] || return 0
+    [ -e "$PIM_CAMERA_BG_FLAG_FILE" ] || { _CL_DISCONNECT_LOG_RAW=""; return 0; }
     raw=$(tr -d '\r\n' < "$PIM_CAMERA_BG_FLAG_FILE") || return 1
     _CL_DISCONNECT_SEEN_RAW=$raw
     [[ $raw =~ ^[0-9]+$ ]] || return 1
-    [ $((raw & 15)) -eq 0 ]
+    [ $((raw & 15)) -eq 0 ] || return 1
+    # A clear sample ends the reported episode, so the same value recurring is logged again.
+    _CL_DISCONNECT_LOG_RAW=""
 }
 
 # Leaves a trace when the BG disconnect flag is why the gate refuses (#213), so a
