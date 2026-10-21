@@ -1,5 +1,55 @@
 # PIM Package Release Notes
 
+## Unreleased (2026-10-21)
+
+### camera17 — gstApp stop wait, recovery after an interrupted restart, liveness after playback, dead startup grace removed (issues #210, #193, #213, #214; PRs #211, #212, #215, #217)
+
+- Package version is `0.6.3+jhw.camera17`.
+- **gstApp stop wait** (#210, PR #211): the default stop wait for gstApp (kinds
+  `app` and `gstapp`) is 10 s instead of 5 s. gstApp waits up to 3 s for EOS and
+  up to 3 s for the NULL transition after SIGTERM, so a slow stop was cut by
+  SIGKILL while the last fragment was being finalized. On board .6, with gstApp
+  held until 7 s after SIGTERM, camera16 killed it at 5.86 s; the fix let it exit
+  normally at 8.25 s and 8.18 s. When gstApp never answers SIGTERM,
+  `gstapp_restart` takes about 5.4 s longer (20.99 → 26.43 s) and so does
+  `module_reload` (26.45 → 31.88 s).
+- **Recovery after an interrupted restart** (#193, PR #212): after a reboot
+  during `gstapp_restart` left "action SUCCEEDED + request FAILED rc 70
+  interrupted", liveness no longer stops at rc 70; `gstapp_restart` verification
+  no longer requires ord and vcm, so a ladder or manual request that runs first no
+  longer ends in `DEGRADED`; and refused internal submissions are logged. On board
+  .6, after such a record and killing gstApp, ord and vcm together, camera16
+  logged rc=70 eight times and recorded no fragment until the file-check ladder
+  restarted gstApp 47 s later; the fix revived ord and vcm (+10 s) and gstApp
+  (+20 s) with no `DEGRADED`. A manual `gstapp_restart` with ord and vcm killed
+  while RUNNING ended `DEGRADED` on camera16 and `SUCCEEDED` (back to `ACTIVE`
+  within 10 s) with the fix.
+- **Liveness after playback** (#213, PR #215): a start marker left by earlier
+  playback made BG treat a freshly started gstApp as playing and raise disconnect
+  flag 15, so liveness stepped back and recovery waited for the 60/180 s
+  disconnect ladder. `cam_start_gstapp` now removes the marker before launching,
+  BG checks the link only while the marker exists and the camera app process runs,
+  and a disconnect episode kept while the app is absent restarts its grace on the
+  next measurement. On board .6, after a prepare failure following playback,
+  liveness restarted gstApp about 16 s later; camera16 restarted nothing for 74 s
+  and recovered only through the ladder's `module_reload`.
+- **Dead startup grace and init cooldown removed** (#214, PR #217): the grace and
+  cooldown checks in `BG_Check_for_pim.sh`, `chk_cam_operate.sh`, `cam_state.sh`
+  and the guardian read timestamps that nothing has written since the b6b70a9
+  refactor, so they were always false. They are removed and the branches that
+  already ran remain, so the judgments do not change (old/new differential of the
+  disconnect ladder: 504 of 504 cases identical). `/tmp/cam_state/last_init_ts`
+  and `last_start_ts` are no longer created; the guardian status report still
+  shows 0. The two windows the cooldown was meant to cover are tracked in #216.
+- gstApp (`bfb3af7`), imx-gst (`libgstmultifile.so` `ed36938`, `libgstrtspserver`
+  `5ea8b13`), imx-vpu (`libgstvpu.so` `d61eaf9`, `libfslvpuwrap` `1f55ed4`),
+  imx-hantro (`c37edf1`) and `max9296.ko` (`172a76a`) are unchanged. Each is built
+  from its repository's latest source (checked 2026-10-21: local HEAD equals the
+  `git ls-remote` head; imx-gst `gst-rtsp-server/` has no change from `5ea8b13` to
+  `ed36938`, imx-vpu `imx-vpuwrap/` has no change from `1f55ed4` to `d61eaf9`, and
+  max9296 commits after `172a76a` change documents and artifacts only).
+- Reboot after installing (same as camera16).
+
 ## Unreleased (2026-10-20)
 
 ### camera16 — last fragment on gstApp stop, journal snapshot tail and file check after restart (issues #205, #190; gstApp #142, PRs #207, #208)
