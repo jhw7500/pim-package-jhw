@@ -145,8 +145,8 @@ CheckFinalArrival
 - `retry_total` 6 이상: `file_check_reboot=true`면 reboot
 
 성공하면 `retry`, `retry_boot`, `retry_total`과 `/tmp/file_check`를
-정상 상태로 되돌린다. init cooldown 또는 disconnect 중에는 이 사다리를 그대로
-진행하지 않는다.
+정상 상태로 되돌린다. 재기동 직후 첫 조각이 아직 없으면 파일 검사를 보류하고(#190),
+disconnect 중에는 이 사다리를 그대로 진행하지 않는다.
 
 ### 5.2 초기 시작 마커 없음
 
@@ -241,7 +241,6 @@ heartbeat가 없거나 stale이면 설정된 final 경로의 최근
 | `/tmp/chk_cam_operate.part_state` | `CleanupStalePartFiles()` | 파일 크기 추적 |
 | `/tmp/chk_cam_operate.disconnect_state` | `maybe_init_cam_on_disconnect()` | disconnect 최초 시각/마지막 init |
 | `/tmp/cam_disconnect_reboot.flag` | disconnect 에스컬레이션 | 같은 부팅의 재부팅 이력 |
-| `/tmp/last_init_cam_ts` | `init_cam.sh` | cooldown 기준 시각 |
 
 ## 9. 구현 기준점
 

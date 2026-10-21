@@ -59,9 +59,11 @@ runtime_values=$(jq -er '
       else join("\u001f") end
     end
 ' <<<"$runtime_json") || config_invalid
+# camera_startup_grace_sec·init_cooldown_sec 는 더 읽지 않는다(#214). 위 jq 의 값 검증은 남겨, 잘못된 값이면
+# 지금처럼 CONFIG_INVALID 로 끝나게 하고 그 두 자리는 _ 로 버린다.
 IFS=$'\x1f' read -r \
     cam_ch0 cam_ch1 cam_ch2 cam_ch3 vhl_name tmp_path muxer \
-    camera_startup_grace_sec init_cooldown_sec \
+    _ _ \
     ping_check_enable test_ip max_cnt <<<"$runtime_values"
 unset IFS
 
@@ -87,24 +89,7 @@ else
 fi
 cam_ch_bit=$((cam_ch3<<3|cam_ch2<<2|cam_ch1<<1|cam_ch0))
 
-camera_startup_grace_sec=$(cam_policy_nonnegative_or_default \
-    "$camera_startup_grace_sec" "$CAMERA_STARTUP_GRACE_SEC_DEFAULT")
-# 기본값 40은 패키지 배포 설정(opt/pim/config/ord_vcm_conf.json)·update_ordvcmconf.sh·
-# chk_cam_operate.sh 와 일치시킨 값이다. 어긋나면 설정 키가 없는 장비에서 두 스크립트가
-# 서로 다른 쿨다운으로 동작한다.
 now_ts() { date +%s; }
-read_ts() { [ -f "$1" ] && cat "$1" 2>/dev/null | tr -d '\n' || echo 0; }
-
-in_startup_grace() {
-    cam_in_startup_grace "$camera_startup_grace_sec"
-}
-
-in_init_cooldown() {
-    local now last
-    now=$(now_ts)
-    last=$(read_ts "/tmp/last_init_cam_ts")
-    [ "$last" -gt 0 ] && [ $((now - last)) -lt "$init_cooldown_sec" ]
-}
 
 SYSFS_LINK_I2C2="/sys/bus/i2c/devices/2-0048/link_status"
 SYSFS_LINK_I2C1="/sys/bus/i2c/devices/1-0048/link_status"
@@ -326,9 +311,7 @@ while true; do
     /opt/pim/bin/chk_voltage.sh 2>/dev/null
     #cam connect check
     #echo "cam"
-    drv_disconnect=0
     if check_driver_disconnect; then
-        drv_disconnect=1
         # 드라이버 마스크는 splitter 에서 한쪽만 빠져도 두 채널을 다 세운다(실측
         # i2c2=3). 여기서 chk_cam_connect 를 건너뛰므로, 채널을 갈라 주는 RX3 를
         # 읽는 경로가 이 분기밖에 없다. 캐시하지 않고 매번 읽는다 — stale 값을
@@ -391,15 +374,7 @@ while true; do
         fi
     fi
 
-    if in_startup_grace || in_init_cooldown; then
-        if [ "$drv_disconnect" -eq 0 ]; then
-            rm ${FLAG_PATH}/err_cam* 2>/dev/null
-        fi
-		streak_set 0
-		cam_reset_streak
-    else
-        update_cam_state_from_errors
-    fi
+    update_cam_state_from_errors
     #make result cmd
     #echo "make flag"
     MAKE_RESULT_FLAG

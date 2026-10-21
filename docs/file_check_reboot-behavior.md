@@ -76,7 +76,8 @@ disconnect 상태라면 이 분기에서는 retry와 reboot를 실행하지 않�
 - `retry_total <= 5`: `init_cam.sh`
 - `retry_total > 5`: `file_check_reboot=true`면 reboot, 아니면 retry 카운터 초기화
 
-init cooldown 중에는 retry를 올리지 않는다. disconnect가 감지되면 이 사다리 대신
+재기동 직후 첫 조각이 아직 없고 앱이 `init_cooldown_sec`보다 어리면 파일 검사를 보류한다(#190).
+init_cam 뒤 쿨다운 판정은 #214에서 제거했다. disconnect가 감지되면 이 사다리 대신
 disconnect 전용 주기 복구 경로에 맡긴다.
 
 ### 2.4 초기 시작 마커 없음

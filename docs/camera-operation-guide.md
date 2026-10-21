@@ -543,9 +543,9 @@ init_cam.sh 호출 시 (모듈 재로드 전)
 | `init_cam.sh` | kill_test + rmmod(2초) + modprobe x2(4초) + 정리 | 12~15초 |
 | `start_cam.sh` | 앱 기동 + BG_Check + restart_app | 즉시 (앱 딜레이는 별도) |
 | app_delay | 싱글/듀얼 CSI 공통 gstApp PLAYING 전 지연 | 5초 |
-| camera startup grace | 앱 시작 시각부터 cold-start 오류 무시 | 총 25초 |
+| camera startup grace | guardian 기동 시각부터 cold-start 오류 무시(BG_Check·chk_cam_operate는 쓰지 않음, #214) | 총 25초 |
 | startup_grace_extra_sec | FINAL STALL 워밍업 계산용 추가값 | 10초 |
-| init cooldown | init_cam 후 중복 실행 방지 | 40초 |
+| init_cooldown_sec | 재기동 직후 파일 검사 보류의 상한(#190). init_cam 뒤 쿨다운 판정은 #214에서 제거 | 40초 |
 | 시스템 reboot | 전체 재부팅 | 60~90초 |
 
 ### 6.2 이벤트별 감지~복구 시간
@@ -591,10 +591,9 @@ init_cam.sh 호출 시 (모듈 재로드 전)
 
 | 파일 | 용도 | 값 형식 |
 |------|------|---------|
-| `/tmp/cam_state/last_start_ts` | camera startup grace의 기준 앱 시작 시각 | epoch (초) |
-| `/tmp/pim_cam_start_delay` | gstApp `-d` 진단값. grace 계산에는 사용하지 않음 | 정수 (초) |
+| `/tmp/cam_state/last_start_ts` | 기록하는 곳 없음(#214). guardian 상태 보고만 읽으며, 없으면 0 | epoch (초) |
+| `/tmp/pim_cam_start_delay` | 기록하는 곳 없음. guardian 상태 보고만 읽으며, grace 계산에는 사용하지 않음 | 정수 (초) |
 | `/tmp/pim_cam_stream_start_ts` | 스트림 실제 시작 시각 | epoch (초) |
-| `/tmp/last_init_cam_ts` | 마지막 init_cam 실행 시각 | epoch (초) |
 | `/tmp/start_video_time` | gstApp 녹화 시작 시각 | "YYYYMMDD HH:MM:SS" |
 | `/tmp/start_video_time_chk` | kill_test 파일 정리용 시작 시각 | "YYYYMMDD HH:MM:SS" |
 
@@ -693,9 +692,8 @@ init_cam.sh 호출 시 (모듈 재로드 전)
 | 드라이버 미로드 시 복구 한계 | modprobe 실패 = 카메라 미연결일 수 있으나 SW 오류와 구분 불가. 이전 disconnect flag 없으면 reboot 루프 가능 (`file_chk_reboot=false`로 방지) |
 | kill 불가 시 무조건 reboot | 앱이 죽지 않으면 카메라 상태 판단 불가 → 30초 후 무조건 reboot |
 | file_chk_reboot 설정 | `false`이면 retry 카운터만 리셋, reboot 안 함 |
-| init cooldown 40초 | 중복 init_cam 호출 차단 |
+| 재기동 직후 파일 검사 보류 | 세션 파일이 없고 앱이 `init_cooldown_sec`(40초)보다 어리면 파일 검사를 미룬다(#190). init_cam 뒤 쿨다운 판정은 #214에서 제거 |
 | 최근 2세션 보호 | 디스크 정리 시 최신 2개 세션은 삭제 안 함 |
-| startup grace | 부팅/재시작 직후 파일 검사 실패 무시 |
-| 쿨다운 중 에러 무시 | BG_Check에서 grace/cooldown 중 카메라 에러 로그 삭제 (단, driver disconnect로 생성된 err_cam은 보존) |
+| 기동 직후 연결 점검 생략 | BG_Check는 재생 마커가 생기기 전(gstApp 기동 직후)에는 연결 점검을 건너뛴다(#213). grace/cooldown 중 에러 로그를 지우던 분기는 #214에서 제거 |
 | disconnect 판단 통일 | `cam_is_disconnected_unified` ("recovering" 상태 기반) 오탐 방지를 위해 제거. `drv_disc`(sysfs) + `cam_disconnect_flag`(err_cam) 기반 판단으로 통일 |
 | SD fallback 이중 구조 | automnt가 `tmp_path` JSON 수정, chk_cam_operate가 `final_path` 런타임 override |

@@ -22,7 +22,7 @@ gstApp의 `-d`는 드라이버 전원 시퀀스 전체를 기다리는 값이 �
 | 드라이버 board power | PWDN/RESET GPIO와 안정화 대기 | 약 5.02초 |
 | 드라이버 prepare | AP1302 초기화부터 CSI 출력까지 | 경로·펌웨어 상태에 따라 변동 |
 | gstApp `-d` | 준비 완료 후 PLAYING 전환 지연 | 5초 |
-| camera startup grace | BG_Check와 guardian의 cold-start 오류 무시 총 시간 | 25초 |
+| camera startup grace | guardian의 cold-start 오류 무시 총 시간(guardian 기동 시각 기준, BG_Check는 쓰지 않음 #214) | 25초 |
 
 이 값들은 직렬로 단순 합산하는 같은 종류의 timeout이 아니다. 특히 드라이버 prepare는
 gstApp의 V4L2 상태 전환 안에서 동기적으로 실행되며, 그 뒤에 `-d`가 적용된다.
@@ -121,9 +121,12 @@ reboot monotonic 로그의 주요 시점은 다음과 같다.
     복구 요청 하나를 forward 할 뿐이고, `start_cam.sh`의 호환 분기는 positional
     인자를 세기만 하고 버린다.
   - `chk_cam_operate.sh`: `GetConfig`의 `app_delay`는 설정 요약 로그에만 쓰인다.
-- `BG_Check_for_pim.sh`, `pim_guardian.py`
-  - `/tmp/cam_state/last_start_ts`부터 총 `camera_startup_grace_sec`를 계산한다.
-  - `/tmp/pim_cam_start_delay`는 진단 정보로 남지만 grace 계산에는 사용하지 않는다.
+- `pim_guardian.py`
+  - guardian 자신이 뜬 시각부터 총 `camera_startup_grace_sec`를 계산한다. 카메라 기동 시각
+    (`/tmp/cam_state/last_start_ts`)은 b6b70a9 이후 기록하는 곳이 없어 쓰지 않는다(#214).
+  - `/tmp/pim_cam_start_delay`도 기록하는 곳이 없다. 상태 보고 필드로만 읽는다.
+- `BG_Check_for_pim.sh`는 `camera_startup_grace_sec`를 쓰지 않는다(#214). 기동 직후 구간은
+  재생 마커 게이트가 연결 점검을 건너뛰어 덮는다(#213).
 - `ord_vcm_conf.json`, `update_ordvcmconf.sh`
   - 기존 설치에도 `camera_startup_grace_sec: 25`를 보강한다.
 

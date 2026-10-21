@@ -1471,10 +1471,7 @@ class PIMHealthGuardian:
         else:
             grace_sec = CAMERA_STARTUP_GRACE_SEC_DEFAULT
 
-        now = int(time.time())
-        start_ts = self._safe_read_int_file(TMP_START_TS, 0)
-        if start_ts > 0:
-            return (now - start_ts) < grace_sec
+        # 카메라 기동 시각은 기록하는 곳이 없어(#214) guardian 자신이 뜬 시각으로 잰다.
         return (time.time() - self.start_time) < grace_sec
 
     def start(self) -> None:

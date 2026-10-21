@@ -45,9 +45,6 @@ MAINTENANCE_INTERVAL_SEC_DEFAULT=30
 
 BG_FLAG_FILE="/tmp/bg_chk_flag.bin"
 RECOVER_REQ_INIT_CAM="/tmp/recover_req_init_cam"
-LAST_INIT_TS_FILE="/tmp/last_init_cam_ts"
-START_TS_FILE="/tmp/cam_state/last_start_ts"
-START_DELAY_FILE="/tmp/pim_cam_start_delay"
 
 # 아래 *_DEFAULT 값은 패키지 배포 설정(opt/pim/config/ord_vcm_conf.json 의 ETC)과
 # update_ordvcmconf.sh 가 채우는 값에 일치시킨다. 세 곳이 어긋나면 설정 키가 없는
@@ -194,17 +191,6 @@ cam_submit_internal_action() {
     return "$rc"
 }
 
-read_ts() {
-    [ -f "$1" ] && cat "$1" 2>/dev/null | tr -d '\n' || echo 0
-}
-
-in_init_cooldown() {
-    local now last
-    now=$(date +%s)
-    last=$(read_ts "$LAST_INIT_TS_FILE")
-    [ "$last" -gt 0 ] && [ $((now - last)) -lt "$init_cooldown_sec" ]
-}
-
 # 재기동 직후 파일 검사 보류(#190). 앱은 prepare 뒤에야 첫 조각을 열어, 분 경계 마커 기준으로 판정하면
 # 아직 만들 수 없던 파일을 누락으로 본다. 이 세션의 첫 조각 신호(먼저 조각을 연 채널이 쓰는 세션 파일)가
 # 없고 앱이 init_cooldown_sec 보다 어리면 0(보류)을 돌려준다. 실행기가 앱을 띄우기 직전에 세션 파일을
@@ -280,20 +266,14 @@ maybe_init_cam_on_disconnect() {
             mark_disconnect_episode_held
             return 1
         fi
-        # init_cam 직후 cooldown 중에는 sysfs가 아직 -1(→0)이므로 상태 파일 보존
-        if ! in_init_cooldown && ! cam_in_init_cooldown "$init_cooldown_sec"; then
-            if [ -f "$DISCONNECT_INIT_CAM_STATE_FILE" ]; then
-                logger -p local0.notice "[$KEY][$tag:$LINENO] disconnect state cleared (flag=$cam_disconnect_flag drv=$drv_disc)"
-            fi
-            rm -f "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
-            # 연결이 회복됐으므로 다음 episode 를 위해 에스컬레이션 이력도 지운다.
-            rm -f "$DISCONNECT_REBOOT_FLAG" 2>/dev/null
+        # module_reload 직후 BG 가 링크를 재기 전의 플래그 0 도 여기서 회복으로 지워진다(#216).
+        if [ -f "$DISCONNECT_INIT_CAM_STATE_FILE" ]; then
+            logger -p local0.notice "[$KEY][$tag:$LINENO] disconnect state cleared (flag=$cam_disconnect_flag drv=$drv_disc)"
         fi
+        rm -f "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
+        # 연결이 회복됐으므로 다음 episode 를 위해 에스컬레이션 이력도 지운다.
+        rm -f "$DISCONNECT_REBOOT_FLAG" 2>/dev/null
         return 1
-    fi
-
-    if in_init_cooldown || cam_in_init_cooldown "$init_cooldown_sec"; then
-        return 0
     fi
 
     now=$(date +%s)
@@ -444,8 +424,8 @@ GetConfig() {
         rst_time=25
     fi
     # PLAYING transition delay is independent of the number of CSI domains.
-    # Cold-start protection is CAMERA_STARTUP_GRACE_SEC_DEFAULT/configured
-    # camera_startup_grace_sec and is enforced by the health monitors.
+    # Cold-start protection of the file check is file_check_startup_hold (#190).
+    # camera_startup_grace_sec is only logged here; pim_guardian applies it (#214).
     app_delay=$CAM_APP_PLAY_DELAY_SEC_DEFAULT
 }
 
@@ -1377,7 +1357,6 @@ DISABLE_VAL="false"
 retry=0
 retry_boot=0
 retry_total=0
-last_init_ts=0
 final_stall_cnt=0
 #touch $FILE_
 
@@ -1519,8 +1498,6 @@ do
         elif [ "$drv_disc_now" -ne 0 ]; then
             logger -p local0.notice "[$KEY][$tag:$LINENO] skip recover_req init_cam: driver disconnect(0x$(printf '%x' $drv_disc_now))"
             rm -f "$RECOVER_REQ_INIT_CAM"
-        elif in_init_cooldown || cam_in_init_cooldown "$init_cooldown_sec"; then
-            :
         else
             logger -p local0.error "[$KEY][$tag:$LINENO] request module_reload because recover request"
             rm -f "$RECOVER_REQ_INIT_CAM"
@@ -1723,9 +1700,7 @@ do
                 start_f=0
                 echo "NG" > $FILE_CHECK
                 cam_disconnect_flag=$(get_cam_disconnect_flag)
-                if in_init_cooldown || cam_in_init_cooldown "$init_cooldown_sec"; then
-                    logger -p local0.notice "[$KEY][$tag:$LINENO] skip retry: in init cooldown (retry=$retry boot=$retry_boot total=$retry_total)"
-                elif (( cam_disconnect_flag == 0x0 )); then
+                if (( cam_disconnect_flag == 0x0 )); then
                     ((retry++))
                     retry_total=$(($retry+$retry_boot))
                     if [ "$retry_total" -le 3 ]; then
@@ -1752,14 +1727,12 @@ do
                         logger -p local0.notice "[$KEY][$tag:$LINENO] skip init_cam: driver disconnect(0x$(printf '%x' $drv_disc_now)), file check fail expected"
                     else
                         logger -p local0.err  "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag): request module_reload"
-                        if ! in_init_cooldown && ! cam_in_init_cooldown "$init_cooldown_sec"; then
-                            # periodic init_cam 간격 추적을 위해 last_init 갱신
-                            now_ts=$(date +%s)
-                            first_seen_val=$(cat "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null | awk -F',' '{print $1}')
-                            [[ ! "$first_seen_val" =~ ^[0-9]+$ ]] && first_seen_val=$now_ts
-                            printf "%s,%s" "$first_seen_val" "$now_ts" > "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
-                            cam_submit_internal_action module_reload "disconnect file check failure"
-                        fi
+                        # periodic init_cam 간격 추적을 위해 last_init 갱신
+                        now_ts=$(date +%s)
+                        first_seen_val=$(cat "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null | awk -F',' '{print $1}')
+                        [[ ! "$first_seen_val" =~ ^[0-9]+$ ]] && first_seen_val=$now_ts
+                        printf "%s,%s" "$first_seen_val" "$now_ts" > "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
+                        cam_submit_internal_action module_reload "disconnect file check failure"
                     fi
                 fi
 			else
@@ -1794,9 +1767,7 @@ do
 
             echo "NG" > $FILE_CHECK
             cam_disconnect_flag=$(get_cam_disconnect_flag)
-            if in_init_cooldown || cam_in_init_cooldown "$init_cooldown_sec"; then
-                logger -p local0.notice "[$KEY][$tag:$LINENO] skip retry_boot: in init cooldown (retry=$retry boot=$retry_boot total=$retry_total)"
-            elif ! start_marker_disconnect_path "$cam_disconnect_flag"; then
+            if ! start_marker_disconnect_path "$cam_disconnect_flag"; then
                 ((retry_boot++))
                 retry_total=$(($retry+$retry_boot))
                 if [ "$retry_total" -le 2 ]; then
@@ -1828,14 +1799,12 @@ do
                     logger -p local0.notice "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag)$disc_note drv_disc=$drv_disc: skip init_cam (periodic handles recovery)"
                 else
                     logger -p local0.err  "[$KEY][$tag:$LINENO] cam disconnect($cam_disconnect_flag)$disc_note: request module_reload"
-                    if ! in_init_cooldown && ! cam_in_init_cooldown "$init_cooldown_sec"; then
-                        # periodic init_cam 간격 추적을 위해 last_init 갱신
-                        now_ts=$(date +%s)
-                        first_seen_val=$(cat "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null | awk -F',' '{print $1}')
-                        [[ ! "$first_seen_val" =~ ^[0-9]+$ ]] && first_seen_val=$now_ts
-                        printf "%s,%s" "$first_seen_val" "$now_ts" > "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
-                        cam_submit_internal_action module_reload "disconnect startup failure"
-                    fi
+                    # periodic init_cam 간격 추적을 위해 last_init 갱신
+                    now_ts=$(date +%s)
+                    first_seen_val=$(cat "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null | awk -F',' '{print $1}')
+                    [[ ! "$first_seen_val" =~ ^[0-9]+$ ]] && first_seen_val=$now_ts
+                    printf "%s,%s" "$first_seen_val" "$now_ts" > "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
+                    cam_submit_internal_action module_reload "disconnect startup failure"
                 fi
             fi
 	    fi

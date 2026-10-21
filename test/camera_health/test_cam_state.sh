@@ -64,9 +64,49 @@ no_last_ok_files() {
     done
 }
 
+# The startup grace and init cooldown are gone too (#214).  Their writers
+# (init_cam.sh's /tmp/last_init_cam_ts, start_cam.sh's last_start_ts) were lost
+# in the b6b70a9 refactor and nothing wrote the timestamps since, so every
+# reader was always false.  no_dead_grace_source keeps half of them from coming
+# back: a writer without the readers, or a reader without a writer.  It matches
+# the key names themselves, so a writer through any helper or a plain redirect
+# is caught, and it scans every shipped shell script under dist/.  It scans
+# shell only, because pim_guardian.py keeps its own live grace (measured from
+# the guardian's start) under similar names.  Same fail-closed rules as above.
+no_dead_grace_source() {
+    local hits rc=0
+    [ -d "$ROOT/dist" ] || {
+        echo "no_dead_grace_source: search root is missing: $ROOT/dist" >&2
+        return 1
+    }
+    hits=$(grep -rnIE --include='*.sh' \
+        'last_init_cam_ts|last_(init|start)_ts|cam_record_(init|start)|cam_in_(startup_grace|init_cooldown)|\bin_(startup_grace|init_cooldown)\b' \
+        "$ROOT/dist") || rc=$?
+    [ "$rc" -le 1 ] || {
+        echo "no_dead_grace_source: grep failed with rc=$rc" >&2
+        return 1
+    }
+    [ -z "$hits" ] || {
+        printf 'startup grace / init cooldown reintroduced:\n%s\n' "$hits" >&2
+        return 1
+    }
+}
+
+no_dead_grace_files() {
+    local key
+    for key in last_init_ts last_start_ts; do
+        [ ! -e "$STATE_DIR/$key" ] || {
+            echo "$key was recreated" >&2
+            return 1
+        }
+    done
+}
+
 no_last_ok_source
+no_dead_grace_source
 cam_state_init
 no_last_ok_files
+no_dead_grace_files
 [ "$(cam_get_state)" = healthy ]
 [ "$(cam_state_get streak)" = 0 ]
 cam_inc_streak; cam_inc_streak
@@ -79,11 +119,8 @@ no_last_ok_files
 cam_channel_clear 0
 no_last_ok_files
 ! cam_has_channel_error
-cam_record_init
-[ "$(cam_get_state)" = recovering ]
-cam_record_start
-[ "$(cam_state_get recording/start_video_time_actual '')" = '' ]
 cam_reset_state
 no_last_ok_files
+no_dead_grace_files
 [ "$(cam_get_state)" = healthy ]
 echo "cam_state retained health contract: PASS"
