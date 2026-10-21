@@ -76,3 +76,5 @@ Description: PIM application
 0.6.1 : debug cism vsd buf overflow, useradd admin, pim-gate schema-v2 TZ debug
 0.6.2 : pim_gate post _id filename, debug upgrade setup.sh, led flash delay 128, pimwebserver
 0.6.3 : pim_gate sFTP_UDP cam setting cmd, ldconfig, capture instant, pimwebserver 1.1.0
+0.6.3.1 : pim_gate PCOM_A, vns mapping axis
+0.6.3.2 : pim_gate sFTP_UDP add cam gain setting cmd
