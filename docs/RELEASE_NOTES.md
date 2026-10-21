@@ -2,6 +2,36 @@
 
 ## Unreleased (2026-10-21)
 
+### camera18 — disconnect history kept across an unmeasured flag 0 after module_reload (issue #216; PR #220)
+
+- Package version is `0.6.3.2+jhw.camera18`. dpkg now sorts it above the company
+  packages: `0.6.3+jhw.camera17` < `0.6.3.1` < `0.6.3.2` < `0.6.3.2+jhw.camera18`.
+- **Disconnect history after module_reload** (#216 C1, PR #220): a recovery action
+  runs inside the cam-operate loop, and right after it chk read BG's flag before
+  BG had measured the link. At that point the start marker or the app was not
+  there yet, or every enabled bus was still at link_status -1. chk treated that 0
+  as a recovered connection and deleted the disconnect state and the escalation
+  reboot flag. With the disconnect continuing, module_reload then ran about every
+  60 s instead of 180 s, and `DISCONNECT_MAX_SEC` never accumulated.
+  - chk now keeps the state and the flag on such an unmeasured 0 and marks the
+    state `,kept`.
+  - A kept state is not an open episode, so the start-marker ladder still chooses
+    as before.
+  - If the app disappears while the state is kept, the #213 hold is added too, so
+    the unmeasured absence is not counted.
+  - Known limit: a chk sample taken right after the marker appears, before BG's
+    next write, can still clear on the stale 0. A real cable disconnect is not
+    affected, because the driver reports it after STREAMON.
+- C5 (#216) is kept as is. On board .6 with camera17, the start marker appeared
+  5–6 s after gstapp_restart and 18 s after module_reload (5 samples, no "no start
+  marker"). Both are inside rst_time 25/35 s.
+- gstApp (`bfb3af7`), imx-gst (`libgstmultifile.so` `ed36938`, `libgstrtspserver`
+  `5ea8b13`), imx-vpu (`libgstvpu.so` `d61eaf9`, `libfslvpuwrap` `1f55ed4`),
+  imx-hantro (`c37edf1`) and `max9296.ko` (`172a76a`) are unchanged from camera17.
+  Each repository's `git ls-remote` head on 2026-10-21 equals the commit checked
+  for camera17.
+- Reboot after installing (same as camera16).
+
 ### camera17 — gstApp stop wait, recovery after an interrupted restart, liveness after playback, dead startup grace removed (issues #210, #193, #213, #214; PRs #211, #212, #215, #217)
 
 - Package version is `0.6.3+jhw.camera17`.
