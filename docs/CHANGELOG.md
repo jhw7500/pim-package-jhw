@@ -1,5 +1,26 @@
 # PIM Package Changelog
 
+## 최신 변경사항 (2026-10-21) — camera18 / module_reload 직후 재지 않은 끊김 플래그 0 (이슈 #216, PR #220)
+
+- 전달 패키지를 `pim-mp 0.6.3.2+jhw.camera18`로 올렸다. dpkg 는 이제 회사 패키지보다 높게 본다
+  (`0.6.3+jhw.camera17` < `0.6.3.1` < `0.6.3.2` < `0.6.3.2+jhw.camera18`).
+- **module_reload 직후 끊김 이력**(#216 C1, PR #220):
+  - 문제: 복구 조치는 cam-operate 루프 안에서 돌고, 끝나면 chk 가 곧바로 BG 플래그를 읽는다. 이때 BG 는
+    아직 링크를 재지 않았다. 시작 마커나 앱이 없거나, 활성 버스가 모두 link_status -1 이기 때문이다. chk 는
+    그 0 을 회복으로 보고 끊김 상태 파일과 재부팅 플래그를 지웠다. 그래서 끊김이 이어지면 module_reload 가
+    180초가 아니라 약 60초마다 돌았고, `DISCONNECT_MAX_SEC` 도 쌓이지 않았다.
+  - 고친 점: 재지 않은 0 이면 이력과 플래그를 그대로 두고 상태에 `,kept` 표시를 붙인다. 보존 중인 이력은
+    열린 episode 가 아니므로 시작 마커 사다리의 선택은 예전과 같다. 보존 중에 앱이 사라지면 #213 보류도
+    붙여, 재지 않은 부재 시간은 세지 않는다.
+  - 알려진 한계: 마커가 막 생긴 뒤 BG 가 다음 플래그를 쓰기 전에 chk 가 표본을 찍으면, 묵은 0 으로 지울 수
+    있다. 실제 케이블 끊김은 STREAMON 뒤 드라이버가 알리므로 해당하지 않는다.
+- C5(#216)는 지금대로 둔다. camera17 .6 에서 조치 뒤 시작 마커까지 걸린 시간을 쟀다. gstapp_restart 는
+  5~6초, module_reload 는 18초였다(표본 5개, no start marker 0건). 둘 다 rst_time 25/35초 안이다.
+- gstApp(`bfb3af7`)·imx-gst(`libgstmultifile.so` `ed36938`, `libgstrtspserver` `5ea8b13`)·imx-vpu(`libgstvpu.so`
+  `d61eaf9`, `libfslvpuwrap` `1f55ed4`)·imx-hantro(`c37edf1`)·`max9296.ko`(`172a76a`)는 camera17 과 같다. 각 저장소의
+  `git ls-remote` 헤드(2026-10-21)가 camera17 때 확인한 커밋과 같다.
+- 설치 뒤 재부팅한다(camera16 과 같다).
+
 ## 최신 변경사항 (2026-10-21) — camera17 / gstApp 정지 대기·끊긴 재시작 뒤 복구·재생 뒤 liveness·죽은 기동 유예 제거 (이슈 #210·#193·#213·#214, PR #211·#212·#215·#217)
 
 - 전달 패키지를 `pim-mp 0.6.3+jhw.camera17`로 올렸다.
