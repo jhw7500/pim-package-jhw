@@ -1067,7 +1067,7 @@ class ShellProvenanceProof:
             return ShellOrigin("source-root", value)
         if value.startswith("/root/shared_v/") and value.endswith(".json"):
             return ShellOrigin("source-path", value)
-        state = value in {"/run/pim-camera/owner.json", "/var/lib/pim-camera/service-state.json", "/run/pim-camera/control/source.json", "/run/pim-camera/control/plan.json", "/run/pim-camera/control/projection.json"} or value.startswith(("/run/pim-camera/recovery/", "/var/lib/pim-camera/recovery/"))
+        state = value in {"/run/pim-camera/owner.json", "/run/pim-camera/gstApp.json", "/var/lib/pim-camera/service-state.json", "/run/pim-camera/control/source.json", "/run/pim-camera/control/plan.json", "/run/pim-camera/control/projection.json"} or value.startswith(("/run/pim-camera/recovery/", "/var/lib/pim-camera/recovery/"))
         if state:
             return ShellOrigin("state-path", value)
         if value == "/run/pim-camera/control/candidate.json":
@@ -2257,6 +2257,11 @@ PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
 
     jq_option_reader_cases = (
         (
+            "only the reviewed gstApp producer snapshot joins the state paths",
+            '''jq -r '.pid' "${PIM_CAMERA_RUN_DIR:-/run/pim-camera}/max9296.json" ''',
+            ["alternate config read: /run/pim-camera/max9296.json"],
+        ),
+        (
             "jq --argjson direct cat cannot hide an alternate reader",
             '''jq -n --argjson cfg "$(cat /etc/pim/jq-argjson.json)" '$cfg' ''',
             ["alternate config read: /etc/pim/jq-argjson.json"],
@@ -2315,6 +2320,10 @@ PIM_CAMERA_RUNTIME_JSON="{RUNTIME_PATH}"
         )
 
     jq_option_reader_allow_cases = (
+        (
+            "gstApp health snapshot is producer state, not camera config (#223)",
+            '''jq -r '.pid' "${PIM_CAMERA_RUN_DIR:-/run/pim-camera}/gstApp.json" ''',
+        ),
         (
             "jq data option accepts direct runtime cat content",
             '''jq -n --argjson cfg "$(cat "$PIM_CAMERA_RUNTIME_JSON")" '$cfg' ''',

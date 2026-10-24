@@ -27,6 +27,11 @@ rollback 기간 동안 legacy owner가 계속 담당한다.
 PIM v1 recovery와 legacy-only max9296 또는 gstApp 조합은 production에서 허용하지 않는다.
 package dependency/capability gate가 recovery enable을 거부해야 한다.
 
+예외: `PIM shadow` 조합에서도 legacy 파일검사 사다리는 gstApp health JSON 의 기동 중 prepare 실패
+표기 하나를 읽고, 그것으로 자기 사다리 단계만 앞당긴다(pim-package-jhw#223,
+`health-contract-v1.md` §6). 판정권 전환(아래 5단계)이나 별도 recovery enable(6단계)을 기다리지
+않는 유일한 소비다. gstApp 이 legacy 이면 그 파일이 없으므로 현재 동작 그대로다.
+
 ## 배포 순서
 
 1. PIM boot config producer를 additive 배포하고 `/tmp/config/READY`만 검증한다.

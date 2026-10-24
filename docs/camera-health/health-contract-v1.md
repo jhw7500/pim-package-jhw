@@ -1,6 +1,7 @@
 # Camera health contract v1
 
 > 상태: Phase 0 초안. 보드 fault injection 결과가 들어오기 전까지 자동 복구에는 사용하지 않는다.
+> 예외는 §6 의 하나뿐이다.
 
 ## 1. 물리 경계
 
@@ -84,6 +85,20 @@ dual-wide에서 한쪽 link가 끊기면 origin link를 보존하되 pair downst
 ## 6. recovery 사용 제한
 
 - 이 계약의 Phase 0/그림자 구현은 기존 error flag나 recovery를 변경하지 않는다.
+- 예외(pim-package-jhw#223): legacy 파일검사 사다리(`chk_cam_operate.sh` 의
+  `file_check_partial_floor`)는 gstApp producer 파일 하나를 읽어 자기 단계만 앞당긴다.
+  조건은 다음과 같다.
+  - `/run/pim-camera/gstApp.json` 의 `schema` 가 1 이다.
+  - `pid` 가 지금 떠 있는 gstApp 이다.
+  - `reason_detail` 이 `MAX9296 prepare failed` 로 시작하는 `gstreamer` 관측이 있다.
+  - 그 관측의 `scope.id` 가 이번 파일검사에서 빠진 채널과 겹친다.
+  - 사다리가 아직 gstapp_restart 구간에 있다.
+
+  이 조건이 모두 맞으면 module_reload 단계로 올린다. 기동 중 prepare 실패로 꺼진 CSI 는 같은 전원
+  epoch 에서 gstapp_restart 로 돌아오지 않기 때문이다(gstApp#148). 새 action 을 만들지 않으며,
+  사다리의 순서와 상한은 그대로다. 판정과 복구는 legacy 사다리가 계속 소유한다. boot ID·TTL 검사는
+  하지 않고, 지금 떠 있는 pid 와 맞는지만 본다. `/run` 은 부팅마다 비워지고, 실행이 바뀌면 pid 도
+  바뀌기 때문이다. producer 의 `reason_detail` 접두나 `scope.id` 형식을 바꾸면 이 소비자도 함께 고친다.
 - storage/recording code는 camera module/hard reset을 유발할 수 없다.
 - `AMBIGUOUS_*`, `PRODUCER_STALE`, `CONFIG_DIVERGED`만으로 destructive recovery를
   실행할 수 없다.
