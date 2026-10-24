@@ -233,12 +233,13 @@ file_check_startup_hold() {
 # 3회 모두 errno=-116). 그런 실행이면 retry_total 을 module_reload 단계 하한(4)으로 올린다.
 # 판정은 지금 떠 있는 앱 pid 가 쓴 health 스냅샷의 reason_detail 접두로만 한다. code 는 #222 에서 바뀔 수 있다.
 # 이번에 빠진 채널과 겹칠 때만, gstapp_restart 구간(≤3)에서만 올리므로 module_reload·reboot 상한은 그대로다.
-# 스냅샷·jq·앱이 없거나 pid 가 다르면 손대지 않는다. $@=이번 검사에서 빠진 채널(ch0..ch3)
+# 스냅샷·jq·앱이 없거나, schema 가 1 이 아니거나, pid 가 다르면 손대지 않는다. health 계약의 예외 하나로
+# 적어 두었다(docs/camera-health/health-contract-v1.md §6). $@=이번 검사에서 빠진 채널(ch0..ch3)
 file_check_partial_floor() {
     local snapshot="${PIM_CAMERA_RUN_DIR:-/run/pim-camera}/gstApp.json" app="" fields snap_pid off ch m hit=()
     [ "$retry_total" -le 3 ] || return 1
     [ -r "$snapshot" ] || return 1
-    fields=$(jq -r '[(.pid // "" | tostring)] + [.observations[]? | select(.block == "gstreamer" and ((.reason_detail // "") | startswith("MAX9296 prepare failed"))) | .scope.id // empty] | join(" ")' "$snapshot" 2>/dev/null) || return 1
+    fields=$(jq -r 'select(.schema == 1) | [(.pid // "" | tostring)] + [.observations[]? | select(.block == "gstreamer" and ((.reason_detail // "") | startswith("MAX9296 prepare failed"))) | .scope.id // empty] | join(" ")' "$snapshot" 2>/dev/null) || return 1
     read -r snap_pid off <<<"$fields"
     [[ "$snap_pid" =~ ^[0-9]+$ ]] || return 1
     _cam_runtime_app_into app "$PIM_CAMERA_RUNTIME_JSON" 2>/dev/null || app=gstApp

@@ -14,13 +14,15 @@ trap 'rm -rf "$WORK"' EXIT
 CHK="$PIM_BIN/chk_cam_operate.sh"
 t_extract_func "$CHK" file_check_partial_floor "$WORK/floor.sh" || exit 1
 
-# snap <pid> <ch2 reason_detail(빈 값=설정상 끈 채널)> [ch2 code] — ch0·ch1 은 정상, ch2·ch3 은 끈 채널
+# snap <pid> <ch2 reason_detail(빈 값=설정상 끈 채널)> [ch2 code] [schema 값(none=키 없음)]
+# ch0·ch1 은 정상, ch2·ch3 은 끈 채널. schema 기본값은 gstApp 이 쓰는 정수 1 이다.
 snap() {
-    local reason=$2 code=${3:-DISABLED} detail=""
+    local reason=$2 code=${3:-DISABLED} detail="" schema_kv="\"schema\":${4:-1},"
+    [ "${4-}" = none ] && schema_kv=""
     [ -n "$reason" ] && detail=",\"reason_detail\":\"$reason\""
     local off_g="\"status\":\"N/A\",\"code\":\"$code\",\"count\":0,\"evidence\":[{\"name\":\"configured\",\"source\":\"gstApp\",\"value\":$([ -n "$reason" ] && echo true || echo false)}]$detail"
     cat > "$WORK/run/gstApp.json" <<EOF
-{"schema":"camera-health.v1","producer":"gstApp","boot_id":"b","pid":$1,"sequence":7,"status":"OK","observations":[
+{${schema_kv}"producer":"gstApp","boot_id":"b","pid":$1,"sequence":7,"status":"OK","observations":[
  {"block":"gstreamer","scope":{"kind":"channel","id":"ch0","channels":[0]},"status":"OK","code":"NONE","count":0,"evidence":[]},
  {"block":"gstreamer","scope":{"kind":"channel","id":"ch1","channels":[1]},"status":"OK","code":"NONE","count":0,"evidence":[]},
  {"block":"gstreamer","scope":{"kind":"channel","id":"ch2","channels":[2]},$off_g},
@@ -81,6 +83,13 @@ snap 4242 "VideoBin build failed"
 run_f "다른 기동 실패 사유"                                          4242   1 0  1 1 1  ch2 ch3
 snap 4242 ""
 run_f "설정상 끈 채널(reason_detail 없음)"                           4242   1 0  1 1 1  ch2 ch3
+# 알 수 없는 schema 는 정상으로 해석하지 않는다(docs/camera-health/health-contract-v1.md §2).
+snap 4242 "MAX9296 prepare failed (errno=-5)" DISABLED 99
+run_f "알 수 없는 schema(99)"                                        4242   1 0  1 1 1  ch2 ch3
+snap 4242 "MAX9296 prepare failed (errno=-5)" DISABLED '"camera-health.v1"'
+run_f "schema 가 정수 1 이 아님(문자열)"                             4242   1 0  1 1 1  ch2 ch3
+snap 4242 "MAX9296 prepare failed (errno=-5)" DISABLED none
+run_f "schema 없음"                                                  4242   1 0  1 1 1  ch2 ch3
 rm -f "$WORK/run/gstApp.json"
 run_f "스냅샷 없음"                                                  4242   1 0  1 1 1  ch2 ch3
 printf 'not json' > "$WORK/run/gstApp.json"
