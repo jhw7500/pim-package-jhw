@@ -227,6 +227,32 @@ file_check_startup_hold() {
     return 1
 }
 
+# 파일검사 사다리 단계를 셈한 직후 부른다(#223). gstApp 이 기동 중 MAX9296 prepare 실패로 CSI 하나를
+# 끄고 떴다면(PARTIAL) 그 CSI 는 gstapp_restart 로 돌아오지 않는다 - 같은 전원 epoch 에서는 다시 cold init
+# 할 수 없고, 정상 CSI 의 전원 참조가 앱 재시작을 넘어 남아 epoch 가 넘어가지 않는다(gstApp#148, .6 에서
+# 3회 모두 errno=-116). 그런 실행이면 retry_total 을 module_reload 단계 하한(4)으로 올린다.
+# 판정은 지금 떠 있는 앱 pid 가 쓴 health 스냅샷의 reason_detail 접두로만 한다. code 는 #222 에서 바뀔 수 있다.
+# 이번에 빠진 채널과 겹칠 때만, gstapp_restart 구간(≤3)에서만 올리므로 module_reload·reboot 상한은 그대로다.
+# 스냅샷·jq·앱이 없거나 pid 가 다르면 손대지 않는다. $@=이번 검사에서 빠진 채널(ch0..ch3)
+file_check_partial_floor() {
+    local snapshot="${PIM_CAMERA_RUN_DIR:-/run/pim-camera}/gstApp.json" app="" fields snap_pid off ch m hit=()
+    [ "$retry_total" -le 3 ] || return 1
+    [ -r "$snapshot" ] || return 1
+    fields=$(jq -r '[(.pid // "" | tostring)] + [.observations[]? | select(.block == "gstreamer" and ((.reason_detail // "") | startswith("MAX9296 prepare failed"))) | .scope.id // empty] | join(" ")' "$snapshot" 2>/dev/null) || return 1
+    read -r snap_pid off <<<"$fields"
+    [[ "$snap_pid" =~ ^[0-9]+$ ]] || return 1
+    _cam_runtime_app_into app "$PIM_CAMERA_RUNTIME_JSON" 2>/dev/null || app=gstApp
+    pgrep -x "$app" 2>/dev/null | grep -qx "$snap_pid" || return 1
+    for ch in $off; do
+        for m in "$@"; do [ "$ch" = "$m" ] && hit+=("$ch"); done
+    done
+    [ "${#hit[@]}" -gt 0 ] || return 1
+    retry=$((4 - retry_boot))
+    retry_total=4
+    logger -p local0.error "[$KEY][$tag:$LINENO] skip gstapp_restart: $app pid=$snap_pid started with $(IFS=,; echo "${hit[*]}") off by MAX9296 prepare failure, which only module_reload clears (retry=$retry boot=$retry_boot total=$retry_total)"
+    return 0
+}
+
 # 런타임 앱 프로세스가 없으면 0. file_check_startup_hold 와 같은 앱 이름 해석을 쓰되 전역 app 은 덮지 않는다.
 cam_app_absent() {
     local runtime_app rc=0
@@ -1775,6 +1801,7 @@ do
                 if (( cam_disconnect_flag == 0x0 )); then
                     ((retry++))
                     retry_total=$(($retry+$retry_boot))
+                    file_check_partial_floor "${missing_chs[@]}"
                     if [ "$retry_total" -le 3 ]; then
                         logger -p local0.error  "[$KEY][$tag:$LINENO] request gstapp_restart (retry=$retry boot=$retry_boot total=$retry_total, next: module_reload at total>3)"
                         cam_submit_internal_action gstapp_restart "file check failure"
