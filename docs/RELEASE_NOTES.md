@@ -1,6 +1,51 @@
 # PIM Package Release Notes
 
-## Unreleased (2026-10-21)
+## Unreleased (2026-10-24)
+
+### camera19 — gstApp keeps recording on one CSI when the other fails to start, and the file-check ladder recovers it with module_reload (gstApp #141, #145; issue #223; PR #224)
+
+- Package version is `0.6.3.2+jhw.camera19`.
+- **gstApp `973b1d7`** (was `bfb3af7`):
+  - **One CSI may fail to start** (gstApp #145, PR #147). If the MAX9296 prepare
+    write of one CSI is rejected, gstApp turns off only that CSI's channels and
+    records on the other CSI. Before this, it exited, and the healthy CSI stopped
+    as well.
+  - The health snapshot (`/run/pim-camera/gstApp.json`) now tells the two kinds
+    of disabled channel apart:
+    - A channel turned off at startup is published as `N/A`/`DISABLED` with
+      evidence `configured=true` and a `reason_detail` such as
+      `MAX9296 prepare failed (errno=-5)`.
+    - A channel disabled in the configuration keeps `configured=false`.
+  - When building the pipeline of a prepared CSI fails, gstApp cancels that
+    CSI's prepare lease at once instead of leaving it to the 60 s timeout.
+  - A failed state change at startup no longer leads to a use of an already
+    released pipeline (gstApp #141).
+- **File-check ladder after a partial start** (#223, PR #224): a CSI that failed
+  cold initialization cannot be initialized again in the same MAX9296 power
+  epoch, so `gstapp_restart` cannot bring it back.
+  - When the running gstApp's snapshot (`schema` 1, same pid) shows such a CSI and
+    its channels are the ones missing, the ladder skips `gstapp_restart` and
+    requests `module_reload` at once.
+  - The limits on module_reload and reboot are unchanged.
+  - The camera health contract records this as its only exception.
+  - On board .6 (camera18 package, this gstApp binary, the #223 script as of
+    `9421d83`, before the `schema` check was added), two
+    partial starts in 15 cold starts recovered with one module_reload each, in
+    38.4 s and 71.6 s. The case before the change took about 142 s and 4 gstApp
+    restarts.
+- The gstApp binary is a clean build of `973b1d7`. It is byte-identical to the
+  `fb4d3e8` build used for the board .6 checks on 2026-10-24 (md5
+  `7b665488…`). `0ce22c1`, the one commit between them, changes tests only.
+- imx-gst (`libgstmultifile.so` `ed36938`, `libgstrtspserver` `5ea8b13`), imx-vpu
+  (`libgstvpu.so` `d61eaf9`, `libfslvpuwrap` `1f55ed4`), imx-hantro (`c37edf1`) and
+  `max9296.ko` (`172a76a`) are unchanged from camera18:
+  - The remote master heads on 2026-10-24 are imx-gst `ed36938`, imx-vpu
+    `d61eaf9` and imx-hantro `c37edf1`.
+  - max9296 `43b14c3` has no source change from `172a76a`.
+- Known issue: on a board without cooling, AP1302 cold starts fail often
+  (max9296 #118). This release keeps recording on the healthy CSI in that case and
+  shortens the recovery. It does not remove the failures.
+- Reboot after installing (same as camera16).
 
 ### camera18 — disconnect history kept across an unmeasured flag 0 after module_reload (issue #216; PR #220)
 
