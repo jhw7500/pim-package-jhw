@@ -1,5 +1,37 @@
 # PIM Package Changelog
 
+## 최신 변경사항 (2026-10-24) — camera19 / 한 CSI 기동 실패 때 나머지로 녹화하고 module_reload 로 복구 (gstApp #141·#145, 이슈 #223, PR #224)
+
+- 전달 패키지를 `pim-mp 0.6.3.2+jhw.camera19`로 올렸다.
+- **gstApp `973b1d7`**(이전 `bfb3af7`):
+  - **한 CSI 기동 실패**(gstApp #145, PR #147): 한 CSI 의 MAX9296 prepare 쓰기가 거부되면 그 CSI 의 채널만 끄고
+    다른 CSI 로 녹화한다. 예전에는 gstApp 이 종료해서 정상 CSI 도 함께 멈췄다.
+  - health 스냅샷(`/run/pim-camera/gstApp.json`)이 끈 채널의 두 경우를 구분한다.
+    - 기동 중 끈 채널은 `N/A`/`DISABLED` 에 evidence `configured=true` 와 `reason_detail` 로 낸다.
+      예: `MAX9296 prepare failed (errno=-5)`.
+    - 설정상 끈 채널은 `configured=false` 그대로다.
+  - prepare 를 마친 CSI 의 파이프라인 구성이 실패하면, 그 CSI 의 prepare lease 를 60초 타임아웃에 맡기지 않고
+    바로 취소한다.
+  - 기동 중 상태 전환이 실패해도 이미 해제된 파이프라인을 쓰지 않는다(gstApp #141).
+- **기동 일부 실패 뒤 파일검사 사다리**(#223, PR #224):
+  - 문제: cold init 에 실패한 CSI 는 같은 MAX9296 전원 epoch 에서 다시 초기화할 수 없다. 그래서 `gstapp_restart`
+    로는 돌아오지 않는다.
+  - 고친 점: 지금 떠 있는 gstApp 의 스냅샷(`schema` 1, 같은 pid)에 그런 CSI 가 있고 빠진 채널이 그 채널이면,
+    사다리가 `gstapp_restart` 를 건너뛰고 바로 `module_reload` 를 요청한다. module_reload 와 재부팅 상한은 그대로다.
+    camera health 계약에는 이 소비를 유일한 예외로 적었다.
+  - .6 측정: camera18 패키지에 이 gstApp 바이너리와 #223 스크립트(`schema` 검사를 넣기 전인 `9421d83` 판)를 얹어
+    cold start 를 15회 했다. 기동 일부 실패
+    2건이 각각 module_reload 1회로 38.4초·71.6초 만에 돌아왔다. 변경 전 사례는 약 142초, gstApp 재시작 4회였다.
+- gstApp 바이너리는 `973b1d7` clean 빌드다. 2026-10-24 .6 검증에 쓴 `fb4d3e8` 빌드와 바이트 단위로 같다
+  (md5 `7b665488…`). 둘 사이의 커밋 `0ce22c1` 은 시험만 바꾼다.
+- imx-gst(`libgstmultifile.so` `ed36938`, `libgstrtspserver` `5ea8b13`)·imx-vpu(`libgstvpu.so` `d61eaf9`, `libfslvpuwrap`
+  `1f55ed4`)·imx-hantro(`c37edf1`)·`max9296.ko`(`172a76a`)는 camera18 과 같다.
+  - 2026-10-24 원격 master 헤드는 imx-gst `ed36938`, imx-vpu `d61eaf9`, imx-hantro `c37edf1` 이다.
+  - max9296 `43b14c3` 은 `172a76a` 와 소스 차이가 없다.
+- 알려진 문제: 냉각이 없는 보드에서는 AP1302 cold start 가 자주 실패한다(max9296 #118). 이번 릴리스는 그때
+  정상 CSI 로 녹화를 이어 가고 복구를 앞당길 뿐, 실패 자체를 없애지는 않는다.
+- 설치 뒤 재부팅한다(camera16 과 같다).
+
 ## 최신 변경사항 (2026-10-21) — camera18 / module_reload 직후 재지 않은 끊김 플래그 0 (이슈 #216, PR #220)
 
 - 전달 패키지를 `pim-mp 0.6.3.2+jhw.camera18`로 올렸다. dpkg 는 이제 회사 패키지보다 높게 본다
