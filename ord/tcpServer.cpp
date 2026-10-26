@@ -1947,7 +1947,7 @@ int CTCPServer::parseRecvData(int fd, char* data, int len)
 			//ret = sprintf(str, "ls -ptr %s | grep -v '/$'| grep %s | tail -%d | head -%d | xargs -t -I %% sh -c '{ cp -a %s/%% /test/%s_%%; }'", \
 									PATH_MOUNT, vhlConf.vhl_name, arg->copyTail, arg->copyHead, PATH_MOUNT, EVENT_FILE_NAME_PREFIX);
 			memset(str, 0, sizeof(str));
-			ret = sprintf(str, "dpkg -l |grep pim | awk '{print $3}'");
+			ret = sprintf(str, "dpkg -s pim-mp | grep '^Version:' | awk  '{print $2}'");
 
 			__LOG(LOG_NOTICE, "[EVT][%s:%d] %s", _FILE_, __LINE__, str);
 #if 1
