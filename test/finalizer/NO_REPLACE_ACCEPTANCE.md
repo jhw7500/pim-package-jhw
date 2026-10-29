@@ -15,7 +15,7 @@ It requires two distinct absolute paths; invalid or missing/empty/symlink source
 
 Publication steps in the actual `MovePartFile()`:
 
-1. RAM-to-SD: make a unique temporary file in the SD staging directory; copy RAM fragment bytes and preserve only source timestamps (FAT32/exFAT cannot reliably preserve Unix ownership/mode), sync temp, atomically rename the temp to the intended staged basename using RENAME_NOREPLACE; only then remove the RAM copy. If the staged basename already exists, preserve the RAM source and reject this attempt.
+1. RAM-to-SD: create a unique **private temporary directory** under the SD staging directory and copy the RAM fragment into a **new file** there (not an existing `mktemp` file). Use `cp --preserve=timestamps` with a scoped `umask 022` so ordinary source read modes (`0644`, `0640`, `0600`) survive on ext4 while FAT32/exFAT does not require Unix ownership/mode syscalls. Sync, atomically rename the new file to the intended staged basename using RENAME_NOREPLACE, remove the now-empty private directory, and only then remove the RAM copy. If staging already exists, preserve the RAM source and reject this attempt.
 2. Staging-to-final: rename the staged pathname to the final pathname using RENAME_NOREPLACE. A successful syscall atomically removes the staged directory entry and creates the final entry. Neither a destination symlink nor a colliding finalized MP4/SRT is overwritten. Sync the destination and directory, then update the final arrival heartbeat.
 
 The move is *per file*, not a multi-channel transaction. It does not prove that the writer closed its FD, that SRT is complete, or that power loss cannot affect directory durability.
@@ -37,7 +37,7 @@ If the helper cannot be compiled or compatibility-checked, **do not create a rel
 
 ## Crash/recovery and operational safety
 
-- During RAM-to-SD private copy: failure removes the incomplete private temp; process crash might leave a hidden `.finalizer-stage1.*` file for controlled reconciliation.
+- During RAM-to-SD private copy: failure removes the incomplete file and its private directory; process crash might leave a hidden `.finalizer-stage1.*` **directory** containing an incomplete recording. Such orphans require controlled reconciliation; never silently treat them as finalized.
 - After Stage1 rename but before RAM unlink: both RAM input and SD staged copy can coexist; restart refuses to overwrite the existing stage. Investigate under an owner-approved recovery process.
 - Before Stage2 rename: staged source still owns the bytes. After a successful Stage2 rename: only the final pathname exists, even if the process crashes before heartbeat or marker removal.
 - On restart after the successful final rename: a still-present `.all_done` marker with no discoverable staged fragments remains pending for controlled reconciliation, not automatically consumed.
