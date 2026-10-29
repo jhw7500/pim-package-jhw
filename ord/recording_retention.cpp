@@ -132,6 +132,40 @@ bool file_name(const std::string &name, const char *vhl, const char *muxer,
   return true;
 }
 
+// The on-disk mtime may have been backdated while a current recording session
+// is still active. Protect recent/future timestamped sessions independently.
+// Both interpretations of the repeated local hour at DST fall-back must be
+// old before cleanup: a lexicographic localtime comparison is not sufficient.
+// This guard is NOT an attestation that all recorder write FDs are closed.
+bool old_session_name(const std::string &name, const char *vhl,
+                      bool event, time_t now) {
+  if (now <= kMinAgeSeconds) return false;
+  const size_t pos = std::string(vhl).size() + (event ? 5 : 1);
+  if (name.size() < pos + 15) return false;
+  const int year = decimal(name, pos, 4), month = decimal(name, pos + 4, 2);
+  const int day = decimal(name, pos + 6, 2), hour = decimal(name, pos + 9, 2);
+  const int minute = decimal(name, pos + 11, 2), second = decimal(name, pos + 13, 2);
+  bool interpreted = false;
+  for (int is_dst = 0; is_dst <= 1; ++is_dst) {
+    struct tm when = {};
+    when.tm_year = year - 1900;
+    when.tm_mon = month - 1;
+    when.tm_mday = day;
+    when.tm_hour = hour;
+    when.tm_min = minute;
+    when.tm_sec = second;
+    when.tm_isdst = is_dst;
+    const time_t epoch = mktime(&when);
+    if (epoch == static_cast<time_t>(-1) || when.tm_year != year - 1900
+        || when.tm_mon != month - 1 || when.tm_mday != day
+        || when.tm_hour != hour || when.tm_min != minute
+        || when.tm_sec != second) continue;
+    interpreted = true;
+    if (epoch >= now - kMinAgeSeconds) return false;
+  }
+  return interpreted;
+}
+
 bool older_than_grace(const struct stat &st, time_t now) {
   return S_ISREG(st.st_mode) && st.st_mtime > 0 && now > st.st_mtime
       && now - st.st_mtime >= kMinAgeSeconds;
@@ -156,6 +190,7 @@ int eligible_files(int fd, const char *vhl, const char *muxer, bool event,
     std::string hour, minute;
     if (!file_name(name, vhl, muxer, event, &hour, &minute)
         || (!hour_filter.empty() && hour != hour_filter)) continue;
+    if (!old_session_name(name, vhl, event, now)) continue;
     struct stat st;
     if (fstatat(fd, name.c_str(), &st, AT_SYMLINK_NOFOLLOW) != 0
         || !older_than_grace(st, now)) continue;
