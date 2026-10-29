@@ -1011,16 +1011,18 @@ ProcessCompletedSessions() {
         # final_path 디렉토리 flush (한 번만)
         sync -f "$final_dir" 2>/dev/null || sync
 
-        if [ $fail_count -eq 0 ]; then
+        # A marker with zero discovered fragments is not proof of a completed
+        # recording. Keep it for a later pass or controlled investigation.
+        if [ "$fail_count" -eq 0 ] && [ "$success_count" -gt 0 ]; then
             rm -f "$done_file"
-        else
-            logger -p local0.error "[$KEY][$tag:$LINENO] keeping marker due to failures: $done_file"
         fi
 
-        if [ $fail_count -eq 0 ]; then
+        if [ "$fail_count" -eq 0 ] && [ "$success_count" -gt 0 ]; then
             logger -p local0.notice "[$KEY][$tag:$LINENO] session $timestamp completed: $success_count files"
+        elif [ "$fail_count" -eq 0 ]; then
+            logger -p local0.warning "[$KEY][$tag:$LINENO] session $timestamp has no finalized files; marker kept for retry"
         else
-            logger -p local0.error "[$KEY][$tag:$LINENO] session $timestamp: $success_count ok, $fail_count failed"
+            logger -p local0.error "[$KEY][$tag:$LINENO] session $timestamp: $success_count ok, $fail_count failed; marker kept"
         fi
 
         # 카운터 초기화
