@@ -593,29 +593,39 @@ MovePartFile() {
         # and atomically claim the intended sd_tmp basename with ln(2).
         # Existing staged files are never replaced, including under races.
         local staged_path="${sd_tmp_dir}/${filename}"
-        local stage_tmp
-        stage_tmp=$(mktemp "${sd_tmp_dir}/.finalizer-stage1.XXXXXXXX") || {
-            logger -p local0.error "[$KEY][$tag:$LINENO] Stage1 cannot create private temp: $filename"
+        local stage_dir stage_tmp
+        # mktemp creates regular files as 0600. Copying into such a file
+        # leaves a finalized ext4 recording unreadable by non-root users.
+        # Instead create a private directory and let cp create a NEW file.
+        stage_dir=$(mktemp -d "${sd_tmp_dir}/.finalizer-stage1.XXXXXXXX") || {
+            logger -p local0.error "[$KEY][$tag:$LINENO] Stage1 cannot create private directory: $filename"
             return 1
         }
-        # FAT32/exFAT cannot preserve Unix owner/mode; copy bytes and
-        # preserve recording mtime only (used by retention/diagnostics).
-        if ! cp --preserve=timestamps -- "$part_file" "$stage_tmp"; then
+        stage_tmp="$stage_dir/$filename"
+        # The scoped umask preserves a recorder's ordinary 0644/0640/0600
+        # file permissions without requiring FAT32/exFAT chmod/chown support.
+        if ! (umask 022; cp --preserve=timestamps -- "$part_file" "$stage_tmp"); then
             command rm -f -- "$stage_tmp"
+            rmdir -- "$stage_dir" 2>/dev/null || true
             logger -p local0.error "[$KEY][$tag:$LINENO] Stage1 cp failed: $filename"
             return 1
         fi
         sync -f "$stage_tmp" 2>/dev/null || sync
 
         if ! "$publish_tool" "$stage_tmp" "$staged_path"; then
-            # renameat2(NO_REPLACE) either moves the name atomically or
-            # leaves both names unchanged. Failure must never fall back to
-            # plain mv/cp, regardless of filesystem type.
+            # Atomic RENAME_NOREPLACE either moves the temporary directory
+            # entry or leaves both entries unchanged.
             command rm -f -- "$stage_tmp"
+            rmdir -- "$stage_dir" 2>/dev/null || true
             logger -p local0.warning "[$KEY][$tag:$LINENO] Stage1 staged collision or unsupported no-replace rename: $filename"
             return 1
         fi
-        # A successful rename removed stage_tmp in the same atomic operation.
+        # Successful rename consumed the temp filename; its private directory
+        # is now empty and may be removed without touching any recording.
+        if ! rmdir -- "$stage_dir"; then
+            logger -p local0.error "[$KEY][$tag:$LINENO] Stage1 private directory cleanup failed: $filename"
+            return 1
+        fi
         sync -f "$sd_tmp_dir" 2>/dev/null || sync
         # Release the RAM source only after a complete, non-overwriting copy
         # exists. A failed unlink leaves both paths for controlled recovery.
