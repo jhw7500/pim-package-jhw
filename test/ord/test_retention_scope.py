@@ -13,6 +13,30 @@ RUNNER = r'''
 #include "recording_retention.h"
 #include <cstdio>
 #include <string>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+// Test-only deterministic concurrent writer, injected at the second
+// fstatat of the chosen recording to exercise the pre-delete recheck.
+extern "C" int __real_fstatat(int, const char *, struct stat *, int);
+extern "C" int __wrap_fstatat(int fd, const char *name, struct stat *st, int flags) {
+    const char *target = std::getenv("ORD_TEST_MUTATE_NAME");
+    static int seen = 0;
+    if (target && std::strcmp(target, name) == 0 && ++seen == 2) {
+        int out = openat(fd, name, O_WRONLY | O_APPEND | O_NOFOLLOW);
+        if (out >= 0) {
+            (void)write(out, "-changed-after-scan", 19);
+            const time_t old = std::time(NULL) - 720;
+            struct timespec dates[2] = {{old, 0}, {old, 0}};
+            (void)futimens(out, dates);
+            (void)close(out);
+        }
+    }
+    return __real_fstatat(fd, name, st, flags);
+}
 int main(int argc, char **argv) {
     if (argc != 6) return 80;
     const std::string mode = argv[1];
@@ -38,7 +62,7 @@ class RecordingRetentionTests(unittest.TestCase):
         cls.executable = Path(cls.program_dir.name) / "scope-test"
         subprocess.run([
             "g++", "-std=c++11", "-Wall", "-Wextra", "-Werror", "-I",
-            str(SOURCE.parent), str(SOURCE), str(main), "-o",
+            str(SOURCE.parent), str(SOURCE), str(main), "-Wl,--wrap=fstatat", "-o",
             str(cls.executable)
         ], check=True)
 
@@ -223,6 +247,31 @@ class RecordingRetentionTests(unittest.TestCase):
             ], capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
         self.assertEqual(len(list(self.rec.iterdir())), 1)
+
+
+    def test_mutation_during_scan_blocks_root_prune(self):
+        video = self.make_file(self.rec, "VD3001_20261020_130001-ch0.mp4")
+        env = dict(os.environ, ORD_TEST_MUTATE_NAME=video.name)
+        result = subprocess.run([
+            str(self.executable), "root", str(self.rec), str(self.recycle),
+            "VD3001", "mp4"
+        ], capture_output=True, text=True, env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "0")
+        self.assertTrue(video.exists())
+        self.assertIn(b"changed-after-scan", video.read_bytes())
+
+    def test_mutation_during_scan_blocks_rotation(self):
+        video = self.make_file(self.rec, "VD3001_20261020_130001-ch0.mp4")
+        env = dict(os.environ, ORD_TEST_MUTATE_NAME=video.name)
+        result = subprocess.run([
+            str(self.executable), "rotate", str(self.rec), str(self.recycle),
+            "VD3001", "mp4"
+        ], capture_output=True, text=True, env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "0")
+        self.assertTrue(video.exists())
+        self.assertFalse((self.recycle / "20261020_13" / video.name).exists())
 
 
 if __name__ == "__main__":
