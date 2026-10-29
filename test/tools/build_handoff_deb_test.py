@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -96,6 +97,55 @@ class HandoffDebTest(unittest.TestCase):
             helper.chmod(0o755)
             with self.assertRaisesRegex(ValueError, "malformed or wrong machine"):
                 module.validate_local_runtime_artifacts(source)
+
+    def test_strict_finalizer_glibc_gate_ignores_bypass_environment(self):
+        """Never inherit PIM_GLIBC_GATE=off or PIM_MAX_GLIBC=999."""
+        module = load_module()
+        with tempfile.TemporaryDirectory(prefix="handoff-deb-test.") as tmp:
+            work = Path(tmp)
+            source = self.make_package(work)
+            finalizer = source / "opt/pim/bin/chk_cam_operate.sh"
+            finalizer.write_text(
+                "#!/bin/bash\nFINALIZER_NOREPLACE_TOOL=/opt/pim/bin/finalizer_noreplace\n",
+                encoding="utf-8",
+            )
+            helper = source / "opt/pim/bin/finalizer_noreplace"
+            # Only test the environmental gate. readelf is stubbed to make
+            # this synthetic *header* pass and never create a deployable ELF.
+            helper.write_bytes(b"\x7fELF\x02\x01" + b"\x00" * 12 + b"\xb7\x00")
+            helper.chmod(0o755)
+            glibc_calls = []
+
+            def fake_validation(command, **kwargs):
+                if command[0] == "readelf":
+                    return subprocess.CompletedProcess(
+                        command, 0, stdout="  Machine: AArch64\n", stderr=""
+                    )
+                if command[0] == "bash" and str(command[1]).endswith("check_glibc.sh"):
+                    glibc_calls.append(kwargs["env"])
+                    return subprocess.CompletedProcess(
+                        command, 0, stdout="GLIBC check OK", stderr=""
+                    )
+                raise AssertionError(f"unexpected command: {command!r}")
+
+            with (mock.patch.dict(os.environ, {
+                    "PIM_GLIBC_GATE": "off",
+                    "PIM_VERIFY_BINARIES": "off",
+                    "PIM_MAX_GLIBC": "999",
+                }),
+                mock.patch.object(module.subprocess, "run", side_effect=fake_validation)):
+                module.validate_local_runtime_artifacts(source)
+            self.assertEqual(len(glibc_calls), 1)
+            self.assertEqual(glibc_calls[0]["PIM_GLIBC_GATE"], "strict")
+            self.assertEqual(glibc_calls[0]["PIM_VERIFY_BINARIES"], "on")
+            self.assertEqual(glibc_calls[0]["PIM_MAX_GLIBC"], "2.31")
+
+    def test_target_helper_builder_always_uses_strict_glibc_limit(self):
+        script = (ROOT / "tools/build_finalizer_noreplace.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("PIM_GLIBC_GATE=strict PIM_VERIFY_BINARIES=on", script)
+        self.assertIn("PIM_MAX_GLIBC=2.31", script)
 
     def test_missing_ignored_runtime_binary_is_refused(self):
         module = load_module()
