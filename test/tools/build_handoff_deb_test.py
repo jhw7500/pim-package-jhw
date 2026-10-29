@@ -79,6 +79,24 @@ class HandoffDebTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "not AArch64 ELF"):
                 module.validate_local_runtime_artifacts(source)
 
+    def test_fake_aarch64_header_is_not_a_packaged_executable(self):
+        module = load_module()
+        with tempfile.TemporaryDirectory(prefix="handoff-deb-test.") as tmp:
+            work = Path(tmp)
+            source = self.make_package(work)
+            finalizer = source / "opt/pim/bin/chk_cam_operate.sh"
+            finalizer.write_text(
+                "#!/bin/bash\nFINALIZER_NOREPLACE_TOOL=/opt/pim/bin/finalizer_noreplace\n",
+                encoding="utf-8",
+            )
+            helper = source / "opt/pim/bin/finalizer_noreplace"
+            helper.write_bytes(
+                b"\x7fELF\x02\x01" + b"\x00" * 12 + b"\xb7\x00"
+            )  # EM_AARCH64, but a truncated/unusable image
+            helper.chmod(0o755)
+            with self.assertRaisesRegex(ValueError, "malformed or wrong machine"):
+                module.validate_local_runtime_artifacts(source)
+
     def test_missing_ignored_runtime_binary_is_refused(self):
         module = load_module()
         for name in ("ord", "vcm", "vsd"):
