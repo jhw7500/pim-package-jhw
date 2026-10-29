@@ -318,6 +318,38 @@ class RecordingRetentionTests(unittest.TestCase):
         self.assertEqual(self.execute("root"), 1)
         self.assertFalse(video.exists())
 
+    def test_open_readwrite_fd_blocks_backdated_root_prune(self):
+        old = self.make_file(self.rec, "VD3001_20261020_130001-ch0.mp4")
+        fd = os.open(old, os.O_RDWR)
+        try:
+            os.utime(old, (self.old, self.old))
+            self.assertEqual(self.execute("root"), 0)
+            self.assertTrue(old.exists())
+        finally:
+            os.close(fd)
+
+    def test_open_readonly_fd_does_not_block_old_root_prune(self):
+        old = self.make_file(self.rec, "VD3001_20261020_130001-ch0.mp4")
+        fd = os.open(old, os.O_RDONLY)
+        try:
+            self.assertEqual(self.execute("root"), 1)
+            self.assertFalse(old.exists())
+        finally:
+            os.close(fd)
+
+    def test_hardlink_alias_writer_fd_blocks_inode_prune(self):
+        old = self.make_file(self.rec, "VD3001_20261020_130001-ch0.mp4")
+        alias = Path(self.work.name) / "writer-alias.bin"
+        os.link(old, alias)
+        writer_fd = os.open(alias, os.O_WRONLY | os.O_APPEND)
+        try:
+            os.utime(old, (self.old, self.old))
+            self.assertEqual(self.execute("root"), 0)
+            self.assertEqual(old.stat().st_ino, alias.stat().st_ino)
+            self.assertTrue(old.exists())
+        finally:
+            os.close(writer_fd)
+
     def test_mutation_during_scan_blocks_root_prune(self):
         video = self.make_file(self.rec, "VD3001_20261020_130001-ch0.mp4")
         env = dict(os.environ, ORD_TEST_MUTATE_NAME=video.name)
