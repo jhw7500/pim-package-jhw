@@ -155,6 +155,51 @@ class MovePartNoReplaceTests(unittest.TestCase):
             check=False,
         )
 
+    def test_missing_publisher_is_a_hard_stop(self):
+        part = self.sdtmp / self.source_name
+        part.write_bytes(b"NO-INSTALLED-HELPER")
+        result = self.execute(
+            part, FINALIZER_NOREPLACE_TOOL=str(self.root / "not-installed")
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(part.read_bytes(), b"NO-INSTALLED-HELPER")
+        self.assertFalse((self.final / self.basename).exists())
+
+    def test_publisher_symlink_is_not_trusted(self):
+        part = self.sdtmp / self.source_name
+        part.write_bytes(b"HELPER-SYMLINK-REJECT")
+        untrusted = self.root / "fake-helper-link"
+        untrusted.symlink_to(self.publisher)
+        result = self.execute(part, FINALIZER_NOREPLACE_TOOL=str(untrusted))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(part.read_bytes(), b"HELPER-SYMLINK-REJECT")
+        self.assertFalse((self.final / self.basename).exists())
+
+    def test_native_publisher_rejects_non_absolute_arguments(self):
+        part = self.sdtmp / self.source_name
+        part.write_bytes(b"INPUT-UNCHANGED")
+        result = subprocess.run(
+            [str(self.publisher), str(part), "relative-name.mp4"],
+            capture_output=True, text=True, timeout=10, check=False,
+            cwd=self.root,
+        )
+        self.assertEqual(result.returncode, 64)
+        self.assertEqual(part.read_bytes(), b"INPUT-UNCHANGED")
+        self.assertFalse((self.final / self.basename).exists())
+
+    def test_native_publisher_returns_collision_status_for_existing_final(self):
+        part = self.sdtmp / self.source_name
+        dest = self.final / self.basename
+        part.write_bytes(b"NEW-FILE")
+        dest.write_bytes(b"OLD-FILE")
+        result = subprocess.run(
+            [str(self.publisher), str(part), str(dest)],
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+        self.assertEqual(result.returncode, 73)
+        self.assertEqual(part.read_bytes(), b"NEW-FILE")
+        self.assertEqual(dest.read_bytes(), b"OLD-FILE")
+
     def test_existing_final_video_is_never_overwritten(self):
         part = self.sdtmp / self.source_name
         final = self.final / self.basename
