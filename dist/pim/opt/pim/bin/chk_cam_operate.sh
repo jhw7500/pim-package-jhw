@@ -610,7 +610,14 @@ MovePartFile() {
             logger -p local0.error "[$KEY][$tag:$LINENO] Stage1 cp failed: $filename"
             return 1
         fi
-        sync -f "$stage_tmp" 2>/dev/null || sync
+        if ! { sync -f "$stage_tmp" 2>/dev/null || sync; }; then
+            # Neither file-scoped nor global sync succeeded; a staged copy
+            # cannot replace the sole RAM recording on this evidence.
+            command rm -f -- "$stage_tmp"
+            rmdir -- "$stage_dir" 2>/dev/null || true
+            logger -p local0.error "[$KEY][$tag:$LINENO] Stage1 data sync failed: $filename"
+            return 1
+        fi
 
         if ! "$publish_tool" "$stage_tmp" "$staged_path"; then
             # Atomic RENAME_NOREPLACE either moves the temporary directory
@@ -626,7 +633,11 @@ MovePartFile() {
             logger -p local0.error "[$KEY][$tag:$LINENO] Stage1 private directory cleanup failed: $filename"
             return 1
         fi
-        sync -f "$sd_tmp_dir" 2>/dev/null || sync
+        if ! { sync -f "$sd_tmp_dir" 2>/dev/null || sync; }; then
+            # Keep both RAM original and staged copy for manual reconciliation.
+            logger -p local0.error "[$KEY][$tag:$LINENO] Stage1 directory sync failed: $filename"
+            return 1
+        fi
         # Release the RAM source only after a complete, non-overwriting copy
         # exists. A failed unlink leaves both paths for controlled recovery.
         if ! rm -- "$part_file"; then
@@ -650,8 +661,16 @@ MovePartFile() {
     else
         # The staged source pathname is already gone after successful rename.
         # On a crash, destination either exists completely or does not exist.
-        sync -f "$final_dest" 2>/dev/null || sync
-        sync -f "$final_dir" 2>/dev/null || sync
+        if ! { sync -f "$final_dest" 2>/dev/null || sync; }; then
+            # Atomic rename may have occurred, but durability is unverified;
+            # do not advance heartbeat or consume the session marker.
+            logger -p local0.error "[$KEY][$tag:$LINENO] Stage2 final file sync failed: $filename"
+            return 1
+        fi
+        if ! { sync -f "$final_dir" 2>/dev/null || sync; }; then
+            logger -p local0.error "[$KEY][$tag:$LINENO] Stage2 final directory sync failed: $filename"
+            return 1
+        fi
     fi
 
     # P2-3: final arrival heartbeat. The rename preserves source mtime.
@@ -1062,7 +1081,12 @@ ProcessCompletedSessions() {
 
         # The storage mode may have changed in MovePartFile.
         final_dir="${final_path%/}"
-        sync -f "$final_dir" 2>/dev/null || sync
+        if ! { sync -f "$final_dir" 2>/dev/null || sync; }; then
+            # All per-file renames may have succeeded, but the final
+            # directory is not durably verified. Preserve all_done.
+            fail_count=$((fail_count + 1))
+            logger -p local0.error "[$KEY][$tag:$LINENO] session $timestamp final directory sync failed; marker kept"
+        fi
 
         # A successful move alone does not establish a complete session.
         # Validate every enabled camera and optional SRT in the final path.
