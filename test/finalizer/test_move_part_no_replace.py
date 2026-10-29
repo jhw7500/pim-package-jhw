@@ -105,6 +105,7 @@ class MovePartNoReplaceTests(unittest.TestCase):
             "TEST_FORCE_COPY_FAILURE": "false",
             "TEST_FORCE_UMASK": "false",
             "TEST_SYNC_FAILURE": "",
+            "TEST_FINAL_DIR_CALLS": "0",
             "TEST_FINAL_NAME": self.basename,
             "FINALIZER_NOREPLACE_TOOL": str(self.publisher),
         })
@@ -127,6 +128,11 @@ class MovePartNoReplaceTests(unittest.TestCase):
             '      [ "$last" = "$final_path/$TEST_FINAL_NAME" ] && return 91 ;;',
             '    stage2_dir)',
             '      [ "$last" = "$final_path" ] && return 91 ;;',
+            '    post_marker_dir)',
+            '      if [ "$last" = "$final_path" ]; then',
+            '        TEST_FINAL_DIR_CALLS=$((TEST_FINAL_DIR_CALLS + 1))',
+            '        [ "$TEST_FINAL_DIR_CALLS" -ge 2 ] && return 91',
+            '      fi ;;',
             '  esac',
             '  if [ "$#" -eq 0 ] && [ -n "${TEST_SYNC_FAILURE:-}" ]; then',
             '    return 91',
@@ -207,6 +213,32 @@ class MovePartNoReplaceTests(unittest.TestCase):
         self.assertEqual(
             (self.final / self.basename).read_bytes(),
             b"FINAL-RENAME-WITH-FAILED-SYNC",
+        )
+
+    def test_failed_stage_two_directory_sync_preserves_marker(self):
+        part = self.sdtmp / self.source_name
+        part.write_bytes(b"FINAL-DIRECTORY-UNSYNCED")
+        self.marker.write_text(self.minute + "\n", encoding="utf-8")
+        result = self.execute(part, session=True, TEST_SYNC_FAILURE="stage2_dir")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.marker.exists())
+        self.assertFalse((self.root / "heartbeat").exists())
+        self.assertEqual(
+            (self.final / self.basename).read_bytes(), b"FINAL-DIRECTORY-UNSYNCED"
+        )
+
+    def test_failed_post_move_session_directory_sync_preserves_marker(self):
+        part = self.sdtmp / self.source_name
+        part.write_bytes(b"MARKER-AFTER-UNSYNCED-FINAL-DIR")
+        self.marker.write_text(self.minute + "\n", encoding="utf-8")
+        result = self.execute(
+            part, session=True, TEST_SYNC_FAILURE="post_marker_dir"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.marker.exists())
+        self.assertEqual(
+            (self.final / self.basename).read_bytes(),
+            b"MARKER-AFTER-UNSYNCED-FINAL-DIR",
         )
 
     def test_missing_publisher_is_a_hard_stop(self):
