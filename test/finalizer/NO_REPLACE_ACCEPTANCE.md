@@ -70,6 +70,34 @@ Full product builds via `docker/build.sh` use the Ubuntu 20.04 ARM64 build envir
 
 If the helper cannot be compiled or compatibility-checked, **do not create a release DEB**. Any handoff packaging path that bypasses the full builder must check for the target executable and refuse missing helpers. A dedicated GitHub Ubuntu 20.04 **ARM64** container workflow also compiles and executes the target C helper using QEMU, verifies the AArch64 ELF machine, strict GLIBC 2.31 gate and no-replace collision behavior. Artifact SHA256: `94853e6287dfafcab9d6b3682b239d23e7da5c12ff42b68074382a9d6ca0cfe6`. The native publish/test suite additionally verifies the process `umask 077` does not turn source file modes `0644`, `0640`, `0600` into unconditionally `0600` at final destination. Both normal packaging and external handoff forcibly set strict GLIBC 2.31 limits even if inherited environment variables would disable the gate. These CI results are **not** installed DEB or actual device compatibility proof. Record target helper/source hashes and installed package manifest under an owner-approved release.
 
+## SD recovery: RAM backlog backfill
+
+The no-clobber contract also applies to `BackfillRamRecordingsToSd()` after
+an SD write-disable interval. The former code deleted the RAM source when
+the SD destination merely had the same **size**, without checking contents
+or writer closure; on size mismatch it used plain `mv` with a timestamped
+`.ramdup` destination that could itself collide and replace prior files.
+
+The Draft fix refuses *every* existing SD destination (including symlinks),
+regardless of size or content. Neither size nor even a hash equality proves
+that a recorder still holding a write FD has closed. It will not silently
+delete a RAM source on an ambiguous duplicate. Normal no-collision backfill
+first copies a private complete file into the actual SD final directory,
+requires path-scoped sync, publishes through `RENAME_NOREPLACE`, then
+requires both file and directory sync **before** unlinking the RAM source.
+Failures retain input data for an owner-controlled reconciliation; they may
+also prevent a backlog from draining until an operator reviews the conflict.
+
+`test/finalizer/test_backfill_no_replace.py` isolates the **actual** shell
+backfill function with synthetic RAM/final directories, checks equal-size
+different bytes, identical destinations with unverified writer closure,
+preexisting `.ramdup`, symlink collisions, and a normal successful move.
+Old code failed 4/5 regression cases; updated source passes 5/5.
+
+The existing 10-second quiet-time/mtime criterion is **not** independent
+proof of a closed writer FD. The user-approved hardware source/mount
+provenance, writer/EOS lifecycle, and SD capacity/rollback gates remain
+release blockers. Never run a mutating probe in live recording paths.
 ## Crash/recovery and operational safety
 
 - During RAM-to-SD private copy: failure removes the incomplete file and its private directory; process crash might leave a hidden `.finalizer-stage1.*` **directory** containing an incomplete recording. Such orphans require controlled reconciliation; never silently treat them as finalized.
