@@ -19,6 +19,14 @@ RUNNER = r'''
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+extern "C" time_t __real_time(time_t *);
+extern "C" time_t __wrap_time(time_t *pointer) {
+    const char *stamp = std::getenv("ORD_TEST_NOW_EPOCH");
+    if (!stamp) return __real_time(pointer);
+    const time_t now = static_cast<time_t>(std::strtoll(stamp, NULL, 10));
+    if (pointer) *pointer = now;
+    return now;
+}
 #include <cstdarg>
 #include <sys/syscall.h>
 // Test-only deterministic concurrent writer, injected at the second
@@ -88,7 +96,7 @@ class RecordingRetentionTests(unittest.TestCase):
         cls.executable = Path(cls.program_dir.name) / "scope-test"
         subprocess.run([
             "g++", "-std=c++11", "-Wall", "-Wextra", "-Werror", "-I",
-            str(SOURCE.parent), str(SOURCE), str(main), "-Wl,--wrap=fstatat", "-Wl,--wrap=syscall", "-o",
+            str(SOURCE.parent), str(SOURCE), str(main), "-Wl,--wrap=fstatat", "-Wl,--wrap=syscall", "-Wl,--wrap=time", "-o",
             str(cls.executable)
         ], check=True)
 
@@ -395,6 +403,51 @@ class RecordingRetentionTests(unittest.TestCase):
         self.assertEqual(self.execute("root"), 1)
         self.assertFalse(video.exists())
         self.assertFalse(stage.exists())
+
+
+    def test_backdated_current_session_is_not_pruned(self):
+        current = time.strftime("%Y%m%d_%H%M00", time.localtime())
+        active = self.make_file(self.rec, f"VD3001_{current}-ch0.mp4")
+        self.assertEqual(self.execute("root"), 0)
+        self.assertTrue(active.exists(), "active session was removed")
+        old = self.make_file(self.rec, "VD3001_20261020_130001-ch1.mp4")
+        self.assertEqual(self.execute("root"), 1)
+        self.assertTrue(active.exists())
+        self.assertFalse(old.exists())
+
+    def test_backdated_future_event_session_is_not_pruned(self):
+        future = time.strftime("%Y%m%d_%H%M00", time.localtime(time.time() + 3600))
+        event = self.make_file(self.event, f"evt_VD3001_{future}-ch0.mp4")
+        self.assertEqual(self.execute("event", target=self.event), 0)
+        self.assertTrue(event.exists())
+
+    def test_dst_fall_back_repeated_hour_is_protected(self):
+        from datetime import datetime, timezone
+        fake = int(datetime(2026, 11, 1, 6, 10, tzinfo=timezone.utc).timestamp())
+        video = self.make_file(self.rec, "VD3001_20261101_010000-ch0.mp4")
+        os.utime(video, (fake - 1200, fake - 1200))
+        env = dict(os.environ, TZ="America/New_York", ORD_TEST_NOW_EPOCH=str(fake))
+        result = subprocess.run([
+            str(self.executable), "root", str(self.rec), str(self.recycle),
+            "VD3001", "mp4"
+        ], capture_output=True, text=True, env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "0")
+        self.assertTrue(video.exists())
+
+    def test_dst_spring_forward_nonexistent_local_time_is_protected(self):
+        from datetime import datetime, timezone
+        fake = int(datetime(2026, 3, 8, 7, 5, tzinfo=timezone.utc).timestamp())
+        video = self.make_file(self.rec, "VD3001_20260308_023000-ch0.mp4")
+        os.utime(video, (fake - 1200, fake - 1200))
+        env = dict(os.environ, TZ="America/New_York", ORD_TEST_NOW_EPOCH=str(fake))
+        result = subprocess.run([
+            str(self.executable), "root", str(self.rec), str(self.recycle),
+            "VD3001", "mp4"
+        ], capture_output=True, text=True, env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "0")
+        self.assertTrue(video.exists())
 
 
 if __name__ == "__main__":
