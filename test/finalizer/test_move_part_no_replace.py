@@ -105,6 +105,7 @@ class MovePartNoReplaceTests(unittest.TestCase):
             "TEST_FORCE_COPY_FAILURE": "false",
             "TEST_FORCE_UMASK": "false",
             "TEST_SYNC_FAILURE": "",
+            "TEST_ALLOW_GLOBAL_SYNC": "false",
             "TEST_FINAL_DIR_CALLS": "0",
             "TEST_FINAL_NAME": self.basename,
             "FINALIZER_NOREPLACE_TOOL": str(self.publisher),
@@ -134,7 +135,8 @@ class MovePartNoReplaceTests(unittest.TestCase):
             '        [ "$TEST_FINAL_DIR_CALLS" -ge 2 ] && return 91',
             '      fi ;;',
             '  esac',
-            '  if [ "$#" -eq 0 ] && [ -n "${TEST_SYNC_FAILURE:-}" ]; then',
+            '  if [ "$#" -eq 0 ] && [ -n "${TEST_SYNC_FAILURE:-}" ]',
+            '     && [ "${TEST_ALLOW_GLOBAL_SYNC:-false}" != true ]; then',
             '    return 91',
             '  fi',
             '  return 0',
@@ -239,6 +241,33 @@ class MovePartNoReplaceTests(unittest.TestCase):
         self.assertEqual(
             (self.final / self.basename).read_bytes(),
             b"MARKER-AFTER-UNSYNCED-FINAL-DIR",
+        )
+
+    def test_stage_one_fsync_error_cannot_be_masked_by_global_success(self):
+        part = self.ram / self.source_name
+        part.write_bytes(b"RAM-INPUT-FSYNC-ERROR")
+        result = self.execute(
+            part, TEST_SYNC_FAILURE="stage1_temp",
+            TEST_ALLOW_GLOBAL_SYNC="true",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(part.read_bytes(), b"RAM-INPUT-FSYNC-ERROR")
+        self.assertFalse((self.final / self.basename).exists())
+        self.assertFalse((self.root / "heartbeat").exists())
+
+    def test_stage_two_fsync_error_cannot_be_masked_by_global_success(self):
+        part = self.sdtmp / self.source_name
+        part.write_bytes(b"FINAL-FSYNC-ERROR")
+        self.marker.write_text(self.minute + "\n", encoding="utf-8")
+        result = self.execute(
+            part, session=True, TEST_SYNC_FAILURE="stage2_final",
+            TEST_ALLOW_GLOBAL_SYNC="true",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.marker.exists())
+        self.assertFalse((self.root / "heartbeat").exists())
+        self.assertEqual(
+            (self.final / self.basename).read_bytes(), b"FINAL-FSYNC-ERROR"
         )
 
     def test_missing_publisher_is_a_hard_stop(self):
