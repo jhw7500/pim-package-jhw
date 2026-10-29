@@ -343,5 +343,59 @@ class RecordingRetentionTests(unittest.TestCase):
         self.assertEqual(retained.read_bytes(), b"must preserve")
 
 
+    def test_interrupted_quarantine_with_valid_filename_preserves_both_versions(self):
+        name = "VD3001_20261020_130001-ch0.mp4"
+        video = self.make_file(self.rec, name)
+        stage = self.rec / ".ord-retention-quarantine"
+        stage.mkdir(mode=0o700)
+        retained = stage / name
+        retained.write_bytes(b"unverified-crash-remainder")
+        result = subprocess.run([
+            str(self.executable), "root", str(self.rec),
+            str(self.recycle), "VD3001", "mp4"
+        ], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(video.read_bytes(), name.encode())
+        self.assertEqual(retained.read_bytes(), b"unverified-crash-remainder")
+
+    def test_symlinked_quarantine_does_not_escape_recording_root(self):
+        video = self.make_file(self.rec, "VD3001_20261020_130001-ch0.mp4")
+        external = Path(self.work.name) / "external-staging"
+        external.mkdir()
+        marker = (external / "outside-file.txt")
+        marker.write_bytes(b"never-delete")
+        stage = self.rec / ".ord-retention-quarantine"
+        stage.symlink_to(external, target_is_directory=True)
+        result = subprocess.run([
+            str(self.executable), "root", str(self.rec),
+            str(self.recycle), "VD3001", "mp4"
+        ], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(video.is_file())
+        self.assertTrue(stage.is_symlink())
+        self.assertEqual(marker.read_bytes(), b"never-delete")
+
+    def test_quarantine_with_public_permissions_is_rejected(self):
+        video = self.make_file(self.rec, "VD3001_20261020_130001-ch0.mp4")
+        stage = self.rec / ".ord-retention-quarantine"
+        stage.mkdir()
+        stage.chmod(0o755)
+        result = subprocess.run([
+            str(self.executable), "root", str(self.rec),
+            str(self.recycle), "VD3001", "mp4"
+        ], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(video.exists())
+        self.assertTrue(stage.is_dir())
+
+    def test_preexisting_empty_private_quarantine_is_reusable(self):
+        video = self.make_file(self.rec, "VD3001_20261020_130001-ch0.mp4")
+        stage = self.rec / ".ord-retention-quarantine"
+        stage.mkdir(mode=0o700)
+        self.assertEqual(self.execute("root"), 1)
+        self.assertFalse(video.exists())
+        self.assertFalse(stage.exists())
+
+
 if __name__ == "__main__":
     unittest.main()
