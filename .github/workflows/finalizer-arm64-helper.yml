@@ -1,0 +1,73 @@
+name: Finalizer ARM64 Publisher ABI
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'tools/finalizer_noreplace.c'
+      - 'tools/build_finalizer_noreplace.sh'
+      - 'tools/check_glibc.sh'
+      - 'build.sh'
+      - '.github/workflows/finalizer-arm64-helper.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  arm64-focal:
+    name: Ubuntu 20.04 AArch64 / GLIBC 2.31 publisher build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact Draft source
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Enable userspace ARM64 emulation (runner only)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - name: Build target-ABI helper in isolated ARM64 Ubuntu 20.04
+        run: |
+          docker run --rm --platform linux/arm64 \
+            -v "$GITHUB_WORKSPACE":/src -w /src \
+            ubuntu:20.04 bash -euc '
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update -qq
+              apt-get install -y -qq --no-install-recommends build-essential binutils file
+              bash tools/build_finalizer_noreplace.sh \
+                /src/dist/pim/opt/pim/bin/finalizer_noreplace
+              helper=/src/dist/pim/opt/pim/bin/finalizer_noreplace
+              test -x "$helper"
+              file "$helper"
+              readelf -h "$helper" | grep -Eq "Machine: *AArch64"
+              bash tools/check_glibc.sh "$helper"
+              sha256sum "$helper"
+              scratch=$(mktemp -d /tmp/finalizer-target-abi.XXXXXXXX)
+              trap '"'"'rm -rf -- "$scratch"'"'"' EXIT
+              printf old > "$scratch/final"
+              printf new > "$scratch/staged"
+              if "$helper" "$scratch/staged" "$scratch/final"; then
+                echo "ERROR: publisher replaced existing final" >&2
+                exit 1
+              fi
+              test "$(cat "$scratch/final")" = old
+              test "$(cat "$scratch/staged")" = new
+              rm "$scratch/final"
+              "$helper" "$scratch/staged" "$scratch/final"
+              test "$(cat "$scratch/final")" = new
+              test ! -e "$scratch/staged"
+              echo "ARM64 ABI and no-replace behavior PASS"
+            '
+      - name: Verify artifact identity from host without executing it
+        run: |
+          test -f dist/pim/opt/pim/bin/finalizer_noreplace
+          file dist/pim/opt/pim/bin/finalizer_noreplace
+          sha256sum dist/pim/opt/pim/bin/finalizer_noreplace
+      - name: Keep ARM64 helper build as review-only artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: finalizer-noreplace-aarch64-focal
+          path: dist/pim/opt/pim/bin/finalizer_noreplace
+          if-no-files-found: error

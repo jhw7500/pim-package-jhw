@@ -191,6 +191,68 @@ def validate_local_runtime_artifacts(source: Path) -> None:
             )
 
 
+    # A direct external handoff DEB bypasses build.sh. If this source tree
+    # includes the helper-dependent finalizer, the target executable MUST
+    # already have been built and staged, not silently omitted.
+    finalizer = source / "opt/pim/bin/chk_cam_operate.sh"
+    if finalizer.is_file():
+        body = finalizer.read_text(encoding="utf-8")
+        if "FINALIZER_NOREPLACE_TOOL" in body:
+            helper_relative = Path("opt/pim/bin/finalizer_noreplace")
+            helper = source / helper_relative
+            if helper.is_symlink() or not helper.is_file():
+                raise FileNotFoundError(
+                    f"required finalizer helper missing: ${helper_relative}"
+                )
+            metadata = helper.stat()
+            if metadata.st_size < 20 or stat.S_IMODE(metadata.st_mode) & 0o111 == 0:
+                raise ValueError(
+                    f"finalizer helper is not an executable ELF: ${helper_relative}"
+                )
+            header = helper.read_bytes()[:20]
+            # Target package is arm64: ELF64 little-endian EM_AARCH64=183.
+            if not (header[:4] == b"\x7fELF" and header[4] == 2
+                    and header[5] == 1 and int.from_bytes(header[18:20], "little") == 183):
+                raise ValueError(
+                    f"finalizer helper is not AArch64 ELF: ${helper_relative}"
+                )
+            # A forged/truncated ELF header must not be shipped as a runtime.
+            # Fail closed if readelf is unavailable or reports a malformed ELF.
+            try:
+                check = subprocess.run(
+                    ["readelf", "-h", str(helper)],
+                    capture_output=True, text=True, timeout=15, check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise ValueError("cannot inspect finalizer ELF") from exc
+            if (check.returncode or "Error:" in check.stderr
+                    or "Machine:" not in check.stdout
+                    or "AArch64" not in check.stdout):
+                raise ValueError(
+                    f"finalizer helper ELF malformed or wrong machine: ${helper_relative}"
+                )
+            # Same strict GLIBC gate as normal PIM release builds.
+            try:
+                strict_glibc_env = {
+                    **os.environ,
+                    "PIM_GLIBC_GATE": "strict",
+                    "PIM_VERIFY_BINARIES": "on",
+                    "PIM_MAX_GLIBC": "2.31",
+                }
+                glibc_check = subprocess.run(
+                    ["bash", str(ROOT / "tools/check_glibc.sh"), str(helper)],
+                    capture_output=True, text=True, timeout=30, check=False,
+                    env=strict_glibc_env,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise ValueError("finalizer GLIBC gate unavailable") from exc
+            if glibc_check.returncode:
+                raise ValueError(
+                    f"finalizer helper fails GLIBC target gate: ${helper_relative}"
+                )
+
+
+
 def build_package(
     source: Path,
     output_dir: Path,
