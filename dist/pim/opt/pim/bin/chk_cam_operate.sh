@@ -598,7 +598,9 @@ MovePartFile() {
             logger -p local0.error "[$KEY][$tag:$LINENO] Stage1 cannot create private temp: $filename"
             return 1
         }
-        if ! cp -p -- "$part_file" "$stage_tmp"; then
+        # FAT32/exFAT cannot preserve Unix owner/mode; copy bytes and
+        # preserve recording mtime only (used by retention/diagnostics).
+        if ! cp --preserve=timestamps -- "$part_file" "$stage_tmp"; then
             command rm -f -- "$stage_tmp"
             logger -p local0.error "[$KEY][$tag:$LINENO] Stage1 cp failed: $filename"
             return 1
