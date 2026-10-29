@@ -243,6 +243,19 @@ class MovePartNoReplaceTests(unittest.TestCase):
         )
         self.assertTrue((self.root / "heartbeat").exists())
 
+    def test_ram_to_sd_stage_does_not_force_private_0600_mode(self):
+        # mktemp creates existing private files with mode 0600. Copying into
+        # that existing file can leave a public recording unreadable by the
+        # non-root FTP/VCM consumers on ext4.
+        part = self.ram / self.source_name
+        part.write_bytes(b"RECORDER-READABLE-VIDEO")
+        part.chmod(0o644)
+        result = self.execute(part)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = self.final / self.basename
+        self.assertEqual(output.read_bytes(), b"RECORDER-READABLE-VIDEO")
+        self.assertEqual(output.stat().st_mode & 0o777, 0o644)
+
     def test_ram_to_sd_copy_preserves_recording_mtime_without_unix_owner(self):
         part = self.ram / self.source_name
         part.write_bytes(b"OLD-RECORDING-MTIME")
