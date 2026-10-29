@@ -19,6 +19,8 @@ RUNNER = r'''
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <cstdarg>
+#include <sys/syscall.h>
 // Test-only deterministic concurrent writer, injected at the second
 // fstatat of the chosen recording to exercise the pre-delete recheck.
 extern "C" int __real_fstatat(int, const char *, struct stat *, int);
@@ -36,6 +38,30 @@ extern "C" int __wrap_fstatat(int fd, const char *name, struct stat *st, int fla
         }
     }
     return __real_fstatat(fd, name, st, flags);
+}
+extern "C" long __real_syscall(long, ...);
+extern "C" long __wrap_syscall(long number, ...) {
+    va_list ap;
+    va_start(ap, number);
+    const int src_fd = va_arg(ap, int);
+    const char *src = va_arg(ap, const char *);
+    const int dst_fd = va_arg(ap, int);
+    const char *dst = va_arg(ap, const char *);
+    const int flags = va_arg(ap, int);
+    va_end(ap);
+    const char *target = std::getenv("ORD_TEST_SWAP_BEFORE_MOVE");
+    static bool swapped = false;
+    if (number == SYS_renameat2 && target && !swapped
+        && std::strcmp(target, src) == 0) {
+        swapped = true;
+        if (renameat(src_fd, src, src_fd, "held-original.mp4") != 0) return -1;
+        int fd = openat(src_fd, src, O_WRONLY | O_CREAT | O_EXCL, 0600);
+        if (fd < 0) return -1;
+        const char wrong[] = "IMPORTANT_NOT_RECORDING";
+        (void)write(fd, wrong, sizeof(wrong)-1);
+        (void)close(fd);
+    }
+    return __real_syscall(number, src_fd, src, dst_fd, dst, flags);
 }
 int main(int argc, char **argv) {
     if (argc != 6) return 80;
@@ -62,7 +88,7 @@ class RecordingRetentionTests(unittest.TestCase):
         cls.executable = Path(cls.program_dir.name) / "scope-test"
         subprocess.run([
             "g++", "-std=c++11", "-Wall", "-Wextra", "-Werror", "-I",
-            str(SOURCE.parent), str(SOURCE), str(main), "-Wl,--wrap=fstatat", "-o",
+            str(SOURCE.parent), str(SOURCE), str(main), "-Wl,--wrap=fstatat", "-Wl,--wrap=syscall", "-o",
             str(cls.executable)
         ], check=True)
 
@@ -272,6 +298,49 @@ class RecordingRetentionTests(unittest.TestCase):
         self.assertEqual(result.stdout.strip(), "0")
         self.assertTrue(video.exists())
         self.assertFalse((self.recycle / "20261020_13" / video.name).exists())
+
+
+    def test_path_replacement_before_root_rename_preserves_foreign_file(self):
+        video = self.make_file(self.rec, "VD3001_20261020_130001-ch0.mp4")
+        env = dict(os.environ, ORD_TEST_SWAP_BEFORE_MOVE=video.name)
+        result = subprocess.run([
+            str(self.executable), "root", str(self.rec), str(self.recycle),
+            "VD3001", "mp4"
+        ], capture_output=True, text=True, env=env)
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(video.read_bytes(), b"IMPORTANT_NOT_RECORDING")
+        self.assertEqual(
+            (self.rec / "held-original.mp4").read_bytes(), video.name.encode()
+        )
+        self.assertFalse((self.rec / ".ord-retention-quarantine").exists())
+
+    def test_path_replacement_before_rotation_restores_foreign_file(self):
+        video = self.make_file(self.rec, "VD3001_20261020_130001-ch0.mp4")
+        env = dict(os.environ, ORD_TEST_SWAP_BEFORE_MOVE=video.name)
+        result = subprocess.run([
+            str(self.executable), "rotate", str(self.rec), str(self.recycle),
+            "VD3001", "mp4"
+        ], capture_output=True, text=True, env=env)
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(video.read_bytes(), b"IMPORTANT_NOT_RECORDING")
+        self.assertEqual(
+            (self.rec / "held-original.mp4").read_bytes(), video.name.encode()
+        )
+        self.assertFalse((self.recycle / "20261020_13" / video.name).exists())
+
+    def test_nonempty_quarantine_blocks_deletion_and_preserves_content(self):
+        video = self.make_file(self.rec, "VD3001_20261020_130001-ch0.mp4")
+        stage = self.rec / ".ord-retention-quarantine"
+        stage.mkdir(mode=0o700)
+        retained = stage / "previous-unverified-recording.bin"
+        retained.write_bytes(b"must preserve")
+        result = subprocess.run([
+            str(self.executable), "root", str(self.rec), str(self.recycle),
+            "VD3001", "mp4"
+        ], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(video.is_file())
+        self.assertEqual(retained.read_bytes(), b"must preserve")
 
 
 if __name__ == "__main__":
