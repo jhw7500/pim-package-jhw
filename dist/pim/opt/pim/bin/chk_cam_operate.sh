@@ -1008,21 +1008,52 @@ ProcessCompletedSessions() {
             done
         done
 
-        # final_path 디렉토리 flush (한 번만)
+        # The storage mode may have changed in MovePartFile.
+        final_dir="${final_path%/}"
         sync -f "$final_dir" 2>/dev/null || sync
 
-        # A marker with zero discovered fragments is not proof of a completed
-        # recording. Keep it for a later pass or controlled investigation.
-        if [ "$fail_count" -eq 0 ] && [ "$success_count" -gt 0 ]; then
-            rm -f "$done_file"
-        fi
+        # A successful move alone does not establish a complete session.
+        # Validate every enabled camera and optional SRT in the final path.
+        local ch flag final_file found_video enabled_count=0 missing_final=0
+        local final_ext="mp4"
+        [ "$muxer" = "ts" ] && final_ext="ts"
+        for ch in 0 1 2 3; do
+            flag="cam_ch${ch}"
+            case "${!flag:-}" in
+                true)
+                    enabled_count=$((enabled_count + 1))
+                    found_video=0
+                    for final_file in "$final_dir"/"${vhl_name}_${timestamp}"[0-5][0-9]"-ch${ch}.${final_ext}"; do
+                        if [ -f "$final_file" ] && [ ! -L "$final_file" ] && [ -s "$final_file" ]; then
+                            found_video=1
+                            break
+                        fi
+                    done
+                    [ "$found_video" -eq 1 ] || missing_final=1
+                    ;;
+                false) ;;
+                *) missing_final=1 ;; # Unknown channel configuration
+            esac
+        done
+        [ "$enabled_count" -gt 0 ] || missing_final=1
+        case "${srt_en:-}" in
+            true)
+                final_file="$final_dir/${vhl_name}_${timestamp}00-data.srt"
+                if [ ! -f "$final_file" ] || [ -L "$final_file" ] || [ ! -s "$final_file" ]; then
+                    missing_final=1
+                fi
+                ;;
+            false) ;;
+            *) missing_final=1 ;; # Do not assume unknown SRT state is disabled
+        esac
 
-        if [ "$fail_count" -eq 0 ] && [ "$success_count" -gt 0 ]; then
-            logger -p local0.notice "[$KEY][$tag:$LINENO] session $timestamp completed: $success_count files"
-        elif [ "$fail_count" -eq 0 ]; then
-            logger -p local0.warning "[$KEY][$tag:$LINENO] session $timestamp has no finalized files; marker kept for retry"
+        if [ "$fail_count" -eq 0 ] && [ "$success_count" -gt 0 ] && [ "$missing_final" -eq 0 ]; then
+            rm -f "$done_file"
+            logger -p local0.notice "[$KEY][$tag:$LINENO] session $timestamp completed: $success_count moved; all enabled files found"
+        elif [ "$fail_count" -gt 0 ]; then
+            logger -p local0.error "[$KEY][$tag:$LINENO] session $timestamp: $success_count moved, $fail_count failed; marker kept"
         else
-            logger -p local0.error "[$KEY][$tag:$LINENO] session $timestamp: $success_count ok, $fail_count failed; marker kept"
+            logger -p local0.warning "[$KEY][$tag:$LINENO] session $timestamp incomplete (moved=$success_count enabled=$enabled_count missing=$missing_final); marker kept"
         fi
 
         # 카운터 초기화
