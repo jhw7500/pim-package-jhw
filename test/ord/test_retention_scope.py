@@ -283,6 +283,41 @@ class RecordingRetentionTests(unittest.TestCase):
         self.assertEqual(len(list(self.rec.iterdir())), 1)
 
 
+    def test_open_writer_fd_blocks_backdated_root_prune(self):
+        # Even an old-looking completed filename may still have an active
+        # writable FD. Age/inode/mtime checks alone do not prove closure.
+        video = self.make_file(self.rec, "VD3001_20261020_130001-ch0.mp4")
+        writer_fd = os.open(video, os.O_WRONLY | os.O_APPEND)
+        try:
+            os.utime(video, (self.old, self.old))
+            self.assertEqual(self.execute("root"), 0)
+            self.assertTrue(video.exists())
+            os.write(writer_fd, b"-live-writer")
+            self.assertIn(b"-live-writer", video.read_bytes())
+        finally:
+            os.close(writer_fd)
+
+    def test_open_writer_fd_blocks_backdated_recycle_prune(self):
+        hour = self.recycle / "20261020_13"
+        hour.mkdir()
+        video = self.make_file(hour, "VD3001_20261020_130001-ch0.mp4")
+        writer_fd = os.open(video, os.O_WRONLY | os.O_APPEND)
+        try:
+            os.utime(video, (self.old, self.old))
+            self.assertEqual(self.execute("recycle"), 0)
+            self.assertTrue(video.exists())
+            os.write(writer_fd, b"-live-recycle-writer")
+            self.assertIn(b"-live-recycle-writer", video.read_bytes())
+        finally:
+            os.close(writer_fd)
+
+    def test_closed_writable_fd_allows_old_root_prune(self):
+        video = self.make_file(self.rec, "VD3001_20261020_130001-ch0.mp4")
+        writer_fd = os.open(video, os.O_WRONLY | os.O_APPEND)
+        os.close(writer_fd)
+        self.assertEqual(self.execute("root"), 1)
+        self.assertFalse(video.exists())
+
     def test_mutation_during_scan_blocks_root_prune(self):
         video = self.make_file(self.rec, "VD3001_20261020_130001-ch0.mp4")
         env = dict(os.environ, ORD_TEST_MUTATE_NAME=video.name)
