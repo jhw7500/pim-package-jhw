@@ -127,6 +127,90 @@ class RecordingRetentionTests(unittest.TestCase):
         self.assertFalse(video.exists())
         self.assertFalse(srt.exists())
 
+    def test_rotation_collision_preserves_source_and_existing_destination(self):
+        old = self.make_file(self.rec, "VD3001_20261020_130001-ch0.mp4")
+        hour = self.recycle / "20261020_13"
+        hour.mkdir()
+        collision = self.make_file(hour, old.name)
+        collision.write_bytes(b"existing separate recording")
+        result = subprocess.run([
+            str(self.executable), "rotate", str(self.rec),
+            str(self.recycle), "VD3001", "mp4"
+        ], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(old.exists())
+        self.assertEqual(collision.read_bytes(), b"existing separate recording")
+
+    def test_invalid_calendar_days_are_not_recordings(self):
+        names = [
+            "VD3001_20260230_130001-ch0.mp4",
+            "VD3001_20260431_130001-ch1.mp4",
+            "VD3001_20261020_246000-ch2.mp4",
+            "VD3001_20261020_126100-ch3.mp4",
+        ]
+        paths = [self.make_file(self.rec, name) for name in names]
+        self.assertEqual(self.execute("root"), 0)
+        self.assertTrue(all(path.exists() for path in paths))
+
+    def test_exactly_32_files_may_be_removed_per_pass(self):
+        for second in range(40):
+            self.make_file(self.rec, f"VD3001_20261020_1300{second:02d}-ch0.mp4")
+        self.assertEqual(self.execute("root"), 32)
+        self.assertEqual(len(list(self.rec.iterdir())), 8)
+
+    def test_directory_named_as_video_is_not_removed(self):
+        name = "VD3001_20261020_130001-ch0.mp4"
+        (self.rec / name).mkdir()
+        self.assertEqual(self.execute("root"), 0)
+        self.assertTrue((self.rec / name).is_dir())
+
+    def test_symlinked_root_and_recycle_directory_are_rejected(self):
+        root_link = Path(self.work.name) / "root-link"
+        root_link.symlink_to(self.rec, target_is_directory=True)
+        result = subprocess.run([
+            str(self.executable), "root", str(root_link),
+            str(self.recycle), "VD3001", "mp4"
+        ], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        recycle_link = Path(self.work.name) / "recycle-link"
+        recycle_link.symlink_to(self.recycle, target_is_directory=True)
+        result = subprocess.run([
+            str(self.executable), "recycle", str(self.rec),
+            str(recycle_link), "VD3001", "mp4"
+        ], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_copy_generated_rms_event_files_are_pruned_but_invalid_formats_survive(self):
+        # tcpServer.cpp formats COPY suffix with "_rmsMax_%0.1f".
+        names = [
+            "evt_VD3001_20261020_130000_rmsMax_12.4-ch0.mp4",
+            "evt_VD3001_20261020_130000_rmsMax_-1.0-data.srt",
+            "evt_VD3001_20261020_130000_rmsMax_0.0-vib.bin",
+        ]
+        allowed = [self.make_file(self.event, name) for name in names]
+        rejected = [
+            self.make_file(self.event, name)
+            for name in [
+                "evt_VD3001_20261020_130000_rmsMax_nan-ch1.mp4",
+                "evt_VD3001_20261020_130000_rmsMax_3.14-ch1.mp4",
+                "evt_VD3001_20261020_130000_rmsMax_1e6-ch1.mp4",
+                "evt_VD3001_20261020_130000_rmsMax_123456789012.3-ch1.mp4",
+                "evt_VD3001_20261020_130000_rmsMax_-Inf-ch1.mp4",
+            ]
+        ]
+        self.assertEqual(self.execute("event", target=self.event), 3)
+        self.assertTrue(all(not p.exists() for p in allowed))
+        self.assertTrue(all(p.exists() for p in rejected))
+
+    def test_large_unterminated_style_device_argument_is_rejected(self):
+        self.make_file(self.rec, "VD3001_20261020_130001-ch0.mp4")
+        result = subprocess.run([
+            str(self.executable), "root", str(self.rec), str(self.recycle),
+            "A" * 10000, "mp4"
+        ], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len(list(self.rec.iterdir())), 1)
+
     def test_invalid_device_or_muxer_never_approved(self):
         self.make_file(self.rec, "VD3001_20261020_130001-ch0.mp4")
         for device, muxer in [

@@ -6,6 +6,8 @@
 #include <ctime>
 #include <dirent.h>
 #include <fcntl.h>
+#include <linux/fs.h>
+#include <sys/syscall.h>
 #include <string>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -36,12 +38,17 @@ struct Candidate {
   std::string minute;
   time_t modified;
   ino_t inode;
+  dev_t device;
 };
 
 bool token(const char *value, size_t max_size) {
-  if (!value || !*value) return false;
-  const std::string s(value);
-  if (s.size() > max_size) return false;
+  if (!value) return false;
+  // Do not let std::string(char*) scan beyond a fixed-size product
+  // configuration field when a malformed value lacks a NUL terminator.
+  size_t length = 0;
+  while (length <= max_size && value[length] != '\0') ++length;
+  if (length == 0 || length > max_size) return false;
+  const std::string s(value, length);
   for (size_t i = 0; i < s.size(); ++i) {
     const unsigned char c = static_cast<unsigned char>(s[i]);
     if (!(std::isalnum(c) || c == '_' || c == '-')) return false;
@@ -69,14 +76,20 @@ int decimal(const std::string &s, size_t pos, size_t size) {
 }
 
 // Check the actual timestamp shape, not just the presence of the machine ID.
+bool valid_calendar_day(int year, int month, int day) {
+  if (year < 2000 || year > 2099 || month < 1 || month > 12) return false;
+  static const int days[] = {0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  const bool leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+  return day >= 1 && day <= days[month] + (leap && month == 2 ? 1 : 0);
+}
+
 bool timestamp(const std::string &s, size_t pos) {
   if (!digits(s, pos, 8) || pos + 8 >= s.size() || s[pos + 8] != '_'
       || !digits(s, pos + 9, 6)) return false;
   const int y = decimal(s, pos, 4), mo = decimal(s, pos + 4, 2);
   const int day = decimal(s, pos + 6, 2), h = decimal(s, pos + 9, 2);
   const int m = decimal(s, pos + 11, 2), sec = decimal(s, pos + 13, 2);
-  return y >= 2000 && y <= 2099 && mo >= 1 && mo <= 12
-      && day >= 1 && day <= 31 && h <= 23 && m <= 59 && sec <= 59;
+  return valid_calendar_day(y, mo, day) && h <= 23 && m <= 59 && sec <= 59;
 }
 
 bool hour_name(const std::string &name) {
@@ -84,8 +97,7 @@ bool hour_name(const std::string &name) {
       || !digits(name, 9, 2)) return false;
   const int year = decimal(name, 0, 4), mo = decimal(name, 4, 2);
   const int day = decimal(name, 6, 2), hour = decimal(name, 9, 2);
-  return year >= 2000 && year <= 2099 && mo >= 1 && mo <= 12
-      && day >= 1 && day <= 31 && hour <= 23;
+  return valid_calendar_day(year, mo, day) && hour <= 23;
 }
 
 bool file_name(const std::string &name, const char *vhl, const char *muxer,
@@ -94,7 +106,19 @@ bool file_name(const std::string &name, const char *vhl, const char *muxer,
   if (name.compare(0, prefix.size(), prefix) != 0) return false;
   const size_t pos = prefix.size();
   if (!timestamp(name, pos)) return false;
-  const std::string suffix = name.substr(pos + 15);
+  std::string suffix = name.substr(pos + 15);
+  // ORD's COPY worker optionally inserts _rmsMax_<N.N> immediately
+  // before -chN/-data/-vib when vibration is enabled.
+  if (event && suffix.compare(0, 8, "_rmsMax_") == 0) {
+    size_t i = 8;
+    if (i < suffix.size() && suffix[i] == '-') ++i;
+    const size_t digits_start = i;
+    while (i < suffix.size() && suffix[i] >= '0' && suffix[i] <= '9') ++i;
+    if (i == digits_start || i - digits_start > 10
+        || i + 1 >= suffix.size() || suffix[i] != '.'
+        || suffix[i + 1] < '0' || suffix[i + 1] > '9') return false;
+    suffix = suffix.substr(i + 2);
+  }
   const bool video = suffix.size() == 5 + std::string(muxer).size()
       && suffix.compare(0, 3, "-ch") == 0
       && suffix[3] >= '0' && suffix[3] <= '3'
@@ -132,7 +156,7 @@ int eligible_files(int fd, const char *vhl, const char *muxer, bool event,
     struct stat st;
     if (fstatat(fd, name.c_str(), &st, AT_SYMLINK_NOFOLLOW) != 0
         || !older_than_grace(st, now)) continue;
-    Candidate item = {name, hour, minute, st.st_mtime, st.st_ino};
+    Candidate item = {name, hour, minute, st.st_mtime, st.st_ino, st.st_dev};
     files->push_back(item);
     errno = 0;
   }
@@ -148,7 +172,7 @@ bool same_regular_file(int fd, const Candidate &file) {
   struct stat st;
   return fstatat(fd, file.name.c_str(), &st, AT_SYMLINK_NOFOLLOW) == 0
       && S_ISREG(st.st_mode) && st.st_ino == file.inode
-      && older_than_grace(st, time(NULL));
+      && st.st_dev == file.device && older_than_grace(st, time(NULL));
 }
 
 int prune_files(int fd, const std::vector<Candidate> &files,
@@ -182,10 +206,17 @@ int rotate_oldest(const char *root, const char *recycle,
   for (size_t i = 0; i < files.size() && moved < static_cast<int>(kMaxFilesPerPass); ++i) {
     const Candidate &f = files[i];
     if (f.hour != hour || !same_regular_file(src.get(), f)) continue;
-    // linkat+unlinkat avoids clobbering a pre-existing destination recording.
-    if (linkat(src.get(), f.name.c_str(), hour_dir.get(), f.name.c_str(), 0) < 0)
-      return moved ? moved : -1;
-    if (unlinkat(src.get(), f.name.c_str(), 0) < 0) return -1;
+    // A single atomic move prevents a successful link followed by an
+    // unrelated source-file replacement before unlink. Never replace an
+    // existing destination recording; unsupported filesystems fail closed.
+#ifdef SYS_renameat2
+    if (syscall(SYS_renameat2, src.get(), f.name.c_str(),
+                hour_dir.get(), f.name.c_str(), RENAME_NOREPLACE) != 0)
+      return -1;
+#else
+    errno = ENOSYS;
+    return -1;
+#endif
     ++moved;
   }
   return moved;
