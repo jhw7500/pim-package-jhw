@@ -104,6 +104,8 @@ class MovePartNoReplaceTests(unittest.TestCase):
             "TEST_FORCE_LINK_FAILURE": "false",
             "TEST_FORCE_COPY_FAILURE": "false",
             "TEST_FORCE_UMASK": "false",
+            "TEST_SYNC_FAILURE": "",
+            "TEST_FINAL_NAME": self.basename,
             "FINALIZER_NOREPLACE_TOOL": str(self.publisher),
         })
         result.update(extra)
@@ -114,7 +116,23 @@ class MovePartNoReplaceTests(unittest.TestCase):
         # No source /tmp glob or hardware configuration can be reached.
         lines = [
             "logger() { :; }",
-            "sync() { :; }",
+            'sync() {',
+            '  local last="${@: -1}"',
+            '  case "${TEST_SYNC_FAILURE:-}" in',
+            '    stage1_temp)',
+            '      [[ "$last" == "$sd_tmp_path/.finalizer-stage1."*/* ]] && return 91 ;;',
+            '    stage1_dir)',
+            '      [ "$last" = "$sd_tmp_path" ] && return 91 ;;',
+            '    stage2_final)',
+            '      [ "$last" = "$final_path/$TEST_FINAL_NAME" ] && return 91 ;;',
+            '    stage2_dir)',
+            '      [ "$last" = "$final_path" ] && return 91 ;;',
+            '  esac',
+            '  if [ "$#" -eq 0 ] && [ -n "${TEST_SYNC_FAILURE:-}" ]; then',
+            '    return 91',
+            '  fi',
+            '  return 0',
+            '}',
             "apply_storage_mode_overrides() { :; }",
             'if [ "$TEST_FORCE_UMASK" = true ]; then umask 077; fi',
             self.move_function,
@@ -155,6 +173,40 @@ class MovePartNoReplaceTests(unittest.TestCase):
             text=True,
             timeout=12,
             check=False,
+        )
+
+    def test_failed_stage_one_file_sync_preserves_ram_input(self):
+        part = self.ram / self.source_name
+        part.write_bytes(b"STAGE1-DATA-NOT-DURABLE")
+        result = self.execute(part, TEST_SYNC_FAILURE="stage1_temp")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(part.read_bytes(), b"STAGE1-DATA-NOT-DURABLE")
+        self.assertFalse((self.final / self.basename).exists())
+        self.assertFalse((self.sdtmp / self.source_name).exists())
+        self.assertFalse((self.root / "heartbeat").exists())
+
+    def test_failed_stage_one_dir_sync_retains_original_for_recovery(self):
+        part = self.ram / self.source_name
+        part.write_bytes(b"STAGE1-DIRECTORY-NOT-SYNCED")
+        result = self.execute(part, TEST_SYNC_FAILURE="stage1_dir")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(part.read_bytes(), b"STAGE1-DIRECTORY-NOT-SYNCED")
+        self.assertFalse((self.final / self.basename).exists())
+        self.assertFalse((self.root / "heartbeat").exists())
+
+    def test_failed_stage_two_sync_retains_marker_and_no_heartbeat(self):
+        part = self.sdtmp / self.source_name
+        part.write_bytes(b"FINAL-RENAME-WITH-FAILED-SYNC")
+        self.marker.write_text(self.minute + "\n", encoding="utf-8")
+        result = self.execute(
+            part, session=True, TEST_SYNC_FAILURE="stage2_final"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.marker.exists())
+        self.assertFalse((self.root / "heartbeat").exists())
+        self.assertEqual(
+            (self.final / self.basename).read_bytes(),
+            b"FINAL-RENAME-WITH-FAILED-SYNC",
         )
 
     def test_missing_publisher_is_a_hard_stop(self):
