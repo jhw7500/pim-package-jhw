@@ -233,9 +233,16 @@ def validate_local_runtime_artifacts(source: Path) -> None:
                 )
             # Same strict GLIBC gate as normal PIM release builds.
             try:
+                strict_glibc_env = {
+                    **os.environ,
+                    "PIM_GLIBC_GATE": "strict",
+                    "PIM_VERIFY_BINARIES": "on",
+                    "PIM_MAX_GLIBC": "2.31",
+                }
                 glibc_check = subprocess.run(
                     ["bash", str(ROOT / "tools/check_glibc.sh"), str(helper)],
                     capture_output=True, text=True, timeout=30, check=False,
+                    env=strict_glibc_env,
                 )
             except (OSError, subprocess.TimeoutExpired) as exc:
                 raise ValueError("finalizer GLIBC gate unavailable") from exc
