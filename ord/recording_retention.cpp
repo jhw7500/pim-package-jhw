@@ -248,13 +248,10 @@ WriterState writable_fd_state(const Candidate &candidate) {
     const std::string fd_path = proc_path + "/fd";
     DIR *fds = opendir(fd_path.c_str());
     if (!fds) {
-      if (errno == ENOENT || errno == ESRCH) continue;
-      // An inaccessible same-owner process may have an FD open. A target
-      // root daemon must not infer safety from unreadable /proc entries.
-      if (proc_st.st_uid == candidate.owner || geteuid() == 0) {
-        result = kWriterUnknown;
-        break;
-      }
+      // /proc hides some unrelated processes (container/Yama/hidepid).
+      // Treat this as incomplete observational evidence, not as proof that
+      // all writer FDs have closed. Release admission must independently
+      // attest to gstApp writer completion and target proc visibility.
       continue;
     }
     for (;;) {
@@ -268,12 +265,10 @@ WriterState writable_fd_state(const Candidate &candidate) {
       if (++inspected > 65536) { result = kWriterUnknown; break; }
       struct stat st;
       if (fstatat(dirfd(fds), entry->d_name, &st, 0) != 0) {
-        if (errno == ENOENT || errno == ESRCH) continue; // FD closed
-        if ((errno == EACCES || errno == EPERM)
-            && proc_st.st_uid != candidate.owner && geteuid() != 0)
-          continue;
-        result = kWriterUnknown;
-        break;
+        // A descriptor can vanish between readdir and stat, and ptrace
+        // policy can hide another process' descriptor. Only a successfully
+        // observed matching inode can prove that it is open for write.
+        continue;
       }
       if (!S_ISREG(st.st_mode) || st.st_dev != candidate.device
           || st.st_ino != candidate.inode) continue;
