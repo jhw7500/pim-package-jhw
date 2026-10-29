@@ -42,11 +42,18 @@ class CompletedSessionMarkerTests(unittest.TestCase):
         self.scratch.cleanup()
 
     def execute(self, *, matching_fragment=False, move_success=True,
-                unknown_file=False):
+                unknown_file=False, enabled_channels=(0,),
+                fragment_channels=(0,), srt_enabled=False, srt_final=False,
+                fragment_bytes=b"synthetic-completed-fragment"):
         self.marker.write_text(self.session + "\n", encoding="utf-8")
         if matching_fragment:
-            path = self.root / "tmp" / f"VD3001_{self.session}00-ch0.mp4.part"
-            path.write_bytes(b"synthetic-completed-fragment")
+            for ch in fragment_channels:
+                path = self.root / "tmp" / f"VD3001_{self.session}00-ch{ch}.mp4.part"
+                path.write_bytes(fragment_bytes)
+        if srt_final:
+            (self.root / "final" / f"VD3001_{self.session}00-data.srt").write_bytes(
+                b"synthetic-srt"
+            )
         if unknown_file:
             (self.root / "tmp" / "unrelated.settings").write_bytes(b"preserve")
         env = os.environ.copy()
@@ -56,6 +63,11 @@ class CompletedSessionMarkerTests(unittest.TestCase):
             "sd_tmp_path": str(self.root / "sdtmp"),
             "final_path": str(self.root / "final"),
             "TEST_MOVE_RESULT": "ok" if move_success else "fail",
+            "vhl_name": "VD3001",
+            "muxer": "mp4",
+            "srt_en": "true" if srt_enabled else "false",
+            **{f"cam_ch{ch}": "true" if ch in enabled_channels else "false"
+               for ch in range(4)},
         })
         harness = """
 KEY=OFFLINE_FIXTURE
@@ -63,8 +75,10 @@ tag=finalizer
 logger() { :; }
 sync() { :; }
 MovePartFile() {
-    if [ "$TEST_MOVE_RESULT" = "ok" ]; then return 0; fi
-    return 1
+    if [ "$TEST_MOVE_RESULT" != "ok" ]; then return 1; fi
+    local name
+    name=$(basename "$1" | sed 's/[.]part$//')
+    cp -- "$1" "$final_path/$name"
 }
 """ + self.function + "\nProcessCompletedSessions\n"
         result = subprocess.run(
@@ -88,6 +102,40 @@ MovePartFile() {
 
     def test_failed_fragment_processing_preserves_completion_marker(self):
         self.assertTrue(self.execute(matching_fragment=True, move_success=False))
+
+
+    def test_missing_second_enabled_video_preserves_marker(self):
+        self.assertTrue(self.execute(
+            matching_fragment=True, enabled_channels=(0, 1),
+            fragment_channels=(0,),
+        ))
+
+    def test_two_enabled_video_files_allow_marker_removal(self):
+        self.assertFalse(self.execute(
+            matching_fragment=True, enabled_channels=(0, 1),
+            fragment_channels=(0, 1),
+        ))
+
+    def test_required_srt_missing_preserves_marker(self):
+        self.assertTrue(self.execute(
+            matching_fragment=True, srt_enabled=True,
+        ))
+
+    def test_required_srt_finalized_allows_marker_removal(self):
+        self.assertFalse(self.execute(
+            matching_fragment=True, srt_enabled=True, srt_final=True,
+        ))
+
+    def test_empty_final_video_does_not_prove_completion(self):
+        self.assertTrue(self.execute(
+            matching_fragment=True, fragment_bytes=b"",
+        ))
+
+    def test_invalid_enabled_channel_flags_preserve_marker(self):
+        self.assertTrue(self.execute(
+            matching_fragment=True, enabled_channels=(),
+        ))
+
 
 
 if __name__ == "__main__":
