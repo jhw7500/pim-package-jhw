@@ -39,6 +39,9 @@ struct Candidate {
   time_t modified;
   ino_t inode;
   dev_t device;
+  off_t size;
+  struct timespec mtime_exact;
+  struct timespec ctime_exact;
 };
 
 bool token(const char *value, size_t max_size) {
@@ -156,7 +159,8 @@ int eligible_files(int fd, const char *vhl, const char *muxer, bool event,
     struct stat st;
     if (fstatat(fd, name.c_str(), &st, AT_SYMLINK_NOFOLLOW) != 0
         || !older_than_grace(st, now)) continue;
-    Candidate item = {name, hour, minute, st.st_mtime, st.st_ino, st.st_dev};
+    Candidate item = {name, hour, minute, st.st_mtime, st.st_ino,
+                      st.st_dev, st.st_size, st.st_mtim, st.st_ctim};
     files->push_back(item);
     errno = 0;
   }
@@ -167,12 +171,20 @@ int eligible_files(int fd, const char *vhl, const char *muxer, bool event,
   return 0;
 }
 
-// Refuse deletion if a candidate was replaced or became a symlink.
+// Refuse a candidate whose identity, size, or modification metadata changed
+// during the directory scan. This narrows, but cannot eliminate, the residual
+// pathname replacement race after the final check; board acceptance must
+// still verify recorder ownership and the cleanup/recording session boundary.
 bool same_regular_file(int fd, const Candidate &file) {
   struct stat st;
   return fstatat(fd, file.name.c_str(), &st, AT_SYMLINK_NOFOLLOW) == 0
       && S_ISREG(st.st_mode) && st.st_ino == file.inode
-      && st.st_dev == file.device && older_than_grace(st, time(NULL));
+      && st.st_dev == file.device && st.st_size == file.size
+      && st.st_mtim.tv_sec == file.mtime_exact.tv_sec
+      && st.st_mtim.tv_nsec == file.mtime_exact.tv_nsec
+      && st.st_ctim.tv_sec == file.ctime_exact.tv_sec
+      && st.st_ctim.tv_nsec == file.ctime_exact.tv_nsec
+      && older_than_grace(st, time(NULL));
 }
 
 int prune_files(int fd, const std::vector<Candidate> &files,
