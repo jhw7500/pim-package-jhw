@@ -20,6 +20,34 @@ Publication steps in the actual `MovePartFile()`:
 
 The move is *per file*, not a multi-channel transaction. It does not prove that the writer closed its FD, that SRT is complete, or that power loss cannot affect directory durability.
 
+### Durability and storage-error fail-closed contract
+
+A successful `renameat2(RENAME_NOREPLACE)` guarantees one atomic pathname
+transition, **not** persistence across power failure. Every required
+file/directory `sync -f` falls back to the product's global `sync` for older
+coreutils; **if both attempts fail**, the finalizer must return failure or
+increase the session's failure count, retain the `.all_done` marker and
+not falsely report a successful final arrival.
+
+- Stage1 copied temp data sync fails: remove the scratch copy and private
+  staging directory, retain the RAM source. No final heartbeat.
+- Stage1 staged-directory sync fails *after* the atomic rename: retain RAM
+  source and staged pathname for explicit recovery, do not publish a final
+  pathname or heartbeat.
+- Stage2 final-file or final-directory sync fails *after* successful rename:
+  the final pathname may already exist and the staged source may be gone.
+  Return failure, retain the session completion marker, and do not write
+  the final-arrival heartbeat. Never replay a destructive move blindly.
+- Session-level final directory sync fails after all individual files:
+  record a failure and retain the marker even if every expected artifact
+  currently exists. Reconcile the marker and file provenance separately.
+
+These paths are exercised in **synthetic storage-fault injection** using the
+real `MovePartFile()`/`ProcessCompletedSessions()` functions in scratch
+directories. They do **not** establish physical SD-card power-loss durability,
+nor that an installed kernel handles all writeback errors correctly.
+
+
 ## Filesystem compatibility
 
 Linux `renameat2(RENAME_NOREPLACE)` is supported by ext4 and by vfat since Linux 4.9. Linux 5.10 exFAT source handles RENAME_NOREPLACE too, via VFS existence checks:
