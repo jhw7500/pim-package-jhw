@@ -1,0 +1,274 @@
+"""Exercise actual Finalizer MovePartFile with isolated scratch paths.
+
+Unlike the session-marker tests, this harness extracts the real MovePartFile
+function and NEVER replaces it with a mock. File operations are confined to
+TemporaryDirectory. No target, recorder, SD, service, or global /tmp marker is
+accessed; logger/sync are stubbed and the storage policy is frozen to scratch.
+"""
+
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+import time
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[2]
+FINALIZER = ROOT / "dist/pim/opt/pim/bin/chk_cam_operate.sh"
+
+
+class MovePartNoReplaceTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        script = FINALIZER.read_text(encoding="utf-8")
+        start = script.index("MovePartFile() {")
+        end = script.index("\n}\n\nis_sd_ok() {", start) + 2
+        cls.move_function = script[start:end]
+        start = script.index("ProcessCompletedSessions() {")
+        end = script.index("\n}\n\n# Stale .part", start) + 2
+        original_glob = "for done_file in /tmp/session_*.all_done; do"
+        part = script[start:end]
+        if part.count(original_glob) != 1:
+            raise AssertionError("marker path contract unexpectedly changed")
+        cls.marker_function = part.replace(
+            original_glob,
+            'for done_file in "$TEST_MARKER_DIR"/session_*.all_done; do',
+        )
+
+    def setUp(self):
+        self.scratch = tempfile.TemporaryDirectory(prefix="finalizer-noreplace-")
+        self.root = Path(self.scratch.name)
+        for name in ("ramtmp", "sdtmp", "final", "markers", "stageA", "stageB"):
+            (self.root / name).mkdir()
+        self.ram = self.root / "ramtmp"
+        self.sdtmp = self.root / "sdtmp"
+        self.final = self.root / "final"
+        self.minute = time.strftime("%Y%m%d_%H%M", time.localtime(time.time() - 86400))
+        self.basename = f"VD3001_{self.minute}00-ch0.mp4"
+        self.source_name = self.basename + ".part"
+        self.marker = self.root / "markers" / f"session_{self.minute}.all_done"
+
+    def tearDown(self):
+        self.scratch.cleanup()
+
+    def env(self, **extra):
+        result = os.environ.copy()
+        result.update({
+            "tmp_path": str(self.ram),
+            "sd_tmp_path": str(self.sdtmp),
+            "final_path": str(self.final),
+            "final_path_cfg": str(self.final),
+            "sd_tmp_path_cfg": str(self.sdtmp),
+            "FINAL_HEARTBEAT_FILE": str(self.root / "heartbeat"),
+            "TEST_MARKER_DIR": str(self.root / "markers"),
+            "KEY": "OFFLINE_ONLY",
+            "tag": "offline-test",
+            "muxer": "mp4",
+            "vhl_name": "VD3001",
+            "cam_ch0": "true",
+            "cam_ch1": "false",
+            "cam_ch2": "false",
+            "cam_ch3": "false",
+            "srt_en": "false",
+            "TEST_FAIL_UNLINK": "false",
+            "TEST_FORCE_LINK_FAILURE": "false",
+        })
+        result.update(extra)
+        return result
+
+    def shell(self, *, session=False):
+        # All file paths are supplied via the tempfile-only environment.
+        # No source /tmp glob or hardware configuration can be reached.
+        lines = [
+            "logger() { :; }",
+            "sync() { :; }",
+            "apply_storage_mode_overrides() { :; }",
+            self.move_function,
+            self.marker_function,
+            'if [ "$TEST_FORCE_LINK_FAILURE" = true ]; then',
+            '  ln() { return 80; }',
+            "fi",
+            'if [ "$TEST_FAIL_UNLINK" = true ]; then',
+            '  rm() {',
+            '    if [ "$1" = "--" ] && [ "$2" = "$TEST_SOURCE" ]; then return 81; fi',
+            '    command rm "$@"',
+            "  }",
+            "fi",
+            'if [ "$TEST_RUN_SESSION" = true ]; then',
+            "  ProcessCompletedSessions",
+            "else",
+            '  MovePartFile "$TEST_SOURCE"',
+            "fi",
+        ]
+        return "\n".join(lines) + "\n"
+
+    def execute(self, path, *, session=False, **extra):
+        return subprocess.run(
+            ["bash", "-c", self.shell(session=session)],
+            env=self.env(
+                TEST_SOURCE=str(path),
+                TEST_RUN_SESSION="true" if session else "false",
+                **extra,
+            ),
+            capture_output=True,
+            text=True,
+            timeout=12,
+            check=False,
+        )
+
+    def test_existing_final_video_is_never_overwritten(self):
+        part = self.sdtmp / self.source_name
+        final = self.final / self.basename
+        part.write_bytes(b"NEW-VIDEO-DO-NOT-PUBLISH")
+        final.write_bytes(b"IRREPLACEABLE-OLD-VIDEO")
+        result = self.execute(part)
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(final.read_bytes(), b"IRREPLACEABLE-OLD-VIDEO")
+        self.assertEqual(part.read_bytes(), b"NEW-VIDEO-DO-NOT-PUBLISH")
+
+    def test_existing_final_srt_is_never_overwritten(self):
+        name = f"VD3001_{self.minute}00-data.srt"
+        part = self.sdtmp / (name + ".part")
+        final = self.final / name
+        part.write_bytes(b"new-srt-cue")
+        final.write_bytes(b"important-original-srt")
+        result = self.execute(part)
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(final.read_bytes(), b"important-original-srt")
+        self.assertEqual(part.read_bytes(), b"new-srt-cue")
+
+    def test_existing_stage_one_file_and_ram_source_survive_collision(self):
+        part = self.ram / self.source_name
+        stage = self.sdtmp / self.source_name
+        part.write_bytes(b"NEW-RAM-BYTES")
+        stage.write_bytes(b"PRIOR-STAGED-BYTES")
+        result = self.execute(part)
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(part.read_bytes(), b"NEW-RAM-BYTES")
+        self.assertEqual(stage.read_bytes(), b"PRIOR-STAGED-BYTES")
+        self.assertFalse((self.final / self.basename).exists())
+
+    def test_new_stage_two_part_finalizes_once_and_removes_source(self):
+        part = self.sdtmp / self.source_name
+        part.write_bytes(b"RECORDED-FRAGMENT")
+        result = self.execute(part)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(part.exists())
+        self.assertEqual(
+            (self.final / self.basename).read_bytes(), b"RECORDED-FRAGMENT"
+        )
+        self.assertTrue((self.root / "heartbeat").exists())
+
+    def test_ram_to_sd_two_stage_publish_finishes_without_temp_leak(self):
+        part = self.ram / self.source_name
+        part.write_bytes(b"RAM-FRAGMENT")
+        result = self.execute(part)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(part.exists())
+        self.assertFalse((self.sdtmp / self.source_name).exists())
+        self.assertEqual((self.final / self.basename).read_bytes(), b"RAM-FRAGMENT")
+        self.assertFalse(list(self.sdtmp.glob(".finalizer-stage1.*")))
+
+    def test_actual_session_marker_is_kept_when_final_collision_occurs(self):
+        part = self.sdtmp / self.source_name
+        final = self.final / self.basename
+        part.write_bytes(b"NEW-DIFFERENT-FILE")
+        final.write_bytes(b"KEEP-PRIOR-FINAL")
+        self.marker.write_text(self.minute + "\n")
+        result = self.execute(part, session=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.marker.exists())
+        self.assertEqual(final.read_bytes(), b"KEEP-PRIOR-FINAL")
+        self.assertEqual(part.read_bytes(), b"NEW-DIFFERENT-FILE")
+
+    def test_link_failure_preserves_source_and_no_final(self):
+        part = self.sdtmp / self.source_name
+        part.write_bytes(b"PRESERVE-ON-FAILED-PUBLISH")
+        result = self.execute(part, TEST_FORCE_LINK_FAILURE="true")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(part.read_bytes(), b"PRESERVE-ON-FAILED-PUBLISH")
+        self.assertFalse((self.final / self.basename).exists())
+
+    def test_interruption_after_link_before_unlink_is_non_success(self):
+        part = self.sdtmp / self.source_name
+        part.write_bytes(b"POST-LINK-FAILURE")
+        result = self.execute(part, TEST_FAIL_UNLINK="true")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(part.read_bytes(), b"POST-LINK-FAILURE")
+        final = self.final / self.basename
+        self.assertEqual(final.read_bytes(), b"POST-LINK-FAILURE")
+        self.assertEqual(part.stat().st_ino, final.stat().st_ino)
+
+    def test_destination_symlink_is_not_followed_or_replaced(self):
+        part = self.sdtmp / self.source_name
+        part.write_bytes(b"DO-NOT-WRITE-THROUGH-SYMLINK")
+        sentinel = self.root / "sentinel"
+        sentinel.write_bytes(b"KEEP-SENTINEL")
+        final = self.final / self.basename
+        final.symlink_to(sentinel)
+        result = self.execute(part)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(final.is_symlink())
+        self.assertEqual(sentinel.read_bytes(), b"KEEP-SENTINEL")
+        self.assertTrue(part.exists())
+
+    def test_source_symlink_is_not_published(self):
+        payload = self.root / "outside-source"
+        payload.write_bytes(b"NOT-A-RECORDER-PART")
+        part = self.sdtmp / self.source_name
+        part.symlink_to(payload)
+        result = self.execute(part)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(part.is_symlink())
+        self.assertFalse((self.final / self.basename).exists())
+
+    def test_concurrent_colliding_publishes_have_exactly_one_winner(self):
+        for n in range(8):
+            part_a = self.root / "stageA" / self.source_name
+            part_b = self.root / "stageB" / self.source_name
+            payload_a = f"NEW-A-{n}".encode()
+            payload_b = f"NEW-B-{n}".encode()
+            part_a.write_bytes(payload_a)
+            part_b.write_bytes(payload_b)
+            dest = self.final / self.basename
+            if dest.exists():
+                dest.unlink()  # scratch fixture only, not a recording
+            script = self.shell()
+            jobs = [
+                subprocess.Popen(
+                    ["bash", "-c", script],
+                    env=self.env(TEST_SOURCE=str(part), TEST_RUN_SESSION="false"),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                for part in (part_a, part_b)
+            ]
+            codes = []
+            for job in jobs:
+                _, stderr = job.communicate(timeout=12)
+                codes.append((job.returncode, stderr))
+            self.assertEqual(sum(code == 0 for code, _ in codes), 1, codes)
+            self.assertIn(dest.read_bytes(), (payload_a, payload_b))
+            loser = part_a if codes[0][0] != 0 else part_b
+            self.assertTrue(loser.exists(), codes)
+            self.assertIn(loser.read_bytes(), (payload_a, payload_b))
+
+    def test_cross_filesystem_publish_is_fail_closed(self):
+        shared = Path("/dev/shm")
+        if not shared.is_dir() or not os.access(shared, os.W_OK):
+            self.skipTest("No isolated shared-memory filesystem")
+        if shared.stat().st_dev == self.final.stat().st_dev:
+            self.skipTest("No differing mounted filesystems")
+        with tempfile.TemporaryDirectory(prefix="finalizer-crossfs-", dir=shared) as tmp:
+            part = Path(tmp) / self.source_name
+            part.write_bytes(b"CROSS-FS-SOURCE")
+            result = self.execute(part)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(part.read_bytes(), b"CROSS-FS-SOURCE")
+            self.assertFalse((self.final / self.basename).exists())
+
+
+if __name__ == "__main__":
+    unittest.main()
