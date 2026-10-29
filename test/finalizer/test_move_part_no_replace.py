@@ -73,6 +73,7 @@ class MovePartNoReplaceTests(unittest.TestCase):
             "srt_en": "false",
             "TEST_FAIL_UNLINK": "false",
             "TEST_FORCE_LINK_FAILURE": "false",
+            "TEST_FORCE_COPY_FAILURE": "false",
         })
         result.update(extra)
         return result
@@ -88,6 +89,14 @@ class MovePartNoReplaceTests(unittest.TestCase):
             self.marker_function,
             'if [ "$TEST_FORCE_LINK_FAILURE" = true ]; then',
             '  ln() { return 80; }',
+            "fi",
+            'if [ "$TEST_FORCE_COPY_FAILURE" = true ]; then',
+            '  cp() {',
+            '    local last',
+            '    last="${@: -1}"',
+            '    printf "INTERRUPTED-COPY" > "$last"',
+            '    return 84',
+            '  }',
             "fi",
             'if [ "$TEST_FAIL_UNLINK" = true ]; then',
             '  rm() {',
@@ -254,6 +263,38 @@ class MovePartNoReplaceTests(unittest.TestCase):
             loser = part_a if codes[0][0] != 0 else part_b
             self.assertTrue(loser.exists(), codes)
             self.assertIn(loser.read_bytes(), (payload_a, payload_b))
+
+    def test_partial_stage_one_copy_does_not_replace_or_leave_a_partial_stage(self):
+        part = self.ram / self.source_name
+        part.write_bytes(b"COMPLETE-RAM-SOURCE")
+        result = self.execute(part, TEST_FORCE_COPY_FAILURE="true")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(part.read_bytes(), b"COMPLETE-RAM-SOURCE")
+        self.assertFalse((self.sdtmp / self.source_name).exists())
+        self.assertFalse((self.final / self.basename).exists())
+        self.assertFalse(list(self.sdtmp.glob(".finalizer-stage1.*")))
+
+    def test_failed_stage_one_hardlink_keeps_ram_source(self):
+        part = self.ram / self.source_name
+        part.write_bytes(b"RAM-FRAGMENT-BEFORE-CLAIM")
+        result = self.execute(part, TEST_FORCE_LINK_FAILURE="true")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(part.read_bytes(), b"RAM-FRAGMENT-BEFORE-CLAIM")
+        self.assertFalse((self.sdtmp / self.source_name).exists())
+        self.assertFalse((self.final / self.basename).exists())
+        self.assertFalse(list(self.sdtmp.glob(".finalizer-stage1.*")))
+
+    def test_recovery_after_hardlink_before_source_unlink_stays_pending(self):
+        part = self.sdtmp / self.source_name
+        final = self.final / self.basename
+        part.write_bytes(b"CRASH-WINDOW-SAME-INODE")
+        os.link(part, final)  # scratch-only simulation of link before unlink
+        self.assertEqual(part.stat().st_ino, final.stat().st_ino)
+        result = self.execute(part)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(part.read_bytes(), b"CRASH-WINDOW-SAME-INODE")
+        self.assertEqual(final.read_bytes(), b"CRASH-WINDOW-SAME-INODE")
+        self.assertFalse((self.root / "heartbeat").exists())
 
     def test_cross_filesystem_publish_is_fail_closed(self):
         shared = Path("/dev/shm")
