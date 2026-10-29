@@ -2,7 +2,7 @@ OUTPUT = .
 OBJ = obj
 
 # Source files
-SOURCES = main.cpp tcpServer.cpp util.cpp
+SOURCES = main.cpp tcpServer.cpp util.cpp recording_retention.cpp
 
 # Libraries to link (headers only)
 LIBS = json-c hiredis
