@@ -15,7 +15,7 @@ It requires two distinct absolute paths; invalid or missing/empty/symlink source
 
 Publication steps in the actual `MovePartFile()`:
 
-1. RAM-to-SD: make a unique temporary file in the SD staging directory; copy metadata+bytes from the RAM fragment to the temp, sync temp, atomically rename the temp to the intended staged basename using RENAME_NOREPLACE; only then remove the RAM copy. If the staged basename already exists, preserve the RAM source and reject this attempt.
+1. RAM-to-SD: make a unique temporary file in the SD staging directory; copy RAM fragment bytes and preserve only source timestamps (FAT32/exFAT cannot reliably preserve Unix ownership/mode), sync temp, atomically rename the temp to the intended staged basename using RENAME_NOREPLACE; only then remove the RAM copy. If the staged basename already exists, preserve the RAM source and reject this attempt.
 2. Staging-to-final: rename the staged pathname to the final pathname using RENAME_NOREPLACE. A successful syscall atomically removes the staged directory entry and creates the final entry. Neither a destination symlink nor a colliding finalized MP4/SRT is overwritten. Sync the destination and directory, then update the final arrival heartbeat.
 
 The move is *per file*, not a multi-channel transaction. It does not prove that the writer closed its FD, that SRT is complete, or that power loss cannot affect directory durability.
