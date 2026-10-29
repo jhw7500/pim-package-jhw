@@ -1271,25 +1271,34 @@ CleanupStalePartFiles() {
 BackfillRamRecordingsToSd() {
     local ram_final_dir="${RAM_ONLY_FINAL_PATH:-$RAM_ONLY_FINAL_PATH_DEFAULT}"
     local sd_final_dir="${final_path_cfg%/}"
+    local publish_tool="${FINALIZER_NOREPLACE_TOOL:-/opt/pim/bin/finalizer_noreplace}"
     local moved_count=0
-    local skipped_count=0
     local fail_count=0
-    local now_ts mtime
-    local src dst base src_size dst_size
+    local now_ts mtime src dst base stage_dir stage_tmp
 
     if [ -z "$sd_final_dir" ] || [ "$sd_final_dir" = "$ram_final_dir" ]; then
         return 0
     fi
-
     [ -d "$ram_final_dir" ] || return 0
-    if [ ! -d "$sd_final_dir" ]; then
-        mkdir -p "$sd_final_dir" || return 1
+    # Never create a recording directory under a missing SD mountpoint.
+    [ -d "$sd_final_dir" ] || return 1
+    if [ ! -x "$publish_tool" ] || [ -L "$publish_tool" ]; then
+        logger -p local0.error "[$KEY][$tag:$LINENO] RAM backfill publisher absent or untrusted"
+        return 1
     fi
 
     now_ts=$(date +%s)
-    for src in "$ram_final_dir"/*.mp4 "$ram_final_dir"/*.ts "$ram_final_dir"/*.srt "$ram_final_dir"/*-vib.bin; do
+    for src in "$ram_final_dir"/*.mp4 "$ram_final_dir"/*.ts \
+               "$ram_final_dir"/*.srt "$ram_final_dir"/*-vib.bin; do
         [ -f "$src" ] || continue
+        if [ -L "$src" ] || [ ! -s "$src" ]; then
+            fail_count=$((fail_count + 1))
+            logger -p local0.warning "[$KEY][$tag:$LINENO] RAM backfill rejects invalid source: $src"
+            continue
+        fi
 
+        # The existing 10-second quiet-time heuristic is NOT proof that
+        # a recorder has closed its write FD. Retain the board lifecycle gate.
         mtime=$(stat -c %Y "$src" 2>/dev/null || echo 0)
         if [ "$mtime" -gt 0 ] && [ $((now_ts - mtime)) -lt 10 ]; then
             continue
@@ -1297,37 +1306,66 @@ BackfillRamRecordingsToSd() {
 
         base=$(basename "$src")
         dst="$sd_final_dir/$base"
-
-        if [ -e "$dst" ]; then
-            src_size=$(stat -c %s "$src" 2>/dev/null || echo "")
-            dst_size=$(stat -c %s "$dst" 2>/dev/null || echo "")
-            if [ -n "$src_size" ] && [ "$src_size" = "$dst_size" ]; then
-                rm -f "$src"
-                ((skipped_count++))
-                continue
-            fi
-            dst="${sd_final_dir}/${base}.ramdup.$(date +%s)"
+        if [ -e "$dst" ] || [ -L "$dst" ]; then
+            # Matching sizes (or even matching content hashes) cannot prove
+            # either writer FD was closed; NEVER unlink RAM on collision.
+            # The old .ramdup.$(date +%s) destination also risked clobber.
+            fail_count=$((fail_count + 1))
+            logger -p local0.warning "[$KEY][$tag:$LINENO] RAM backfill collision, both files retained: $base"
+            continue
         fi
 
-        if mv "$src" "$dst"; then
-            ((moved_count++))
-        else
-            ((fail_count++))
+        # Cross-filesystem RAM -> SD cannot be renamed directly. Stage a
+        # private, complete SD copy before the atomic NOREPLACE rename.
+        stage_dir=$(mktemp -d "$sd_final_dir/.finalizer-backfill.XXXXXXXX") || {
+            fail_count=$((fail_count + 1))
+            continue
+        }
+        stage_tmp="$stage_dir/$base"
+        if ! (umask 022; cp --preserve=timestamps -- "$src" "$stage_tmp"); then
+            command rm -f -- "$stage_tmp"
+            rmdir -- "$stage_dir" 2>/dev/null || true
+            fail_count=$((fail_count + 1))
+            continue
         fi
+        if ! sync -f "$stage_tmp" 2>/dev/null; then
+            command rm -f -- "$stage_tmp"
+            rmdir -- "$stage_dir" 2>/dev/null || true
+            fail_count=$((fail_count + 1))
+            continue
+        fi
+        if ! "$publish_tool" "$stage_tmp" "$dst"; then
+            command rm -f -- "$stage_tmp"
+            rmdir -- "$stage_dir" 2>/dev/null || true
+            fail_count=$((fail_count + 1))
+            continue
+        fi
+        # The rename has committed the name, but we cannot remove the RAM
+        # original until destination data and parent directory are synced.
+        if ! rmdir -- "$stage_dir"; then
+            fail_count=$((fail_count + 1))
+            continue
+        fi
+        if ! sync -f "$dst" 2>/dev/null || ! sync -f "$sd_final_dir" 2>/dev/null; then
+            logger -p local0.error "[$KEY][$tag:$LINENO] RAM backfill sync unverified: $base"
+            fail_count=$((fail_count + 1))
+            continue
+        fi
+        if ! rm -- "$src"; then
+            fail_count=$((fail_count + 1))
+            logger -p local0.error "[$KEY][$tag:$LINENO] RAM source cleanup failed: $base"
+            continue
+        fi
+        moved_count=$((moved_count + 1))
     done
 
-    if [ "$moved_count" -gt 0 ] || [ "$skipped_count" -gt 0 ] || [ "$fail_count" -gt 0 ]; then
-        logger -p local0.notice "[$KEY][$tag:$LINENO] ram backlog backfill: moved=$moved_count skipped=$skipped_count failed=$fail_count ($ram_final_dir -> $sd_final_dir)"
-        sync -f "$sd_final_dir" 2>/dev/null || sync
-        # P0-1: SD 복귀 후 backfill로 RAM 파일이 SD final에 도착했음을 heartbeat에 반영한다.
-        # mv는 mtime을 보존하므로 find -mmin은 backfill된 파일을 못 잡고, heartbeat도 갱신 안 되면
-        # 다음 CheckFinalArrival 사이클에 false STALL 발생 → 무한 kill_test.sh loop.
-        # moved_count>0 (실제 mv 발생) 시에만 갱신. skipped (dedup)는 새 도착이 아니므로 제외.
+    if [ "$moved_count" -gt 0 ] || [ "$fail_count" -gt 0 ]; then
+        logger -p local0.notice "[$KEY][$tag:$LINENO] RAM backlog backfill: moved=$moved_count failed=$fail_count ($ram_final_dir -> $sd_final_dir)"
+        # A confirmed final arrival updates heartbeat, not mere collisions.
         if [ "$moved_count" -gt 0 ]; then
             date +%s > "$FINAL_HEARTBEAT_FILE" 2>/dev/null
         fi
     fi
-
     [ "$fail_count" -eq 0 ]
 }
 
