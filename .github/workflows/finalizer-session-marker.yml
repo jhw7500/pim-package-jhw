@@ -1,0 +1,34 @@
+name: Finalizer Session Marker
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'dist/pim/opt/pim/bin/chk_cam_operate.sh'
+      - 'test/finalizer/**'
+      - '.github/workflows/finalizer-session-marker.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'dist/pim/opt/pim/bin/chk_cam_operate.sh'
+      - 'test/finalizer/**'
+      - '.github/workflows/finalizer-session-marker.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  marker-contract:
+    name: Finalizer marker offline regression
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Validate finalizer Bash syntax
+        run: bash -n dist/pim/opt/pim/bin/chk_cam_operate.sh
+      - name: Test isolated session markers
+        run: python3 -m unittest -v test/finalizer/test_completed_session_marker.py
