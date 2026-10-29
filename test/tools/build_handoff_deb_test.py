@@ -50,6 +50,35 @@ class HandoffDebTest(unittest.TestCase):
             runtime_binary.chmod(0o755)
         return source
 
+    def test_finalizer_handoff_missing_target_helper_is_refused(self):
+        module = load_module()
+        with tempfile.TemporaryDirectory(prefix="handoff-deb-test.") as tmp:
+            work = Path(tmp)
+            source = self.make_package(work)
+            finalizer = source / "opt/pim/bin/chk_cam_operate.sh"
+            finalizer.write_text(
+                '#!/bin/bash\nFINALIZER_NOREPLACE_TOOL=/opt/pim/bin/finalizer_noreplace\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(FileNotFoundError, "finalizer helper missing"):
+                module.validate_local_runtime_artifacts(source)
+
+    def test_finalizer_handoff_x86_or_fake_helper_is_refused(self):
+        module = load_module()
+        with tempfile.TemporaryDirectory(prefix="handoff-deb-test.") as tmp:
+            work = Path(tmp)
+            source = self.make_package(work)
+            finalizer = source / "opt/pim/bin/chk_cam_operate.sh"
+            finalizer.write_text(
+                '#!/bin/bash\nFINALIZER_NOREPLACE_TOOL=/opt/pim/bin/finalizer_noreplace\n',
+                encoding="utf-8",
+            )
+            helper = source / "opt/pim/bin/finalizer_noreplace"
+            helper.write_bytes(b"\x7fELF\x02\x01" + b"\x00" * 12 + b"\x3e\x00")
+            helper.chmod(0o755)
+            with self.assertRaisesRegex(ValueError, "not AArch64 ELF"):
+                module.validate_local_runtime_artifacts(source)
+
     def test_missing_ignored_runtime_binary_is_refused(self):
         module = load_module()
         for name in ("ord", "vcm", "vsd"):
