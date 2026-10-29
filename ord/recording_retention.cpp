@@ -171,6 +171,62 @@ int eligible_files(int fd, const char *vhl, const char *muxer, bool event,
   return 0;
 }
 
+// Never unlink a pathname solely because it passed a prior fstatat: a
+// producer may replace it before the unlinkat/renameat2 call. First move to
+// a restricted same-filesystem quarantine and check the moved inode itself.
+const char *const kQuarantine = ".ord-retention-quarantine";
+
+int move_noreplace(int src_fd, const char *src, int dst_fd, const char *dst) {
+#ifdef SYS_renameat2
+  return static_cast<int>(syscall(SYS_renameat2, src_fd, src, dst_fd, dst,
+                                  RENAME_NOREPLACE));
+#else
+  (void)src_fd; (void)src; (void)dst_fd; (void)dst;
+  errno = ENOSYS;
+  return -1;
+#endif
+}
+
+// Rename can change ctime even when file contents are unchanged. Compare
+// identity, size, mtime and age instead, after moving the actual inode.
+bool same_moved_file(int fd, const Candidate &file) {
+  struct stat st;
+  return fstatat(fd, file.name.c_str(), &st, AT_SYMLINK_NOFOLLOW) == 0
+      && S_ISREG(st.st_mode) && st.st_ino == file.inode
+      && st.st_dev == file.device && st.st_size == file.size
+      && st.st_mtim.tv_sec == file.mtime_exact.tv_sec
+      && st.st_mtim.tv_nsec == file.mtime_exact.tv_nsec
+      && older_than_grace(st, time(NULL));
+}
+
+bool empty_dir(int fd) {
+  const int copied = dup(fd);
+  if (copied < 0) return false;
+  DIR *dir = fdopendir(copied);
+  if (!dir) { close(copied); return false; }
+  bool empty = true;
+  int read_error = 0;
+  for (;;) {
+    errno = 0;
+    struct dirent *entry = readdir(dir);
+    if (!entry) { read_error = errno; break; }
+    if (std::string(entry->d_name) != "."
+        && std::string(entry->d_name) != "..") { empty = false; break; }
+  }
+  closedir(dir);
+  return empty && read_error == 0;
+}
+
+struct RemoveEmptyQuarantine {
+  explicit RemoveEmptyQuarantine(int parent) : parent_(parent) {}
+  ~RemoveEmptyQuarantine() {
+    // RMDIR cannot remove the directory if any unverified file remains.
+    (void)unlinkat(parent_, kQuarantine, AT_REMOVEDIR);
+  }
+ private:
+  int parent_;
+};
+
 // Refuse a candidate whose identity, size, or modification metadata changed
 // during the directory scan. This narrows, but cannot eliminate, the residual
 // pathname replacement race after the final check; board acceptance must
@@ -189,12 +245,30 @@ bool same_regular_file(int fd, const Candidate &file) {
 
 int prune_files(int fd, const std::vector<Candidate> &files,
                 const std::string &minute_filter) {
+  if (mkdirat(fd, kQuarantine, 0700) != 0 && errno != EEXIST) return -1;
+  DirFd stage(fd, kQuarantine);
+  struct stat stage_stat;
+  if (stage.get() < 0 || fstat(stage.get(), &stage_stat) != 0
+      || !S_ISDIR(stage_stat.st_mode)
+      || stage_stat.st_uid != geteuid()
+      || (stage_stat.st_mode & 077) != 0) return -1;
+  RemoveEmptyQuarantine cleanup(fd);
+  // A previous interrupted operation may have left a file here. Preserve it.
+  if (!empty_dir(stage.get())) return -1;
   int removed = 0;
   for (size_t i = 0; i < files.size() && removed < static_cast<int>(kMaxFilesPerPass); ++i) {
     const Candidate &file = files[i];
     if (!minute_filter.empty() && file.minute != minute_filter) continue;
     if (!same_regular_file(fd, file)) continue;
-    if (unlinkat(fd, file.name.c_str(), 0) != 0) return -1;
+    if (move_noreplace(fd, file.name.c_str(), stage.get(), file.name.c_str()) != 0)
+      return -1;
+    if (!same_moved_file(stage.get(), file)) {
+      // If the source name is no longer free, an unverified object stays
+      // quarantined for manual recovery. Never delete it.
+      (void)move_noreplace(stage.get(), file.name.c_str(), fd, file.name.c_str());
+      return -1;
+    }
+    if (unlinkat(stage.get(), file.name.c_str(), 0) != 0) return -1;
     ++removed;
   }
   return removed;
@@ -221,14 +295,15 @@ int rotate_oldest(const char *root, const char *recycle,
     // A single atomic move prevents a successful link followed by an
     // unrelated source-file replacement before unlink. Never replace an
     // existing destination recording; unsupported filesystems fail closed.
-#ifdef SYS_renameat2
-    if (syscall(SYS_renameat2, src.get(), f.name.c_str(),
-                hour_dir.get(), f.name.c_str(), RENAME_NOREPLACE) != 0)
+    if (move_noreplace(src.get(), f.name.c_str(),
+                       hour_dir.get(), f.name.c_str()) != 0) return -1;
+    if (!same_moved_file(hour_dir.get(), f)) {
+      // Do not keep an unexpected object as a valid recording.
+      // Try a no-overwrite rollback; on collision preserve it in recycle.
+      (void)move_noreplace(hour_dir.get(), f.name.c_str(),
+                           src.get(), f.name.c_str());
       return -1;
-#else
-    errno = ENOSYS;
-    return -1;
-#endif
+    }
     ++moved;
   }
   return moved;
