@@ -216,6 +216,33 @@ def validate_local_runtime_artifacts(source: Path) -> None:
                 raise ValueError(
                     f"finalizer helper is not AArch64 ELF: ${helper_relative}"
                 )
+            # A forged/truncated ELF header must not be shipped as a runtime.
+            # Fail closed if readelf is unavailable or reports a malformed ELF.
+            try:
+                check = subprocess.run(
+                    ["readelf", "-h", str(helper)],
+                    capture_output=True, text=True, timeout=15, check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise ValueError("cannot inspect finalizer ELF") from exc
+            if (check.returncode or "Error:" in check.stderr
+                    or "Machine:" not in check.stdout
+                    or "AArch64" not in check.stdout):
+                raise ValueError(
+                    f"finalizer helper ELF malformed or wrong machine: ${helper_relative}"
+                )
+            # Same strict GLIBC gate as normal PIM release builds.
+            try:
+                glibc_check = subprocess.run(
+                    ["bash", str(ROOT / "tools/check_glibc.sh"), str(helper)],
+                    capture_output=True, text=True, timeout=30, check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise ValueError("finalizer GLIBC gate unavailable") from exc
+            if glibc_check.returncode:
+                raise ValueError(
+                    f"finalizer helper fails GLIBC target gate: ${helper_relative}"
+                )
 
 
 
