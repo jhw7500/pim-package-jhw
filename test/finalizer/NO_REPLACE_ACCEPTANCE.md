@@ -24,11 +24,14 @@ The move is *per file*, not a multi-channel transaction. It does not prove that 
 
 A successful `renameat2(RENAME_NOREPLACE)` guarantees one atomic pathname
 transition, **not** persistence across power failure. Every required
-file/directory `sync -f` falls back to the product's global `sync` for older
-coreutils; **if both attempts fail**, the finalizer must return failure or
-increase the session's failure count, retain the `.all_done` marker and
-not falsely report a successful final arrival.
-
+per-file/per-directory `sync -f <path>` must **succeed for the exact path**.
+A failing path-scoped sync is an error even if a subsequent global `sync`
+would report success: the latter cannot negate a writeback error observed
+for the source file or filesystem. The finalizer returns failure (or
+increases the session failure count), preserves the `.all_done` marker
+and does not falsely report a successful final arrival. If the installed
+`sync` tool lacks `-f`, finalization must fail closed until a tested
+target-specific durability mechanism is approved.
 - Stage1 copied temp data sync fails: remove the scratch copy and private
   staging directory, retain the RAM source. No final heartbeat.
 - Stage1 staged-directory sync fails *after* the atomic rename: retain RAM
@@ -44,7 +47,7 @@ not falsely report a successful final arrival.
 
 These paths are exercised in **synthetic storage-fault injection** using the
 real `MovePartFile()`/`ProcessCompletedSessions()` functions in scratch
-directories. They do **not** establish physical SD-card power-loss durability,
+directories. Tests also enforce that a successful global `sync` never masks a failed path-scoped `sync -f`. They do **not** establish physical SD-card power-loss durability,
 nor that an installed kernel handles all writeback errors correctly.
 
 
