@@ -31,4 +31,4 @@ jobs:
       - name: Validate finalizer Bash syntax
         run: bash -n dist/pim/opt/pim/bin/chk_cam_operate.sh
       - name: Test isolated session markers
-        run: python3 -m unittest -v test/finalizer/test_completed_session_marker.py
+        run: python3 test/finalizer/test_completed_session_marker.py -v
