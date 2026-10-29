@@ -29,10 +29,16 @@ chmod 0755 "$scratch"
 # Reuse product target GLIBC 2.31 compatibility gate.
 bash "${root}/tools/check_glibc.sh" "$scratch"
 
-if command -v readelf >/dev/null 2>&1; then
-    machine="$(readelf -h "$scratch" | sed -n 's/^[[:space:]]*Machine:[[:space:]]*//p')"
-    echo "finalizer publisher ELF machine: $machine"
-fi
+command -v readelf >/dev/null 2>&1 || {
+    echo "finalizer helper: readelf unavailable, cannot verify target ELF" >&2
+    exit 2
+}
+machine="$(readelf -h "$scratch" | sed -n 's/^[[:space:]]*Machine:[[:space:]]*//p')"
+echo "finalizer publisher ELF machine: $machine"
+[ "$machine" = "AArch64" ] || {
+    echo "finalizer helper: refusing non-AArch64 binary in arm64 PIM package" >&2
+    exit 2
+}
 
 # Only build artifact is replaced, never a recording.
 mv -f -- "$scratch" "$output"
