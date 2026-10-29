@@ -423,7 +423,7 @@ class RecordingRetentionTests(unittest.TestCase):
 
     def test_dst_fall_back_repeated_hour_is_protected(self):
         from datetime import datetime, timezone
-        fake = int(datetime(2026, 11, 1, 6, 10, tzinfo=timezone.utc).timestamp())
+        fake = int(datetime(2026, 11, 1, 6, 3, tzinfo=timezone.utc).timestamp())
         video = self.make_file(self.rec, "VD3001_20261101_010000-ch0.mp4")
         os.utime(video, (fake - 1200, fake - 1200))
         env = dict(os.environ, TZ="America/New_York", ORD_TEST_NOW_EPOCH=str(fake))
