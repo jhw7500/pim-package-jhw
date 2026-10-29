@@ -243,6 +243,18 @@ class MovePartNoReplaceTests(unittest.TestCase):
         )
         self.assertTrue((self.root / "heartbeat").exists())
 
+    def test_ram_to_sd_copy_preserves_recording_mtime_without_unix_owner(self):
+        part = self.ram / self.source_name
+        part.write_bytes(b"OLD-RECORDING-MTIME")
+        recording_epoch = int(time.time()) - 3600
+        os.utime(part, (recording_epoch, recording_epoch))
+        result = self.execute(part)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        dest = self.final / self.basename
+        self.assertEqual(dest.read_bytes(), b"OLD-RECORDING-MTIME")
+        self.assertLessEqual(abs(dest.stat().st_mtime - recording_epoch), 2.0)
+        self.assertFalse(part.exists())
+
     def test_ram_to_sd_two_stage_publish_finishes_without_temp_leak(self):
         part = self.ram / self.source_name
         part.write_bytes(b"RAM-FRAGMENT")
