@@ -36,7 +36,8 @@ jobs:
               export DEBIAN_FRONTEND=noninteractive
               apt-get update -qq
               apt-get install -y -qq --no-install-recommends \
-                build-essential binutils python3
+                build-essential binutils python3 tzdata
+              test -f /usr/share/zoneinfo/America/New_York
               test "$(uname -m)" = aarch64
               getconf GNU_LIBC_VERSION
               g++ -std=c++11 -Wall -Wextra -Werror \
