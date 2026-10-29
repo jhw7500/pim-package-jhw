@@ -184,8 +184,13 @@ int eligible_files(int fd, const char *vhl, const char *muxer, bool event,
   DIR *dir = fdopendir(copy);
   if (!dir) { close(copy); return -1; }
   const time_t now = time(NULL);
-  errno = 0;
-  while (struct dirent *entry = readdir(dir)) {
+  int read_error = 0;
+  for (;;) {
+    // Only errno from readdir() itself represents an iteration error.
+    // mktime() and fstatat() within the loop are allowed to change errno.
+    errno = 0;
+    struct dirent *entry = readdir(dir);
+    if (!entry) { read_error = errno; break; }
     const std::string name(entry->d_name);
     std::string hour, minute;
     if (!file_name(name, vhl, muxer, event, &hour, &minute)
@@ -197,11 +202,9 @@ int eligible_files(int fd, const char *vhl, const char *muxer, bool event,
     Candidate item = {name, hour, minute, st.st_mtime, st.st_ino,
                       st.st_dev, st.st_size, st.st_mtim, st.st_ctim};
     files->push_back(item);
-    errno = 0;
   }
-  const int saved_errno = errno;
   closedir(dir);
-  if (saved_errno) return -1;
+  if (read_error) return -1;
   std::sort(files->begin(), files->end(), candidate_order);
   return 0;
 }
