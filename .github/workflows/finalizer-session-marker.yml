@@ -28,7 +28,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: false
-      - name: Validate finalizer Bash syntax
-        run: bash -n dist/pim/opt/pim/bin/chk_cam_operate.sh
-      - name: Test actual finalizer marker and no-replace functions
+      - name: Validate finalizer and package build Bash syntax
+        run: |
+          bash -n dist/pim/opt/pim/bin/chk_cam_operate.sh
+          bash -n tools/build_finalizer_noreplace.sh
+          bash -n build.sh
+      - name: Test actual finalizer and compiled renameat2 helper
         run: python3 -m unittest discover -s test/finalizer -p 'test_*.py' -v
+      - name: Ensure handoff DEB rejects missing/wrong target executable
+        run: python3 test/tools/build_handoff_deb_test.py -v
