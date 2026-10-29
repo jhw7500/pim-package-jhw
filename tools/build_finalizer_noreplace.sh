@@ -27,7 +27,8 @@ read -r -a compiler <<< "${CC:-cc}"
 chmod 0755 "$scratch"
 
 # Reuse product target GLIBC 2.31 compatibility gate.
-bash "${root}/tools/check_glibc.sh" "$scratch"
+PIM_GLIBC_GATE=strict PIM_VERIFY_BINARIES=on PIM_MAX_GLIBC=2.31 \
+    bash "${root}/tools/check_glibc.sh" "$scratch"
 
 command -v readelf >/dev/null 2>&1 || {
     echo "finalizer helper: readelf unavailable, cannot verify target ELF" >&2
