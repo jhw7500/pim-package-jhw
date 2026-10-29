@@ -28,12 +28,16 @@ Linux `renameat2(RENAME_NOREPLACE)` is supported by ext4 and by vfat since Linux
 
 But **the actual board kernel, filesystem driver, mount options and configured SD/RAM/fallback paths remain unverified**. The PIM package supports ext4, FAT32 and exFAT in source/release notes; the presence of a driver alone does not attest that this exact deployed system accepts the syscall. The finalizer must fail closed on ENOSYS, EINVAL, EOPNOTSUPP and EXDEV. A target-safe test is required before any release.
 
+### Isolated Linux filesystem-matrix evidence
+
+`test/finalizer/run_filesystem_matrix.sh` creates disposable **loopback image files**, never touches a production SD card, and uses the actual compiled C publisher to validate collision protection of video/SRT, one successful publish, and EXDEV fail-closed behavior. Ubuntu 22.04 Azure kernel 6.8 passed ext4/vfat but lacked an exFAT kernel mount driver (therefore exFAT was not tested there). Ubuntu 24.04 Azure kernel 7.0 **successfully mounted and tested ext4, FAT32(vfat) and exFAT** in GitHub Actions run `40876215485`, all three PASS. This demonstrates behavior on that hosted Linux kernel only; it does **not** attest to the i.MX8MP's deployed kernel, actual SD-card mount, or live recorder state.
+
 ## Build and packaging gate
 
 Full product builds via `docker/build.sh` use the Ubuntu 20.04 ARM64 build environment, then invoke `build.sh`. That full-release path must run
 `tools/build_finalizer_noreplace.sh`, produce the ARM64 helper into `dist/pim/opt/pim/bin/` before release is copied, and validate that its ELF machine is **AArch64** and its versioned GLIBC requirements do not exceed the target rootfs **GLIBC 2.31** using `tools/check_glibc.sh`. The generated target executable is gitignored, not committed.
 
-If the helper cannot be compiled or compatibility-checked, **do not create a release DEB**. Any handoff packaging path that bypasses the full builder must check for the target executable and refuse missing helpers. The current GitHub Actions tests compile the C source on Ubuntu runners for native QA; this is NOT proof of ARM64 target helper compilation or installed DEB compatibility. Record the target ELF SHA256 and package manifest at official target release.
+If the helper cannot be compiled or compatibility-checked, **do not create a release DEB**. Any handoff packaging path that bypasses the full builder must check for the target executable and refuse missing helpers. A dedicated GitHub Ubuntu 20.04 **ARM64** container workflow also compiles and executes the target C helper using QEMU, verifies the AArch64 ELF machine, strict GLIBC 2.31 gate and no-replace collision behavior. Artifact SHA256: `94853e6287dfafcab9d6b3682b239d23e7da5c12ff42b68074382a9d6ca0cfe6`. The native publish/test suite additionally verifies the process `umask 077` does not turn source file modes `0644`, `0640`, `0600` into unconditionally `0600` at final destination. Both normal packaging and external handoff forcibly set strict GLIBC 2.31 limits even if inherited environment variables would disable the gate. These CI results are **not** installed DEB or actual device compatibility proof. Record target helper/source hashes and installed package manifest under an owner-approved release.
 
 ## Crash/recovery and operational safety
 
