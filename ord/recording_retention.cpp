@@ -6,6 +6,7 @@
 #include <ctime>
 #include <dirent.h>
 #include <fcntl.h>
+#include <cstdio>
 #include <linux/fs.h>
 #include <sys/syscall.h>
 #include <string>
@@ -39,6 +40,7 @@ struct Candidate {
   time_t modified;
   ino_t inode;
   dev_t device;
+  uid_t owner;
   off_t size;
   struct timespec mtime_exact;
   struct timespec ctime_exact;
@@ -200,13 +202,106 @@ int eligible_files(int fd, const char *vhl, const char *muxer, bool event,
     if (fstatat(fd, name.c_str(), &st, AT_SYMLINK_NOFOLLOW) != 0
         || !older_than_grace(st, now)) continue;
     Candidate item = {name, hour, minute, st.st_mtime, st.st_ino,
-                      st.st_dev, st.st_size, st.st_mtim, st.st_ctim};
+                      st.st_dev, st.st_uid, st.st_size, st.st_mtim, st.st_ctim};
     files->push_back(item);
   }
   closedir(dir);
   if (read_error) return -1;
   std::sort(files->begin(), files->end(), candidate_order);
   return 0;
+}
+
+// A filesystem mtime or filename age never establishes that a writer's FD
+// was closed. Inspect the Linux proc FD table for a *writable* descriptor to
+// the candidate's exact (device,inode). Deleted/unlinked names still match.
+// This is a risk-reducing guard, NOT a complete race-free writer completion
+// protocol: a new opener after this scan remains possible. Board acceptance
+// must separately verify gstApp/Finalizer EOS and FD ownership.
+enum WriterState { kNoWriter, kOpenWriter, kWriterUnknown };
+
+bool decimal_pid(const char *s) {
+  if (!s || !*s) return false;
+  for (; *s; ++s) if (*s < '0' || *s > '9') return false;
+  return true;
+}
+
+WriterState writable_fd_state(const Candidate &candidate) {
+  DIR *processes = opendir("/proc");
+  if (!processes) return kWriterUnknown;
+  WriterState result = kNoWriter;
+  size_t inspected = 0;
+  for (;;) {
+    errno = 0;
+    struct dirent *pid = readdir(processes);
+    if (!pid) {
+      if (errno != 0) result = kWriterUnknown;
+      break;
+    }
+    if (!decimal_pid(pid->d_name)) continue;
+    const std::string proc_path = std::string("/proc/") + pid->d_name;
+    struct stat proc_st;
+    if (stat(proc_path.c_str(), &proc_st) != 0) {
+      if (errno == ENOENT || errno == ESRCH) continue;
+      result = kWriterUnknown;
+      break;
+    }
+    const std::string fd_path = proc_path + "/fd";
+    DIR *fds = opendir(fd_path.c_str());
+    if (!fds) {
+      if (errno == ENOENT || errno == ESRCH) continue;
+      // An inaccessible same-owner process may have an FD open. A target
+      // root daemon must not infer safety from unreadable /proc entries.
+      if (proc_st.st_uid == candidate.owner || geteuid() == 0) {
+        result = kWriterUnknown;
+        break;
+      }
+      continue;
+    }
+    for (;;) {
+      errno = 0;
+      struct dirent *entry = readdir(fds);
+      if (!entry) {
+        if (errno != 0) result = kWriterUnknown;
+        break;
+      }
+      if (!decimal_pid(entry->d_name)) continue;
+      if (++inspected > 65536) { result = kWriterUnknown; break; }
+      struct stat st;
+      if (fstatat(dirfd(fds), entry->d_name, &st, 0) != 0) {
+        if (errno == ENOENT || errno == ESRCH) continue; // FD closed
+        if ((errno == EACCES || errno == EPERM)
+            && proc_st.st_uid != candidate.owner && geteuid() != 0)
+          continue;
+        result = kWriterUnknown;
+        break;
+      }
+      if (!S_ISREG(st.st_mode) || st.st_dev != candidate.device
+          || st.st_ino != candidate.inode) continue;
+      const std::string info = proc_path + "/fdinfo/" + entry->d_name;
+      FILE *fp = fopen(info.c_str(), "r");
+      if (!fp) { result = kWriterUnknown; break; }
+      bool parsed = false;
+      unsigned flags = 0;
+      char line[256];
+      while (fgets(line, sizeof(line), fp)) {
+        if (sscanf(line, "flags: %o", &flags) == 1) {
+          parsed = true;
+          break;
+        }
+      }
+      const bool read_error = ferror(fp) != 0;
+      fclose(fp);
+      if (!parsed || read_error) { result = kWriterUnknown; break; }
+      if ((flags & O_ACCMODE) != O_RDONLY) {
+        result = kOpenWriter;
+        break;
+      }
+    }
+    closedir(fds);
+    if (result != kNoWriter) break;
+  }
+  closedir(processes);
+  return result;
 }
 
 // Never unlink a pathname solely because it passed a prior fstatat: a
@@ -297,10 +392,12 @@ int prune_files(int fd, const std::vector<Candidate> &files,
   for (size_t i = 0; i < files.size() && removed < static_cast<int>(kMaxFilesPerPass); ++i) {
     const Candidate &file = files[i];
     if (!minute_filter.empty() && file.minute != minute_filter) continue;
-    if (!same_regular_file(fd, file)) continue;
+    if (!same_regular_file(fd, file) || writable_fd_state(file) != kNoWriter)
+      continue;
     if (move_noreplace(fd, file.name.c_str(), stage.get(), file.name.c_str()) != 0)
       return -1;
-    if (!same_moved_file(stage.get(), file)) {
+    if (!same_moved_file(stage.get(), file)
+        || writable_fd_state(file) != kNoWriter) {
       // If the source name is no longer free, an unverified object stays
       // quarantined for manual recovery. Never delete it.
       (void)move_noreplace(stage.get(), file.name.c_str(), fd, file.name.c_str());
@@ -329,13 +426,15 @@ int rotate_oldest(const char *root, const char *recycle,
   int moved = 0;
   for (size_t i = 0; i < files.size() && moved < static_cast<int>(kMaxFilesPerPass); ++i) {
     const Candidate &f = files[i];
-    if (f.hour != hour || !same_regular_file(src.get(), f)) continue;
+    if (f.hour != hour || !same_regular_file(src.get(), f)
+        || writable_fd_state(f) != kNoWriter) continue;
     // A single atomic move prevents a successful link followed by an
     // unrelated source-file replacement before unlink. Never replace an
     // existing destination recording; unsupported filesystems fail closed.
     if (move_noreplace(src.get(), f.name.c_str(),
                        hour_dir.get(), f.name.c_str()) != 0) return -1;
-    if (!same_moved_file(hour_dir.get(), f)) {
+    if (!same_moved_file(hour_dir.get(), f)
+        || writable_fd_state(f) != kNoWriter) {
       // Do not keep an unexpected object as a valid recording.
       // Try a no-overwrite rollback; on collision preserve it in recycle.
       (void)move_noreplace(hour_dir.get(), f.name.c_str(),
