@@ -570,8 +570,13 @@ MovePartFile() {
     fi
 
     local final_dest="${final_dir}/${final_name}"
+    local publish_tool="${FINALIZER_NOREPLACE_TOOL:-/opt/pim/bin/finalizer_noreplace}"
+    if [ ! -x "$publish_tool" ] || [ -L "$publish_tool" ]; then
+        logger -p local0.error "[$KEY][$tag:$LINENO] no verified executable no-replace publisher: $publish_tool"
+        return 1
+    fi
     # Early collision guard avoids a redundant RAM-to-SD copy. It is not the
-    # concurrency guarantee: the no-replace ln(2) below enforces that.
+    # concurrency guarantee: renameat2(RENAME_NOREPLACE) enforces that.
     if [ "$part_file" != "$final_dest" ] \
        && { [ -e "$final_dest" ] || [ -L "$final_dest" ]; }; then
         logger -p local0.warning "[$KEY][$tag:$LINENO] final destination already exists: $final_name"
@@ -600,15 +605,15 @@ MovePartFile() {
         fi
         sync -f "$stage_tmp" 2>/dev/null || sync
 
-        if ! ln -- "$stage_tmp" "$staged_path"; then
+        if ! "$publish_tool" "$stage_tmp" "$staged_path"; then
+            # renameat2(NO_REPLACE) either moves the name atomically or
+            # leaves both names unchanged. Failure must never fall back to
+            # plain mv/cp, regardless of filesystem type.
             command rm -f -- "$stage_tmp"
-            logger -p local0.warning "[$KEY][$tag:$LINENO] Stage1 staged collision or unsupported hardlink: $filename"
+            logger -p local0.warning "[$KEY][$tag:$LINENO] Stage1 staged collision or unsupported no-replace rename: $filename"
             return 1
         fi
-        if ! rm -- "$stage_tmp"; then
-            logger -p local0.error "[$KEY][$tag:$LINENO] Stage1 private temp unlink failed: $filename"
-            return 1
-        fi
+        # A successful rename removed stage_tmp in the same atomic operation.
         sync -f "$sd_tmp_dir" 2>/dev/null || sync
         # Release the RAM source only after a complete, non-overwriting copy
         # exists. A failed unlink leaves both paths for controlled recovery.
@@ -623,25 +628,21 @@ MovePartFile() {
     # Stage 2: sd_tmp_path → final_path (.part 확장자 있으면 제거)
     if [ "$src_file" = "$final_dest" ]; then
         logger -p local0.debug "[$KEY][$tag:$LINENO] Stage2 skip (same path): $final_name"
-    elif ! ln -- "$src_file" "$final_dest"; then
-        # Atomic no-replace publish. ln(2) fails if a final file or symlink
-        # already exists, or if hardlinks/cross-device links are unsupported.
-        # Do NOT fall back to mv/cp: preserve the staged input for recovery.
-        logger -p local0.error "[$KEY][$tag:$LINENO] Stage2 collision or unsupported hardlink: $filename"
+    elif ! "$publish_tool" "$src_file" "$final_dest"; then
+        # renameat2(RENAME_NOREPLACE) atomically moves a file without
+        # overwriting an existing destination. It works on verified support
+        # for FAT/vfat/ext4/exFAT without relying on POSIX hardlinks.
+        # For unsupported filesystems or EXDEV, fail closed; keep source.
+        logger -p local0.error "[$KEY][$tag:$LINENO] Stage2 collision or unsupported no-replace rename: $filename"
         return 1
     else
+        # The staged source pathname is already gone after successful rename.
+        # On a crash, destination either exists completely or does not exist.
         sync -f "$final_dest" 2>/dev/null || sync
         sync -f "$final_dir" 2>/dev/null || sync
-        if ! rm -- "$src_file"; then
-            # The destination now names the same inode. Keep marker pending;
-            # never claim complete if the staged source cannot be released.
-            logger -p local0.error "[$KEY][$tag:$LINENO] Stage2 source unlink failed: $filename"
-            return 1
-        fi
-        sync -f "$(dirname "$src_file")" 2>/dev/null || sync
     fi
 
-    # P2-3: final arrival heartbeat. The hardlink preserves source mtime.
+    # P2-3: final arrival heartbeat. The rename preserves source mtime.
     # fragment 생성 시점을 본다. 정확한 "최근 final 도착 시각"을 별도 파일로 기록한다.
     date +%s > "$FINAL_HEARTBEAT_FILE" 2>/dev/null
 
