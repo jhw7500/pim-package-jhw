@@ -84,7 +84,7 @@ that a recorder still holding a write FD has closed. It will not silently
 delete a RAM source on an ambiguous duplicate. Normal no-collision backfill
 first copies a private complete file into the actual SD final directory,
 requires path-scoped sync, publishes through `RENAME_NOREPLACE`, then
-requires both file and directory sync **before** unlinking the RAM source.
+requires both file and directory sync **before** unlinking the RAM source. It never invokes a replacing `mv` or deletes an equal-size RAM source as an implicit deduplication. A failure may leave a completed SD pathname and its RAM source together, pending manual recovery; do not blindly retry an uncertain commit.
 Failures retain input data for an owner-controlled reconciliation; they may
 also prevent a backlog from draining until an operator reviews the conflict.
 
@@ -92,7 +92,7 @@ also prevent a backlog from draining until an operator reviews the conflict.
 backfill function with synthetic RAM/final directories, checks equal-size
 different bytes, identical destinations with unverified writer closure,
 preexisting `.ramdup`, symlink collisions, and a normal successful move.
-Old code failed 4/5 regression cases; updated source passes 5/5.
+Old code failed 4/5 initial regression cases; updated source passes all 8/8 backfill tests, including a separate tmpfs-to-SD-directory filesystem copy and synthetic Stage1/Stage2 data-sync faults.
 
 The existing 10-second quiet-time/mtime criterion is **not** independent
 proof of a closed writer FD. The user-approved hardware source/mount
