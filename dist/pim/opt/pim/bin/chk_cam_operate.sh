@@ -610,7 +610,7 @@ MovePartFile() {
             logger -p local0.error "[$KEY][$tag:$LINENO] Stage1 cp failed: $filename"
             return 1
         fi
-        if ! { sync -f "$stage_tmp" 2>/dev/null || sync; }; then
+        if ! sync -f "$stage_tmp" 2>/dev/null; then
             # Neither file-scoped nor global sync succeeded; a staged copy
             # cannot replace the sole RAM recording on this evidence.
             command rm -f -- "$stage_tmp"
@@ -633,7 +633,7 @@ MovePartFile() {
             logger -p local0.error "[$KEY][$tag:$LINENO] Stage1 private directory cleanup failed: $filename"
             return 1
         fi
-        if ! { sync -f "$sd_tmp_dir" 2>/dev/null || sync; }; then
+        if ! sync -f "$sd_tmp_dir" 2>/dev/null; then
             # Keep both RAM original and staged copy for manual reconciliation.
             logger -p local0.error "[$KEY][$tag:$LINENO] Stage1 directory sync failed: $filename"
             return 1
@@ -661,13 +661,13 @@ MovePartFile() {
     else
         # The staged source pathname is already gone after successful rename.
         # On a crash, destination either exists completely or does not exist.
-        if ! { sync -f "$final_dest" 2>/dev/null || sync; }; then
+        if ! sync -f "$final_dest" 2>/dev/null; then
             # Atomic rename may have occurred, but durability is unverified;
             # do not advance heartbeat or consume the session marker.
             logger -p local0.error "[$KEY][$tag:$LINENO] Stage2 final file sync failed: $filename"
             return 1
         fi
-        if ! { sync -f "$final_dir" 2>/dev/null || sync; }; then
+        if ! sync -f "$final_dir" 2>/dev/null; then
             logger -p local0.error "[$KEY][$tag:$LINENO] Stage2 final directory sync failed: $filename"
             return 1
         fi
@@ -1081,7 +1081,7 @@ ProcessCompletedSessions() {
 
         # The storage mode may have changed in MovePartFile.
         final_dir="${final_path%/}"
-        if ! { sync -f "$final_dir" 2>/dev/null || sync; }; then
+        if ! sync -f "$final_dir" 2>/dev/null; then
             # All per-file renames may have succeeded, but the final
             # directory is not durably verified. Preserve all_done.
             fail_count=$((fail_count + 1))
