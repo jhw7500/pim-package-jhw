@@ -103,6 +103,7 @@ class MovePartNoReplaceTests(unittest.TestCase):
             "TEST_FAIL_UNLINK": "false",
             "TEST_FORCE_LINK_FAILURE": "false",
             "TEST_FORCE_COPY_FAILURE": "false",
+            "TEST_FORCE_UMASK": "false",
             "FINALIZER_NOREPLACE_TOOL": str(self.publisher),
         })
         result.update(extra)
@@ -115,6 +116,7 @@ class MovePartNoReplaceTests(unittest.TestCase):
             "logger() { :; }",
             "sync() { :; }",
             "apply_storage_mode_overrides() { :; }",
+            'if [ "$TEST_FORCE_UMASK" = true ]; then umask 077; fi',
             self.move_function,
             self.marker_function,
             'if [ "$TEST_FORCE_COPY_FAILURE" = true ]; then',
@@ -243,18 +245,23 @@ class MovePartNoReplaceTests(unittest.TestCase):
         )
         self.assertTrue((self.root / "heartbeat").exists())
 
-    def test_ram_to_sd_stage_does_not_force_private_0600_mode(self):
-        # mktemp creates existing private files with mode 0600. Copying into
-        # that existing file can leave a public recording unreadable by the
-        # non-root FTP/VCM consumers on ext4.
+    def test_ram_to_sd_stage_preserves_source_read_permissions(self):
+        # mktemp -f created an existing 0600 file and lost the original 0644
+        # recording permissions on ext4. The private directory + fresh copy
+        # must preserve all ordinary source read modes, even under umask 077.
         part = self.ram / self.source_name
-        part.write_bytes(b"RECORDER-READABLE-VIDEO")
-        part.chmod(0o644)
-        result = self.execute(part)
-        self.assertEqual(result.returncode, 0, result.stderr)
         output = self.final / self.basename
-        self.assertEqual(output.read_bytes(), b"RECORDER-READABLE-VIDEO")
-        self.assertEqual(output.stat().st_mode & 0o777, 0o644)
+        for mode in (0o644, 0o640, 0o600):
+            with self.subTest(source_mode=oct(mode)):
+                part.write_bytes(b"RECORDER-EXPECTED-READ-MODE")
+                part.chmod(mode)
+                result = self.execute(part, TEST_FORCE_UMASK="true")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(
+                    output.read_bytes(), b"RECORDER-EXPECTED-READ-MODE"
+                )
+                self.assertEqual(output.stat().st_mode & 0o777, mode)
+                output.unlink()  # scratch output only
 
     def test_ram_to_sd_copy_preserves_recording_mtime_without_unix_owner(self):
         part = self.ram / self.source_name
