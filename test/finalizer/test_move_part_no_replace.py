@@ -25,6 +25,28 @@ class MovePartNoReplaceTests(unittest.TestCase):
         start = script.index("MovePartFile() {")
         end = script.index("\n}\n\nis_sd_ok() {", start) + 2
         cls.move_function = script[start:end]
+        cls.compile_dir = tempfile.TemporaryDirectory(
+            prefix="finalizer-test-native-publisher-"
+        )
+        cls.publisher = Path(cls.compile_dir.name) / "finalizer_noreplace"
+        source = ROOT / "tools/finalizer_noreplace.c"
+        compile_result = subprocess.run(
+            [
+                "cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
+                "-o", str(cls.publisher), str(source),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if compile_result.returncode:
+            raise RuntimeError(
+                "failed compiling actual no-replace publisher: "
+                + compile_result.stderr
+            )
+        assert cls.publisher.is_file()
+
         start = script.index("ProcessCompletedSessions() {")
         end = script.index("\n}\n\n# Stale .part", start) + 2
         original_glob = "for done_file in /tmp/session_*.all_done; do"
@@ -35,6 +57,10 @@ class MovePartNoReplaceTests(unittest.TestCase):
             original_glob,
             'for done_file in "$TEST_MARKER_DIR"/session_*.all_done; do',
         )
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.compile_dir.cleanup()
 
     def setUp(self):
         self.scratch = tempfile.TemporaryDirectory(prefix="finalizer-noreplace-")
@@ -48,6 +74,9 @@ class MovePartNoReplaceTests(unittest.TestCase):
         self.basename = f"VD3001_{self.minute}00-ch0.mp4"
         self.source_name = self.basename + ".part"
         self.marker = self.root / "markers" / f"session_{self.minute}.all_done"
+        self.refuse_tool = self.root / "publisher-fails"
+        self.refuse_tool.write_text("#!/bin/sh\nexit 80\n", encoding="utf-8")
+        self.refuse_tool.chmod(0o700)
 
     def tearDown(self):
         self.scratch.cleanup()
@@ -74,6 +103,7 @@ class MovePartNoReplaceTests(unittest.TestCase):
             "TEST_FAIL_UNLINK": "false",
             "TEST_FORCE_LINK_FAILURE": "false",
             "TEST_FORCE_COPY_FAILURE": "false",
+            "FINALIZER_NOREPLACE_TOOL": str(self.publisher),
         })
         result.update(extra)
         return result
@@ -87,9 +117,6 @@ class MovePartNoReplaceTests(unittest.TestCase):
             "apply_storage_mode_overrides() { :; }",
             self.move_function,
             self.marker_function,
-            'if [ "$TEST_FORCE_LINK_FAILURE" = true ]; then',
-            '  ln() { return 80; }',
-            "fi",
             'if [ "$TEST_FORCE_COPY_FAILURE" = true ]; then',
             '  cp() {',
             '    local last',
@@ -113,6 +140,8 @@ class MovePartNoReplaceTests(unittest.TestCase):
         return "\n".join(lines) + "\n"
 
     def execute(self, path, *, session=False, **extra):
+        if extra.pop("TEST_FORCE_LINK_FAILURE", "false") == "true":
+            extra["FINALIZER_NOREPLACE_TOOL"] = str(self.refuse_tool)
         return subprocess.run(
             ["bash", "-c", self.shell(session=session)],
             env=self.env(
@@ -199,15 +228,17 @@ class MovePartNoReplaceTests(unittest.TestCase):
         self.assertEqual(part.read_bytes(), b"PRESERVE-ON-FAILED-PUBLISH")
         self.assertFalse((self.final / self.basename).exists())
 
-    def test_interruption_after_link_before_unlink_is_non_success(self):
-        part = self.sdtmp / self.source_name
-        part.write_bytes(b"POST-LINK-FAILURE")
+    def test_interruption_after_stage_rename_before_ram_unlink_is_non_success(self):
+        # Stage 1 renames the completed copy into sdtmp atomically; failing
+        # RAM unlink must leave BOTH original and stage for manual recovery.
+        part = self.ram / self.source_name
+        part.write_bytes(b"POST-STAGE-RENAME-FAILURE")
         result = self.execute(part, TEST_FAIL_UNLINK="true")
         self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(part.read_bytes(), b"POST-LINK-FAILURE")
-        final = self.final / self.basename
-        self.assertEqual(final.read_bytes(), b"POST-LINK-FAILURE")
-        self.assertEqual(part.stat().st_ino, final.stat().st_ino)
+        self.assertEqual(part.read_bytes(), b"POST-STAGE-RENAME-FAILURE")
+        staged = self.sdtmp / self.source_name
+        self.assertEqual(staged.read_bytes(), b"POST-STAGE-RENAME-FAILURE")
+        self.assertFalse((self.final / self.basename).exists())
 
     def test_destination_symlink_is_not_followed_or_replaced(self):
         part = self.sdtmp / self.source_name
@@ -284,16 +315,19 @@ class MovePartNoReplaceTests(unittest.TestCase):
         self.assertFalse((self.final / self.basename).exists())
         self.assertFalse(list(self.sdtmp.glob(".finalizer-stage1.*")))
 
-    def test_recovery_after_hardlink_before_source_unlink_stays_pending(self):
+    def test_post_rename_pre_marker_crash_keeps_final_and_marker_pending(self):
+        # A successful atomic rename may complete before marker cleanup.
+        # On restart there is no .part to move: retain marker for review.
         part = self.sdtmp / self.source_name
         final = self.final / self.basename
-        part.write_bytes(b"CRASH-WINDOW-SAME-INODE")
-        os.link(part, final)  # scratch-only simulation of link before unlink
-        self.assertEqual(part.stat().st_ino, final.stat().st_ino)
-        result = self.execute(part)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(part.read_bytes(), b"CRASH-WINDOW-SAME-INODE")
-        self.assertEqual(final.read_bytes(), b"CRASH-WINDOW-SAME-INODE")
+        part.write_bytes(b"POST-RENAME-FINAL-BYTES")
+        os.rename(part, final)  # isolated fixture recreating crash boundary
+        self.assertFalse(part.exists())
+        self.marker.write_text(self.minute + "\n", encoding="utf-8")
+        result = self.execute(part, session=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.marker.exists())
+        self.assertEqual(final.read_bytes(), b"POST-RENAME-FINAL-BYTES")
         self.assertFalse((self.root / "heartbeat").exists())
 
     def test_cross_filesystem_publish_is_fail_closed(self):
