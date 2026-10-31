@@ -19,7 +19,14 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 expect_rc() { local expected=$1; shift; set +e; "$@"; local actual=$?; set -e; [ "$actual" -eq "$expected" ] || fail "expected rc=$expected, got $actual: $*"; }
 uuid() { [[ $1 =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || fail "not UUID: $1"; }
 fake_stat() { mkdir -p "$PIM_CAMERA_PROC_ROOT/$DAEMON_PID"; { printf '%s' "$DAEMON_PID (cam operate) S"; for _ in $(seq 1 18); do printf ' 0'; done; printf ' %s 0 0\n' "$1"; } > "$PIM_CAMERA_PROC_ROOT/$DAEMON_PID/stat"; }
-owner_active() { rm -f "$PIM_CAMERA_RUN_DIR/owner.json"; cam_owner_create "$DAEMON_PID"; cam_owner_set_lifecycle ACTIVE; }
+# systemd StateDirectory exists before cam-operate starts. Maintain that
+# contract in this synthetic protocol helper before creating a live Owner.
+owner_active() {
+    mkdir -p "$PIM_CAMERA_STATE_DIR"
+    rm -f "$PIM_CAMERA_RUN_DIR/owner.json"
+    cam_owner_create "$DAEMON_PID"
+    cam_owner_set_lifecycle ACTIVE
+}
 reset_protocol_sandbox() {
     rm -rf "$PIM_CAMERA_RUN_DIR" "$PIM_CAMERA_STATE_DIR" "$PIM_CAMERA_PROC_ROOT"
     printf 'test-boot-id\n' > "$PIM_CAMERA_BOOT_ID_FILE"
