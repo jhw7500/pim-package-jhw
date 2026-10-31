@@ -85,5 +85,6 @@ never returns a fence token or permission to run a test. Its JSON
 `decision` is **always** `BLOCK`, including when no marker exists.
 `NO_OWNER_WRITER_FENCE` is **not** an affirmative board health check.
 `RESTORE_PENDING_UNVERIFIED` includes malformed, symlinked, or directory
-markers; `STATE_DIRECTORY_UNTRUSTED` includes absent or symlinked storage.
+markers; `STATE_DIRECTORY_UNTRUSTED` includes absent or symlinked storage; in that
+case `marker_present` is `null` (unknown), never a misleading `false`.
 It performs no write, process signal, or service control.
