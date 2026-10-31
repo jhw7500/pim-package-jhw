@@ -25,7 +25,7 @@ assert_status() {
         and (keys|sort)==["decision","hardware_execution_authorized","marker_present","reason_code","schema","writer_cannot_reopen","writer_closed","writer_fence_session"]
     ' <<<"$actual" >/dev/null || fail "invalid status: $actual"
 }
-assert_status STATE_DIRECTORY_UNTRUSTED false
+assert_status STATE_DIRECTORY_UNTRUSTED null
 mkdir -p "$PIM_CAMERA_STATE_DIR"
 assert_status NO_OWNER_WRITER_FENCE false
 marker="$PIM_CAMERA_STATE_DIR/qa-maintenance.json"
@@ -44,7 +44,7 @@ assert_status RESTORE_PENDING_UNVERIFIED true
 rmdir "$marker"
 rmdir "$PIM_CAMERA_STATE_DIR"
 ln -s "$WORK" "$PIM_CAMERA_STATE_DIR"
-assert_status STATE_DIRECTORY_UNTRUSTED false
+assert_status STATE_DIRECTORY_UNTRUSTED null
 
 set +e
 "$CLI" maintenance-status --json >/dev/null 2>&1
