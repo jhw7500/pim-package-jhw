@@ -75,3 +75,15 @@ Commitlint workflows. Accordingly its aggregate diff includes the unmerged
 Phase 1 baseline from PR #231; the Phase 2-only delta starts at
 `3eda4e40eec7415014eb0ecd08d0fc3a5d97e82e`. This does not change
 the two-phase review or authorize release.
+
+## Read-only maintenance status
+
+`cam-recoveryctl maintenance-status` now reports whether the **presence**
+of the persistent marker prevents recovery. It deliberately does not inspect
+or trust a marker's contents, does not require the Owner to be alive, and
+never returns a fence token or permission to run a test. Its JSON
+`decision` is **always** `BLOCK`, including when no marker exists.
+`NO_OWNER_WRITER_FENCE` is **not** an affirmative board health check.
+`RESTORE_PENDING_UNVERIFIED` includes malformed, symlinked, or directory
+markers; `STATE_DIRECTORY_UNTRUSTED` includes absent or symlinked storage.
+It performs no write, process signal, or service control.
