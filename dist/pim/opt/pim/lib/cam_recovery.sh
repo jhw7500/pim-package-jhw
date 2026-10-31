@@ -37,6 +37,8 @@ _cr_qa_maintenance_barrier() {
 cam_qa_maintenance_status_json() {
     local reason marker_present=false
     if [ ! -d "$PIM_CAMERA_STATE_DIR" ] || [ -L "$PIM_CAMERA_STATE_DIR" ]; then
+        # The marker cannot be inspected: do not falsely report it as absent.
+        marker_present=null
         reason=STATE_DIRECTORY_UNTRUSTED
     else
         local marker
