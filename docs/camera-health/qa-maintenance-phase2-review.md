@@ -66,3 +66,12 @@ barrier in PR #231. It is not a deployable four-channel QA transaction.
 Tracking: product issue #230; pim-check issue #192; QA PR #191 remains
 review-only. Do not merge this branch to the installed board until the
 independent Owner review and physical admission requirements above are met.
+
+## CI integration scope
+
+This Draft pull request targets `master` to exercise the repository's
+existing `pull_request.branches: [master]` Camera Tests, ShellCheck and
+Commitlint workflows. Accordingly its aggregate diff includes the unmerged
+Phase 1 baseline from PR #231; the Phase 2-only delta starts at
+`3eda4e40eec7415014eb0ecd08d0fc3a5d97e82e`. This does not change
+the two-phase review or authorize release.
