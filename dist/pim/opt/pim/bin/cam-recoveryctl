@@ -14,6 +14,7 @@ usage() { cat >&2 <<'USAGE'
 usage: cam-recoveryctl request ACTION --source NAME --reason TEXT [--wait SEC]
      | apply-config --source NAME --reason TEXT [--wait SEC]
      | status [--request-id UUID] [--json]
+     | maintenance-status  (read-only; always BLOCK, never a Writer Fence)
 
 ACTION (괄호는 별칭) 과 실패 시 에스컬레이션:
   gstapp_restart    (restart)  gstApp 만 재시작. 에스컬레이션 없음
@@ -87,6 +88,9 @@ request() {
 case "${1:-}" in
     request) [ $# -ge 2 ] || bad; canonicalize_action "$2"; shift 2; [ "$type" != apply_config ] || bad; request "$type" "$@"; exit $?;;
     apply-config) shift; request apply_config "$@"; exit $?;;
+    maintenance-status)
+        [ "$#" -eq 1 ] || bad
+        cam_qa_maintenance_status_json; exit $?;;
     status)
         shift; id=; json=0
         while [ $# -gt 0 ]; do case "$1" in --request-id) [ $# -ge 2 ] || bad; id=$2; shift 2;; --json) json=1; shift;; *) bad;; esac; done
