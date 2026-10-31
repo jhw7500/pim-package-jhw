@@ -29,6 +29,27 @@ _cr_qa_maintenance_barrier() {
     [ ! -e "$marker" ] && [ ! -L "$marker" ] || return 75
     return 0
 }
+
+# Read-only QA diagnostic. The presence of a marker is a restart prohibition;
+# absence is NOT an authenticated lease or a Writer closure certificate.
+# Never parse, delete, follow a symlink or validate privileges from this marker.
+# A successful status command is NOT permission for a hardware action.
+cam_qa_maintenance_status_json() {
+    local reason marker_present=false
+    if [ ! -d "$PIM_CAMERA_STATE_DIR" ] || [ -L "$PIM_CAMERA_STATE_DIR" ]; then
+        reason=STATE_DIRECTORY_UNTRUSTED
+    else
+        local marker
+        marker=$(_cr_qa_maintenance_marker) || return 70
+        if [ -e "$marker" ] || [ -L "$marker" ]; then
+            marker_present=true
+            reason=RESTORE_PENDING_UNVERIFIED
+        else
+            reason=NO_OWNER_WRITER_FENCE
+        fi
+    fi
+    printf '{"schema":1,"decision":"BLOCK","marker_present":%s,"reason_code":"%s","writer_fence_session":null,"writer_closed":false,"writer_cannot_reopen":false,"hardware_execution_authorized":false}\n' "$marker_present" "$reason"
+}
 _cr_now() { date +%s; }
 # 구간 계측. PIM_CAMERA_TIMING_LOG 가 설정될 때만 기록한다(기본 off).
 # EPOCHREALTIME 은 bash 5.0+ 내장이라 fork 가 없다 — 보드 실측 100회 8ms.
