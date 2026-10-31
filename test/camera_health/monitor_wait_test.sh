@@ -17,7 +17,8 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/pim-monitor-wait.XXXXXX")
 export PIM_LIB="$ROOT/dist/pim/opt/pim/lib"
 export PIM_CAMERA_RUN_DIR="$WORK/run" PIM_CAMERA_STATE_DIR="$WORK/state" PIM_CAMERA_BOOT_ID_FILE="$WORK/boot-id"
 export PIM_CAMERA_PROC_ROOT=/proc
-mkdir -p "$PIM_CAMERA_RUN_DIR" "$WORK/bin"
+# systemd StateDirectory must exist before any real monitor/recovery request.
+mkdir -p "$PIM_CAMERA_RUN_DIR" "$PIM_CAMERA_STATE_DIR" "$WORK/bin"
 printf 'boot-1\n' > "$PIM_CAMERA_BOOT_ID_FILE"
 REAL_JQ=$(command -v jq)
 cat > "$WORK/bin/jq" <<SH

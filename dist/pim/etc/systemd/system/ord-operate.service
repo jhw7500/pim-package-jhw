@@ -4,4 +4,6 @@ After=cam-operate.service
 
 [Service]
 Type=simple
+# Keep QA RESTORE_PENDING effective across systemd restarts.
+ExecCondition=/bin/sh /opt/pim/bin/qa_maintenance_exec_condition.sh
 ExecStart=/usr/local/bin/ord
