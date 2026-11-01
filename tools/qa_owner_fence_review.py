@@ -47,10 +47,13 @@ def _text(value):
 
 def _identity(owner, lease, baseline):
     if type(owner) is not dict or set(owner) != {
-        "boot_id", "invocation_id", "proc_start_time", "source_sha"
+        "boot_id", "invocation_id", "pid", "proc_start_time", "source_sha"
     }:
         raise FenceDenied("OWNER_IDENTITY_UNTRUSTED")
-    if not all(_text(owner[k]) for k in ("boot_id", "invocation_id", "proc_start_time")):
+    if (not all(_text(owner[k]) for k in ("boot_id", "invocation_id"))
+            or type(owner["pid"]) is not int or owner["pid"] <= 0
+            or type(owner["proc_start_time"]) is not str
+            or not owner["proc_start_time"].isdigit()):
         raise FenceDenied("OWNER_IDENTITY_INVALID")
     if not (type(owner["source_sha"]) is str and SHA40.fullmatch(owner["source_sha"])):
         raise FenceDenied("OWNER_SOURCE_UNPINNED")
@@ -129,7 +132,8 @@ def _read(dfd):
         rec = json.loads(body.decode("utf-8"))
         if (type(rec) is not dict or set(rec) != {
             "schema", "phase", "revision", "owner", "lease", "baseline", "digest"
-        } or rec["schema"] != 1 or type(rec["revision"]) is not int
+        } or type(rec["schema"]) is not int or rec["schema"] != 1
+                or type(rec["revision"]) is not int
                 or rec["revision"] < 0 or rec["phase"] not in PHASES):
             raise FenceDenied("JOURNAL_SCHEMA_UNTRUSTED")
         _identity(rec["owner"], rec["lease"], rec["baseline"])
