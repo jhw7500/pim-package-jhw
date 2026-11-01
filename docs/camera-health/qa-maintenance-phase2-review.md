@@ -120,3 +120,25 @@ systemd restoration before any production acquisition/release can ship.
 These tests exist to prevent accidental regression while that real adapter
 and independently supervised restoration service are developed; do not
 interpret green CI as installed Writer-Fence or physical QA acceptance.
+
+## Boot config guard preservation (Phase 2 follow-up)
+
+The normal `pim-config-guard.service` is another **configuration writer**:
+its `config_guard.sh` can restore edgeconf and ORD/VCM from backup/seed
+and can refresh both backups on an ordinary boot. That conflicts with an
+unfinished QA restore transaction even when gstApp/ORD processes are stopped.
+
+This review branch now creates the same `StateDirectory=pim-camera` for
+the early boot config guard and applies the existing
+`qa_maintenance_exec_condition.sh` *before* its `ExecStart`.
+The direct `config_guard.sh` entrypoint additionally checks an existing
+maintenance marker (including malformed contents and dangling symlinks)
+before touching config/backup files and exits 75 while it is present.
+A symlinked state directory is also rejected. Normal no-marker boot logic
+is unchanged; unit creation ensures the persistent directory exists for
+a clean first boot.
+
+**The guard is not a restorer.** It deliberately *defers* restoration to an
+independent future authorized service, which does not yet exist. Never
+delete the marker just to make the boot guard run. No physical boot,
+package installation, or user configuration has been modified by this PR.
