@@ -198,6 +198,21 @@ update_backups() {
 }
 
 main() {
+    # This script can overwrite edgeconf/ORD and refresh both backup files.
+    # An active QA maintenance marker is a restore-only obligation, not
+    # permission for the normal boot guard to publish a different baseline.
+    # Unit StateDirectory creates this path before ExecCondition on boot.
+    local qa_state_dir=${PIM_CAMERA_STATE_DIR:-/var/lib/pim-camera}
+    if [ -L "$qa_state_dir" ]; then
+        log_emerg "QA maintenance state directory is symlinked: refuse config restore"
+        exit 75
+    fi
+    if [ -d "$qa_state_dir" ] &&
+       { [ -e "$qa_state_dir/qa-maintenance.json" ] ||
+         [ -L "$qa_state_dir/qa-maintenance.json" ]; }; then
+        log_warn "QA restore pending: do not overwrite edgeconf/ORD or backups"
+        exit 75
+    fi
     if ! command -v jq >/dev/null 2>&1; then
         log_emerg "jq not found — cannot validate JSON; aborting"
         exit 1
