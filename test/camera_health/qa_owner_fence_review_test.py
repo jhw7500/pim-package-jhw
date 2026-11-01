@@ -28,7 +28,7 @@ class ReviewContractTest(unittest.TestCase):
         sentinel.write_bytes(qa.MAGIC)
         sentinel.chmod(0o600)
         self.owner = dict(boot_id="boot-1", invocation_id="owner-42",
-                          proc_start_time="555", source_sha="a" * 40)
+                          pid=4242, proc_start_time="555", source_sha="a" * 40)
         self.lease = dict(board_id="pim", holder_id="hld-1", session="qa-2",
                           generation=12, mode="exclusive",
                           live=True, expired=False)
@@ -229,6 +229,24 @@ class ReviewContractTest(unittest.TestCase):
         alias.symlink_to(self.root, target_is_directory=True)
         with self.assertRaises(qa.FenceDenied):
             qa.OwnerFenceReview(alias)
+
+    def test_reject_boolean_pid_and_bad_process_starttime(self):
+        for owner in (dict(self.owner, pid=True),
+                      dict(self.owner, pid=0),
+                      dict(self.owner, proc_start_time="not-a-number")):
+            with self.subTest(owner=owner), self.assertRaises(qa.FenceDenied):
+                self.obj().begin(owner, self.lease, self.baseline)
+
+    def test_boolean_schema_version_is_not_valid_journal(self):
+        self.begin()
+        file = self.root / qa.NAME
+        body = json.loads(file.read_text())
+        body["schema"] = True
+        unsigned = {k: v for k, v in body.items() if k != "digest"}
+        body["digest"] = qa._digest(unsigned)
+        file.write_text(json.dumps(body))
+        with self.assertRaises(qa.FenceDenied):
+            self.obj().status()
 
     def test_no_script_exports_hardware_action(self):
         import importlib
