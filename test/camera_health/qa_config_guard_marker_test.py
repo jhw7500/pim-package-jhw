@@ -5,6 +5,7 @@ All subprocesses stop before /root/shared_v access. No board, reboot, service
 or live config is touched by these offline tests.
 """
 from pathlib import Path
+import fcntl
 import os
 import subprocess
 import tempfile
@@ -71,6 +72,39 @@ class QAConfigGuardMarkerTest(unittest.TestCase):
         alias = self.base / "state-alias"
         alias.symlink_to(self.state, target_is_directory=True)
         self.assertEqual(self.guard(alias).returncode, 75)
+
+    def test_busy_owner_coordination_lock_prevents_config_write(self):
+        lockfile = self.state / "qa-maintenance.lock"
+        fd = os.open(str(lockfile), os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            os.chmod(lockfile, 0o600)
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            r = self.guard()
+            self.assertEqual(r.returncode, 75, r.stderr)
+            self.assertIn("coordination lock already held", r.stderr)
+            self.assertFalse(self.marker.exists())
+        finally:
+            os.close(fd)
+
+    def test_symlinked_coordination_lock_never_opened(self):
+        lockfile = self.state / "qa-maintenance.lock"
+        protected = self.base / "protected"
+        protected.write_bytes(b"KEEP")
+        lockfile.symlink_to(protected)
+        r = self.guard()
+        self.assertEqual(r.returncode, 75, r.stderr)
+        self.assertEqual(protected.read_bytes(), b"KEEP")
+        self.assertFalse(self.marker.exists())
+
+    def test_hardlinked_coordination_lock_refused(self):
+        lockfile = self.state / "qa-maintenance.lock"
+        lockfile.write_bytes(b"")
+        lockfile.chmod(0o600)
+        os.link(lockfile, self.base / "same-inode")
+        r = self.guard()
+        self.assertEqual(r.returncode, 75, r.stderr)
+        self.assertIn("lock identity untrusted", r.stderr)
+        self.assertFalse(self.marker.exists())
 
     def test_no_mutation_routines_run_before_qa_guard(self):
         text = SCRIPT.read_text(encoding="utf-8")
