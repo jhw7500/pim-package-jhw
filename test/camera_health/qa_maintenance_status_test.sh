@@ -46,6 +46,15 @@ rmdir "$PIM_CAMERA_STATE_DIR"
 ln -s "$WORK" "$PIM_CAMERA_STATE_DIR"
 assert_status STATE_DIRECTORY_UNTRUSTED null
 
+# Every direct Owner/liveness path uses this same guard, not just systemd.
+# A linked state directory must not bypass the durable marker barrier.
+source "$PIM_LIB/cam_recovery.sh"
+set +e
+_cr_qa_maintenance_barrier
+guard_rc=$?
+set -e
+[ "$guard_rc" -eq 70 ] || fail "symlinked StateDirectory accepted by Owner rc=$guard_rc"
+
 set +e
 "$CLI" maintenance-status --json >/dev/null 2>&1
 rc=$?
