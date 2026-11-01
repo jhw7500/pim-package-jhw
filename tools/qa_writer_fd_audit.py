@@ -137,6 +137,9 @@ def audit(proc_root: Path = Path("/proc"),
         "official_lease_verified": False, "finalizer_verified": False,
         "reason_codes": [],
         "active_writer_pids": [], "recording_write_fds": [],
+        # Bind every sighted writer to /proc starttime (PID reuse defense).
+        # Still an instantaneous read-only observation, NEVER a trusted fence.
+        "active_writer_generations": [], "recording_write_fd_generations": [],
         "partial_recording_files": None,
     }
     reasons = results["reason_codes"]
@@ -153,6 +156,9 @@ def audit(proc_root: Path = Path("/proc"),
         for pid, (comm, start) in before.items():
             if comm in WRITERS:
                 results["active_writer_pids"].append(int(pid))
+                results["active_writer_generations"].append({
+                    "pid": int(pid), "comm": comm, "proc_start_time": start,
+                })
             fd_dir = proc / pid / "fd"
             try:
                 handles = list(fd_dir.iterdir())
@@ -172,6 +178,10 @@ def audit(proc_root: Path = Path("/proc"),
                 if _writable_flags(proc / pid / "fdinfo" / f.name):
                     results["recording_write_fds"].append({"pid": int(pid),
                                                           "fd": int(f.name)})
+                    results["recording_write_fd_generations"].append({
+                        "pid": int(pid), "fd": int(f.name),
+                        "proc_start_time": start,
+                    })
             # Recheck every visited process, not just active writer names.
             # A changed identity invalidates the entire recording FD snapshot.
             if _proc_start(_read_text(proc / pid / "stat")) != start:

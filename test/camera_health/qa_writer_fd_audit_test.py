@@ -53,12 +53,18 @@ class WriterFdAuditTest(unittest.TestCase):
         self.process(comm="gstApp", with_fd=False)
         r = self.result()
         self.assertEqual(r["active_writer_pids"], [123])
+        self.assertEqual(r["active_writer_generations"], [
+            {"pid": 123, "comm": "gstApp", "proc_start_time": "12345"}
+        ])
         self.assertIn("ACTIVE_WRITER_PROCESS", r["reason_codes"])
 
     def test_unrelated_process_opening_recording_for_write_is_blocked(self):
         self.process(comm="python3")
         r = self.result()
         self.assertEqual(r["recording_write_fds"], [{"pid": 123, "fd": 5}])
+        self.assertEqual(r["recording_write_fd_generations"], [
+            {"pid": 123, "fd": 5, "proc_start_time": "12345"}
+        ])
         self.assertIn("RECORDING_WRITABLE_FD_OPEN", r["reason_codes"])
 
     def test_read_only_recording_fd_not_counted_as_writer(self):
