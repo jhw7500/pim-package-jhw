@@ -88,3 +88,35 @@ never returns a fence token or permission to run a test. Its JSON
 markers; `STATE_DIRECTORY_UNTRUSTED` includes absent or symlinked storage; in that
 case `marker_present` is `null` (unknown), never a misleading `false`.
 It performs no write, process signal, or service control.
+
+## Offline Owner phase protocol (next integration milestone)
+
+`tools/qa_owner_fence_review.py` is an **isolated, non-packaged, offline**
+crash-safe review state machine. It persists `QUIESCING`,
+`QUIESCED_REVIEW`, `RESTORE_PENDING` and
+`FINAL_ATTESTATION_PENDING` under a private 0700 sandbox, using an
+exclusive lock, 0600 journal, SHA-256 integrity digest and fsync+rename.
+
+It binds the reviewed owner tuple (boot, invocation, proc-start and source
+SHA) to an exclusive lease holder, session and **generation**. Changing boot,
+invocation, holder, generation or expired lease turns a prior synthetic
+QUIESCED review into `RESTORE_PENDING`. EOS, media fsync, Finalizer close,
+zero writable FDs and no-reopen are **distinct** requirements for a reviewed
+transition. A changed original SHA, enabled LED or wrong ch0-only/15fps
+restoration prevents the final review phase.
+
+**Crucial limitation:** All parameters to this prototype are
+caller-supplied and therefore not authenticated independent facts about
+the real PIM board. The synthetic `QUIESCED_REVIEW` state is **not**
+production `QUIESCED`: every result remains `decision=BLOCK`,
+`writer_fence_session=null` and
+`hardware_execution_authorized=false`. No release API is available.
+The journal never deletes the persistent production maintenance marker,
+starts a service, contacts a board, or alters recordings. A real Owner
+must provide privileged trusted receipt collection bound to actual process
+lifetimes and authoritative board lease generation, and independent
+systemd restoration before any production acquisition/release can ship.
+
+These tests exist to prevent accidental regression while that real adapter
+and independently supervised restoration service are developed; do not
+interpret green CI as installed Writer-Fence or physical QA acceptance.
