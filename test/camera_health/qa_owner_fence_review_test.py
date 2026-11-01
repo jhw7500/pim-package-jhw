@@ -72,6 +72,20 @@ class ReviewContractTest(unittest.TestCase):
         self.assertEqual(result["revision"], 1)
         self.assert_no_grant(result)
 
+    def test_transition_digest_matches_unsigned_journal_at_every_step(self):
+        self.begin()
+        self.obj().confirm_quiesced(self.owner, self.lease, self.writer, 0)
+        changed = dict(self.lease, generation=13)
+        self.obj().reconcile(self.owner, changed)
+        self.obj().restore_review(self.restored, 2)
+        # Every read must verify the persisted, canonical, digest-free body.
+        record = json.loads((self.root / qa.NAME).read_text())
+        unsigned = {key: value for key, value in record.items()
+                    if key != "digest"}
+        self.assertEqual(record["digest"], qa._digest(unsigned))
+        self.assertEqual(self.obj().status()["phase"],
+                         "FINAL_ATTESTATION_PENDING")
+
     def test_lost_writer_fsync_refuses_quiesce(self):
         self.begin()
         bad = dict(self.writer, file_fsync=False)
