@@ -23,7 +23,9 @@ _cr_service_file() { printf '%s/service-state.json' "$PIM_CAMERA_STATE_DIR"; }
 _cr_qa_maintenance_marker() { printf '%s/qa-maintenance.json' "$PIM_CAMERA_STATE_DIR"; }
 _cr_qa_maintenance_barrier() {
     local marker
-    [ -d "$PIM_CAMERA_STATE_DIR" ] || return 70
+    # Match the systemd start interlock: a symlinked StateDirectory is never
+    # a trusted durable barrier, including for direct Owner/liveness launches.
+    [ -d "$PIM_CAMERA_STATE_DIR" ] && [ ! -L "$PIM_CAMERA_STATE_DIR" ] || return 70
     marker=$(_cr_qa_maintenance_marker)
     # Also reject a broken symlink: -e alone treats it as absent.
     [ ! -e "$marker" ] && [ ! -L "$marker" ] || return 75
