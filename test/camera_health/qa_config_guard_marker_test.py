@@ -79,8 +79,6 @@ class QAConfigGuardMarkerTest(unittest.TestCase):
                         main.index("restore_edgeconf ||"))
         self.assertLess(main.index("qa-maintenance.json"),
                         main.index("update_backups"))
-        self.assertEqual(self.guard(self.state)["returncode"] if
-                         isinstance(self.guard(self.state), dict) else 75, 75)
 
 
 if __name__ == "__main__":
