@@ -7,6 +7,12 @@ Before=cam-operate.service vsd-operate.service ord-operate.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+# The config guard itself may restore edgeconf/ORD and refresh backups.
+# During QA RESTORE_PENDING, only an independently supervised exact restorer
+# may touch these bytes. Create persistent state before evaluating the marker.
+StateDirectory=pim-camera
+StateDirectoryMode=0750
+ExecCondition=/bin/sh /opt/pim/bin/qa_maintenance_exec_condition.sh
 ExecStart=/opt/pim/bin/config_guard.sh
 StandardOutput=journal
 StandardError=journal
