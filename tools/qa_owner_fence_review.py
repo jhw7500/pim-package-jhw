@@ -158,8 +158,15 @@ def _write(dfd, data):
                            or st.st_uid != os.getuid()
                            or stat.S_IMODE(st.st_mode) != 0o600):
         raise FenceDenied("EXISTING_JOURNAL_UNTRUSTED")
-    body = dict(data)
-    body["digest"] = _digest(data)
+    # State transitions start from an already verified record containing its
+    # previous digest. Never feed that old digest into the *new* checksum:
+    # _read authenticates only the unsigned canonical fields.
+    unsigned = {key: value for key, value in data.items() if key != "digest"}
+    if set(unsigned) != {"schema", "phase", "revision", "owner", "lease",
+                         "baseline"}:
+        raise FenceDenied("JOURNAL_WRITE_SCHEMA_UNTRUSTED")
+    body = dict(unsigned)
+    body["digest"] = _digest(unsigned)
     raw = (json.dumps(body, sort_keys=True, separators=(",", ":")) + "\n").encode()
     if len(raw) > MAX_SIZE:
         raise FenceDenied("JOURNAL_TOO_LARGE")
