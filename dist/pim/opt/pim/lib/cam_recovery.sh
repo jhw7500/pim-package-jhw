@@ -317,6 +317,69 @@ _cr_load_owner_lifecycle() {
     _CR_LIFECYCLE_KEY=$stamp
 }
 cam_owner_assert() { local owner; owner=$(_cr_owner_json); _cr_owner_snapshot_live "$owner" "${1:-}" "${2:-}"; }
+
+# Read-only Owner process observation. This NEVER authenticates the official
+# board lease, media durability, or no-reopen. Do not expose the Owner token.
+_cr_qa_owner_observation_block() {
+    printf '{"schema":1,"decision":"BLOCK","reason_code":"%s","owner_process_observed":false,"owner":null,"official_lease_verified":false,"eos_verified":false,"fsync_verified":false,"writer_fd_closed_verified":false,"writer_cannot_reopen":false,"writer_fence_session":null,"hardware_execution_authorized":false}\n' "$1"
+}
+cam_qa_owner_observation_json() {
+    local file stamp_before stamp_after owner_before owner_after size
+    if [ ! -d "$PIM_CAMERA_RUN_DIR" ] || [ -L "$PIM_CAMERA_RUN_DIR" ]; then
+        _cr_qa_owner_observation_block OWNER_RUNTIME_DIRECTORY_UNTRUSTED
+        return 0
+    fi
+    file=$(_cr_owner_file) || return 70
+    if [ ! -f "$file" ] || [ -L "$file" ]; then
+        _cr_qa_owner_observation_block OWNER_FILE_UNAVAILABLE
+        return 0
+    fi
+    size=$(stat -c '%s' "$file" 2>/dev/null) || size=
+    if ! [[ "$size" =~ ^[0-9]+$ ]] || [ "$size" -lt 1 ] || [ "$size" -gt 65536 ]; then
+        _cr_qa_owner_observation_block OWNER_DOCUMENT_UNTRUSTED
+        return 0
+    fi
+    stamp_before=$(stat -c '%d:%i:%s:%y:%z' "$file" 2>/dev/null) || stamp_before=
+    owner_before=$(cat "$file" 2>/dev/null) || owner_before=
+    if [ -z "$stamp_before" ] || [ -z "$owner_before" ] ||
+        ! jq -es "length == 1 and (.[0] | ($_CR_OWNER_SCHEMA_FILTER))" <<<"$owner_before" >/dev/null 2>&1; then
+        _cr_qa_owner_observation_block OWNER_DOCUMENT_UNTRUSTED
+        return 0
+    fi
+    if ! _cr_owner_snapshot_live "$owner_before"; then
+        _cr_qa_owner_observation_block OWNER_PROCESS_STALE_OR_UNKNOWN
+        return 0
+    fi
+    owner_after=$(cat "$file" 2>/dev/null) || owner_after=
+    stamp_after=$(stat -c '%d:%i:%s:%y:%z' "$file" 2>/dev/null) || stamp_after=
+    if [ "$stamp_before" != "$stamp_after" ] || [ "$owner_before" != "$owner_after" ] ||
+        [ -z "$stamp_after" ]; then
+        _cr_qa_owner_observation_block OWNER_SNAPSHOT_CHANGED
+        return 0
+    fi
+    if ! _cr_owner_snapshot_live "$owner_after"; then
+        _cr_qa_owner_observation_block OWNER_PROCESS_STALE_OR_UNKNOWN
+        return 0
+    fi
+    # Project the validated document; never print .token or full owner.json.
+    if ! jq -ec '{
+        schema: 1,
+        decision: "BLOCK",
+        reason_code: "OWNER_PROCESS_OBSERVED_NO_WRITER_FENCE",
+        owner_process_observed: true,
+        owner: {boot_id, invocation_id, pid, proc_start_time, lifecycle},
+        official_lease_verified: false,
+        eos_verified: false,
+        fsync_verified: false,
+        writer_fd_closed_verified: false,
+        writer_cannot_reopen: false,
+        writer_fence_session: null,
+        hardware_execution_authorized: false
+    }' <<<"$owner_before"; then
+        _cr_qa_owner_observation_block OWNER_SNAPSHOT_UNTRUSTED
+    fi
+}
+
 # _cr_owner_lifecycle_in 의 두 가드는 같은 owner 텍스트에 jq 를 하나씩 띄운다(live 판정, -r
 # .lifecycle). 이 owner 텍스트가 메모에 처음이면 — 새 프로세스(submit 의 cam-recoveryctl)이거나
 # owner 가 막 바뀐 경우 — 두 답을 jq 한 번으로 구해 메모에 넣는다 (이슈 #150). 가드는 그대로
