@@ -138,6 +138,16 @@ A symlinked state directory is also rejected. Normal no-marker boot logic
 is unchanged; unit creation ensures the persistent directory exists for
 a clean first boot.
 
+To close the **config-guard/marker creation** race once a production Owner
+acquisition exists, the config guard now holds an exclusive
+`/var/lib/pim-camera/qa-maintenance.lock` while reading/restoring/
+refreshing configs and checks the marker **under** that lock. It refuses
+a contended, symlinked or multiply hard-linked lock. The production
+Owner MUST take this same lock to persist its marker, verify live Writer
+quiescence and only then issue any authenticated lease-bound token.
+This branch does **not** implement the marker acquisition side of that
+protocol; the lock is a prerequisite, not proof of completed fencing.
+
 **The guard is not a restorer.** It deliberately *defers* restoration to an
 independent future authorized service, which does not yet exist. Never
 delete the marker just to make the boot guard run. No physical boot,
