@@ -68,12 +68,19 @@ class SystemdStartBarrierTest(unittest.TestCase):
         self.assertEqual(self.run_gate(), 1)
         self.assertEqual(marker.read_bytes(), b"BAD\n")
 
-    def test_both_writer_services_have_fail_closed_exec_condition(self):
-        for name in ("cam-operate.service", "ord-operate.service"):
+    def test_config_guard_and_writer_services_have_fail_closed_exec_condition(self):
+        for name in ("pim-config-guard.service", "cam-operate.service",
+                     "ord-operate.service"):
             with self.subTest(name=name):
                 text = (UNITS / name).read_text(encoding="utf-8")
                 self.assertEqual(text.count(EXEC), 1)
                 self.assertLess(text.index(EXEC), text.index("ExecStart="))
+        # Boot config guard executes before cam-operate.service. It must
+        # create the same persistent StateDirectory before checking its marker
+        # or a fresh boot would fail even without a QA campaign.
+        guard = (UNITS / "pim-config-guard.service").read_text(encoding="utf-8")
+        self.assertEqual(guard.count("StateDirectory=pim-camera"), 1)
+        self.assertEqual(guard.count("StateDirectoryMode=0750"), 1)
         # No implicit service enable/install of a QA restorer in this patch.
         self.assertNotIn("pim-qa-restore.service",
                          (UNITS / "cam-operate.service").read_text())
