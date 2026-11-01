@@ -207,6 +207,39 @@ main() {
         log_emerg "QA maintenance state directory is symlinked: refuse config restore"
         exit 75
     fi
+    # Serialize every config/backup mutation against a future Owner marker
+    # writer. The future Owner MUST take this SAME persistent exclusive lock
+    # before creating its marker, then verify this guard has quiesced.
+    # Until that trusted Owner API exists this lock alone is NOT a Writer Fence.
+    if [ -d "$qa_state_dir" ]; then
+        local qa_lock_fd qa_lock_path="$qa_state_dir/qa-maintenance.lock"
+        local qa_old_umask qa_lock_meta
+        [ ! -L "$qa_lock_path" ] || {
+            log_emerg "QA coordination lock path is symlinked"
+            exit 75
+        }
+        qa_old_umask=$(umask)
+        umask 077
+        exec {qa_lock_fd}>>"$qa_lock_path" || {
+            log_emerg "QA coordination lock cannot be opened"
+            exit 75
+        }
+        umask "$qa_old_umask"
+        qa_lock_meta=$(stat -Lc '%a:%h:%u' "/proc/self/fd/$qa_lock_fd" 2>/dev/null) || {
+            log_emerg "QA coordination lock identity unavailable"
+            exit 75
+        }
+        [ "$qa_lock_meta" = "600:1:$(id -u)" ] || {
+            log_emerg "QA coordination lock identity untrusted"
+            exit 75
+        }
+        flock -n "$qa_lock_fd" || {
+            log_warn "QA coordination lock already held: defer config guard"
+            exit 75
+        }
+    fi
+    # Check AFTER acquiring the coordination lock. No config mutation may
+    # race with a cooperating future Owner that takes the same lock.
     if [ -d "$qa_state_dir" ] &&
        { [ -e "$qa_state_dir/qa-maintenance.json" ] ||
          [ -L "$qa_state_dir/qa-maintenance.json" ]; }; then
