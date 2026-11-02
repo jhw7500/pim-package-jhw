@@ -97,6 +97,53 @@ def _pid_snapshot(proc_root: Path) -> dict:
     return out
 
 
+def _owner_proc_observation(owner: object, processes: dict) -> tuple[bool, str]:
+    """Compare a DENY-ONLY Owner diagnostic with the *same* /proc snapshot.
+
+    Both JSON and /proc are read-only observations, not an authenticated
+    exclusive lease or future proof of Writer inhibition. An additional
+    caller-provided field must never become a source of authority.
+    """
+    keys = {
+        "schema", "decision", "reason_code", "owner_process_observed",
+        "owner", "official_lease_verified", "eos_verified", "fsync_verified",
+        "writer_fd_closed_verified", "writer_cannot_reopen",
+        "writer_fence_session", "hardware_execution_authorized",
+    }
+    owner_keys = {"boot_id", "invocation_id", "pid", "proc_start_time", "lifecycle"}
+    if type(owner) is not dict or set(owner) != keys:
+        return False, "OWNER_OBSERVATION_UNTRUSTED"
+    if (type(owner["schema"]) is not int or owner["schema"] != 1
+            or owner["decision"] != "BLOCK"
+            or owner["reason_code"] != "OWNER_PROCESS_OBSERVED_NO_WRITER_FENCE"
+            or owner["owner_process_observed"] is not True
+            or any(owner[k] is not False for k in (
+                "official_lease_verified", "eos_verified", "fsync_verified",
+                "writer_fd_closed_verified", "writer_cannot_reopen",
+                "hardware_execution_authorized"))
+            or owner["writer_fence_session"] is not None):
+        return False, "OWNER_OBSERVATION_UNTRUSTED"
+    item = owner["owner"]
+    if type(item) is not dict or set(item) != owner_keys:
+        return False, "OWNER_OBSERVATION_UNTRUSTED"
+    if (type(item["pid"]) is not int or item["pid"] <= 0
+            or type(item["proc_start_time"]) is not str
+            or re.fullmatch(r"[0-9]+", item["proc_start_time"]) is None
+            or any(type(item[k]) is not str
+                   or re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", item[k]) is None
+                   for k in ("boot_id", "invocation_id"))
+            or item["lifecycle"] not in (
+                "STARTING", "ACTIVE", "APPLYING_CONFIG",
+                "RECOVERING", "DEGRADED", "STOPPING")):
+        return False, "OWNER_OBSERVATION_UNTRUSTED"
+    actual = processes.get(str(item["pid"]))
+    if actual is None or actual[1] != item["proc_start_time"]:
+        return False, "OWNER_PID_STARTTIME_CHANGED_OR_ABSENT"
+    # A process might have a matching PID+starttime yet not be a camera
+    # coordinator; do not promote this to an authenticated Owner.
+    return True, "OWNER_PID_STARTTIME_OBSERVED_NO_FENCE"
+
+
 def _scan_part_files(recording_root: Path) -> int:
     count = 0
     scanned = 0
@@ -127,7 +174,8 @@ def _scan_part_files(recording_root: Path) -> int:
 
 def audit(proc_root: Path = Path("/proc"),
           recording_root: Path = Path("/mnt/sd_cam"),
-          *, inspect_partial_files: bool = True) -> dict:
+          *, inspect_partial_files: bool = True,
+          owner_observation: dict | None = None) -> dict:
     """One bounded read-only snapshot; deliberately never grants admission."""
     results = {
         "schema": 1, "observed_at_unix": int(time.time()),
@@ -141,6 +189,10 @@ def audit(proc_root: Path = Path("/proc"),
         # Still an instantaneous read-only observation, NEVER a trusted fence.
         "active_writer_generations": [], "recording_write_fd_generations": [],
         "partial_recording_files": None,
+        "owner_observation_supplied": owner_observation is not None,
+        "owner_pid_starttime_observed": None,
+        # A matching process is never a validated Owner/lease/Writer fence.
+        "owner_observation_trusted": False,
     }
     reasons = results["reason_codes"]
     root = Path(recording_root)
@@ -189,6 +241,10 @@ def audit(proc_root: Path = Path("/proc"),
         after = _pid_snapshot(proc)
         if before != after:
             raise AuditBlocked("PID set changed during observation")
+        if owner_observation is not None:
+            matches, reason = _owner_proc_observation(owner_observation, before)
+            results["owner_pid_starttime_observed"] = matches
+            reasons.append(reason)
         if inspect_partial_files:
             results["partial_recording_files"] = _scan_part_files(root)
     except AuditBlocked as exc:
