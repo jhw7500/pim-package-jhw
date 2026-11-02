@@ -120,6 +120,9 @@ printf '%s' "$help_out" | grep -q -- '--no-wait' || { echo 'start_cam --help doe
 # executor 경로는 해석된 지연을 인자로 요구한다(rc 64). 그 검사가 owner 검사보다
 # 앞서므로, 인자를 뺀 호출로 owner 컨텍스트를 단정하면 arg 검사에서 먼저 끊겨
 # 단정이 조용히 무의미해진다 — 그래서 두 rc 를 각각 정확히 못박는다.
+export PIM_CAMERA_STATE_DIR="$WORK/state"
+# The real unit creates StateDirectory; absent Owner context must still return 69.
+mkdir -p "$PIM_CAMERA_STATE_DIR"
 set +e
 PIM_CAMERA_EXECUTOR=1 "$ROOT/dist/pim/opt/pim/bin/start_cam.sh" >/dev/null 2>&1
 rc=$?

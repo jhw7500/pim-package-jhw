@@ -91,6 +91,8 @@ printf '%s' '99 (BG_Check_for_pim) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 999 0' 
 printf '/bin/bash\000%s\0004\000' "$PIM_CAMERA_BG_CHECKER" > "$PIM_CAMERA_PROCESS_ROOT/99/cmdline"
 prepare_sysfs
 runtime
+# systemd creates the persistent StateDirectory before the Owner starts.
+mkdir -p "$PIM_CAMERA_STATE_DIR"
 # This is the RED boundary: Task 3 must provide the only action executor.
 source "$PIM_LIB/cam_recovery.sh"
 source "$PIM_LIB/cam_recovery_actions.sh"

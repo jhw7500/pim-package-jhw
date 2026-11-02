@@ -30,6 +30,13 @@ python3 capture_probe_test.py
 python3 max9296_producer_test.py
 bash cam_fps_stack_cli_test.sh
 python3 systemd_recovery_contract_test.py
+python3 qa_maintenance_start_interlock_test.py
+python3 qa_config_guard_marker_test.py
+python3 qa_restore_worker_test.py
+python3 qa_writer_fd_audit_test.py
+python3 qa_owner_fence_review_test.py
+bash qa_maintenance_status_test.sh
+bash qa_owner_observe_test.sh
 python3 package_executable_test.py
 python3 aggregator_test.py
 python3 shadow_compare_test.py

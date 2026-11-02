@@ -1283,4 +1283,18 @@ seen_ifs='' seen_start=''
 [ "$seen_ifs" = "$(printf '%q' $' \t\n')" ] || fail "trap IFS: the stop ran with IFS $seen_ifs"
 [[ $seen_start =~ ^[0-9]+$ ]] || fail "trap IFS: the stop could not read a start time from /proc ('$seen_start')"
 
+echo '=== persistent QA marker blocks every liveness restart guard ==='
+mkdir -p "$PIM_CAMERA_STATE_DIR"
+barrier=$PIM_CAMERA_STATE_DIR/qa-maintenance.json
+printf '{invalid maintenance document}\n' > "$barrier"
+: > "$PIM_CAMERA_CALL_LOG"
+expect_rc 75 _cl_active_guard
+reject_effects 'durable QA maintenance marker'
+rm -f "$barrier"
+ln -s "$WORK/absent-qa-maintenance" "$barrier"
+expect_rc 75 _cl_active_guard
+reject_effects 'dangling durable QA maintenance marker'
+[ -L "$barrier" ] || fail 'liveness guard unexpectedly removed dangling marker'
+rm -f "$barrier"
+
 echo 'cam liveness: PASS'

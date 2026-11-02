@@ -1,0 +1,286 @@
+#!/usr/bin/env python3
+"""PIM writer lifecycle read-only probe (review evidence only).
+
+It never kills a process, touches recording media, or grants a Writer Fence.
+A single /proc observation cannot prove EOS/fsync, prevent a subsequent
+reopen, or establish the official board lease. Hardware QA remains BLOCKED.
+
+The command's production defaults are /proc and /mnt/sd_cam. Tests inject
+private fake /proc and private recording directories.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+import time
+
+# Names are from product cam recovery and gstApp/ORD/VCM. Finalizer may be
+# a thread inside gstApp, so any *other* process with a writable FD into
+# the recorded-media tree is also treated as a writer.
+WRITERS = frozenset(("gstApp", "PIMCAM", "streamApp", "ord", "vcm"))
+MAX_PIDS = 131072
+MAX_FDS_PER_PID = 65536
+MAX_RECORDING_WALK = 50000
+
+
+class AuditBlocked(RuntimeError):
+    pass
+
+
+def _proc_start(stat_line: str) -> str:
+    # PID (name with spaces) state ppid ... starttime is field 22.
+    # After the closing ')', field 3 is index 0, field 22 is index 19.
+    if ") " not in stat_line:
+        raise AuditBlocked("bad proc stat framing")
+    fields = stat_line.rsplit(") ", 1)[1].split()
+    if len(fields) <= 19 or not fields[19].isdigit():
+        raise AuditBlocked("missing process starttime")
+    return fields[19]
+
+
+def _read_text(path: Path, limit: int = 65536) -> str:
+    try:
+        with path.open("rb") as reader:
+            data = reader.read(limit + 1)
+        if len(data) > limit or b"\0" in data:
+            raise AuditBlocked("untrusted proc text")
+        return data.decode("utf-8").strip()
+    except (OSError, UnicodeError) as exc:
+        raise AuditBlocked("proc observation unavailable") from exc
+
+
+def _writable_flags(path: Path) -> bool:
+    # fdinfo flags are octal and include O_ACCMODE. Unknown is never clean.
+    data = _read_text(path, 8192)
+    entries = [line.partition(":")[2].strip() for line in data.splitlines()
+               if line.startswith("flags:")]
+    if len(entries) != 1 or not re.fullmatch(r"[0-7]+", entries[0]):
+        raise AuditBlocked("unknown FD open mode")
+    return (int(entries[0], 8) & os.O_ACCMODE) != os.O_RDONLY
+
+
+def _is_under(path: str, root: str) -> bool:
+    if path.endswith(" (deleted)"):
+        path = path[:-10]
+    if not path.startswith("/"):
+        return False
+    normalized = os.path.normpath(path)
+    return os.path.commonpath((normalized, root)) == root
+
+
+def _pid_snapshot(proc_root: Path) -> dict:
+    if proc_root.is_symlink() or not proc_root.is_dir():
+        raise AuditBlocked("proc root invalid")
+    out = {}
+    try:
+        entries = list(proc_root.iterdir())
+    except OSError as exc:
+        raise AuditBlocked("proc enumeration unavailable") from exc
+    numeric = [p for p in entries if p.name.isdigit()]
+    if len(numeric) > MAX_PIDS:
+        raise AuditBlocked("proc entry bound exceeded")
+    for entry in numeric:
+        if entry.is_symlink():
+            raise AuditBlocked("PID directory alias")
+        # Process races must block; no "process went away so we are clean".
+        stat_text = _read_text(entry / "stat")
+        start = _proc_start(stat_text)
+        comm = _read_text(entry / "comm")
+        if not comm or len(comm) > 15:
+            raise AuditBlocked("untrusted process name")
+        out[entry.name] = (comm, start)
+    return out
+
+
+def _owner_proc_observation(owner: object, processes: dict) -> tuple[bool, str]:
+    """Compare a DENY-ONLY Owner diagnostic with the *same* /proc snapshot.
+
+    Both JSON and /proc are read-only observations, not an authenticated
+    exclusive lease or future proof of Writer inhibition. An additional
+    caller-provided field must never become a source of authority.
+    """
+    keys = {
+        "schema", "decision", "reason_code", "owner_process_observed",
+        "owner", "official_lease_verified", "eos_verified", "fsync_verified",
+        "writer_fd_closed_verified", "writer_cannot_reopen",
+        "writer_fence_session", "hardware_execution_authorized",
+    }
+    owner_keys = {"boot_id", "invocation_id", "pid", "proc_start_time", "lifecycle"}
+    if type(owner) is not dict or set(owner) != keys:
+        return False, "OWNER_OBSERVATION_UNTRUSTED"
+    if (type(owner["schema"]) is not int or owner["schema"] != 1
+            or owner["decision"] != "BLOCK"
+            or owner["reason_code"] != "OWNER_PROCESS_OBSERVED_NO_WRITER_FENCE"
+            or owner["owner_process_observed"] is not True
+            or any(owner[k] is not False for k in (
+                "official_lease_verified", "eos_verified", "fsync_verified",
+                "writer_fd_closed_verified", "writer_cannot_reopen",
+                "hardware_execution_authorized"))
+            or owner["writer_fence_session"] is not None):
+        return False, "OWNER_OBSERVATION_UNTRUSTED"
+    item = owner["owner"]
+    if type(item) is not dict or set(item) != owner_keys:
+        return False, "OWNER_OBSERVATION_UNTRUSTED"
+    if (type(item["pid"]) is not int or item["pid"] <= 0
+            or type(item["proc_start_time"]) is not str
+            or re.fullmatch(r"[0-9]+", item["proc_start_time"]) is None
+            or any(type(item[k]) is not str
+                   or re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", item[k]) is None
+                   for k in ("boot_id", "invocation_id"))
+            or item["lifecycle"] not in (
+                "STARTING", "ACTIVE", "APPLYING_CONFIG",
+                "RECOVERING", "DEGRADED", "STOPPING")):
+        return False, "OWNER_OBSERVATION_UNTRUSTED"
+    actual = processes.get(str(item["pid"]))
+    if actual is None or actual[1] != item["proc_start_time"]:
+        return False, "OWNER_PID_STARTTIME_CHANGED_OR_ABSENT"
+    # A process might have a matching PID+starttime yet not be a camera
+    # coordinator; do not promote this to an authenticated Owner.
+    return True, "OWNER_PID_STARTTIME_OBSERVED_NO_FENCE"
+
+
+def _scan_part_files(recording_root: Path) -> int:
+    count = 0
+    scanned = 0
+    stack = [recording_root]
+    while stack:
+        folder = stack.pop()
+        try:
+            with os.scandir(folder) as iterator:
+                entries = list(iterator)
+        except OSError as exc:
+            raise AuditBlocked("recording traversal unavailable") from exc
+        for ent in entries:
+            scanned += 1
+            if scanned > MAX_RECORDING_WALK:
+                raise AuditBlocked("recording walk bound exceeded")
+            # Unknown alias inside mounted media cannot establish closure.
+            if ent.is_symlink():
+                raise AuditBlocked("recording path symlink encountered")
+            if ent.is_dir(follow_symlinks=False):
+                stack.append(Path(ent.path))
+            elif ent.is_file(follow_symlinks=False):
+                if ent.name.endswith((".part", ".tmp", ".pending")):
+                    count += 1
+            else:
+                raise AuditBlocked("unknown recording file type")
+    return count
+
+
+def audit(proc_root: Path = Path("/proc"),
+          recording_root: Path = Path("/mnt/sd_cam"),
+          *, inspect_partial_files: bool = True,
+          owner_observation: dict | None = None) -> dict:
+    """One bounded read-only snapshot; deliberately never grants admission."""
+    results = {
+        "schema": 1, "observed_at_unix": int(time.time()),
+        "decision": "BLOCK", "hardware_execution_authorized": False,
+        "writer_fence_session": None, "eos_verified": False,
+        "fsync_verified": False, "writer_cannot_reopen": False,
+        "official_lease_verified": False, "finalizer_verified": False,
+        "reason_codes": [],
+        "active_writer_pids": [], "recording_write_fds": [],
+        # Bind every sighted writer to /proc starttime (PID reuse defense).
+        # Still an instantaneous read-only observation, NEVER a trusted fence.
+        "active_writer_generations": [], "recording_write_fd_generations": [],
+        "partial_recording_files": None,
+        "owner_observation_supplied": owner_observation is not None,
+        "owner_pid_starttime_observed": None,
+        # A matching process is never a validated Owner/lease/Writer fence.
+        "owner_observation_trusted": False,
+    }
+    reasons = results["reason_codes"]
+    root = Path(recording_root)
+    proc = Path(proc_root)
+    if not root.is_absolute() or root.is_symlink() or not root.is_dir():
+        reasons.append("RECORDING_ROOT_UNTRUSTED")
+        return results
+    # No mutation and no claim of mount identity. A separate authoritative
+    # board-side mount + dev and boot sample is still required.
+    normalized = os.path.normpath(str(root))
+    try:
+        before = _pid_snapshot(proc)
+        for pid, (comm, start) in before.items():
+            if comm in WRITERS:
+                results["active_writer_pids"].append(int(pid))
+                results["active_writer_generations"].append({
+                    "pid": int(pid), "comm": comm, "proc_start_time": start,
+                })
+            fd_dir = proc / pid / "fd"
+            try:
+                handles = list(fd_dir.iterdir())
+            except OSError as exc:
+                raise AuditBlocked("FD enumeration unavailable") from exc
+            if len(handles) > MAX_FDS_PER_PID:
+                raise AuditBlocked("FD scan bound exceeded")
+            for f in handles:
+                if not f.name.isdigit():
+                    raise AuditBlocked("unexpected FD entry")
+                try:
+                    link = os.readlink(f)
+                except OSError as exc:
+                    raise AuditBlocked("FD target unavailable") from exc
+                if not _is_under(link, normalized):
+                    continue
+                if _writable_flags(proc / pid / "fdinfo" / f.name):
+                    results["recording_write_fds"].append({"pid": int(pid),
+                                                          "fd": int(f.name)})
+                    results["recording_write_fd_generations"].append({
+                        "pid": int(pid), "fd": int(f.name),
+                        "proc_start_time": start,
+                    })
+            # Recheck every visited process, not just active writer names.
+            # A changed identity invalidates the entire recording FD snapshot.
+            if _proc_start(_read_text(proc / pid / "stat")) != start:
+                raise AuditBlocked("PID changed during observation")
+        after = _pid_snapshot(proc)
+        if before != after:
+            raise AuditBlocked("PID set changed during observation")
+        if owner_observation is not None:
+            matches, reason = _owner_proc_observation(owner_observation, before)
+            results["owner_pid_starttime_observed"] = matches
+            reasons.append(reason)
+        if inspect_partial_files:
+            results["partial_recording_files"] = _scan_part_files(root)
+    except AuditBlocked as exc:
+        reasons.append("READ_ONLY_OBSERVATION_INCOMPLETE")
+        results["inspection_error"] = str(exc)
+        return results
+    except (OSError, ValueError) as exc:
+        reasons.append("READ_ONLY_OBSERVATION_INCOMPLETE")
+        results["inspection_error"] = type(exc).__name__
+        return results
+    if results["active_writer_pids"]:
+        reasons.append("ACTIVE_WRITER_PROCESS")
+    if results["recording_write_fds"]:
+        reasons.append("RECORDING_WRITABLE_FD_OPEN")
+    if results["partial_recording_files"]:
+        reasons.append("RECORDING_PARTIAL_FILES_PRESENT")
+    # Absence only at two observation instants is not persistent fencing.
+    reasons.extend(("EOS_FSYNC_NOT_ATTESTED",
+                    "OWNER_NO_REOPEN_FENCE_NOT_ATTESTED",
+                    "FINALIZER_CLOSE_NOT_ATTESTED",
+                    "OFFICIAL_LEASE_NOT_ATTESTED",
+                    "INSTALLED_SOURCE_AND_MOUNT_NOT_ATTESTED"))
+    return results
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description="Read-only PIM writer FD probe")
+    parser.add_argument("--proc-root", type=Path, default=Path("/proc"))
+    parser.add_argument("--recording-root", type=Path, default=Path("/mnt/sd_cam"))
+    args = parser.parse_args(argv)
+    # This tool is evidence only. Non-zero does NOT mean a failed probe:
+    # 2 means it cannot prove safe hardware execution, as designed.
+    output = audit(args.proc_root, args.recording_root)
+    print(json.dumps(output, sort_keys=True))
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
