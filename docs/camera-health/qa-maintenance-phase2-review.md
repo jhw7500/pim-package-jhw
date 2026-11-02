@@ -5,13 +5,18 @@ barrier in PR #231. It is not a deployable four-channel QA transaction.
 
 ## What was implemented
 
-1. Both `cam-operate.service` and `ord-operate.service` have an
+1. `cam-operate.service`, `ord-operate.service`, and `vsd-operate.service` have an
    `ExecCondition=/bin/sh /opt/pim/bin/qa_maintenance_exec_condition.sh`.
    It rejects an existing `/var/lib/pim-camera/qa-maintenance.json` marker,
    including broken symlinks and corrupt content, and missing/linked state
    directories. A denied systemd start does not create a new Owner or Writer.
    This is defense in depth: direct execution outside systemd still needs
    an Owner-backed fence and must not be mistaken for an authorized QA session.
+   `vsd/tcpsvr.cc:cmd_set_config` writes edgeconf, so VSD must not restart
+   while a restore marker is present. Its unit also creates the same
+   StateDirectory. This prevents **new systemd starts only**: an already
+   running VSD or a direct binary launch still requires a real Owner
+   quiesce/no-reopen fence, which is not implemented here.
 2. `tools/qa_restore_worker.py` is an **OFFLINE-ONLY** restartable,
    owner-locked restore kernel. It can restore exactly four private **sandbox**
    files (edgeconf, ORD/VCM, merged runtime and LED-off fixture) from

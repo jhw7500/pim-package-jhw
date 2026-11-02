@@ -70,7 +70,7 @@ class SystemdStartBarrierTest(unittest.TestCase):
 
     def test_config_guard_and_writer_services_have_fail_closed_exec_condition(self):
         for name in ("pim-config-guard.service", "cam-operate.service",
-                     "ord-operate.service"):
+                     "ord-operate.service", "vsd-operate.service"):
             with self.subTest(name=name):
                 text = (UNITS / name).read_text(encoding="utf-8")
                 self.assertEqual(text.count(EXEC), 1)
@@ -81,6 +81,11 @@ class SystemdStartBarrierTest(unittest.TestCase):
         guard = (UNITS / "pim-config-guard.service").read_text(encoding="utf-8")
         self.assertEqual(guard.count("StateDirectory=pim-camera"), 1)
         self.assertEqual(guard.count("StateDirectoryMode=0750"), 1)
+        # VSD writes edgeconf through its set_config TCP handler; create the
+        # marker directory even when the service starts independently.
+        vsd = (UNITS / "vsd-operate.service").read_text(encoding="utf-8")
+        self.assertEqual(vsd.count("StateDirectory=pim-camera"), 1)
+        self.assertEqual(vsd.count("StateDirectoryMode=0750"), 1)
         # No implicit service enable/install of a QA restorer in this patch.
         self.assertNotIn("pim-qa-restore.service",
                          (UNITS / "cam-operate.service").read_text())
