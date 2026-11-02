@@ -39,8 +39,25 @@ class WriterFdAuditTest(unittest.TestCase):
             (p / "fdinfo" / str(fd)).write_text("pos:\t0\nflags:\t{}\n".format(flags))
         return p
 
-    def result(self):
-        return audit.audit(self.proc, self.sd)
+    def result(self, *, owner_observation=None):
+        return audit.audit(self.proc, self.sd,
+                           owner_observation=owner_observation)
+
+    def owner_status(self, *, pid=123, start="12345"):
+        # Exact deny-only shape returned by cam-recoveryctl owner-observe.
+        return {
+            "schema": 1, "decision": "BLOCK",
+            "reason_code": "OWNER_PROCESS_OBSERVED_NO_WRITER_FENCE",
+            "owner_process_observed": True,
+            "owner": {
+                "boot_id": "boot-a", "invocation_id": "inv-42",
+                "pid": pid, "proc_start_time": start, "lifecycle": "ACTIVE"
+            },
+            "official_lease_verified": False, "eos_verified": False,
+            "fsync_verified": False, "writer_fd_closed_verified": False,
+            "writer_cannot_reopen": False, "writer_fence_session": None,
+            "hardware_execution_authorized": False,
+        }
 
     def test_empty_proc_not_mistaken_for_fence(self):
         r = self.result()
@@ -122,6 +139,89 @@ class WriterFdAuditTest(unittest.TestCase):
     def test_symlink_pid_directory_denies(self):
         (self.proc / "123").symlink_to(self.root, target_is_directory=True)
         self.assertIn("READ_ONLY_OBSERVATION_INCOMPLETE", self.result()["reason_codes"])
+
+    def test_owner_pid_starttime_matches_same_proc_scan_but_not_a_fence(self):
+        self.process(comm="chk_cam_operate", with_fd=False)
+        r = self.result(owner_observation=self.owner_status())
+        self.assertTrue(r["owner_observation_supplied"])
+        self.assertTrue(r["owner_pid_starttime_observed"])
+        self.assertFalse(r["owner_observation_trusted"])
+        self.assertIn("OWNER_PID_STARTTIME_OBSERVED_NO_FENCE", r["reason_codes"])
+        self.assertEqual(r["decision"], "BLOCK")
+        self.assertFalse(r["official_lease_verified"])
+        self.assertFalse(r["writer_cannot_reopen"])
+        self.assertIsNone(r["writer_fence_session"])
+
+    def test_matching_pid_but_changed_starttime_denies_owner_observation(self):
+        self.process(comm="chk_cam_operate", with_fd=False)
+        r = self.result(owner_observation=self.owner_status(start="99999"))
+        self.assertFalse(r["owner_pid_starttime_observed"])
+        self.assertIn("OWNER_PID_STARTTIME_CHANGED_OR_ABSENT", r["reason_codes"])
+
+    def test_older_missing_owner_process_is_not_assumed_dead_and_safe(self):
+        r = self.result(owner_observation=self.owner_status())
+        self.assertFalse(r["owner_pid_starttime_observed"])
+        self.assertEqual(r["decision"], "BLOCK")
+        self.assertIn("OWNER_PID_STARTTIME_CHANGED_OR_ABSENT", r["reason_codes"])
+
+    def test_owner_observation_with_spoofed_token_is_rejected(self):
+        self.process(comm="chk_cam_operate", with_fd=False)
+        forged = self.owner_status()
+        forged["owner"]["token"] = "SECRET"
+        r = self.result(owner_observation=forged)
+        self.assertFalse(r["owner_pid_starttime_observed"])
+        self.assertIn("OWNER_OBSERVATION_UNTRUSTED", r["reason_codes"])
+        self.assertNotIn("SECRET", str(r))
+
+    def test_owner_observation_claiming_lease_or_execution_is_rejected(self):
+        self.process(comm="chk_cam_operate", with_fd=False)
+        for field, value in (
+            ("official_lease_verified", True),
+            ("hardware_execution_authorized", True),
+            ("writer_fence_session", "claimed-lease"),
+            ("writer_cannot_reopen", True),
+            ("decision", "ALLOW"),
+            ("schema", True),
+        ):
+            observation = self.owner_status()
+            observation[field] = value
+            with self.subTest(field=field):
+                r = self.result(owner_observation=observation)
+                self.assertIn("OWNER_OBSERVATION_UNTRUSTED",
+                              r["reason_codes"])
+                self.assertFalse(r["owner_pid_starttime_observed"])
+
+    def test_owner_observation_bool_pid_and_malformed_start_refused(self):
+        self.process(comm="chk_cam_operate", with_fd=False)
+        for owner_field, value in (("pid", True), ("pid", 0),
+                                   ("proc_start_time", 12345),
+                                   ("proc_start_time", "12abc"),
+                                   ("boot_id", "boot-a\\nforged"),
+                                   ("lifecycle", "QUIESCED")):
+            observation = self.owner_status()
+            observation["owner"][owner_field] = value
+            with self.subTest(field=owner_field, value=value):
+                r = self.result(owner_observation=observation)
+                self.assertIn("OWNER_OBSERVATION_UNTRUSTED",
+                              r["reason_codes"])
+                self.assertFalse(r["owner_pid_starttime_observed"])
+
+    def test_matching_owner_cannot_hide_active_writer_and_open_file(self):
+        self.process(comm="gstApp", with_fd=True)
+        r = self.result(owner_observation=self.owner_status())
+        self.assertTrue(r["owner_pid_starttime_observed"])
+        self.assertIn("ACTIVE_WRITER_PROCESS", r["reason_codes"])
+        self.assertIn("RECORDING_WRITABLE_FD_OPEN", r["reason_codes"])
+        self.assertEqual(r["decision"], "BLOCK")
+
+    def test_failed_pid_scan_does_not_retain_owner_match(self):
+        self.process(comm="chk_cam_operate", with_fd=False)
+        with mock.patch.object(audit, "_pid_snapshot",
+                               side_effect=audit.AuditBlocked("scan failed")):
+            r = self.result(owner_observation=self.owner_status())
+        self.assertIsNone(r["owner_pid_starttime_observed"])
+        self.assertIn("READ_ONLY_OBSERVATION_INCOMPLETE",
+                      r["reason_codes"])
 
     def test_missing_recording_root_is_blocked(self):
         r = audit.audit(self.proc, self.root / "no-sd")
