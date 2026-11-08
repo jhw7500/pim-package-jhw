@@ -78,3 +78,4 @@ Description: PIM application
 0.6.3 : pim_gate sFTP_UDP cam setting cmd, ldconfig, capture instant, pimwebserver 1.1.0
 0.6.3.1 : pim_gate PCOM_A, vns mapping axis
 0.6.3.2 : pim_gate sFTP_UDP add cam gain setting cmd
+0.6.3.3 : pim_gate add vibnos gyro offset with pimwebserver 1.1.3(1.1.2 skip), modify data_record(for tlift)
