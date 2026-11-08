@@ -296,4 +296,28 @@ fi
 
 echo "PIM_DEB_FILE     : $PIM_DEB_FILE" > /root/fwupgrade/version.txt
 echo "DB_FIRMWARE_FILE : $DB_ANAL_FIRMWARE_FILE" >> /root/fwupgrade/version.txt
+
+prog_per=99
+echo '{"PROGRESS":'"$prog_per"',"MSG":"Check pimwebserver"}'
+cd ${BASEDIR}/dpkg
+
+package="pimwebserver"
+target_ver="1.1.3"
+deb_file="pimwebserver_${target_ver}_all.deb"
+installed_ver=$(dpkg-query -W -f='${Version}' "$package" 2>/dev/null)
+
+if [ -z "$installed_ver" ]; then
+    echo '{"PROGRESS":'"$prog_per"',"MSG":"install '"$package"' (not installed)"}'
+    echo '{"PROGRESS":'"$prog_per"',"MSG":"dpkg -i '"$deb_file"'"}'
+    dpkg -i "$deb_file" >/dev/null 2>&1
+
+elif dpkg --compare-versions "$installed_ver" lt "$target_ver"; then
+    echo '{"PROGRESS":'"$prog_per"',"MSG":"upgrade '"$package"' '"$installed_ver"' -> '"$target_ver"'"}'
+    echo '{"PROGRESS":'"$prog_per"',"MSG":"dpkg -i '"$deb_file"'"}'
+    dpkg -i "$deb_file" >/dev/null 2>&1
+
+else
+    echo '{"PROGRESS":'"$prog_per"',"MSG":"installed '"$package"' '"$installed_ver"'"}'
+fi
+
 echo '{"PROGRESS":100,"MSG":"Finished"}'
