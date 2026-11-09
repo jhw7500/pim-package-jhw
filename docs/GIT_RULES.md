@@ -141,8 +141,9 @@ GitHub·GitLab 패키지에 이미 있는 파일을 각각 그대로 보존한�
 export GITLAB_REPO=<GitLab 작업 복제본 경로>
 
 # 동기화마다 GitLab master에서 sync 브랜치를 새로 만든다. 이전 sync 브랜치는 잇지 않는다.
+# --no-track: upstream을 origin/master로 잡지 않아, 손으로 git push 해도 master로 가지 않는다.
 git -C "$GITLAB_REPO" fetch --prune origin
-git -C "$GITLAB_REPO" switch -c "sync/github-$(date +%F)" origin/master
+git -C "$GITLAB_REPO" switch --no-track -c "sync/github-$(date +%F)" origin/master
 git -C "$GITLAB_REPO" submodule update --init
 
 # 특정 모듈만. 서브모듈을 동기화하면 그 서브모듈에도 같은 이름의 sync 브랜치를 만든다.
@@ -156,8 +157,9 @@ git -C "$GITLAB_REPO/ord" switch -c "sync/github-$(date +%F)"
 
 `--dry-run`이 아니면(파일만 sync, `--commit`, `--push`) 쓰려는 GitLab 저장소(본체와
 대상 서브모듈)가 `sync/github-*` 브랜치일 때만 진행한다. `master`·`main`·detached
-HEAD와 다른 기능 브랜치에서는 파일을 복사하기 전에 중단한다. 실제 푸시는 대상 ref를
-명시하고, GitLab `master`에는 푸시하지 않는다.
+HEAD와 다른 기능 브랜치에서는 파일을 복사하기 전에 중단한다. `--push`는 검사한 sync
+브랜치와 같은 이름의 `origin` 브랜치로만 push한다. 직접 push할 때도 대상 ref를 명시하고,
+GitLab `master`에는 푸시하지 않는다.
 
 동기화 커밋 메시지에 GitHub 커밋 내역이 자동으로 포함된다:
 
@@ -192,7 +194,7 @@ git push origin master
 # 5. GitLab 작업 복제본에서 sync 브랜치를 새로 만들고 dry-run과 commit
 export GITLAB_REPO=<GitLab 작업 복제본 경로>
 git -C "$GITLAB_REPO" fetch --prune origin
-git -C "$GITLAB_REPO" switch -c "sync/github-$(date +%F)" origin/master
+git -C "$GITLAB_REPO" switch --no-track -c "sync/github-$(date +%F)" origin/master
 ./sync-to-gitlab.sh --dry-run pim
 ./sync-to-gitlab.sh --commit pim
 
