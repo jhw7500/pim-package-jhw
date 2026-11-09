@@ -291,4 +291,90 @@ GITHUB_REPO="$github" GITLAB_REPO="$gitlab" \
     fail "본체와 서브모듈이 모두 sync 브랜치인데 ord 동기화가 거부됨"
 assert_same "$github/ord/main.txt" "$gitlab/ord/main.txt"
 
-echo "PASS: repo paths, write branch guard, PIM allowlist, reverse scope, submodule guard"
+# 상대 경로는 호출한 디렉터리 기준으로 한 번만 푼다. 스크립트가 뒤에서 cd 해도
+# 검증한 GitLab 저장소에만 쓰고, GitHub HEAD와 작업 트리는 그대로여야 한다.
+assert_github_untouched() {
+    local label=$1 head=$2
+    [ "$(git -C "$github" rev-parse HEAD)" = "$head" ] || fail "${label}: GitHub HEAD가 바뀜"
+    [ -z "$(git -C "$github" status --porcelain)" ] || fail "${label}: GitHub 작업 트리가 바뀜"
+}
+
+relative_pim_commit() {
+    local label=$1 dir=$2 relative=$3 cdpath=$4 head
+    write_fixture "$github" "docs/session-lifecycle.md" "relative candidate: $label"
+    git -C "$github" add -A
+    git -C "$github" commit -qm "fixture: relative $label"
+    head=$(git -C "$github" rev-parse HEAD)
+    (cd "$dir" && CDPATH="$cdpath" GITHUB_REPO="$github" GITLAB_REPO="$relative" \
+        bash "$ROOT/sync-to-gitlab.sh" --commit pim) >"$TMP_ROOT/relative-$label.log" 2>&1 || \
+        fail "${label}: 상대 경로 GITLAB_REPO로 commit이 실패함"
+    assert_same "$github/docs/session-lifecycle.md" "$gitlab/docs/session-lifecycle.md"
+    git -C "$gitlab" log -1 --format=%s | grep -q '^sync: GitHub 반영' || \
+        fail "${label}: 검증한 GitLab 저장소에 sync commit이 없음"
+    assert_github_untouched "$label" "$head"
+}
+
+relative_pim_commit gitlab-dot "$gitlab" . ""
+relative_pim_commit parent-name "$TMP_ROOT" gitlab ""
+
+# CDPATH가 있어도 호출한 디렉터리 기준으로 푼다. 같은 이름의 미끼 저장소는 그대로여야 한다.
+decoy="$TMP_ROOT/cdpath-decoy"
+mkdir -p "$decoy/gitlab"
+git_init "$decoy/gitlab" master
+git -C "$decoy/gitlab" commit -q --allow-empty -m "fixture: decoy"
+git -C "$decoy/gitlab" switch -qc sync/github-decoy
+decoy_head=$(git -C "$decoy/gitlab" rev-parse HEAD)
+relative_pim_commit cdpath "$TMP_ROOT" gitlab "$decoy"
+[ "$(git -C "$decoy/gitlab" rev-parse HEAD)" = "$decoy_head" ] || fail "CDPATH 미끼 저장소에 commit이 생김"
+
+# 서브모듈 commit도 GitHub 최상위에서 준 상대 경로를 같은 기준으로 쓴다.
+write_fixture "$github" "ord/main.txt" "github ord relative"
+git -C "$github" add -A
+git -C "$github" commit -qm "fixture: ord relative"
+github_head=$(git -C "$github" rev-parse HEAD)
+(cd "$github" && GITHUB_REPO="$github" GITLAB_REPO=../gitlab \
+    bash "$ROOT/sync-to-gitlab.sh" --commit ord) >"$TMP_ROOT/relative-ord.log" 2>&1 || \
+    fail "서브모듈 상대 경로 commit이 실패함"
+assert_same "$github/ord/main.txt" "$gitlab/ord/main.txt"
+git -C "$gitlab/ord" log -1 --format=%s | grep -q '^sync: GitHub 반영' || \
+    fail "서브모듈에 sync commit이 없음"
+assert_github_untouched "ord-relative" "$github_head"
+
+# 역방향도 상대 GITLAB_REPO를 호출한 디렉터리 기준으로 읽는다.
+write_fixture "$gitlab" "docs/session-lifecycle.md" "gitlab relative reverse"
+git -C "$gitlab" add -- docs/session-lifecycle.md
+git -C "$gitlab" commit -qm "fixture: gitlab relative reverse"
+(cd "$gitlab" && GITHUB_REPO="$github" GITLAB_REPO=. \
+    bash "$ROOT/sync-from-gitlab.sh" pim) >"$TMP_ROOT/relative-from.log" 2>&1 || \
+    fail "역방향 상대 경로 sync가 실패함"
+assert_same "$gitlab/docs/session-lifecycle.md" "$github/docs/session-lifecycle.md"
+git -C "$github" add -A
+git -C "$github" commit -qm "fixture: relative reverse sync"
+
+# 상대 경로가 GitHub 저장소 자신으로 풀리면 거부한다.
+expect_refusal "상대 경로 같은 저장소" "같은 Git 저장소" "$TMP_ROOT/relative-same.log" \
+    bash -c 'cd "$1" && GITHUB_REPO="$1" GITLAB_REPO=. bash "$2" --dry-run pim' \
+    _ "$github" "$ROOT/sync-to-gitlab.sh"
+
+# --push는 검사한 sync 브랜치와 같은 이름의 원격 브랜치로만 올린다. upstream이
+# origin/master이고 push.default=upstream이어도 원격 master는 그대로여야 한다.
+remote="$TMP_ROOT/gitlab-remote.git"
+git init -q --bare -b master "$remote"
+git -C "$gitlab" push -q "$remote" master
+push_clone="$TMP_ROOT/gitlab-push"
+git clone -q "$remote" "$push_clone"
+git -C "$push_clone" config user.name "sync scope test"
+git -C "$push_clone" config user.email "sync-scope@example.invalid"
+git -C "$push_clone" config push.default upstream
+git -C "$push_clone" switch -q -c sync/github-push --track origin/master
+remote_master=$(git -C "$remote" rev-parse master)
+write_fixture "$github" "docs/session-lifecycle.md" "push candidate"
+git -C "$github" add -A
+git -C "$github" commit -qm "fixture: push candidate"
+GITHUB_REPO="$github" GITLAB_REPO="$push_clone" \
+    bash "$ROOT/sync-to-gitlab.sh" --push pim >"$TMP_ROOT/push.log" 2>&1 || fail "--push가 실패함"
+[ "$(git -C "$remote" rev-parse master)" = "$remote_master" ] || fail "--push가 원격 master를 바꿈"
+[ "$(git -C "$remote" rev-parse refs/heads/sync/github-push)" = \
+    "$(git -C "$push_clone" rev-parse HEAD)" ] || fail "--push가 같은 이름의 sync 브랜치로 올라가지 않음"
+
+echo "PASS: repo paths, relative paths, write branch guard, push target, PIM allowlist, reverse scope, submodule guard"

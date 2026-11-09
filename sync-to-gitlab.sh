@@ -79,7 +79,7 @@ if [ ${#TARGETS[@]} -eq 0 ]; then
 모드 (기본은 파일만 sync, commit/push 없음):
   --dry-run      — rsync 시뮬레이션만 (실제 파일 변경 없음)
   --commit       — 파일 sync + GitLab repo에 commit (push 없음)
-  --push         — 파일 sync + commit + GitLab origin push
+  --push         — 파일 sync + commit + origin의 같은 이름 sync/github-* 브랜치로 push
 
 안전 검사:
   기본           — 이 sync 로 GitLab 에서 파일이 '삭제'되면 중단한다.
@@ -101,18 +101,26 @@ fi
 log() { echo "=== $1 ==="; }
 warn() { echo "⚠ $1"; }
 
+# 디렉터리를 호출한 위치 기준의 물리 절대 경로로 푼다. CDPATH가 상대 경로를 다른
+# 디렉터리로 돌리지 않게 비운다.
+resolve_dir() {
+    (CDPATH='' cd -- "$1" 2>/dev/null && pwd -P)
+}
+
 # Git common dir의 실제 경로를 돌려준다. 같은 저장소의 링크된 worktree도 같은 값이다.
 # --git-common-dir는 상대 경로를 돌려줄 수 있으므로 저장소 안에서 cd 한 뒤 pwd -P로 푼다.
 git_common_dir() {
     local repo="$1" dir
     dir=$(git -C "$repo" rev-parse --git-common-dir 2>/dev/null) || return 1
-    (cd "$repo" && cd "$dir" && pwd -P)
+    (CDPATH='' cd -- "$repo" && CDPATH='' cd -- "$dir" && pwd -P)
 }
 
 # 어떤 파일도 읽거나 쓰기 전에 두 저장소 경로를 확정한다. 빈 GITLAB_REPO도 거부한다.
 # set -u는 빈 문자열을 잡지 못하고, git -C ""는 현재 디렉터리를 대상으로 삼는다.
+# 상대 경로는 여기서 한 번만 절대 경로로 바꾼다. 스크립트는 뒤에서 cd 하므로 그대로
+# 두면 검증한 저장소와 실제로 쓰는 위치가 달라진다.
 validate_repo_paths() {
-    local github_common gitlab_common
+    local github_abs gitlab_abs github_common gitlab_common
     if [ -z "$GITLAB_REPO" ]; then
         echo "GITLAB_REPO가 필요하다: GitLab 작업 복제본 경로를 지정하라 (기본값 없음)" >&2
         return 1
@@ -121,6 +129,16 @@ validate_repo_paths() {
         echo "GITHUB_REPO를 정할 수 없다: 스크립트가 Git 저장소 밖에 있으니 경로를 지정하라" >&2
         return 1
     fi
+    github_abs=$(resolve_dir "$GITHUB_REPO") || {
+        echo "GitHub 쪽 경로를 찾을 수 없다: $GITHUB_REPO" >&2
+        return 1
+    }
+    gitlab_abs=$(resolve_dir "$GITLAB_REPO") || {
+        echo "GitLab 쪽 경로를 찾을 수 없다: $GITLAB_REPO" >&2
+        return 1
+    }
+    GITHUB_REPO="$github_abs"
+    GITLAB_REPO="$gitlab_abs"
     github_common=$(git_common_dir "$GITHUB_REPO") || {
         echo "GitHub 쪽 Git 저장소를 찾을 수 없다: $GITHUB_REPO" >&2
         return 1
@@ -173,6 +191,25 @@ preflight_write_targets() {
                 ;;
         esac
     done
+}
+
+# --push는 검사한 sync 브랜치와 같은 이름의 origin 브랜치로만 올린다. refspec 없는
+# git push는 push.default와 upstream 설정을 따르므로, sync 브랜치를 origin/master에서
+# 만들었다면 GitLab master로 올라가거나 commit 뒤에 실패할 수 있다.
+push_sync_branch() {
+    local branch
+    branch=$(git symbolic-ref --quiet --short HEAD) || {
+        echo "detached HEAD는 push하지 않는다: $(pwd -P)" >&2
+        return 1
+    }
+    case "$branch" in
+        sync/github-*) ;;
+        *)
+            echo "'$branch' 브랜치는 push하지 않는다: $(pwd -P)" >&2
+            return 1
+            ;;
+    esac
+    git push origin "HEAD:refs/heads/${branch}"
 }
 
 # 이 sync 로 GitLab 에서 '지워질' 파일이 있는지 미리 잡는다.
@@ -409,7 +446,7 @@ finalize_commit() {
     echo "  ${label} commit 완료"
 
     if [ "$DO_PUSH" = true ]; then
-        git push
+        push_sync_branch
         echo "  ${label} push 완료"
     else
         echo "  [NO-PUSH] commit만 생성됨. push는 수동으로 실행하세요"
@@ -626,7 +663,7 @@ update_submodule_refs() {
         echo "  서브모듈 참조 commit 완료"
 
         if [ "$DO_PUSH" = true ]; then
-            git push
+            push_sync_branch
             echo "  서브모듈 참조 push 완료"
         else
             echo "  [NO-PUSH] commit만 생성됨. push는 수동으로 실행하세요"
