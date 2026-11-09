@@ -4,7 +4,7 @@ set -euo pipefail
 # =============================================================================
 # sync-from-gitlab.sh — GitLab 회사 repo → GitHub 개인 monorepo 동기화
 #
-# 사용법:
+# 사용법 (GITLAB_REPO에 GitLab 작업 복제본 경로를 지정해야 한다):
 #   ./sync-from-gitlab.sh ord                  # ord 파일만 sync (commit/push 없음)
 #   ./sync-from-gitlab.sh --commit pim         # pim 파일 sync + commit (push 없음)
 #   ./sync-from-gitlab.sh --push all           # ord+vcm+vsd+pim 전부 sync + commit + push
@@ -20,8 +20,12 @@ set -euo pipefail
 # loopback이므로 GitHub commit 메시지에서 제외.
 # =============================================================================
 
-GITHUB_REPO="${GITHUB_REPO:-/home/jhw/ai/opencode/projects/pim-package-jhw}"
-GITLAB_REPO="${GITLAB_REPO:-/home/jhw/ai/opencode/projects/pim-package}"
+# GITLAB_REPO에는 기본값을 두지 않는다. 개인 환경의 절대 경로를 기본값으로 두면
+# 다른 환경에서는 엉뚱한 저장소를 대상으로 삼고, 작업 복제본 이름이 바뀌면 GitHub
+# 작업 복제본 자신을 가리킬 수 있다. GITHUB_REPO 기본값은 이 스크립트가 있는 저장소다.
+SCRIPT_DIR=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
+GITHUB_REPO="${GITHUB_REPO:-$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || true)}"
+GITLAB_REPO="${GITLAB_REPO:-}"
 
 # 서브모듈 매핑: scope → GitLab 서브모듈 경로
 declare -A SUBMODULE_MAP=(
@@ -62,7 +66,12 @@ done
 
 if [ ${#TARGETS[@]} -eq 0 ]; then
     cat <<EOF
-사용법: $0 [--dry-run|--commit|--push] [--force] <ord|vcm|vsd|pim|all> [...]
+사용법: GITLAB_REPO=<GitLab 작업 복제본> $0 [--dry-run|--commit|--push] [--force] <ord|vcm|vsd|pim|all> [...]
+
+환경변수:
+  GITLAB_REPO    — GitLab 작업 복제본 경로. 기본값이 없으므로 반드시 지정한다.
+  GITHUB_REPO    — GitHub 작업 복제본 경로. 생략하면 이 스크립트가 있는 저장소를 쓴다.
+                   두 경로가 같은 Git 저장소(링크된 worktree 포함)면 중단한다.
 
 방향: GitLab → GitHub (sync-to-gitlab.sh의 역방향)
 전제: GitLab repo와 ord/vcm/vsd 서브모듈을 미리 git pull한 상태
@@ -87,6 +96,40 @@ fi
 # --- 유틸 함수 ---
 log() { echo "=== $1 ==="; }
 warn() { echo "⚠ $1"; }
+
+# Git common dir의 실제 경로를 돌려준다. 같은 저장소의 링크된 worktree도 같은 값이다.
+# --git-common-dir는 상대 경로를 돌려줄 수 있으므로 저장소 안에서 cd 한 뒤 pwd -P로 푼다.
+git_common_dir() {
+    local repo="$1" dir
+    dir=$(git -C "$repo" rev-parse --git-common-dir 2>/dev/null) || return 1
+    (cd "$repo" && cd "$dir" && pwd -P)
+}
+
+# 어떤 파일도 읽거나 쓰기 전에 두 저장소 경로를 확정한다. 빈 GITLAB_REPO도 거부한다.
+# set -u는 빈 문자열을 잡지 못하고, git -C ""는 현재 디렉터리를 대상으로 삼는다.
+validate_repo_paths() {
+    local github_common gitlab_common
+    if [ -z "$GITLAB_REPO" ]; then
+        echo "GITLAB_REPO가 필요하다: GitLab 작업 복제본 경로를 지정하라 (기본값 없음)" >&2
+        return 1
+    fi
+    if [ -z "$GITHUB_REPO" ]; then
+        echo "GITHUB_REPO를 정할 수 없다: 스크립트가 Git 저장소 밖에 있으니 경로를 지정하라" >&2
+        return 1
+    fi
+    github_common=$(git_common_dir "$GITHUB_REPO") || {
+        echo "GitHub 쪽 Git 저장소를 찾을 수 없다: $GITHUB_REPO" >&2
+        return 1
+    }
+    gitlab_common=$(git_common_dir "$GITLAB_REPO") || {
+        echo "GitLab 쪽 Git 저장소를 찾을 수 없다: $GITLAB_REPO" >&2
+        return 1
+    }
+    if [ "$github_common" = "$gitlab_common" ]; then
+        echo "GITHUB_REPO와 GITLAB_REPO가 같은 Git 저장소를 가리킨다: $GITLAB_REPO" >&2
+        return 1
+    fi
+}
 
 # 동기화 대상 경로에 로컬 수정/untracked 파일이 있는지 검사
 # 인자: <scope> <path1> <path2> ...
@@ -446,9 +489,12 @@ sync_pim() {
 }
 
 # --- 메인 실행 ---
+validate_repo_paths
 cd "$GITHUB_REPO"
 
 log "동기화 시작 (GitLab → GitHub) ($(date '+%Y-%m-%d %H:%M:%S'))"
+echo "GitLab: ${GITLAB_REPO}"
+echo "GitHub: ${GITHUB_REPO}"
 [ "$DRY_RUN" = true ] && warn "DRY-RUN 모드 — 실제 변경 없음"
 [ "$DRY_RUN" = false ] && [ "$DO_COMMIT" = false ] && warn "FILES-ONLY 모드 — 파일만 sync, commit/push 없음"
 [ "$DO_COMMIT" = true ] && [ "$DO_PUSH" = false ] && warn "COMMIT 모드 — commit만, push 없음"

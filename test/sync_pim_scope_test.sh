@@ -31,6 +31,17 @@ git_init() {
     git -C "$repo" config user.email "sync-scope@example.invalid"
 }
 
+# 명령이 실패하고 로그에 기대한 거부 사유가 있어야 한다. 다른 이유로 실패한 것을
+# 통과로 읽지 않으려고 사유 문구까지 확인한다.
+expect_refusal() {
+    local label=$1 reason=$2 log=$3
+    shift 3
+    if "$@" >"$log" 2>&1; then
+        fail "${label}: 실행이 허용됨"
+    fi
+    grep -qF -- "$reason" "$log" || fail "${label}: 거부 사유가 다름 — $(tail -n 1 "$log")"
+}
+
 # 이 검사는 저장소 경로 환경변수를 무시하는 회귀를 잡는다. dry-run만 사용하므로
 # 구현 전에도 실제 작업 복제본을 수정하지 않는다.
 missing_source="$TMP_ROOT/missing-source"
@@ -92,6 +103,47 @@ git -C "$github" commit -qm "fixture: github"
 git_init "$gitlab" master
 git -C "$gitlab" add -A
 git -C "$gitlab" commit -qm "fixture: gitlab"
+# GitLab 쪽 쓰기는 GitLab master에서 새로 만든 sync/github-* 브랜치에서만 한다.
+git -C "$gitlab" switch -qc sync/github-fixture
+
+# GITLAB_REPO에는 기본값이 없다. 미설정과 빈 문자열 모두 거부한다(git -C ""는 현재
+# 디렉터리를 대상으로 삼는다). dry-run만 쓰므로 기본값이 남은 옛 스크립트로 돌려도
+# 실제 작업 복제본을 바꾸지 않는다.
+for script in sync-to-gitlab.sh sync-from-gitlab.sh; do
+    expect_refusal "${script} GITLAB_REPO 미설정" "GITLAB_REPO가 필요하다" \
+        "$TMP_ROOT/unset-${script}.log" \
+        env -u GITLAB_REPO GITHUB_REPO="$github" bash "$ROOT/$script" --dry-run pim
+    expect_refusal "${script} GITLAB_REPO 빈 값" "GITLAB_REPO가 필요하다" \
+        "$TMP_ROOT/empty-${script}.log" \
+        env GITHUB_REPO="$github" GITLAB_REPO= bash "$ROOT/$script" --dry-run pim
+done
+
+# 두 경로가 같은 Git 저장소면 같은 경로든 링크된 worktree든 거부한다.
+git -C "$github" worktree add -q --detach "$TMP_ROOT/github-worktree"
+for script in sync-to-gitlab.sh sync-from-gitlab.sh; do
+    for same in "$github" "$TMP_ROOT/github-worktree"; do
+        expect_refusal "${script} 같은 저장소 ${same##*/}" "같은 Git 저장소" \
+            "$TMP_ROOT/same-${script}-${same##*/}.log" \
+            env GITHUB_REPO="$github" GITLAB_REPO="$same" bash "$ROOT/$script" --dry-run pim
+    done
+done
+git -C "$github" worktree remove --force "$TMP_ROOT/github-worktree"
+
+# GITHUB_REPO를 생략하면 스크립트가 있는 저장소를 쓴다. 스크립트를 별도 fixture
+# 저장소에 복사해 실행하고, 실제 작업 복제본이 아니라 그 저장소를 잡는지 본다.
+self_source="$TMP_ROOT/self-source"
+mkdir -p "$self_source"
+git_init "$self_source" master
+cp "$ROOT/sync-to-gitlab.sh" "$ROOT/sync-from-gitlab.sh" "$self_source/"
+git -C "$self_source" add -A
+git -C "$self_source" commit -qm "fixture: self source"
+self_top=$(git -C "$self_source" rev-parse --show-toplevel)
+for script in sync-to-gitlab.sh sync-from-gitlab.sh; do
+    env -u GITHUB_REPO GITLAB_REPO="$gitlab" bash "$self_source/$script" --dry-run pim \
+        >"$TMP_ROOT/default-${script}.log" 2>&1 || fail "${script}: GITHUB_REPO 생략 dry-run 실패"
+    grep -qxF "GitHub: ${self_top}" "$TMP_ROOT/default-${script}.log" || \
+        fail "${script}: GITHUB_REPO 기본값이 스크립트가 있는 저장소가 아님"
+done
 
 GITHUB_REPO="$github" GITLAB_REPO="$gitlab" \
     bash "$ROOT/sync-to-gitlab.sh" pim >"$TMP_ROOT/to.log"
@@ -143,7 +195,7 @@ git -C "$github" commit -qm "fixture: reverse sync"
 
 # PIM 자동 commit은 허용 경로만 stage해야 한다. 실제 작업 복제본에는 vsd 서브모듈
 # 수정과 HANDOFF.md가 공존할 수 있으므로, 전역 git add -A는 인수인계 범위를 오염시킨다.
-git -C "$gitlab" switch -qc scoped-commit
+git -C "$gitlab" switch -qc sync/github-scoped-commit
 write_fixture "$github" "docs/session-lifecycle.md" "scoped commit candidate"
 git -C "$github" add -A
 git -C "$github" commit -qm "fixture: scoped commit candidate"
@@ -161,7 +213,7 @@ fi
 [ -f "$gitlab/vsd/local-change.txt" ] || fail "PIM commit이 vsd 작업을 제거함"
 git -C "$gitlab" switch -q master
 
-# 보호 브랜치에서는 --push가 파일 복사나 commit 전에 거부되어야 한다.
+# 보호 브랜치에서는 쓰기 모드가 파일 복사나 commit 전에 거부되어야 한다.
 write_fixture "$github" "docs/session-lifecycle.md" "protected branch candidate"
 git -C "$github" add -A
 git -C "$github" commit -qm "fixture: protected branch candidate"
@@ -180,14 +232,63 @@ fi
 [ "$(cat "$gitlab/docs/session-lifecycle.md")" = "$before_content" ] || \
     fail "보호 브랜치 dry-run이 GitLab 파일을 변경함"
 
-if GITHUB_REPO="$github" GITLAB_REPO="$gitlab" \
-        bash "$ROOT/sync-to-gitlab.sh" --push pim >"$TMP_ROOT/protected.log" 2>&1; then
-    fail "GitLab master에서 --push가 허용됨"
-fi
+# 쓰기 모드 셋(파일만·--commit·--push) 모두 sync/github-* 브랜치에서만 허용한다.
+# master·main뿐 아니라 다른 기능 브랜치와 detached HEAD도 거부하고, 거부 뒤에도
+# HEAD와 파일 내용이 그대로여야 한다.
+assert_refused_without_write() {
+    local label=$1 log=$2
+    shift 2
+    local head content
+    head=$(git -C "$gitlab" rev-parse HEAD)
+    content=$(cat "$gitlab/docs/session-lifecycle.md")
+    expect_refusal "$label" "sync/github-<날짜>" "$log" "$@"
+    [ "$(git -C "$gitlab" rev-parse HEAD)" = "$head" ] || fail "${label}: GitLab commit이 생성됨"
+    [ "$(cat "$gitlab/docs/session-lifecycle.md")" = "$content" ] || \
+        fail "${label}: GitLab 파일이 바뀜"
+}
 
-[ "$(git -C "$gitlab" rev-parse HEAD)" = "$before_sha" ] || \
-    fail "보호 브랜치 검사 전에 GitLab commit이 생성됨"
-[ "$(cat "$gitlab/docs/session-lifecycle.md")" = "$before_content" ] || \
-    fail "보호 브랜치 검사 전에 GitLab 파일이 변경됨"
+for mode in "" --commit --push; do
+    assert_refused_without_write "master ${mode:-파일만}" "$TMP_ROOT/master${mode}.log" \
+        env GITHUB_REPO="$github" GITLAB_REPO="$gitlab" \
+        bash "$ROOT/sync-to-gitlab.sh" ${mode:+"$mode"} pim
+done
+git -C "$gitlab" switch -qc feat/other
+for mode in "" --commit --push; do
+    assert_refused_without_write "feat/other ${mode:-파일만}" "$TMP_ROOT/feat${mode}.log" \
+        env GITHUB_REPO="$github" GITLAB_REPO="$gitlab" \
+        bash "$ROOT/sync-to-gitlab.sh" ${mode:+"$mode"} pim
+done
+git -C "$gitlab" switch -q --detach
+assert_refused_without_write "detached 파일만" "$TMP_ROOT/detached.log" \
+    env GITHUB_REPO="$github" GITLAB_REPO="$gitlab" bash "$ROOT/sync-to-gitlab.sh" pim
+git -C "$gitlab" switch -q master
 
-echo "PASS: PIM sync allowlist, reverse scope, protected branch guard"
+# 서브모듈 대상은 서브모듈과 GitLab 본체를 모두 검사한다. 서브모듈을 commit하면
+# 본체에도 .last-sync-<scope>와 서브모듈 참조 commit을 쓰기 때문이다.
+write_fixture "$github" "ord/main.txt" "github ord"
+git -C "$github" add -A
+git -C "$github" commit -qm "fixture: ord"
+mkdir -p "$gitlab/ord"
+git_init "$gitlab/ord" master
+write_fixture "$gitlab/ord" "main.txt" "gitlab ord"
+git -C "$gitlab/ord" add -A
+git -C "$gitlab/ord" commit -qm "fixture: gitlab ord"
+
+git -C "$gitlab/ord" switch -qc sync/github-ord
+expect_refusal "본체 master·서브모듈 sync 브랜치" "sync/github-<날짜>" "$TMP_ROOT/sub-parent.log" \
+    env GITHUB_REPO="$github" GITLAB_REPO="$gitlab" bash "$ROOT/sync-to-gitlab.sh" ord
+[ "$(cat "$gitlab/ord/main.txt")" = "gitlab ord" ] || fail "본체가 master인데 서브모듈 파일이 바뀜"
+
+git -C "$gitlab" switch -q sync/github-fixture
+git -C "$gitlab/ord" switch -q master
+expect_refusal "본체 sync 브랜치·서브모듈 master" "sync/github-<날짜>" "$TMP_ROOT/sub-child.log" \
+    env GITHUB_REPO="$github" GITLAB_REPO="$gitlab" bash "$ROOT/sync-to-gitlab.sh" ord
+[ "$(cat "$gitlab/ord/main.txt")" = "gitlab ord" ] || fail "서브모듈이 master인데 파일이 바뀜"
+
+git -C "$gitlab/ord" switch -q sync/github-ord
+GITHUB_REPO="$github" GITLAB_REPO="$gitlab" \
+    bash "$ROOT/sync-to-gitlab.sh" ord >"$TMP_ROOT/sub-ok.log" 2>&1 || \
+    fail "본체와 서브모듈이 모두 sync 브랜치인데 ord 동기화가 거부됨"
+assert_same "$github/ord/main.txt" "$gitlab/ord/main.txt"
+
+echo "PASS: repo paths, write branch guard, PIM allowlist, reverse scope, submodule guard"
