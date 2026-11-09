@@ -10,11 +10,11 @@
 1. `pim-package-jhw`에서 변경·문서·바이너리·검증을 먼저 완료한다.
 2. 로컬 커밋과 전체 검증 결과를 확인한다.
 3. 사용자 승인을 받은 뒤에만 GitHub로 push한다.
-4. GitHub 반영이 끝난 뒤 회사 GitLab 기능 브랜치 동기화를 시작한다.
+4. GitHub 반영이 끝난 뒤 GitLab master에서 새 `sync/github-<날짜>` 브랜치를 만들어 동기화를 시작한다.
 5. GitLab도 로컬 커밋과 diff를 먼저 확인하고, 별도 사용자 승인 후 push한다.
 
 GitHub와 GitLab 모두 승인 없는 원격 push를 하지 않는다. 회사 GitLab의
-`master`에는 직접 push하지 않고 기능 브랜치와 MR을 사용한다.
+`master`에는 push하거나 머지하지 않고, 동기화 결과는 `sync/github-<날짜>` 브랜치에만 올린다.
 
 ## 커밋 메시지 형식
 
@@ -133,8 +133,20 @@ GitHub·GitLab 패키지에 이미 있는 파일을 각각 그대로 보존한�
 
 ### 동기화 스크립트
 
+`GITLAB_REPO`에는 기본값이 없으므로 항상 GitLab 작업 복제본 경로를 지정한다.
+`GITHUB_REPO`를 생략하면 스크립트가 있는 저장소를 쓴다. 두 경로가 같은 Git
+저장소(링크된 worktree 포함)를 가리키면 스크립트가 중단한다.
+
 ```bash
-# 특정 모듈만
+export GITLAB_REPO=<GitLab 작업 복제본 경로>
+
+# 동기화마다 GitLab master에서 sync 브랜치를 새로 만든다. 이전 sync 브랜치는 잇지 않는다.
+git -C "$GITLAB_REPO" fetch --prune origin
+git -C "$GITLAB_REPO" switch -c "sync/github-$(date +%F)" origin/master
+git -C "$GITLAB_REPO" submodule update --init
+
+# 특정 모듈만. 서브모듈을 동기화하면 그 서브모듈에도 같은 이름의 sync 브랜치를 만든다.
+git -C "$GITLAB_REPO/ord" switch -c "sync/github-$(date +%F)"
 ./sync-to-gitlab.sh ord
 
 # PIM 본체 변경 검토 후 로컬 GitLab commit까지만 생성
@@ -142,13 +154,10 @@ GitHub·GitLab 패키지에 이미 있는 파일을 각각 그대로 보존한�
 ./sync-to-gitlab.sh --commit pim
 ```
 
-`--push`는 대상 GitLab 저장소가 `master`, `main` 또는 detached HEAD이면 파일을
-복사하기 전에 중단한다. 실제 푸시는 기능 브랜치를 확인한 뒤 대상 ref를 명시한다.
-현재 인수인계 대상은 `feat/cam-link-diagnostics`이며 GitLab `master`에는 푸시하지
-않는다.
-
-테스트나 별도 작업 복제본에서는 `GITHUB_REPO`, `GITLAB_REPO` 환경변수로 기본
-경로를 덮어쓸 수 있다.
+`--dry-run`이 아니면(파일만 sync, `--commit`, `--push`) 쓰려는 GitLab 저장소(본체와
+대상 서브모듈)가 `sync/github-*` 브랜치일 때만 진행한다. `master`·`main`·detached
+HEAD와 다른 기능 브랜치에서는 파일을 복사하기 전에 중단한다. 실제 푸시는 대상 ref를
+명시하고, GitLab `master`에는 푸시하지 않는다.
 
 동기화 커밋 메시지에 GitHub 커밋 내역이 자동으로 포함된다:
 
@@ -180,11 +189,13 @@ git commit -m "chore(dist): max9296 바이너리 업데이트 (v2.1)"
 # 4. 전체 검증 후 사용자 승인을 받아 GitHub에 push
 git push origin master
 
-# 5. GitLab 기능 브랜치에서 dry-run과 commit
+# 5. GitLab 작업 복제본에서 sync 브랜치를 새로 만들고 dry-run과 commit
+export GITLAB_REPO=<GitLab 작업 복제본 경로>
+git -C "$GITLAB_REPO" fetch --prune origin
+git -C "$GITLAB_REPO" switch -c "sync/github-$(date +%F)" origin/master
 ./sync-to-gitlab.sh --dry-run pim
 ./sync-to-gitlab.sh --commit pim
 
-# 6. diff 검토 후 별도 사용자 승인을 받아 기능 브랜치를 명시해 push
-git -C /home/jhw/ai/opencode/projects/pim-package \
-  push origin HEAD:refs/heads/feat/cam-link-diagnostics
+# 6. diff 검토 후 별도 사용자 승인을 받아 sync 브랜치를 명시해 push
+git -C "$GITLAB_REPO" push origin "HEAD:refs/heads/sync/github-<날짜>"
 ```
