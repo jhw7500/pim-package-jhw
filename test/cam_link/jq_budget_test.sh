@@ -388,6 +388,8 @@ hits=$(jq_bypass_scan "$WORK/scan/clean.sh") || die "jq bypass scan: control fil
 fresh_board() {
     local d
     rm -rf "${WORK:?}"/{run,state,proc,sys,dev,shm,processes,recordings}
+    # Match systemd StateDirectory creation before any fresh Owner startup.
+    mkdir -p "$PIM_CAMERA_STATE_DIR"
     : > "$PIM_CAMERA_CALL_LOG"; : > "$WORK/procs.lock"
     printf 'boot\n' > "$PIM_CAMERA_BOOT_ID_FILE"
     mkdir -p "$PIM_CAMERA_PROC_ROOT/$DAEMON_PID"

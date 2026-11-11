@@ -632,6 +632,9 @@ cam_execute_pending_request() {
 cam_poll_pending_request() {
     local repair_rc=0 active type
     PIM_CAMERA_POLL_WORK_TYPE=
+    # A persisted restore-pending marker forbids the recovery executor AND
+    # same-iteration liveness. It is not a writer-fence authorization.
+    _cr_qa_maintenance_barrier || return $?
     _coc_repair_retryable_liveness_gstapp || repair_rc=$?
     case "$repair_rc" in
         0) PIM_CAMERA_POLL_WORK_TYPE=repair; return 0 ;;
