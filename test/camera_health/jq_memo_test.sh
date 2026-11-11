@@ -134,6 +134,9 @@ export PIM_CAMERA_PROC_ROOT="$WORK/proc"
 mkdir -p "$PIM_CAMERA_PROC_ROOT/4242"
 { printf '%s' '4242 (cam operate) S'; for _ in $(seq 1 18); do printf ' 0'; done; printf ' 111 0 0\n'; } > "$PIM_CAMERA_PROC_ROOT/4242/stat"
 printf 'memo-boot\n' > "$PIM_CAMERA_BOOT_ID_FILE"
+# The real owner starts after systemd has created persistent StateDirectory.
+# Keep the memo fixture's lifecycle identical to production startup.
+mkdir -p "$PIM_CAMERA_STATE_DIR"
 cam_owner_create 4242; cam_owner_set_lifecycle ACTIVE
 cam_request_submit gstapp_restart operator 'executor memo' >/dev/null
 cam_request_claim; cam_request_transition QUIESCING; cam_request_transition RUNNING

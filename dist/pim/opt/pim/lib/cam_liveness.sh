@@ -72,6 +72,9 @@ _CL_GUARD_CACHE_KEY=""
 _CL_GUARD_CACHE_VAL=""
 _cl_active_guard_locked() {
     local owner boot stamp key fields pid start actual
+    # Every restart path rechecks the persisted barrier under recovery.lock,
+    # independently of monitor's initial poll decision.
+    _cr_qa_maintenance_barrier || return $?
     boot=$(cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null) || return 69
     stamp=$(stat -c '%d:%i:%s:%y' "$(_cr_owner_file)" 2>/dev/null) || stamp=""
     key=""
