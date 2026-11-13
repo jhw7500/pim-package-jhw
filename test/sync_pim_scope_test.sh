@@ -65,8 +65,34 @@ selected=(
     "docs/runbook_final_stall.md"
     "docs/session-lifecycle.md"
     "docs/ord_vcm_conf-settings-analysis.md"
+    "docs/camera-startup-timing.md"
+    "docs/max9296/V4L2_CTRL_GUIDE.md"
     "test/test_final_stall_scenarios.md"
 )
+
+# 두 스크립트의 PIM_FILES는 양방향 공통 계약이라 같아야 한다. build.sh가 docs/에서
+# 패키지로 복사하는 문서는 그 목록에 있어야 하고, 목록의 파일은 아래에서 실제 복사로
+# 검사하도록 selected에도 있어야 한다.
+pim_files_of() {
+    awk '/^PIM_FILES=\(/ { inside = 1; next }
+         inside && /^\)/ { exit }
+         inside && !/^[[:space:]]*#/ { gsub(/[" \t]/, ""); if ($0 != "") print }' "$1"
+}
+to_files=$(pim_files_of "$ROOT/sync-to-gitlab.sh")
+from_files=$(pim_files_of "$ROOT/sync-from-gitlab.sh")
+[ -n "$to_files" ] || fail "sync-to-gitlab.sh에서 PIM_FILES를 읽지 못함"
+[ "$to_files" = "$from_files" ] || fail "sync-to-gitlab.sh와 sync-from-gitlab.sh의 PIM_FILES가 다름"
+build_docs=$(grep -oE '\$\{BASEDIR\}/docs/[^[:space:]]+' "$ROOT/build.sh" | \
+    sed 's#^\${BASEDIR}/##' | sort -u)
+[ -n "$build_docs" ] || fail "build.sh에서 docs/ 복사 대상을 찾지 못함"
+while IFS= read -r path; do
+    grep -qxF -- "$path" <<<"$to_files" || fail "build.sh가 복사하는 ${path}가 PIM_FILES에 없음"
+done <<<"$build_docs"
+while IFS= read -r path; do
+    [ "$path" = "build.sh" ] && continue
+    printf '%s\n' "${selected[@]}" | grep -qxF -- "$path" || \
+        fail "PIM_FILES의 ${path}가 이 테스트의 selected에 없음"
+done <<<"$to_files"
 
 for path in "${selected[@]}"; do
     write_fixture "$github" "$path" "github selected: $path"
@@ -76,6 +102,8 @@ write_fixture "$github" "tools/tool.txt" "github tool"
 write_fixture "$github" "docker/README.md" "github docker"
 write_fixture "$github" "build.sh" "github build"
 write_fixture "$github" "docs/github-only.md" "do not sync"
+# allowlist 파일과 같은 디렉터리의 다른 파일은 어느 방향으로도 넘어가지 않아야 한다.
+write_fixture "$github" "docs/max9296/CHANGELOG.md" "github max9296 sibling"
 write_fixture "$github" "test/github-only.sh" "do not sync"
 write_fixture "$github" "test/tools/github-only.sh" "do not sync nested tools"
 write_fixture "$github" ".github/binary-manifest.json" "github local manifest"
@@ -84,6 +112,7 @@ write_fixture "$github" "dist/pim/opt/pim/driver/laird_backport.tar" \
     "github local Summit archive"
 
 write_fixture "$gitlab" "docs/gitlab-only.md" "preserve gitlab doc"
+write_fixture "$gitlab" "docs/max9296/CHANGELOG.md" "gitlab max9296 sibling"
 write_fixture "$gitlab" "test/gitlab-only.sh" "preserve gitlab test"
 write_fixture "$gitlab" ".github/binary-manifest.json" "gitlab repository local manifest"
 write_fixture "$gitlab" ".github/workflows/gitlab-only.yml" "preserve gitlab workflow"
@@ -156,6 +185,8 @@ assert_same "$github/tools/tool.txt" "$gitlab/tools/tool.txt"
 assert_same "$github/docker/README.md" "$gitlab/docker/README.md"
 assert_same "$github/build.sh" "$gitlab/build.sh"
 assert_absent "$gitlab/docs/github-only.md"
+[ "$(cat "$gitlab/docs/max9296/CHANGELOG.md")" = "gitlab max9296 sibling" ] || \
+    fail "allowlist 밖의 docs/max9296 파일이 정방향 sync로 덮어써짐"
 assert_absent "$gitlab/test/github-only.sh"
 assert_absent "$gitlab/test/tools/github-only.sh"
 assert_absent "$gitlab/.github/workflows/github-only.yml"
@@ -172,6 +203,7 @@ git -C "$gitlab" commit -qm "fixture: forward sync"
 
 # 역방향도 같은 allowlist만 적용해야 한다.
 write_fixture "$gitlab" "docs/session-lifecycle.md" "gitlab selected update"
+write_fixture "$gitlab" "docs/max9296/V4L2_CTRL_GUIDE.md" "gitlab nested selected update"
 write_fixture "$gitlab" "docs/gitlab-new-only.md" "do not sync back"
 write_fixture "$gitlab" "test/tools/gitlab-new-only.sh" "do not sync nested tools back"
 git -C "$gitlab" add -A
@@ -181,6 +213,9 @@ GITHUB_REPO="$github" GITLAB_REPO="$gitlab" \
     bash "$ROOT/sync-from-gitlab.sh" pim >"$TMP_ROOT/from.log"
 
 assert_same "$gitlab/docs/session-lifecycle.md" "$github/docs/session-lifecycle.md"
+assert_same "$gitlab/docs/max9296/V4L2_CTRL_GUIDE.md" "$github/docs/max9296/V4L2_CTRL_GUIDE.md"
+[ "$(cat "$github/docs/max9296/CHANGELOG.md")" = "github max9296 sibling" ] || \
+    fail "allowlist 밖의 docs/max9296 파일이 역방향 sync로 덮어써짐"
 assert_absent "$github/docs/gitlab-new-only.md"
 assert_absent "$github/test/tools/gitlab-new-only.sh"
 [ "$(cat "$github/.github/binary-manifest.json")" = "github local manifest" ] || \
@@ -377,4 +412,36 @@ GITHUB_REPO="$github" GITLAB_REPO="$push_clone" \
 [ "$(git -C "$remote" rev-parse refs/heads/sync/github-push)" = \
     "$(git -C "$push_clone" rev-parse HEAD)" ] || fail "--push가 같은 이름의 sync 브랜치로 올라가지 않음"
 
-echo "PASS: repo paths, relative paths, write branch guard, push target, PIM allowlist, reverse scope, submodule guard"
+# 역방향 가드: GitHub이 추적하는 allowlist 파일이 GitLab에 없으면 pim scope를 건너뛴다.
+# 그대로 rsync --delete를 돌리면 GitHub의 그 파일이 지워진다. 이 스크립트는 scope를
+# 건너뛸 때도 0으로 끝나므로 경고 문구와 결과 상태로 판정한다.
+git -C "$gitlab" rm -q -- docs/camera-startup-timing.md
+git -C "$gitlab" commit -qm "fixture: gitlab lacks an allowlisted doc"
+guard_head=$(git -C "$github" rev-parse HEAD)
+GITHUB_REPO="$github" GITLAB_REPO="$gitlab" \
+    bash "$ROOT/sync-from-gitlab.sh" --commit pim >"$TMP_ROOT/guard.log" 2>&1 || \
+    fail "역방향 가드: 스크립트가 실패로 끝남"
+grep -qF "GitLab 에 없는 allowlist 파일 1건" "$TMP_ROOT/guard.log" || fail "역방향 가드: 경고가 없음"
+grep -qxF "    docs/camera-startup-timing.md" "$TMP_ROOT/guard.log" || \
+    fail "역방향 가드: 빠진 파일 이름이 없음"
+[ -f "$github/docs/camera-startup-timing.md" ] || fail "역방향 가드: allowlist 문서가 지워짐"
+assert_github_untouched "reverse-guard" "$guard_head"
+
+# dry-run은 경고만 하고 계속하며 아무것도 쓰지 않는다.
+GITHUB_REPO="$github" GITLAB_REPO="$gitlab" \
+    bash "$ROOT/sync-from-gitlab.sh" --dry-run pim >"$TMP_ROOT/guard-dry.log" 2>&1 || \
+    fail "역방향 가드 dry-run: 스크립트가 실패로 끝남"
+grep -qF "[DRY-RUN] 경고만 하고 계속한다." "$TMP_ROOT/guard-dry.log" || \
+    fail "역방향 가드 dry-run: 경고가 없음"
+assert_github_untouched "reverse-guard-dry-run" "$guard_head"
+
+# --force는 삭제를 감수한다. 삭제는 같은 commit에 들어가고 작업 트리에 남지 않는다.
+GITHUB_REPO="$github" GITLAB_REPO="$gitlab" \
+    bash "$ROOT/sync-from-gitlab.sh" --force --commit pim >"$TMP_ROOT/guard-force.log" 2>&1 || \
+    fail "역방향 가드 --force: 스크립트가 실패로 끝남"
+[ ! -e "$github/docs/camera-startup-timing.md" ] || fail "역방향 가드 --force: 문서가 남아 있음"
+git -C "$github" show --name-status --format= HEAD | \
+    grep -qxF $'D\tdocs/camera-startup-timing.md' || fail "역방향 가드 --force: 삭제가 commit에 없음"
+[ -z "$(git -C "$github" status --porcelain)" ] || fail "역방향 가드 --force: 작업 트리에 변경이 남음"
+
+echo "PASS: repo paths, relative paths, write branch guard, push target, PIM allowlist, reverse scope, submodule guard, build doc allowlist, reverse missing-file guard"
