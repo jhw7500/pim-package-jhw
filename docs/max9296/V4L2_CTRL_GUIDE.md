@@ -41,7 +41,8 @@ crop을 꺼도 CSI 출력은 640x360이다.
 sensor-mode 선택은 펌웨어 값을 유지한다. 즉 640x360 출력이 곧 AR0234의
 640x360 readout을 의미하지 않는다. 후보 sensor-mode 0~15는 full-FOV 120 FPS
 profile로 검증되지 않았으므로 운영 기본은 `KEEP`이다. 일반 드라이버는 이 경로에서
-최대 120 FPS 요청을 허용하지만 패키지 기본값은 회귀 안전성을 위해 30 FPS다.
+최대 120 FPS 요청을 허용하지만 패키지의 360p fragment는 30 FPS를 요청한다. 패키지
+기본 출력은 `1280x720@15`다(5.0절).
 120 FPS 전달률 기준 시험에서는 패키지의 전용 fragment를 사용해 AE auto와 활성
 채널 `led_flash.flash_delay=0`도 함께 적용한다. 수동 노출 비교 시험은
 `ae_on=false`와 frame period보다 짧은 `exp_time`을 별도로 지정한다. 이 보드에서
