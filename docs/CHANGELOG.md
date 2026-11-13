@@ -1,5 +1,22 @@
 # PIM Package Changelog
 
+## 최신 변경사항 (2026-11-13) — 1.0.0.0 / 릴리스 버전을 올리고 기본 해상도를 되돌린다 (이슈 #238·#241, PR #239)
+
+- 전달 패키지를 `pim-mp 1.0.0.0`으로 올렸다. camera19 의 `0.6.3.2+jhw.camera19`는 dpkg 비교에서 사내 배포본
+  `0.6.3.3`보다 낮아, `0.6.3.3`이 설치된 보드에서 다운그레이드로 취급됐다.
+  `dpkg --compare-versions 1.0.0.0 gt 0.6.3.3`은 참이다.
+- `DEBIAN/control` 설명의 변경 이력에 `1.0.0.0` 줄을 더했다.
+- **기본 해상도 복원**(#238, PR #239): 새 설치와 공장 초기화에 쓰는 `edgeconf_pim_base.json`의
+  `VHL_CAM.cam_width`, `cam_height`, `fps`를 1280, 720, 15로 되돌렸다. `ad91145`가 640, 360, 30으로 바꾼 것은
+  의도한 변경이 아니었다. 360p는 `max9296_640x360_fragment.json`을 병합해 쓴다. `update_edgeconf.sh`는 기존
+  설정 파일의 이 세 값을 바꾸지 않는다.
+- camera19 뒤에 들어온 다른 패키지 변경:
+  - ord 가 패키지 버전을 `dpkg -s pim-mp`로 읽는다(GitLab ord `87976ac` 반영, PR #227).
+  - pimwebserver 설치 단계를 `upgrade_file/setup.sh`로 옮겼다(GitLab `78b11cc`와 같게, `331a96e`).
+  - `control` 변경 이력에 `0.6.3.3` 줄을 더했다(`cddd704`).
+- gstApp(`973b1d7`), `max9296.ko`(`172a76a`), `hantro_vc8000e_ext.ko`(`c37edf1`), GStreamer 교체본은 camera19 와
+  같다.
+
 ## 최신 변경사항 (2026-10-24) — camera19 / 한 CSI 기동 실패 때 나머지로 녹화하고 module_reload 로 복구 (gstApp #141·#145, 이슈 #223, PR #224)
 
 - 전달 패키지를 `pim-mp 0.6.3.2+jhw.camera19`로 올렸다.

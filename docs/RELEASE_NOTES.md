@@ -1,5 +1,26 @@
 # PIM Package Release Notes
 
+## Unreleased (2026-11-13)
+
+### 1.0.0.0 — release version raised and default resolution restored (issues #238, #241; PR #239)
+
+- Package version is `1.0.0.0`. dpkg sorts camera19's `0.6.3.2+jhw.camera19` below the
+  company release `0.6.3.3`, so installing it on a `0.6.3.3` board was a downgrade.
+  `dpkg --compare-versions 1.0.0.0 gt 0.6.3.3` is true.
+- The change history in `DEBIAN/control` has a `1.0.0.0` line.
+- **Default resolution restored** (#238, PR #239). `edgeconf_pim_base.json`, used for a
+  new install and for factory reset, has `VHL_CAM.cam_width`, `cam_height` and `fps` back
+  at 1280, 720 and 15. `ad91145` had changed them to 640, 360 and 30, which was not
+  intended. For 360p, merge `max9296_640x360_fragment.json`. `update_edgeconf.sh` does not
+  change these three values in an existing configuration file.
+- Other package changes since camera19:
+  - ord reads the package version with `dpkg -s pim-mp` (GitLab ord `87976ac`, PR #227).
+  - pimwebserver installation moved into `upgrade_file/setup.sh`, as in GitLab `78b11cc`
+    (`331a96e`).
+  - `control` gained the `0.6.3.3` history line (`cddd704`).
+- gstApp (`973b1d7`), `max9296.ko` (`172a76a`), `hantro_vc8000e_ext.ko` (`c37edf1`) and
+  the GStreamer replacement libraries are the same as in camera19.
+
 ## Unreleased (2026-10-24)
 
 ### camera19 — gstApp keeps recording on one CSI when the other fails to start, and the file-check ladder recovers it with module_reload (gstApp #141, #145; issue #223; PR #224)
