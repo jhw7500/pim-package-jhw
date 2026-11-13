@@ -36,6 +36,7 @@ declare -A SUBMODULE_MAP=(
 
 # pim 본체 동기화 대상 (서브모듈 외)
 PIM_DIRS=("dist" "patch" "upgrade_file" "tools" "docker")
+# sync-to-gitlab.sh 의 PIM_FILES 와 같아야 한다(양방향 공통 계약).
 PIM_FILES=(
     "build.sh"
     "docs/file_check_reboot-behavior.md"
@@ -43,6 +44,8 @@ PIM_FILES=(
     "docs/runbook_final_stall.md"
     "docs/session-lifecycle.md"
     "docs/ord_vcm_conf-settings-analysis.md"
+    "docs/camera-startup-timing.md"
+    "docs/max9296/V4L2_CTRL_GUIDE.md"
     "test/test_final_stall_scenarios.md"
 )
 
@@ -88,7 +91,9 @@ if [ ${#TARGETS[@]} -eq 0 ]; then
 
 안전 검사 (rsync --delete가 로컬 수정/untracked 파일을 덮어쓰는 것 방지):
   기본          — 동기화 대상 경로에 modified/untracked 파일 있으면 해당 scope skip
-  --force       — 안전 검사 우회 (위험: 로컬 수정사항 손실 가능)
+  기본          — GitHub 이 추적하는 PIM_DIRS 디렉터리나 PIM_FILES 파일이 GitLab 에 통째로
+                  없으면 pim scope skip (그대로 돌리면 GitHub 에서 삭제된다. --dry-run 은 경고만 한다)
+  --force       — 안전 검사 우회 (위험: 로컬 수정사항 손실 가능, 위 삭제 감수)
 EOF
     exit 1
 fi
@@ -159,11 +164,14 @@ check_clean_paths() {
     local paths=("$@")
     [ ${#paths[@]} -eq 0 ] && return 0
 
-    # 존재하는 경로만 git status 검사 대상으로 사용
+    # 존재하거나 Git 이 추적하는 경로를 git status 검사 대상으로 쓴다. 추적 경로가 작업 트리에서
+    # 통째로 지워진 채 커밋되지 않은 상태도 로컬 수정이다. 빼면 그 삭제가 sync commit 에 섞인다.
     local exist_paths=()
     local p
     for p in "${paths[@]}"; do
-        [ -e "$GITHUB_REPO/$p" ] && exist_paths+=("$p")
+        if [ -e "$GITHUB_REPO/$p" ] || [ -n "$(git -C "$GITHUB_REPO" ls-files -- "$p")" ]; then
+            exist_paths+=("$p")
+        fi
     done
     [ ${#exist_paths[@]} -eq 0 ] && return 0
 
@@ -179,6 +187,36 @@ check_clean_paths() {
         return 1
     fi
     return 0
+}
+
+# 역방향 rsync --delete 는 GitLab 에 없는 동기화 경로를 GitHub 에서 지운다. 정방향 결과가
+# GitLab 에 아직 반영되지 않은 경우와 GitLab 이 일부러 지운 경우를 구분할 수 없으므로,
+# GitHub 이 추적하는 동기화 경로(PIM_DIRS 의 디렉터리, PIM_FILES 의 파일)가 GitLab 에 통째로
+# 없으면 pim scope 를 건너뛴다. 디렉터리 안의 일부 파일 삭제는 여기서 보지 않는다.
+# 반환: 0=진행, 1=건너뜀
+check_allowlist_missing_on_gitlab() {
+    local missing=()
+    local p
+    for p in "${PIM_DIRS[@]}" "${PIM_FILES[@]}"; do
+        if [ ! -e "$GITLAB_REPO/$p" ] && [ -n "$(git -C "$GITHUB_REPO" ls-files -- "$p")" ]; then
+            missing+=("$p")
+        fi
+    done
+    [ ${#missing[@]} -eq 0 ] && return 0
+
+    warn "scope 'pim': GitLab 에 없는 동기화 경로 ${#missing[@]}건 — 이 sync 로 GitHub 에서 삭제된다"
+    printf '    %s\n' "${missing[@]}"
+    echo "    → 정방향 동기화 결과가 GitLab 에 아직 반영되지 않은 것은 아닌지 확인하라"
+    if [ "$DRY_RUN" = true ]; then
+        warn "  [DRY-RUN] 경고만 하고 계속한다."
+        return 0
+    fi
+    if [ "$FORCE" = true ]; then
+        warn "  [FORCE] 삭제를 감수하고 계속한다."
+        return 0
+    fi
+    echo "    → GitLab 쪽을 확인한 뒤 재시도, 또는 삭제를 감수하고 --force 사용"
+    return 1
 }
 
 # GitLab → GitHub 방향 loopback 제외:
@@ -303,13 +341,16 @@ finalize_commit() {
 
     local marker_file=".last-sync-from-gitlab-${save_scope}"
 
-    # 존재하는 경로만 add — 누락된 PIM_DIRS/FILES (예: 새 repo) 안전 처리
+    # 없는 경로는 건너뛴다(예: 새 repo 의 누락된 PIM_DIRS/FILES). 다만 rsync 가 방금 지운
+    # 추적 파일은 작업 트리에 없어도 포함해야 그 삭제가 같은 commit 에 들어간다.
     local paths=()
     local p
     # shellcheck disable=SC2206
     local raw_paths=( $add_paths_str "$marker_file" )
     for p in "${raw_paths[@]}"; do
-        [ -e "$p" ] && paths+=("$p")
+        if [ -e "$p" ] || [ -n "$(git ls-files -- "$p")" ]; then
+            paths+=("$p")
+        fi
     done
 
     if [ ${#paths[@]} -eq 0 ]; then
@@ -420,6 +461,7 @@ sync_pim() {
     if [ "$DRY_RUN" = false ] && [ "$FORCE" = false ]; then
         check_clean_paths "pim" "${PIM_DIRS[@]}" "${PIM_FILES[@]}" || return 1
     fi
+    check_allowlist_missing_on_gitlab || return 1
 
     # PIM_DIRS + PIM_FILES을 단일 rsync include 패턴으로 통합
     # source가 GitLab repo 루트라 루트 .gitignore가 per-directory merge로 자동 적용
@@ -430,10 +472,17 @@ sync_pim() {
     for d in "${PIM_DIRS[@]}"; do
         rsync_includes+=(--include="/${d}/" --include="/${d}/**")
     done
+    # 파일까지 내려가려면 모든 상위 디렉터리를 포함해야 한다. 첫 디렉터리만 넣으면
+    # docs/max9296/... 같은 두 단계 경로는 오류 없이 복사되지 않는다.
+    local parent rest
     for f in "${PIM_FILES[@]}"; do
-        if [[ "$f" == */* ]]; then
-            rsync_includes+=(--include="/${f%%/*}/")
-        fi
+        parent=""
+        rest="$f"
+        while [[ "$rest" == */* ]]; do
+            parent="${parent}/${rest%%/*}"
+            rsync_includes+=(--include="${parent}/")
+            rest="${rest#*/}"
+        done
         rsync_includes+=(--include="/${f}")
     done
 

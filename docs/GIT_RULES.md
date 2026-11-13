@@ -114,6 +114,7 @@ git commit -m "docs: GIT_RULES 문서 추가"
 | `vsd` | `mhkim/vsd.git` 서브모듈 | rsync → 서브모듈 레포 push |
 | `dist/`, `patch/`, `upgrade_file/`, `tools/`, `docker/`, `build.sh` | `jkpark/pim-package` 본체 | PIM 코드 allowlist |
 | 인수인계 문서 5개 + FINAL STALL 테스트 명세 | `jkpark/pim-package` 본체 | 파일 allowlist |
+| `build.sh`가 패키지에 넣는 문서(`docs/max9296/V4L2_CTRL_GUIDE.md`, `docs/camera-startup-timing.md`) | `jkpark/pim-package` 본체 | 파일 allowlist |
 | `.github/binary-manifest.json` | 각 저장소 로컬 | 동기화 안 함 — 저장소별 바이너리 증명서 |
 | `dist/pim/opt/pim/driver/laird_backport.tar` | 각 저장소 로컬 | 검사·동기화 안 함 — Summit 아카이브는 별도 관리 |
 | 그 밖의 `docs/`, `test/`, `.github/workflows/` | 동기화 안 함 | GitHub 전용 또는 저장소별 문서 |
@@ -130,6 +131,24 @@ GitHub·GitLab 패키지에 이미 있는 파일을 각각 그대로 보존한�
 매니페스트는 동기화하지 않으므로, 처음 반영할 때 GitLab 쪽 `.github/binary-manifest.json`에 같은
 항목을 넣고 `tools/verify_binaries.py --strict`로 검증한다. 이 저장소는 이 파일을 LFS로 추적하므로,
 동기화된 파일이 LFS 포인터가 아니라 실제 ELF인지도 확인한다.
+
+`build.sh`가 `docs/`에서 패키지(`/opt/pim/docs/`)로 복사하는 문서는 모두 `PIM_FILES`에 있어야
+한다. 빠지면 GitLab에서 만든 패키지에 옛 판이 실리거나 문서가 빠진다.
+`test/sync_pim_scope_test.sh`가 이 조건과 두 스크립트의 `PIM_FILES`가 같은지를 검사한다.
+
+### 역방향 동기화 주의
+
+`sync-from-gitlab.sh`는 같은 allowlist를 `rsync --delete --checksum`으로 GitLab에서 GitHub로 쓴다.
+
+- 실행 전에 `--dry-run`으로 덮어쓸 파일과 지울 파일을 확인한다. 덮어쓰기는 어느 쪽이 최신인지
+  스크립트가 판단하지 못한다.
+- 정방향 결과가 GitLab `master`에 머지되기 전에는 GitLab `master`의 파일이 GitHub보다 옛 판이다.
+  이 상태에서 역방향을 돌리면 GitHub의 새 내용이 옛 판으로 바뀐다.
+- GitHub이 추적하는 동기화 경로(`PIM_DIRS`의 디렉터리, `PIM_FILES`의 파일)가 GitLab에 통째로 없으면
+  pim scope를 건너뛴다. 스크립트는 경고를 내고 0으로 끝난다. GitLab이 그 경로를 아직 받지 못한
+  경우와 일부러 지운 경우를 구분할 수 없기 때문이다. 지우는 것이 맞으면 `--force`로 실행한다.
+  삭제는 같은 commit에 들어간다. 디렉터리 안의 일부 파일 삭제는 이 검사 대상이 아니다.
+- GitHub 작업 트리에서 추적 경로가 지워진 채 커밋되지 않은 상태도 로컬 수정으로 보고 건너뛴다.
 
 ### 동기화 스크립트
 

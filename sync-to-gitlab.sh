@@ -34,6 +34,8 @@ declare -A SUBMODULE_MAP=(
 # pim 본체 동기화 대상 디렉토리 (서브모듈 외)
 # release/는 빌드 산출물이므로 제외 (.gitignore와 정합)
 PIM_DIRS=("dist" "patch" "upgrade_file" "tools" "docker")
+# build.sh 가 docs/ 에서 패키지로 복사하는 문서는 모두 여기 있어야 한다. 빠지면 GitLab 에서
+# 만든 패키지에 옛 판이 실리거나 문서가 빠진다(test/sync_pim_scope_test.sh 가 검사한다).
 PIM_FILES=(
     "build.sh"
     "docs/file_check_reboot-behavior.md"
@@ -41,6 +43,8 @@ PIM_FILES=(
     "docs/runbook_final_stall.md"
     "docs/session-lifecycle.md"
     "docs/ord_vcm_conf-settings-analysis.md"
+    "docs/camera-startup-timing.md"
+    "docs/max9296/V4L2_CTRL_GUIDE.md"
     "test/test_final_stall_scenarios.md"
 )
 
@@ -537,10 +541,17 @@ sync_pim() {
     for d in "${PIM_DIRS[@]}"; do
         rsync_includes+=(--include="/${d}/" --include="/${d}/**")
     done
+    # 파일까지 내려가려면 모든 상위 디렉터리를 포함해야 한다. 첫 디렉터리만 넣으면
+    # docs/max9296/... 같은 두 단계 경로는 오류 없이 복사되지 않는다.
+    local parent rest
     for f in "${PIM_FILES[@]}"; do
-        if [[ "$f" == */* ]]; then
-            rsync_includes+=(--include="/${f%%/*}/")
-        fi
+        parent=""
+        rest="$f"
+        while [[ "$rest" == */* ]]; do
+            parent="${parent}/${rest%%/*}"
+            rsync_includes+=(--include="${parent}/")
+            rest="${rest#*/}"
+        done
         rsync_includes+=(--include="/${f}")
     done
 
