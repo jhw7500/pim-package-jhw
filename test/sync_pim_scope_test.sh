@@ -421,7 +421,7 @@ guard_head=$(git -C "$github" rev-parse HEAD)
 GITHUB_REPO="$github" GITLAB_REPO="$gitlab" \
     bash "$ROOT/sync-from-gitlab.sh" --commit pim >"$TMP_ROOT/guard.log" 2>&1 || \
     fail "역방향 가드: 스크립트가 실패로 끝남"
-grep -qF "GitLab 에 없는 allowlist 파일 1건" "$TMP_ROOT/guard.log" || fail "역방향 가드: 경고가 없음"
+grep -qF "GitLab 에 없는 동기화 경로 1건" "$TMP_ROOT/guard.log" || fail "역방향 가드: 경고가 없음"
 grep -qxF "    docs/camera-startup-timing.md" "$TMP_ROOT/guard.log" || \
     fail "역방향 가드: 빠진 파일 이름이 없음"
 [ -f "$github/docs/camera-startup-timing.md" ] || fail "역방향 가드: allowlist 문서가 지워짐"
@@ -444,4 +444,31 @@ git -C "$github" show --name-status --format= HEAD | \
     grep -qxF $'D\tdocs/camera-startup-timing.md' || fail "역방향 가드 --force: 삭제가 commit에 없음"
 [ -z "$(git -C "$github" status --porcelain)" ] || fail "역방향 가드 --force: 작업 트리에 변경이 남음"
 
-echo "PASS: repo paths, relative paths, write branch guard, push target, PIM allowlist, reverse scope, submodule guard, build doc allowlist, reverse missing-file guard"
+# 추적 디렉터리가 GitHub 작업 트리에서 통째로 지워진 채 커밋되지 않았으면 로컬 수정이다.
+# 그 삭제가 sync commit에 섞이지 않도록 pim scope를 건너뛴다.
+rm -rf "$github/tools"
+dirty_head=$(git -C "$github" rev-parse HEAD)
+GITHUB_REPO="$github" GITLAB_REPO="$gitlab" \
+    bash "$ROOT/sync-from-gitlab.sh" --commit pim >"$TMP_ROOT/dirty-dir.log" 2>&1 || \
+    fail "지워진 추적 디렉터리: 스크립트가 실패로 끝남"
+grep -qF "로컬 수정/untracked 파일 존재" "$TMP_ROOT/dirty-dir.log" || \
+    fail "지워진 추적 디렉터리: 로컬 수정으로 막지 않음"
+[ "$(git -C "$github" rev-parse HEAD)" = "$dirty_head" ] || fail "지워진 추적 디렉터리: commit이 생김"
+[ ! -e "$github/tools" ] || fail "지워진 추적 디렉터리: sync가 작업 트리를 바꿈"
+git -C "$github" checkout -q -- tools
+
+# GitLab에 동기화 디렉터리가 통째로 없을 때도 가드가 pim scope를 건너뛴다. 그대로 돌리면
+# GitHub의 그 디렉터리가 지워지고 삭제가 commit된다.
+git -C "$gitlab" rm -rq -- docker
+git -C "$gitlab" commit -qm "fixture: gitlab lacks an allowlisted directory"
+dir_head=$(git -C "$github" rev-parse HEAD)
+GITHUB_REPO="$github" GITLAB_REPO="$gitlab" \
+    bash "$ROOT/sync-from-gitlab.sh" --commit pim >"$TMP_ROOT/guard-dir.log" 2>&1 || \
+    fail "역방향 가드(디렉터리): 스크립트가 실패로 끝남"
+grep -qF "GitLab 에 없는 동기화 경로 1건" "$TMP_ROOT/guard-dir.log" || \
+    fail "역방향 가드(디렉터리): 경고가 없음"
+grep -qxF "    docker" "$TMP_ROOT/guard-dir.log" || fail "역방향 가드(디렉터리): 빠진 디렉터리 이름이 없음"
+[ -f "$github/docker/README.md" ] || fail "역방향 가드(디렉터리): GitHub 디렉터리가 지워짐"
+assert_github_untouched "reverse-guard-dir" "$dir_head"
+
+echo "PASS: repo paths, relative paths, write branch guard, push target, PIM allowlist, reverse scope, submodule guard, build doc allowlist, reverse missing-file guard, reverse missing-dir guard, local deletion check"
