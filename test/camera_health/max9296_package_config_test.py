@@ -19,14 +19,14 @@ def main() -> int:
     document = json.loads(CONFIG.read_text(encoding="utf-8"))
     camera = document["VHL_CAM"]
 
-    expected_output = (640, 360, 30)
+    expected_output = (1280, 720, 15)
     actual_output = (
         camera["cam_width"],
         camera["cam_height"],
         camera["fps"],
     )
     assert actual_output == expected_output, (
-        f"production output must be 640x360@30, got "
+        f"production output must be 1280x720@15, got "
         f"{actual_output[0]}x{actual_output[1]}@{actual_output[2]}"
     )
 
@@ -77,7 +77,7 @@ def main() -> int:
             }
 
     print(
-        "PASS: packaged MAX9296 defaults and fragments select safe "
+        "PASS: packaged MAX9296 default is 1280x720@15 and fragments select "
         "640x360@30/120"
     )
     return 0

@@ -163,12 +163,12 @@
       }
    },
    "VHL_CAM": {
-      "cam_width": 640,
-      "cam_height": 360,
+      "cam_width": 1280,
+      "cam_height": 720,
       "event_auto_remove": true,
       "event_storage_size": 10,
       "floor": "NONAME",
-      "fps": 30,
+      "fps": 15,
       "line": "NONAME",
       "recording_time": 1,
       "vhl_name": "VD3001",

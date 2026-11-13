@@ -422,8 +422,8 @@ V4L2 컨트롤을 수동으로 만질 때는 아래처럼 “자동 루프”를
 
 ### 5.0 패키지 JSON과 해상도 전환
 
-패키지 기본 `edgeconf_pim_base.json`은 `640x360@30`, crop false, `dz=100`,
-모든 중심 32768이다. 기존 장비에 일부 키만 안전하게 병합할 때는 설치되는
+패키지 기본 `edgeconf_pim_base.json`은 `1280x720@15`, crop false, `dz=100`,
+모든 중심 32768이다. 360p로 바꾸려고 일부 키만 안전하게 병합할 때는 설치되는
 `/opt/pim/config/max9296_640x360_fragment.json`을 사용한다. fragment에는
 credential, 채널 enable, bitrate 같은 장비별 값이 없다.
 
@@ -441,7 +441,7 @@ jq -e . "$CONF.360p.tmp"
 `cam_hard_reset.sh -s -S` 또는 `init_cam.sh`를 실행한다. FHD는
 `cam_width=1920, cam_height=1080`, HD는 `1280,720`, 360p는 `640,360`으로
 선택하며 crop 키는 어느 해상도에서도 독립적으로 쓸 수 있다. 운영 FPS 상한은
-FHD/HD 30, 360p 120이다. 패키지 기본값은 30이며 120 FPS 시험 시 같은 모듈에서
+FHD/HD 30, 360p 120이다. 360p fragment의 FPS는 30이며 120 FPS 시험 시 같은 모듈에서
 `max9296_640x360_120_fragment.json`을 적용하고 하드 리셋한다.
 
 ```bash
