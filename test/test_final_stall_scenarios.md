@@ -19,7 +19,7 @@
 - 단말 콜드부팅 후 vcm/gstApp 정상 기동
 - **기대**:
   - 첫 2분 안에 `[SRT] bootstrap srt_done for prev session: ...` 1회
-  - 기본 설정의 140초 워밍업 후 `cam_final_health` 가 `OK_FB` → `OK`
+  - 첫 조각이 final 에 도착하면 `cam_final_health` 가 `OK` (그 전에는 `WARMUP`)
   - `cam_last_final_ts` 가 매 분 갱신
   - `FINAL STALL` 로그 0회
 
@@ -65,7 +65,8 @@
 - 카메라 연결과 fragment 생성은 유지한 채 fault-injection 환경에서
   `all_done` 생성 또는 `MovePartFile` final commit을 차단
 - 운영 장비의 실제 영상을 손상시키지 않는 전용 테스트 경로에서만 수행
-- 기본 설정에서 워밍업과 2분 검사 window 이후 5회의 60초 평가를 관찰
+- 기본 설정에서 유예(140초) 뒤 첫 판정을 관찰하고, 이후 판정은 앱이 다시 조각을 연 뒤
+  유예가 지날 때마다 한 번씩 관찰
 - **기대**:
   - `Heartbeat:OK`인 동안 `cam_final_health=STALL` 발생
   - stall_cnt 1~2: `kill_test.sh` 로그
@@ -92,13 +93,13 @@ disconnect 재부팅은 `test/cam_link/escalation_test.sh`에서 별도로 검�
   - 5분 fragment 정상 final 도달
   - `FINAL STALL` window가 10분으로 자동 확대
 
-### S9. heartbeat 깨짐 → find fallback
+### S9. heartbeat 파일 삭제
 - 워치독 정상 동작 중 `rm /tmp/cam_last_final_ts`
 - 60초 대기
 - **기대**:
-  - 다음 사이클에서 `cam_final_health` 가 `OK_FB` (fallback)
-  - heartbeat 파일 자동 재생성
-  - 그 다음 사이클부터 `OK`
+  - `cam_final_health` 는 `OK` 를 유지 (직전 도착을 본 지 유예 시간이 지나지 않았다)
+  - 다음 도착에서 heartbeat 파일 자동 재생성
+  - `OK_FB` 는 heartbeat 갱신 없이 유예가 지났는데 final 경로에 최근 파일이 있을 때만 나온다
 
 ### S10. 연속 Snap-back (S3 strong variant)
 - `touch /tmp/start_video_time_chk` 를 1분 사이 2~3회 반복

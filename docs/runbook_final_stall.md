@@ -35,13 +35,22 @@
 | `OK_FB` | 0 | heartbeat가 없거나 stale이지만 `find -mmin` fallback으로 최근 파일 확인 |
 | `RAM_ONLY` | 0 | SD BAD/write-disable로 SD final 감시 제외 |
 | `REC_DISABLED` | 0 | 모든 채널 비활성 또는 capture 녹화 비활성 |
-| `BUSY` | 0 | init/restart/kill 진행 중 |
-| `WARMUP` | 현재 timer(초) | 시작 직후 유예 중 |
-| `STALL` | `stall_cnt` | final 도착 정체, 자동 복구 사다리 진행 |
+| `BUSY` | 0 | init/restart/kill 진행 중, 또는 복구 요청이 거절됨(다른 요청이 진행 중) |
+| `WARMUP` | 감시를 건 뒤 경과(초). 대기 중이면 0 | 앱이 조각을 열기를 기다리거나 유예 중 |
+| `STALL` | `stall_cnt` | final 도착 정체, 자동 복구 사다리 진행. 복구를 요청한 뒤 도착이 다시 확인될 때까지 유지(`file_check_reboot=false`로 카운터가 0으로 돌아가면 `WARMUP`으로 바뀐다) |
 
-검사 윈도우는 `max(rec_min * 2, 2)`분이다. 시작 워밍업은
-`rec_time * 2 + file_check_delay + startup_grace_extra_sec`이며, 기본
-`recording_time=1`분 설정에서는 140초다.
+검사 윈도우는 `max(rec_min * 2, 2)`분이다. 여기에
+`file_check_delay + startup_grace_extra_sec`를 더한 시간(기본 `recording_time=1`분
+설정에서 140초) 동안 도착이 없으면 정체로 본다. 같은 시간이 유예로도 쓰인다.
+
+- 유예는 지금 떠 있는 gstApp 인스턴스가 조각을 연 것(`/tmp/start_video_session_chk`)을
+  데몬이 본 시각부터 잰다. 분 경계 시작 마커는 vcm 도 쓰므로 기준이 아니다. 세션 파일을
+  쓰지 않는 앱 구성에서는 감시가 걸리지 않는다. 도착이 끊겨도 판정하지 않고 `WARMUP 0`에
+  머문다.
+- 도착은 `/tmp/cam_last_final_ts`의 내용이 바뀐 것으로 알아본다. 경과 시간은 모두
+  `/proc/uptime`으로 재므로 벽시계가 옮겨져도 정체로 세지 않는다.
+- 판정은 한 번에 한 단계다. 판정한 뒤에는 감시를 풀고, 앱이 다시 조각을 연 뒤 유예가
+  지나야 다음 판정을 한다. 거절된 복구 요청은 단계로 세지 않는다.
 
 | `stall_cnt` | 자동 동작 |
 |---:|---|
@@ -49,7 +58,7 @@
 | 3~4 | `init_cam.sh` |
 | 5 이상 | `file_check_reboot=true`면 reboot, 아니면 카운터 초기화 |
 
-정상 루프에서는 60초마다 다시 평가한다. `MovePartFile()`이 실제 final 도착을
+유지보수 블록이 돌 때마다 다시 평가한다. `MovePartFile()`이 실제 final 도착을
 완료하면 `/tmp/cam_last_final_ts`를 갱신하고 다음 검사에서 `OK`로 복귀한다.
 Guardian의 Final 라인은 이 상태를 표시만 하며, FINAL STALL 복구 사다리는
 `chk_cam_operate.sh`가 직접 소유한다.

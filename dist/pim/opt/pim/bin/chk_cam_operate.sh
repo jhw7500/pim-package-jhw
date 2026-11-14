@@ -1235,18 +1235,73 @@ _write_final_health() {
 }
 
 # Final-path 정체 감시.
-# 최근 (rec_min × 2)분 내에 final_path에 새 ${vhl_name}_* 파일이 없으면
-# .all_done 마커 누락 등으로 인한 사일런트 정체로 판단하고 카메라 앱을 재시작한다.
+# 조각은 계속 생기는데 final_path에 새 ${vhl_name}_* 파일이 (rec_min × 2)분과 여유
+# (file_check_delay + startup_grace_extra_sec) 동안 도착하지 않으면 .all_done 마커 누락 등으로 인한
+# 사일런트 정체로 판단하고 복구를 요청한다.
 # (사용자 우선순위: "정체가 침묵하는 게 진짜 문제, 복구만 되면 OK")
 #
-# P0 가드:
+# 가드:
 #   - RAM-only 모드에서는 final_path_cfg(SD)가 의도적으로 안 쓰임 → skip
 #   - 녹화 비활성(cap_record_en=false 또는 모든 채널 disabled) → skip
 #   - 이미 재시작/kill 사이클 진행 중 → skip
-# Escalation (사용자 escalation 정책: 정체 지속 시 단계적 강도 증가):
-#   stall_cnt 1-2: kill_test.sh
-#   stall_cnt 3-4: init_cam.sh (cooldown 무관, 정체는 cooldown보다 우선)
-#   stall_cnt 5+ : reboot (file_chk_reboot=true 시)
+#   - 지금 떠 있는 앱 인스턴스가 조각을 연 것을 데몬이 본 뒤로 위 시간이 지나기 전 → skip
+# Escalation (사용자 escalation 정책: 정체 지속 시 단계적 강도 증가. 판정 한 번에 한 단계이고
+# 요청이 접수됐을 때만 센다):
+#   stall_cnt 1-2: gstapp_restart
+#   stall_cnt 3-4: module_reload (cooldown 무관, 정체는 cooldown보다 우선)
+#   stall_cnt 5+ : reboot_fallback (file_chk_reboot=true 시. 아니면 카운터를 0 으로)
+#
+# 이 감시의 시각은 모두 /proc/uptime(단조 시계) 초다. 벽시계는 RTC 설정과 NTP 가 옮긴다. 도착은 도착
+# 시각 파일의 내용이 바뀐 것으로 알아보고, 그 값(벽시계)끼리는 빼지 않는다(#247).
+#   final_watch_since  감시를 건 시각. 0 이면 대기(앱 인스턴스가 조각을 열기를 기다린다).
+#   final_watch_pids   감시를 걸 때의 앱 pid 목록. 판정 직전에 다시 비교한다.
+#   final_hb_seen      마지막으로 본 도착 시각 파일의 내용. 데몬이 뜰 때 있던 값은 도착으로 치지 않는다.
+#   final_hb_seen_up   그 내용이 바뀐 것을 본 시각. 0 이면 데몬이 뜬 뒤로 도착을 본 적이 없다.
+final_watch_since=0
+final_watch_pids=""
+final_hb_seen=""
+{ read -r final_hb_seen < "$FINAL_HEARTBEAT_FILE" || [ -n "$final_hb_seen" ]; } 2>/dev/null || final_hb_seen=""
+final_hb_seen_up=0
+
+_final_watch_uptime_into() {
+    local _fwu_up=""
+    { read -r _fwu_up _ < "${PIM_CAMERA_PROCESS_ROOT:-/proc}/uptime"; } 2>/dev/null || return 1
+    _fwu_up=${_fwu_up%.*}
+    [[ "$_fwu_up" =~ ^[0-9]+$ ]] || return 1
+    [ "$_fwu_up" -gt 0 ] || return 1
+    printf -v "$1" '%s' "$_fwu_up"
+}
+
+# 지금 떠 있는 카메라 앱의 pid 목록(오름차순, 공백 구분). 앱이 없으면 빈 값.
+_final_watch_app_pids() {
+    local app="" pids
+    _cam_runtime_app_into app "$PIM_CAMERA_RUNTIME_JSON" 2>/dev/null || app=gstApp
+    pids=$(pgrep -x "$app" 2>/dev/null | sort -n)
+    printf '%s' "${pids//$'\n'/ }"
+}
+
+# 감시가 판정하지 않고 기다리는 동안의 상태. 복구를 요청해 둔 정체가 있으면 STALL 을 유지한다.
+_final_watch_write_waiting() {
+    if [ "$final_stall_cnt" -gt 0 ]; then
+        _write_final_health "STALL" "$final_stall_cnt"
+    else
+        _write_final_health "WARMUP" "$1"
+    fi
+}
+
+# 주 루프가 세션 파일에서 값을 읽었을 때 부른다. 세션 파일은 gstApp 만 쓰고(조각을 먼저 연 채널),
+# 실행기가 앱을 띄우기 직전에 지우므로 "지금 인스턴스가 조각을 열었다"는 신호다. 분 경계 시작 마커는
+# vcm 도 자기 일정대로 쓰기 때문에 이 신호로 쓸 수 없다(#247). 이미 감시 중이면 아무것도 하지 않는다.
+FinalWatchNoteSession() {
+    local up pids
+    [ "$final_watch_since" -eq 0 ] || return 0
+    _final_watch_uptime_into up || return 0
+    pids=$(_final_watch_app_pids)
+    [ -n "$pids" ] || return 0
+    final_watch_pids=$pids
+    final_watch_since=$up
+}
+
 CheckFinalArrival() {
     local final_dir="${final_path_cfg%/}"
     [ -d "$final_dir" ] || return 0
@@ -1283,64 +1338,93 @@ CheckFinalArrival() {
         return 0
     fi
 
-    # 시작 직후 워밍업: 첫 녹화가 final에 도달할 시간 확보.
+    # 도착이 없다고 보는 시간이자, 감시를 건 뒤 판정까지 두는 시간.
     # P2: rec_time*2 단독은 boundary case에 부족. file_check_delay (gstApp 첫 fragment 대기)
-    # 와 startup_grace_extra_sec (앱 부팅 grace) 까지 포함하여 첫 post-warmup 사이클의
-    # false STALL을 차단한다.
-    local warmup_sec=$(( rec_time * 2 + ${file_check_delay:-10} + ${startup_grace_extra_sec:-10} ))
-    if [ "$timer" -lt "$warmup_sec" ]; then
-        _write_final_health "WARMUP" "$timer"
+    # 와 startup_grace_extra_sec (앱 부팅 grace) 까지 포함하여 첫 판정의 false STALL을 차단한다.
+    local window_min=$(( rec_min * 2 ))
+    [ "$window_min" -lt 2 ] && window_min=2
+    local limit_sec=$(( window_min * 60 + ${file_check_delay:-10} + ${startup_grace_extra_sec:-10} ))
+    local up hb="" elapsed=0 age pids next action level
+
+    if ! _final_watch_uptime_into up; then
+        _final_watch_write_waiting 0
         return 0
     fi
 
-    local window_min=$(( rec_min * 2 ))
-    [ "$window_min" -lt 2 ] && window_min=2
-    local window_sec=$(( window_min * 60 ))
-
-    # P2-3: heartbeat 1차 검사 (가장 정확). MovePartFile 성공 시 갱신됨.
+    # 도착 관측. MovePartFile 과 backfill 이 도착할 때마다 도착 시각 파일을 다시 쓴다.
     if [ -f "$FINAL_HEARTBEAT_FILE" ]; then
-        local hb_ts now_ts age
-        hb_ts=$(cat "$FINAL_HEARTBEAT_FILE" 2>/dev/null | tr -d '\r\n')
-        now_ts=$(date +%s)
-        if [[ "$hb_ts" =~ ^[0-9]+$ ]]; then
-            age=$(( now_ts - hb_ts ))
-            if [ "$age" -ge 0 ] && [ "$age" -lt "$window_sec" ]; then
-                final_stall_cnt=0
-                _write_final_health "OK" "$age"
-                return 0
-            fi
+        { read -r hb < "$FINAL_HEARTBEAT_FILE" || [ -n "$hb" ]; } 2>/dev/null || hb=""
+    fi
+    if [ -n "$hb" ] && [ "$hb" != "$final_hb_seen" ]; then
+        final_hb_seen=$hb
+        final_hb_seen_up=$up
+    fi
+    if [ "$final_hb_seen_up" -gt 0 ]; then
+        age=$(( up - final_hb_seen_up ))
+        if [ "$age" -lt "$limit_sec" ]; then
+            final_stall_cnt=0
+            _write_final_health "OK" "$age"
+            return 0
         fi
     fi
 
-    # 2차 fallback: find -mmin (heartbeat 없거나 깨졌을 때만)
+    # 감시 대기: 지금 인스턴스가 조각을 연 것을 아직 못 봤거나, 본 지 limit_sec 가 지나지 않았다.
+    [ "$final_watch_since" -eq 0 ] || elapsed=$(( up - final_watch_since ))
+    if [ "$final_watch_since" -eq 0 ] || [ "$elapsed" -lt "$limit_sec" ]; then
+        _final_watch_write_waiting "$elapsed"
+        return 0
+    fi
+
+    # 2차 fallback: find -mmin (도착 시각 파일을 거치지 않고 도착한 파일이 있는지)
     if find "$final_dir" -maxdepth 1 -type f -name "${vhl_name}_*" \
             -mmin -"$window_min" -print -quit 2>/dev/null | grep -q .; then
-        # heartbeat가 없었다면 지금 만들어둔다 (다음 사이클부터 정확)
+        # 도착 시각 파일을 지금 써 둔다. 다음 호출이 내용 변화로 도착을 본다.
         date +%s > "$FINAL_HEARTBEAT_FILE" 2>/dev/null
         final_stall_cnt=0
         _write_final_health "OK_FB" 0
         return 0
     fi
 
-    ((final_stall_cnt++))
-    logger -p local0.emerg "[$KEY][$tag:$LINENO] FINAL STALL: no new ${vhl_name}_* in ${final_dir} for >${window_min}m (stall_cnt=$final_stall_cnt)"
-    echo "NG" > "$FILE_CHECK"
-    _write_final_health "STALL" "$final_stall_cnt"
+    # 판정 직전에 인스턴스를 다시 본다. 감시를 건 뒤 앱이 바뀌었으면(다른 사다리의 재시작 등) 새
+    # 인스턴스가 조각을 열 때까지 다시 기다린다. 앱이 없을 때는 시작 마커·파일 검사 쪽이 맡는다.
+    pids=$(_final_watch_app_pids)
+    if [ -z "$pids" ] || [ "$pids" != "$final_watch_pids" ]; then
+        final_watch_since=0
+        final_watch_pids=""
+        _final_watch_write_waiting 0
+        return 0
+    fi
 
-    if [ "$final_stall_cnt" -le 2 ]; then
-        logger -p local0.error "[$KEY][$tag:$LINENO] FINAL STALL request gstapp_restart (stall_cnt=$final_stall_cnt)"
-        cam_submit_internal_action gstapp_restart "final path stall count $final_stall_cnt"
-    elif [ "$final_stall_cnt" -le 4 ]; then
-        logger -p local0.error "[$KEY][$tag:$LINENO] FINAL STALL request module_reload (stall_cnt=$final_stall_cnt)"
-        cam_submit_internal_action module_reload "final path stall count $final_stall_cnt"
+    next=$(( final_stall_cnt + 1 ))
+    logger -p local0.emerg "[$KEY][$tag:$LINENO] FINAL STALL: no new ${vhl_name}_* in ${final_dir} for >${window_min}m (stall_cnt=$next)"
+    echo "NG" > "$FILE_CHECK"
+    # 요청이 접수되든 아니든 다음 판정은 앱이 다시 조각을 열고 limit_sec 가 지난 뒤다. 유지보수 블록은
+    # 시작 마커가 있는 동안 반복마다 돌므로, 여기서 감시를 풀지 않으면 같은 정체를 여러 번 센다.
+    final_watch_since=0
+    final_watch_pids=""
+
+    if [ "$next" -le 2 ]; then
+        action=gstapp_restart
+        level=error
+    elif [ "$next" -le 4 ]; then
+        action=module_reload
+        level=error
+    elif [[ "$file_chk_reboot" == *"$ENABLE_VAL"* ]]; then
+        action=reboot_fallback
+        level=emerg
     else
-        if [[ "$file_chk_reboot" == *"$ENABLE_VAL"* ]]; then
-            logger -p local0.emerg "[$KEY][$tag:$LINENO] FINAL STALL request reboot_fallback (stall_cnt=$final_stall_cnt)"
-            cam_submit_internal_action reboot_fallback "final path stall count $final_stall_cnt"
-        else
-            logger -p local0.notice "[$KEY][$tag:$LINENO] FINAL STALL persistent but file_chk_reboot=false — reset counter"
-            final_stall_cnt=0
-        fi
+        logger -p local0.notice "[$KEY][$tag:$LINENO] FINAL STALL persistent but file_chk_reboot=false — reset counter"
+        final_stall_cnt=0
+        _write_final_health "STALL" "$next"
+        return 0
+    fi
+    logger -p "local0.$level" "[$KEY][$tag:$LINENO] FINAL STALL request $action (stall_cnt=$next)"
+    if cam_submit_internal_action "$action" "final path stall count $next"; then
+        final_stall_cnt=$next
+        _write_final_health "STALL" "$final_stall_cnt"
+    else
+        # 거절된 요청(다른 요청이 진행 중이거나 lifecycle 이 ACTIVE 가 아님)은 단계로 세지 않는다.
+        _write_final_health "BUSY" 0
     fi
 }
 
@@ -1681,6 +1765,8 @@ do
             # 세션 파일이 없거나(구버전 바이너리) 형식이 어긋나면 기존 방식으로 폴백.
             session_id=$(cat "$SESSION_FILE_" 2>/dev/null | tr -d '\n')
             cat /dev/null > "$SESSION_FILE_" 2>/dev/null
+            # gstApp 이 이 세션의 조각을 열었다. 최종 경로 정체 감시가 이 신호로 감시를 건다(#247).
+            [ -z "$session_id" ] || FinalWatchNoteSession
             if [[ "$session_id" =~ ^[0-9]{8}_[0-9]{4}$ ]]; then
                 datetime=${session_id}00
                 datetime_=$session_id
