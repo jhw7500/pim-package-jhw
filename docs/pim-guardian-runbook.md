@@ -159,7 +159,7 @@ TMP 라인 바로 다음에 별행으로 출력됨. Final-path 워치독 상태 
 - 쉽게 말해: 영상이 SD 최종 위치까지 잘 도착하는지. 자세한 의미는 위의 `Final-path 워치독 필드` 섹션 표 참조.
 - `metric` : status 별 의미 다름.
   - `OK` → 마지막 final 도착 후 경과 초
-  - `WARMUP` → 현재 timer 초
+  - `WARMUP` → 감시를 건 뒤 경과 초(대기 중이면 0)
   - `STALL` → stall_cnt (escalation 단계 추적)
   - 그 외 → `0`
 - `window` : 검사 윈도우(분). 보통 `rec_min * 2` (최소 2)
@@ -172,8 +172,8 @@ TMP 라인 바로 다음에 별행으로 출력됨. Final-path 워치독 상태 
 - `status=RAM_ONLY` / `REC_DISABLED` → 의도된 비활성, 워치독 skip 중
 - `status=WARMUP` → 계산된 시작 유예시간 안이면 정상. 기본 설정의 유예시간은
   `120 + 10 + 10 = 140`초다.
-- WARMUP이 계산된 유예시간보다 오래 지속되면 raw telemetry의 4번째 epoch와
-  현재 시각을 비교하고 `chk_cam_operate.sh` 정지를 의심한다.
+- WARMUP이 계산된 유예시간보다 오래 지속되면 앱이 조각을 열지 못하고 있는지 보고,
+  raw telemetry의 4번째 epoch와 현재 시각을 비교해 `chk_cam_operate.sh` 정지를 의심한다.
 
 ### 초보자용 한 줄 해석 예시
 
@@ -205,9 +205,9 @@ TMP 라인 바로 다음에 별행으로 출력됨. Final-path 워치독 상태 
 | `OK_FB` | 0 | 정상이지만 heartbeat 없음/stale → find -mmin fallback으로 확인 |
 | `RAM_ONLY` | 0 | SD BAD/write-disable → SD final 검사 의도적 skip (정상 RAM-only) |
 | `REC_DISABLED` | 0 | 모든 채널 disabled 또는 capture 모드+record off → 녹화 없음 |
-| `BUSY` | 0 | restart/init/kill 사이클 진행 중 → 검사 일시 skip |
-| `WARMUP` | 현재 timer 초 | 시작 후 워밍업 중. 기준은 `rec_time*2 + file_check_delay + startup_grace_extra_sec`이며 기본 140초 |
-| `STALL` | stall_cnt | **정체 감지**. escalation 진행 중 (자동 복구 시도) |
+| `BUSY` | 0 | restart/init/kill 사이클 진행 중 → 검사 일시 skip. 복구 요청이 거절됐을 때도 쓴다 |
+| `WARMUP` | 감시를 건 뒤 경과 초(대기 중이면 0) | 앱이 조각을 열기를 기다리거나 워밍업 중. 기준은 `rec_time*2 + file_check_delay + startup_grace_extra_sec`이며 기본 140초 |
+| `STALL` | stall_cnt | **정체 감지**. escalation 진행 중 (자동 복구 시도). 복구 요청 뒤 도착이 다시 확인될 때까지 유지(`file_chk_reboot=false`로 카운터가 0으로 돌아가면 `WARMUP`) |
 
 #### 운영 시 빠른 확인
 
