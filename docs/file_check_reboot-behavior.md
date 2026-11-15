@@ -3,8 +3,10 @@
 > 기준: 2026-08-25 `master`. 코드 행 번호 대신 함수/변수명을 기준으로 설명한다.
 
 `ord_vcm_conf.json`의 `.ETC.file_check_reboot`는 복구 사다리 전체를 켜고 끄는
-옵션이 아니다. `kill_test.sh`와 `init_cam.sh`를 거친 뒤 마지막 단계에서
-`reboot`를 허용할지를 결정하는 공통 게이트다.
+옵션이 아니다. `gstapp_restart`와 `module_reload` 요청을 거친 뒤 마지막 단계에서
+`reboot_fallback` 요청을 허용할지를 결정하는 공통 게이트다. 복구 사다리는 스크립트를
+직접 실행하지 않고 복구 요청을 낸다(`kill_test.sh`와 `init_cam.sh`도 지금은 요청을 내는
+래퍼다).
 
 ## 1. 설정과 로딩
 
@@ -35,7 +37,7 @@
 
 | 분기 | 소유 로직 | 재부팅 직전 조건 | `false`일 때 |
 |---|---|---|---|
-| 장기 disconnect | `maybe_init_cam_on_disconnect()` | `.ETC.disconnect_max_sec > 0`이고 disconnect가 제한시간 이상 지속 | 주기적 `init_cam.sh`만 계속 |
+| 장기 disconnect | `maybe_init_cam_on_disconnect()` | `.ETC.disconnect_max_sec > 0`이고 disconnect가 제한시간 이상 지속 | 주기적 `module_reload` 요청만 계속 |
 | 드라이버 모듈 미로딩 | 메인 루프의 `modules_loaded()` 검사 | `max9296`/`imx8_media_dev` 미로딩, disconnect 아님, `retry_total > 5` | 공통 retry 카운터 초기화 |
 | 채널별 파일 수 불일치 | 파일 생성 검사 | `check_num != file_cnt`, cooldown/disconnect 아님, `retry_total > 5` | 공통 retry 카운터 초기화 |
 | 초기 시작 마커 없음 | `start_f == 0` 분기 | 적어도 한 카메라 그룹이 활성, cooldown/disconnect 아님, `retry_total > 4` | 공통 retry 카운터 초기화 |
@@ -44,7 +46,7 @@
 ### 2.1 장기 disconnect
 
 disconnect 복구의 기본 동작은 `disconnect_init_grace_sec` 이후
-`disconnect_init_interval_sec` 간격으로 `init_cam.sh`를 실행하는 것이다.
+`disconnect_init_interval_sec` 간격으로 `module_reload`를 요청하는 것이다.
 
 `.ETC.disconnect_max_sec`의 스크립트 기본값은 `0`이므로 재부팅 에스컬레이션은
 기본적으로 비활성이다. 명시적으로 0보다 큰 값을 설정한 장비에서만 다음 조건을
@@ -63,8 +65,8 @@ disconnect 복구의 기본 동작은 `disconnect_init_grace_sec` 이후
 
 `modules_loaded()`가 실패하고 카메라 disconnect 비트가 없을 때:
 
-- `retry_total <= 5`: `init_cam.sh`
-- `retry_total > 5`: `file_check_reboot=true`면 reboot, 아니면 retry 카운터 초기화
+- `retry_total <= 5`: `module_reload`
+- `retry_total > 5`: `file_check_reboot=true`면 `reboot_fallback`, 아니면 retry 카운터 초기화
 
 disconnect 상태라면 이 분기에서는 retry와 reboot를 실행하지 않는다.
 
@@ -72,21 +74,21 @@ disconnect 상태라면 이 분기에서는 retry와 reboot를 실행하지 않�
 
 활성 채널과 SRT 설정으로 계산한 기대 파일 수가 실제 파일 수와 다를 때:
 
-- `retry_total <= 3`: `kill_test.sh`
-- `retry_total <= 5`: `init_cam.sh`
-- `retry_total > 5`: `file_check_reboot=true`면 reboot, 아니면 retry 카운터 초기화
+- `retry_total <= 3`: `gstapp_restart`
+- `retry_total <= 5`: `module_reload`
+- `retry_total > 5`: `file_check_reboot=true`면 `reboot_fallback`, 아니면 retry 카운터 초기화
 
 재기동 직후 첫 조각이 아직 없고 앱이 `init_cooldown_sec`보다 어리면 파일 검사를 보류한다(#190).
-init_cam 뒤 쿨다운 판정은 #214에서 제거했다. disconnect가 감지되면 이 사다리 대신
+모듈 재적재 뒤 쿨다운 판정은 #214에서 제거했다. disconnect가 감지되면 이 사다리 대신
 disconnect 전용 주기 복구 경로에 맡긴다.
 
 ### 2.4 초기 시작 마커 없음
 
 `/tmp/start_video_time_chk`가 비어 있고 `timer >= rst_time`인 상태가 계속될 때:
 
-- `retry_total <= 2`: `kill_test.sh`
-- `retry_total <= 4`: `init_cam.sh`
-- `retry_total > 4`: `file_check_reboot=true`면 reboot, 아니면 retry 카운터 초기화
+- `retry_total <= 2`: `gstapp_restart`
+- `retry_total <= 4`: `module_reload`
+- `retry_total > 4`: `file_check_reboot=true`면 `reboot_fallback`, 아니면 retry 카운터 초기화
 
 모든 채널이 비활성인 경우에는 실패가 아니라 설정상 비활성으로 보고 건너뛴다.
 cooldown과 disconnect 처리 원칙은 파일 수 불일치 분기와 같다.
@@ -96,9 +98,9 @@ cooldown과 disconnect 처리 원칙은 파일 수 불일치 분기와 같다.
 `CheckFinalArrival()`은 정상 루프에서 60초마다 최종 저장 경로의 도착 진척을
 확인한다.
 
-- `final_stall_cnt` 1~2: `kill_test.sh`
-- `final_stall_cnt` 3~4: `init_cam.sh`
-- `final_stall_cnt` 5 이상: `file_check_reboot=true`면 reboot, 아니면
+- `final_stall_cnt` 1~2: `gstapp_restart`
+- `final_stall_cnt` 3~4: `module_reload`
+- `final_stall_cnt` 5 이상: `file_check_reboot=true`면 `reboot_fallback`, 아니면
   `final_stall_cnt=0`
 
 다음 경우에는 정체 재부팅 사다리에 진입하지 않는다.
@@ -123,7 +125,7 @@ cooldown과 disconnect 처리 원칙은 파일 수 불일치 분기와 같다.
 ### `false` 또는 키 누락
 
 - `reboot`만 억제한다.
-- `kill_test.sh`, `init_cam.sh`, disconnect 주기 복구는 계속 동작한다.
+- `gstapp_restart`, `module_reload` 요청과 disconnect 주기 복구는 계속 동작한다.
 - 일반 retry 사다리는 한계에서 카운터를 초기화해 다시 시작하고, FINAL STALL은
   `final_stall_cnt`만 초기화한다.
 - 하드웨어 수준 장애가 소프트 복구로 해결되지 않으면 복구 사이클이 반복될 수 있다.

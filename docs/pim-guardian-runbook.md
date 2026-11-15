@@ -168,7 +168,7 @@ TMP 라인 바로 다음에 별행으로 출력됨. Final-path 워치독 상태 
 
 운영 빠른 해석:
 - `status=OK hbAge=<window*60 이내>` → 정상
-- `status=STALL metric=<n>` → 자동 escalation 진행 중 (1~2: kill_test, 3~4: init_cam, 5+: reboot)
+- `status=STALL metric=<n>` → 자동 escalation 진행 중 (1~2: gstapp_restart, 3~4: module_reload, 5+: reboot_fallback)
 - `status=RAM_ONLY` / `REC_DISABLED` → 의도된 비활성, 워치독 skip 중
 - `status=WARMUP` → 계산된 시작 유예시간 안이면 정상. 기본 설정의 유예시간은
   `120 + 10 + 10 = 140`초다.
@@ -218,14 +218,14 @@ date +%s                          # 비교 기준
 ```
 
 - `OK <age>` 인데 age > rec_min*60*2 → guardian 갱신 지연 또는 워치독 정지
-- `STALL <n>` 이 1~2 → 자동 kill_test.sh 진행 중 (지켜보기)
-- `STALL <n>` 이 3~4 → init_cam.sh 진행 중
-- `STALL <n>` 이 5+ → reboot 직전 (file_chk_reboot=true 시)
+- `STALL <n>` 이 1~2 → `gstapp_restart` 요청 진행 중 (지켜보기)
+- `STALL <n>` 이 3~4 → `module_reload` 요청 진행 중
+- `STALL <n>` 이 5+ → `reboot_fallback` 요청 직전 (file_chk_reboot=true 시)
 - 기본 설정에서 `WARMUP 120`은 정상 범위다. WARMUP 지속 여부는 raw telemetry
   epoch와 계산된 유예시간을 함께 확인한다.
 
 Final 라인은 관측용이다. `status=STALL` 자체가 guardian의 `guardian_bits`나
-`--recovery` 요청 조건을 직접 올리지는 않는다. FINAL STALL의 kill/init/reboot
+`--recovery` 요청 조건을 직접 올리지는 않는다. FINAL STALL의 복구 요청
 사다리는 `chk_cam_operate.sh CheckFinalArrival()`이 소유한다.
 
 상세 진단/대응: [runbook_final_stall.md](./runbook_final_stall.md)
@@ -377,7 +377,7 @@ guardian은 `guardian_bits`를 만들고, 아래 조건일 때만 복구 요청 
 3. `jq '.VCM.srt_enable' /root/shared_v/ord_vcm_conf.json` — null은 현재
    구현에서 `false`다. 운영 의도와 다르면 승인된 설정 배포 경로로 명시값을 넣고
    vcm/gstApp을 포함한 파이프라인을 재기동한다.
-4. escalation은 자동 진행한다(kill_test → init_cam → reboot). `stall_cnt`와
+4. escalation은 자동 진행한다(`gstapp_restart` → `module_reload` → `reboot_fallback` 요청). `stall_cnt`와
    journal의 단계가 진행하지 않거나 reboot 후에도 재발하면 storage/hardware를 확인한다.
 5. 상세 진단: [runbook_final_stall.md](./runbook_final_stall.md)
 

@@ -81,9 +81,9 @@ GitHub `master`의 코드가 동작 정본이다. 이 문서의 “패키지 값
 | `file_check_reboot` | `true` | `false` | 복구 사다리의 마지막 reboot 단계 허용 |
 | `startup_grace_extra_sec` | `10` | `10` | FINAL STALL 워밍업 계산에 추가 |
 | `camera_startup_grace_sec` | `25` | `25` | 앱 시작 시각부터 cold-start 카메라 오류를 무시하는 총 시간. gstApp `-d`와 독립 |
-| `init_cooldown_sec` | `40` | `40` | `init_cam.sh` 직후 재초기화 억제 |
-| `disconnect_init_interval_sec` | `180` | `180` | disconnect 중 주기적 `init_cam.sh` 간격 |
-| `disconnect_init_grace_sec` | `60` | `60` | disconnect 후 첫 `init_cam.sh` 전 유예 |
+| `init_cooldown_sec` | `40` | `40` | 재기동 직후 카메라 앱이 이 시간보다 어리고 첫 조각 신호가 없으면 파일 검사를 보류(#190). 보류는 이 시간을 넘기지 않는다 |
+| `disconnect_init_interval_sec` | `180` | `180` | disconnect 중 주기적 `module_reload` 요청 간격 |
+| `disconnect_init_grace_sec` | `60` | `60` | disconnect 후 첫 `module_reload` 요청 전 유예 |
 | `disconnect_max_sec` | 키 없음 | `0` | 선택적 장기 disconnect reboot. `0`이면 비활성 |
 
 `update_ordvcmconf.sh`는 `disconnect_max_sec`를 제외한 앞의 패키지 키를 보강하지만
