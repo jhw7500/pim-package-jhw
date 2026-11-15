@@ -1,5 +1,28 @@
 # PIM Package Changelog
 
+## 최신 변경사항 (2026-11-15) — 1.0.0.1 / 최종 경로 정체 감시가 실제로 판정한다 (이슈 #247·#249, PR #248)
+
+- 전달 패키지를 `pim-mp 1.0.0.1`로 올렸다. `dpkg --compare-versions 1.0.0.1 gt 1.0.0.0`은 참이다.
+- `DEBIAN/control` 설명의 변경 이력에 `1.0.0.1` 줄을 더했다.
+- **최종 경로 정체 감시 수정**(#247, PR #248): `chk_cam_operate.sh`의 `CheckFinalArrival`은 워밍업을
+  `timer`로 쟀는데, `timer`는 조각이 열릴 때마다 0으로 돌아가 워밍업 기준을 넘지 못했다. 그래서 감시가 늘
+  `WARMUP`만 썼고, 조각은 생기는데 최종 경로로 못 가는 정체에서 복구 요청이 나오지 않았다. 개발 보드에서
+  `.all_done`을 330초 지우자 6개 세션 30개 파일이 RAM에서 지워졌고 복구 요청은 0건이었다.
+  - 워밍업을 지금 떠 있는 gstApp 인스턴스가 조각을 연 것을 데몬이 본 시각부터 잰다. 신호는 gstApp만 쓰는
+    세션 파일(`/tmp/start_video_session_chk`)이다. 분 경계 시작 마커는 vcm도 쓰므로 쓰지 않는다.
+  - 경과 시간은 `/proc/uptime`으로 재고, 도착은 `/tmp/cam_last_final_ts`의 내용이 바뀐 것으로 알아본다.
+  - 도착이 없다고 보는 시간은 `rec_min×2`분에 `file_check_delay + startup_grace_extra_sec`를 더한
+    값이다(기본 140초).
+  - 판정은 한 번에 한 단계다. 판정 뒤 감시를 풀고, 판정 직전에 앱 pid를 다시 본다. 거절된 요청은 단계로 세지
+    않는다. 복구를 기다리는 동안 상태는 `STALL`을 유지한다. 사다리의 단계와 임계(1~2 `gstapp_restart`,
+    3~4 `module_reload`, 5 이상 `reboot_fallback`)는 그대로다.
+  - 개발 보드에서 스크립트만 바꿔 같은 정체를 주입했을 때, 마지막 도착 약 3분 뒤 `FINAL STALL ...
+    (stall_cnt=1)`과 `gstapp_restart` 요청이 나왔고 주입이 끝난 뒤 `OK`로 돌아왔다. `module_reload`와
+    `reboot_fallback` 단계는 자동 시험(`test/camera_health/final_stall_watch_test.sh`)으로만 확인했다.
+  - 세션 파일을 쓰지 않는 앱 구성에서는 감시가 걸리지 않는다.
+- gstApp(`973b1d7`), `max9296.ko`(`172a76a`), `hantro_vc8000e_ext.ko`(`c37edf1`), GStreamer 교체본은 1.0.0.0 과
+  같다.
+
 ## 최신 변경사항 (2026-11-13) — 1.0.0.0 / 릴리스 버전을 올리고 기본 해상도를 되돌린다 (이슈 #238·#241, PR #239)
 
 - 전달 패키지를 `pim-mp 1.0.0.0`으로 올렸다. camera19 의 `0.6.3.2+jhw.camera19`는 dpkg 비교에서 사내 배포본

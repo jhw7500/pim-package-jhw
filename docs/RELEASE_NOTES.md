@@ -1,5 +1,39 @@
 # PIM Package Release Notes
 
+## Unreleased (2026-11-15)
+
+### 1.0.0.1 — the final-path stall watch reaches its verdict (issues #247, #249; PR #248)
+
+- Package version is `1.0.0.1`. `dpkg --compare-versions 1.0.0.1 gt 1.0.0.0` is true.
+- The change history in `DEBIAN/control` has a `1.0.0.1` line.
+- **Final-path stall watch fixed** (#247, PR #248). `CheckFinalArrival` in
+  `chk_cam_operate.sh` timed its warmup with `timer`, which returns to 0 every time a
+  fragment opens, so the warmup threshold was never passed. The watch only ever wrote
+  `WARMUP`, and a stall in which fragments keep starting but none reaches the final path
+  requested no recovery. On the development board, removing `.all_done` for 330 seconds
+  had 30 files of 6 sessions deleted from RAM with no recovery request.
+  - The warmup is now timed from the moment the daemon sees that the running gstApp
+    instance has opened a fragment. The signal is the session file only gstApp writes
+    (`/tmp/start_video_session_chk`); the minute-boundary start marker is not used
+    because vcm writes it too.
+  - Elapsed time is read from `/proc/uptime`, and an arrival is recognised by a change in
+    the content of `/tmp/cam_last_final_ts`.
+  - "No arrival" means `rec_min × 2` minutes plus `file_check_delay +
+    startup_grace_extra_sec` (140 seconds by default).
+  - One ladder step per verdict. After a verdict the watch is disarmed, and the app pid is
+    checked again just before a verdict. A refused request is not counted as a step. The
+    status stays `STALL` while a requested recovery is awaited. The ladder steps and
+    thresholds (1–2 `gstapp_restart`, 3–4 `module_reload`, 5 and above `reboot_fallback`)
+    are unchanged.
+  - On the development board, with only the script swapped in and the same stall
+    injected, `FINAL STALL ... (stall_cnt=1)` and a `gstapp_restart` request came about
+    3 minutes after the last arrival, and the status returned to `OK` after the injection
+    ended. The `module_reload` and `reboot_fallback` steps were checked only by the
+    automated test (`test/camera_health/final_stall_watch_test.sh`).
+  - With an app configuration that does not write the session file the watch is not armed.
+- gstApp (`973b1d7`), `max9296.ko` (`172a76a`), `hantro_vc8000e_ext.ko` (`c37edf1`) and
+  the GStreamer replacement libraries are the same as in 1.0.0.0.
+
 ## Unreleased (2026-11-13)
 
 ### 1.0.0.0 — release version raised and default resolution restored (issues #238, #241; PR #239)
