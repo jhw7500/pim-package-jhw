@@ -48,7 +48,8 @@
 - **기대**:
   - `cam_final_health` 가 `RAM_ONLY 0 ...`
   - `FINAL STALL` 로그 0회 (워치독 정상 skip)
-  - `FINAL STALL request` 로그 없음(이 감시가 복구를 요청하지 않음)
+  - `gstapp_restart`·`module_reload` 요청 없음(어느 사다리에서도. `request gstapp_restart`,
+    `request module_reload` 로그 없음)
 - 복구: `echo 1 > /dev/shm/sd_mount_flag` → 정상 모드 복귀, S1 결과
 
 ### S5. Manual stop (녹화 중지)
@@ -111,7 +112,7 @@ disconnect 재부팅은 `test/cam_link/escalation_test.sh`에서 별도로 검�
 ## 통과 기준
 
 - 모든 S1~S10 시나리오에서 기대 결과 일치
-- S4/S5에서 `FINAL STALL` 로그와 이 감시의 복구 요청 0회
+- S4/S5에서 `FINAL STALL` 로그와 `gstapp_restart`·`module_reload` 요청 0회
 - S6 escalation 사슬 정확히 1~5 stall_cnt 단계 진행
 - 모든 시나리오에서 segfault, hang, OOM 없음
 
