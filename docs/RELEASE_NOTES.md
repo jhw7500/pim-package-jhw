@@ -15,6 +15,9 @@
   90% used) the flag stayed for 3 minutes and 15 recording files piled up in RAM.
   - A non-numeric inode use is now treated as unknown and the inode test is skipped.
     Filesystems that count inodes behave as before.
+  - On a pass whose retention found the SD unwritable (and blocked SD writes), the release
+    test is skipped. Before, the same pass cleared that block on block use alone, on any
+    filesystem.
   - New test `test/camera_health/sd_write_disable_flag_test.sh` covers both vfat and
     inode-counting output.
 - **Recovery ladder documents** (#252, PR #253). Six operational documents named the

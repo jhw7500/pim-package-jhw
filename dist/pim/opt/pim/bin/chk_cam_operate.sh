@@ -1495,8 +1495,11 @@ CheckDiskSpace() {
     # SD OK: enforce retention against SD final path from config.
     if is_sd_ok; then
         if [ -n "$final_path_cfg" ] && [ -d "$final_path_cfg" ]; then
-            enforce_sd_retention_if_needed "$final_path_cfg"
-            update_sd_write_disable_flag "$final_path_cfg"
+            # retention 은 SD 가 쓰기 불가일 때만 1 을 돌려주고 그때 쓰기 차단을 건다. 같은 주기에 해제
+            # 판정을 하면 사용률만 보고 그 차단을 바로 지우므로, 쓸 수 있을 때만 판정한다(#251).
+            if enforce_sd_retention_if_needed "$final_path_cfg"; then
+                update_sd_write_disable_flag "$final_path_cfg"
+            fi
             # Apply runtime overrides immediately when CRIT flips SD write state.
             apply_storage_mode_overrides
             # P0-2: update_sd_write_disable_flag가 막 sd_write_disabled를 제거했을 수 있다.

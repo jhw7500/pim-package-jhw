@@ -11,6 +11,8 @@
   차단이 재부팅 전까지 풀리지 않았다. 개발 보드(vfat, 사용률 90%)에서 차단 파일을 만들자 3분 동안 지워지지
   않았고 녹화 파일 15개가 RAM에 쌓였다.
   - inode 사용률이 숫자가 아니면 빈 값으로 다뤄 inode 조건을 건너뛴다. inode를 세는 파일시스템의 동작은 같다.
+  - SD에 쓸 수 없어 retention이 차단을 건 주기에는 해제 판정을 하지 않는다. 전에는 같은 주기에 사용률만 보고
+    그 차단을 바로 지웠다(inode를 세는 파일시스템에서도 같았다).
   - 새 시험 `test/camera_health/sd_write_disable_flag_test.sh`가 vfat과 inode를 세는 출력 두 경우를 본다.
 - **복구 사다리 문서**(#252, PR #253): 운영 문서 6개가 사다리 단계를 옛 스크립트 이름(`kill_test.sh`,
   `init_cam.sh`)으로 적던 것을 요청 이름(`gstapp_restart`, `module_reload`, `reboot_fallback`)과 코드의

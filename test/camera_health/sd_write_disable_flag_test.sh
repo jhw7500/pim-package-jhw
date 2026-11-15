@@ -9,6 +9,9 @@
 # IUse% column, every numeric test on it failed with "integer expression expected", and the
 # re-enable test was always false, so the flag stayed until a reboot.
 #
+# Retention also sets the flag when the SD cannot be written; the release test runs only on a pass
+# whose retention found the SD writable, or it would clear that flag at once on block use alone.
+#
 # The test runs the daemon's own functions with a stubbed `df` and checks the flag on both kinds
 # of filesystem.  SD_FLAG_DAEMON=<path> runs the same scenarios against another copy of the daemon
 # (the pre-fix function keeps the flag in the vfat scenario):
@@ -30,7 +33,7 @@ extract() {  # one top-level function of the daemon script, by name
         p && /^}/ { exit }
     ' "$DAEMON"
 }
-for fn in get_df_usage_pct get_df_inode_pct update_sd_write_disable_flag; do
+for fn in get_df_usage_pct get_df_inode_pct enforce_sd_retention_if_needed update_sd_write_disable_flag; do
     body=$(extract "$fn")
     grep -q "^$fn() {" <<<"$body" || fail "could not extract $fn from $DAEMON"
     eval "$body"
@@ -40,6 +43,8 @@ KEY=RST
 tag=sd_write_disable_flag_test
 WARN_PCT_DEFAULT=95
 CRIT_PCT_DEFAULT=98
+SD_HARD_CAP_PCT_DEFAULT=99
+PROTECT_RECENT_SESSIONS_DEFAULT=2
 SD_WRITE_DISABLE_FILE="$WORK/sd_write_disabled"
 FLAG=$SD_WRITE_DISABLE_FILE
 ERRLOG="$WORK/stderr"
@@ -66,6 +71,23 @@ step() {  # block use, inode use ("-" for vfat)
     USE=$1
     IUSE=$2
     update_sd_write_disable_flag /mnt/sd_cam 2>>"$ERRLOG" || :
+}
+# The daemon's own retention-then-release sequence, taken from CheckDiskSpace: the lines from the
+# retention call through the end of the block that follows it.
+sequence=$(awk '
+    /enforce_sd_retention_if_needed "\$final_path_cfg"/ { p = 1 }
+    p { print }
+    p && /update_sd_write_disable_flag "\$final_path_cfg"/ { u = 1 }
+    u && /^[[:space:]]*fi[[:space:]]*$/ { exit }
+    u && !/fi/ && !/update_sd_write_disable_flag/ { exit }
+' "$DAEMON")
+grep -q 'update_sd_write_disable_flag "$final_path_cfg"' <<<"$sequence" \
+    || fail "could not extract the retention and release sequence from $DAEMON"
+cycle() {  # one CheckDiskSpace pass over an SD directory: block use, inode use
+    USE=$2
+    IUSE=$3
+    local final_path_cfg=$1
+    eval "$sequence" 2>>"$ERRLOG" || :
 }
 flag() { [ -e "$FLAG" ] && echo present || echo absent; }
 expect_flag() {
@@ -124,5 +146,26 @@ expect_flag present
 step 94 10
 expect_flag absent
 no_shell_errors
+
+# 5. vfat: the SD cannot be written (retention's write test fails).  Retention blocks SD writes and
+#    the same pass must not release them on block use alone; once the SD is writable again, the
+#    next pass releases them.
+scenario 'vfat, SD not writable'
+mkdir -p "$WORK/sd"
+chmod 0555 "$WORK/sd"
+if touch "$WORK/sd/.probe" 2>/dev/null; then
+    rm -f "$WORK/sd/.probe"
+    echo "skip: running as a user that can write a read-only directory" >&2
+else
+    cycle "$WORK/sd" 50 -
+    expect_flag present
+    cycle "$WORK/sd" 50 -
+    expect_flag present
+    chmod 0755 "$WORK/sd"
+    cycle "$WORK/sd" 50 -
+    expect_flag absent
+    no_shell_errors
+fi
+chmod 0755 "$WORK/sd"
 
 echo "sd write disable flag: PASS"
