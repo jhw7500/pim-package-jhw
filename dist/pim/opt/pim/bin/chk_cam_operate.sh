@@ -722,9 +722,11 @@ get_df_usage_pct() {
     df -P "$dir" 2>/dev/null | awk 'NR==2 {gsub(/%/,"",$5); print $5}'
 }
 
+# inode 사용률(%). vfat 처럼 inode 를 세지 않는 파일시스템은 이 칸이 "-" 라서, 숫자가 아니면
+# 빈 값을 돌려준다. 호출하는 쪽은 빈 값이면 inode 조건을 건너뛴다(#251).
 get_df_inode_pct() {
     local dir="$1"
-    df -Pi "$dir" 2>/dev/null | awk 'NR==2 {gsub(/%/,"",$5); print $5}'
+    df -Pi "$dir" 2>/dev/null | awk 'NR==2 {gsub(/%/,"",$5); if ($5 ~ /^[0-9]+$/) print $5}'
 }
 
 # SD-side emergency: evict oldest fragments at file granularity until df% drops below stop_pct.
@@ -1493,8 +1495,11 @@ CheckDiskSpace() {
     # SD OK: enforce retention against SD final path from config.
     if is_sd_ok; then
         if [ -n "$final_path_cfg" ] && [ -d "$final_path_cfg" ]; then
-            enforce_sd_retention_if_needed "$final_path_cfg"
-            update_sd_write_disable_flag "$final_path_cfg"
+            # retention 은 SD 가 쓰기 불가일 때만 1 을 돌려주고 그때 쓰기 차단을 건다. 같은 주기에 해제
+            # 판정을 하면 사용률만 보고 그 차단을 바로 지우므로, 쓸 수 있을 때만 판정한다(#251).
+            if enforce_sd_retention_if_needed "$final_path_cfg"; then
+                update_sd_write_disable_flag "$final_path_cfg"
+            fi
             # Apply runtime overrides immediately when CRIT flips SD write state.
             apply_storage_mode_overrides
             # P0-2: update_sd_write_disable_flag가 막 sd_write_disabled를 제거했을 수 있다.

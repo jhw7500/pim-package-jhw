@@ -2,6 +2,33 @@
 
 ## Unreleased (2026-11-15)
 
+### 1.0.0.2 — SD writes are re-enabled on a vfat SD (issues #251, #252; PR #253)
+
+- Package version is `1.0.0.2`. `dpkg --compare-versions 1.0.0.2 gt 1.0.0.1` is true.
+- The change history in `DEBIAN/control` has a `1.0.0.2` line.
+- **SD writes re-enabled on vfat** (#251). `chk_cam_operate.sh` creates
+  `/tmp/sd_write_disabled`, which sends recordings to RAM only, when the SD is 98% full or
+  has gone read-only, and removes it once block and inode use are below 95%. vfat does not
+  count inodes: `df -Pi` prints `-` in the use column, every numeric test on it failed with
+  `[: -: integer expression expected`, and the re-enable test was always false. On a vfat
+  SD a write block therefore lasted until the next reboot. On the development board (vfat,
+  90% used) the flag stayed for 3 minutes and 15 recording files piled up in RAM.
+  - A non-numeric inode use is now treated as unknown and the inode test is skipped.
+    Filesystems that count inodes behave as before.
+  - On a pass whose retention found the SD unwritable (and blocked SD writes), the release
+    test is skipped. Before, the same pass cleared that block on block use alone, on any
+    filesystem.
+  - New test `test/camera_health/sd_write_disable_flag_test.sh` covers both vfat and
+    inode-counting output.
+- **Recovery ladder documents** (#252, PR #253). Six operational documents named the
+  ladder steps after old scripts (`kill_test.sh`, `init_cam.sh`); they now use the request
+  names (`gstapp_restart`, `module_reload`, `reboot_fallback`) and the code thresholds. The
+  packaged `pim-guardian-runbook.md` changed too.
+- gstApp (`973b1d7`), `max9296.ko` (`172a76a`), `hantro_vc8000e_ext.ko` (`c37edf1`) and
+  the GStreamer replacement libraries are the same as in 1.0.0.1.
+
+## Unreleased (2026-11-15)
+
 ### 1.0.0.1 — the final-path stall watch reaches its verdict (issues #247, #249; PR #248)
 
 - Package version is `1.0.0.1`. `dpkg --compare-versions 1.0.0.1 gt 1.0.0.0` is true.
