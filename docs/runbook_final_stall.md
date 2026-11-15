@@ -8,7 +8,7 @@
 
 ```text
 [RST][chk_cam_operate.sh:...] FINAL STALL: no new <vhl>_* in <final_dir> for >Nm (stall_cnt=K)
-[RST][chk_cam_operate.sh:...] FINAL STALL escalate: kill_test.sh (stall_cnt=K)
+[RST][chk_cam_operate.sh:...] FINAL STALL request gstapp_restart (stall_cnt=K)
 ```
 
 또는 `cat /tmp/cam_final_health`가
@@ -54,9 +54,9 @@
 
 | `stall_cnt` | 자동 동작 |
 |---:|---|
-| 1~2 | `kill_test.sh` |
-| 3~4 | `init_cam.sh` |
-| 5 이상 | `file_check_reboot=true`면 reboot, 아니면 카운터 초기화 |
+| 1~2 | `gstapp_restart` 요청 |
+| 3~4 | `module_reload` 요청 |
+| 5 이상 | `file_check_reboot=true`면 `reboot_fallback` 요청, 아니면 카운터 초기화 |
 
 유지보수 블록이 돌 때마다 다시 평가한다. `MovePartFile()`이 실제 final 도착을
 완료하면 `/tmp/cam_last_final_ts`를 갱신하고 다음 검사에서 `OK`로 복귀한다.

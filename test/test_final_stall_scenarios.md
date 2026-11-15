@@ -48,7 +48,7 @@
 - **기대**:
   - `cam_final_health` 가 `RAM_ONLY 0 ...`
   - `FINAL STALL` 로그 0회 (워치독 정상 skip)
-  - `kill_test.sh` 호출 없음
+  - `FINAL STALL request` 로그 없음(이 감시가 복구를 요청하지 않음)
 - 복구: `echo 1 > /dev/shm/sd_mount_flag` → 정상 모드 복귀, S1 결과
 
 ### S5. Manual stop (녹화 중지)
@@ -69,12 +69,12 @@
   유예가 지날 때마다 한 번씩 관찰
 - **기대**:
   - `Heartbeat:OK`인 동안 `cam_final_health=STALL` 발생
-  - stall_cnt 1~2: `kill_test.sh` 로그
-  - stall_cnt 3~4: `init_cam.sh` 로그
-  - stall_cnt 5: `reboot` (file_chk_reboot=true 시) 또는 카운터 리셋
+  - stall_cnt 1~2: `FINAL STALL request gstapp_restart` 로그
+  - stall_cnt 3~4: `FINAL STALL request module_reload` 로그
+  - stall_cnt 5: `FINAL STALL request reboot_fallback` 로그(file_chk_reboot=true 시) 또는 카운터 리셋
 
 물리 disconnect는 이 시나리오의 대체 수단이 아니다. 현재 기본값에서는
-`maybe_init_cam_on_disconnect()`가 주기적 `init_cam.sh`를 소유하고
+`maybe_init_cam_on_disconnect()`가 주기적 `module_reload` 요청을 소유하고
 `disconnect_max_sec=0`이므로 disconnect만으로 재부팅하지 않는다. 선택적
 disconnect 재부팅은 `test/cam_link/escalation_test.sh`에서 별도로 검증한다.
 
@@ -111,7 +111,7 @@ disconnect 재부팅은 `test/cam_link/escalation_test.sh`에서 별도로 검�
 ## 통과 기준
 
 - 모든 S1~S10 시나리오에서 기대 결과 일치
-- S4/S5에서 `FINAL STALL` 또는 `kill_test.sh` 호출 0회
+- S4/S5에서 `FINAL STALL` 로그와 이 감시의 복구 요청 0회
 - S6 escalation 사슬 정확히 1~5 stall_cnt 단계 진행
 - 모든 시나리오에서 segfault, hang, OOM 없음
 
