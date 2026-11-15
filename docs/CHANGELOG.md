@@ -1,5 +1,23 @@
 # PIM Package Changelog
 
+## 최신 변경사항 (2026-11-15) — 1.0.0.2 / vfat SD 에서 SD 쓰기 차단이 풀린다 (이슈 #251·#252, PR #253)
+
+- 전달 패키지를 `pim-mp 1.0.0.2`로 올렸다. `dpkg --compare-versions 1.0.0.2 gt 1.0.0.1`은 참이다.
+- `DEBIAN/control` 설명의 변경 이력에 `1.0.0.2` 줄을 더했다.
+- **vfat SD 쓰기 차단 해제**(#251): `chk_cam_operate.sh`는 SD 사용률이 98% 이상이거나 SD가 읽기 전용이 되면
+  `/tmp/sd_write_disabled`를 만들고 녹화를 RAM으로만 보낸다. 사용률과 inode 사용률이 95% 아래로 내려오면 이
+  파일을 지운다. 그런데 vfat은 inode를 세지 않아 `df -Pi`의 사용률 칸이 `-`이고, 숫자 비교가
+  `[: -: integer expression expected`로 실패해 해제 조건이 늘 거짓이었다. 그래서 vfat SD에서는 한 번 걸린
+  차단이 재부팅 전까지 풀리지 않았다. 개발 보드(vfat, 사용률 90%)에서 차단 파일을 만들자 3분 동안 지워지지
+  않았고 녹화 파일 15개가 RAM에 쌓였다.
+  - inode 사용률이 숫자가 아니면 빈 값으로 다뤄 inode 조건을 건너뛴다. inode를 세는 파일시스템의 동작은 같다.
+  - 새 시험 `test/camera_health/sd_write_disable_flag_test.sh`가 vfat과 inode를 세는 출력 두 경우를 본다.
+- **복구 사다리 문서**(#252, PR #253): 운영 문서 6개가 사다리 단계를 옛 스크립트 이름(`kill_test.sh`,
+  `init_cam.sh`)으로 적던 것을 요청 이름(`gstapp_restart`, `module_reload`, `reboot_fallback`)과 코드의
+  임계값으로 맞췄다. 패키지에 실리는 `pim-guardian-runbook.md`도 바뀌었다.
+- gstApp(`973b1d7`), `max9296.ko`(`172a76a`), `hantro_vc8000e_ext.ko`(`c37edf1`), GStreamer 교체본은 1.0.0.1 과
+  같다.
+
 ## 최신 변경사항 (2026-11-15) — 1.0.0.1 / 최종 경로 정체 감시가 실제로 판정한다 (이슈 #247·#249, PR #248)
 
 - 전달 패키지를 `pim-mp 1.0.0.1`로 올렸다. `dpkg --compare-versions 1.0.0.1 gt 1.0.0.0`은 참이다.

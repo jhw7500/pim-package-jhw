@@ -722,9 +722,11 @@ get_df_usage_pct() {
     df -P "$dir" 2>/dev/null | awk 'NR==2 {gsub(/%/,"",$5); print $5}'
 }
 
+# inode 사용률(%). vfat 처럼 inode 를 세지 않는 파일시스템은 이 칸이 "-" 라서, 숫자가 아니면
+# 빈 값을 돌려준다. 호출하는 쪽은 빈 값이면 inode 조건을 건너뛴다(#251).
 get_df_inode_pct() {
     local dir="$1"
-    df -Pi "$dir" 2>/dev/null | awk 'NR==2 {gsub(/%/,"",$5); print $5}'
+    df -Pi "$dir" 2>/dev/null | awk 'NR==2 {gsub(/%/,"",$5); if ($5 ~ /^[0-9]+$/) print $5}'
 }
 
 # SD-side emergency: evict oldest fragments at file granularity until df% drops below stop_pct.

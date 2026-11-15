@@ -1,5 +1,5 @@
 Package: pim-mp
-Version: 1.0.0.1
+Version: 1.0.0.2
 Replaces: cis
 Breaks: cis
 Section: test
@@ -81,3 +81,4 @@ Description: PIM application
 0.6.3.3 : pim_gate add vibnos gyro offset with pimwebserver 1.1.3(1.1.2 skip), modify data_record(for tlift)
 1.0.0.0 : gstApp(3.0), max9296(2.12), camera recovery daemon(cam-operate), runtime config, vc8000e driver fix, gstreamer lib fix
 1.0.0.1 : cam-operate final-path stall watch fix(CheckFinalArrival)
+1.0.0.2 : SD write re-enable on vfat SD(inode check), recovery ladder names in docs
