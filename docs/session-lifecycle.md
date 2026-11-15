@@ -164,14 +164,16 @@ disconnect 중에는 이 사다리를 그대로 진행하지 않는다.
 
 ## 6. Final-path 정체 감시
 
-`CheckFinalArrival()`은 `/tmp/cam_last_final_ts`의 age를 우선 확인한다.
+`CheckFinalArrival()`은 `/tmp/cam_last_final_ts`의 갱신(내용 변화)을 우선 확인한다.
 heartbeat가 없거나 stale이면 설정된 final 경로의 최근
 `${vhl_name}_*` 파일을 fallback으로 찾는다.
 
 - 검사 윈도우: `max(recording_time * 2, 2)`분
-- 워밍업:
+- 워밍업(도착이 없다고 보는 시간과 같다):
   `recording_time*60*2 + file_check_delay + startup_grace_extra_sec`
 - 기본 `recording_time=1`분일 때 워밍업: 140초
+- 워밍업의 기준 시각: 지금 떠 있는 gstApp 인스턴스가 조각을 연 것을 데몬이 본 시각
+  (`/proc/uptime`). 판정 뒤에는 앱이 다시 조각을 열 때부터 다시 잰다.
 - 결과: `/tmp/cam_final_health`
 
 가드와 복구 사다리:
