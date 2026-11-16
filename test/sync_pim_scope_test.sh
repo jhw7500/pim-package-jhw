@@ -94,6 +94,16 @@ while IFS= read -r path; do
         fail "PIM_FILES의 ${path}가 이 테스트의 selected에 없음"
 done <<<"$to_files"
 
+# rsync의 .gitignore 필터는 Git이 이미 추적하는 파일도 제외한다. 동기화 범위에
+# 그런 파일이 있으면 실제 복사 검증 전에 실패시켜 CMakeLists.txt 누락을 막는다.
+# 전역 excludes 대신 저장소의 .gitignore만 검사한다.
+mapfile -t pim_dirs < <(sed -n 's/^PIM_DIRS=(\(.*\))$/\1/p' "$ROOT/sync-to-gitlab.sh" | tr -d '"' | tr ' ' '\n')
+[ "${#pim_dirs[@]}" -gt 0 ] || fail "sync-to-gitlab.sh에서 PIM_DIRS를 읽지 못함"
+mapfile -t pim_files <<<"$to_files"
+ignored_tracked=$(git -C "$ROOT" ls-files -ci --exclude-per-directory=.gitignore -- \
+    ord vcm vsd "${pim_dirs[@]}" "${pim_files[@]}")
+[ -z "$ignored_tracked" ] || fail "동기화 대상 추적 파일이 .gitignore에 걸림: $ignored_tracked"
+
 for path in "${selected[@]}"; do
     write_fixture "$github" "$path" "github selected: $path"
 done
@@ -471,4 +481,35 @@ grep -qxF "    docker" "$TMP_ROOT/guard-dir.log" || fail "역방향 가드(디�
 [ -f "$github/docker/README.md" ] || fail "역방향 가드(디렉터리): GitHub 디렉터리가 지워짐"
 assert_github_untouched "reverse-guard-dir" "$dir_head"
 
-echo "PASS: repo paths, relative paths, write branch guard, push target, PIM allowlist, reverse scope, submodule guard, build doc allowlist, reverse missing-file guard, reverse missing-dir guard, local deletion check"
+# 실제 vcm 무시 규칙으로 CMake 입력을 왕복 복사한다. build/와 obj/ 산출물은
+# 계속 제외해야 하므로 .gitignore 필터 자체를 제거하는 우회도 검출한다.
+mkdir -p "$github/vcm" "$gitlab/vcm"
+cp "$ROOT/vcm/.gitignore" "$github/vcm/.gitignore"
+write_fixture "$github" "vcm/CMakeLists.txt" "github vcm cmake"
+write_fixture "$github" "vcm/build/generated.o" "do not sync build"
+write_fixture "$github" "vcm/obj/generated.o" "do not sync obj"
+git -C "$github" add -- vcm/.gitignore vcm/CMakeLists.txt
+git -C "$github" commit -qm "fixture: vcm build inputs"
+git_init "$gitlab/vcm" master
+write_fixture "$gitlab" "vcm/CMakeLists.txt" "gitlab vcm cmake"
+git -C "$gitlab/vcm" add -- CMakeLists.txt
+git -C "$gitlab/vcm" commit -qm "fixture: gitlab vcm"
+git -C "$gitlab/vcm" switch -qc sync/github-vcm
+
+GITHUB_REPO="$github" GITLAB_REPO="$gitlab" \
+    bash "$ROOT/sync-to-gitlab.sh" --dry-run vcm >"$TMP_ROOT/vcm-dry.log"
+grep -qxF "CMakeLists.txt" "$TMP_ROOT/vcm-dry.log" || fail "vcm dry-run에서 CMake 입력 누락"
+GITHUB_REPO="$github" GITLAB_REPO="$gitlab" \
+    bash "$ROOT/sync-to-gitlab.sh" vcm >"$TMP_ROOT/vcm-to.log"
+assert_same "$github/vcm/CMakeLists.txt" "$gitlab/vcm/CMakeLists.txt"
+assert_absent "$gitlab/vcm/build/generated.o"
+assert_absent "$gitlab/vcm/obj/generated.o"
+
+write_fixture "$gitlab" "vcm/CMakeLists.txt" "gitlab vcm updated cmake"
+git -C "$gitlab/vcm" add -A
+git -C "$gitlab/vcm" commit -qm "fixture: reverse vcm build inputs"
+GITHUB_REPO="$github" GITLAB_REPO="$gitlab" \
+    bash "$ROOT/sync-from-gitlab.sh" vcm >"$TMP_ROOT/vcm-from.log"
+assert_same "$gitlab/vcm/CMakeLists.txt" "$github/vcm/CMakeLists.txt"
+
+echo "PASS: repo paths, relative paths, write branch guard, push target, PIM allowlist, reverse scope, submodule guard, build doc allowlist, reverse missing-file guard, reverse missing-dir guard, local deletion check, tracked ignore check, vcm CMake round trip"
