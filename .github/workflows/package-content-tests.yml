@@ -1,0 +1,38 @@
+name: Package Content Tests
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'build.sh'
+      - 'dist/pim/opt/pim/bin/test/**'
+      - 'sync-to-gitlab.sh'
+      - 'sync-from-gitlab.sh'
+      - 'docs/max9296/V4L2_CTRL_GUIDE.md'
+      - 'docs/pim-guardian-runbook.md'
+      - 'docs/camera-startup-timing.md'
+      - 'test/test_final_stall_scenarios.md'
+      - 'test/package/**'
+      - '.github/workflows/package-content-tests.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'build.sh'
+      - 'dist/pim/opt/pim/bin/test/**'
+      - 'sync-to-gitlab.sh'
+      - 'sync-from-gitlab.sh'
+      - 'docs/max9296/V4L2_CTRL_GUIDE.md'
+      - 'docs/pim-guardian-runbook.md'
+      - 'docs/camera-startup-timing.md'
+      - 'test/test_final_stall_scenarios.md'
+      - 'test/package/**'
+      - '.github/workflows/package-content-tests.yml'
+  workflow_dispatch:
+
+jobs:
+  package-content:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify packaged content with isolated fixtures
+        run: python3 -m unittest discover -s test/package -p '*_test.py' -v

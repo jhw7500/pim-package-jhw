@@ -322,7 +322,11 @@ if [ -z "$TARGET_MODULE" ]; then
     copy_built ${BASEDIR}/cism/build/cism ${BASEDIR}/release/pim/opt/cis/bin/
     copy_built ${BASEDIR}/stm32update/build/stm32update ${BASEDIR}/release/pim/opt/cis/bin/
     copy_built ${BASEDIR}/mcp_trust_test/build/mcp_trust_test ${BASEDIR}/release/pim/opt/pim/bin/
-    cp -R ${BASEDIR}/test ${BASEDIR}/release/pim/opt/pim/bin/
+    # 개발 테스트는 저장소마다 다르므로 배포하지 않는다. runbook에서 참조하는
+    # 시나리오 문서만 보존하며, 이 파일은 양방향 동기화 PIM_FILES에도 포함된다.
+    mkdir -p "${BASEDIR}/release/pim/opt/pim/bin/test" || exit $?
+    cp "${BASEDIR}/test/test_final_stall_scenarios.md" \
+        "${BASEDIR}/release/pim/opt/pim/bin/test/" || exit $?
 
     # build pim_gate
     SOURCEDIR=${BASEDIR}/pim_gate
