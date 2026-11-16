@@ -1,6 +1,5 @@
 # vcm build artifacts
 vcm
-CMakeLists.txt
 make-for-imx8/
 obj/
 lib/
