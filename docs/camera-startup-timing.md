@@ -22,7 +22,7 @@ gstApp의 `-d`는 드라이버 전원 시퀀스 전체를 기다리는 값이 �
 | 드라이버 board power | PWDN/RESET GPIO와 안정화 대기 | 약 5.02초 |
 | 드라이버 prepare | AP1302 초기화부터 CSI 출력까지 | 경로·펌웨어 상태에 따라 변동 |
 | gstApp `-d` | 준비 완료 후 PLAYING 전환 지연 | 5초 |
-| camera startup grace | guardian의 cold-start 오류 무시 총 시간(guardian 기동 시각 기준, BG_Check는 쓰지 않음 #214) | 25초 |
+| camera startup grace | guardian의 cold-start 오류 무시 총 시간(guardian 기동 시각 기준, BG_Check는 쓰지 않음) | 25초 |
 
 이 값들은 직렬로 단순 합산하는 같은 종류의 timeout이 아니다. 특히 드라이버 prepare는
 gstApp의 V4L2 상태 전환 안에서 동기적으로 실행되며, 그 뒤에 `-d`가 적용된다.
@@ -59,14 +59,14 @@ GPIO 5초와 `s_power` 이후 2.33초만 더해 전체 기동 시간을 계산�
 모듈 재로드만으로는 SoC D-PHY/CSI2가 걸린 상태를 항상 복구하지 못한다.
 
 기존 재부팅 로그는 커널 uptime 기준 CSI 출력이 약 26.7초에 나타난 단일 표본이라
-반복성 근거로 사용하지 않는다. 아래 camera4 시험에서 새 reboot smoke 1회를 추가했지만,
+반복성 근거로 사용하지 않는다. 아래 타겟 시험에서 새 reboot smoke 1회를 추가했지만,
 양산 반복성 판정에는 별도의 다회 reboot qualification이 필요하다.
 
-## camera4 타겟 qualification 결과
+## 2026-08-31 타겟 qualification 결과
 
-2026-08-31 `pim-camera-v016`에 `pim-mp 0.6.3+jhw.camera4`를 설치하여
+2026-08-31 검증용 보드에 기동 지연 정책을 적용한 시험 패키지를 설치하여
 ch0/ch1, 카메라당 640x360@30(dual-wide V4L2 1280x360)으로 검증했다. 설치 전
-camera3 rollback DEB와 edgeconf/ord 설정을 보존했고, 설치 후 설정값은 유지됐다.
+직전 패키지의 rollback DEB와 edgeconf/ord 설정을 보존했고, 설치 후 설정값은 유지됐다.
 
 | 경로 | 결과 |
 |---|---|
@@ -123,10 +123,10 @@ reboot monotonic 로그의 주요 시점은 다음과 같다.
   - `chk_cam_operate.sh`: `GetConfig`의 `app_delay`는 설정 요약 로그에만 쓰인다.
 - `pim_guardian.py`
   - guardian 자신이 뜬 시각부터 총 `camera_startup_grace_sec`를 계산한다. 카메라 기동 시각
-    (`/tmp/cam_state/last_start_ts`)은 b6b70a9 이후 기록하는 곳이 없어 쓰지 않는다(#214).
+    (`/tmp/cam_state/last_start_ts`)은 b6b70a9 이후 기록하는 곳이 없어 기동 시간 기준으로 쓰지 않는다.
   - `/tmp/pim_cam_start_delay`도 기록하는 곳이 없다. 상태 보고 필드로만 읽는다.
-- `BG_Check_for_pim.sh`는 `camera_startup_grace_sec`를 쓰지 않는다(#214). 기동 직후 구간은
-  재생 마커 게이트가 연결 점검을 건너뛰어 덮는다(#213).
+- `BG_Check_for_pim.sh`는 `camera_startup_grace_sec`를 쓰지 않는다. 기동 직후 연결 점검을
+  건너뛰도록 보호하는 것은 별도의 재생 마커 게이트다.
 - `ord_vcm_conf.json`, `update_ordvcmconf.sh`
   - 기존 설치에도 `camera_startup_grace_sec: 25`를 보강한다.
 
