@@ -1,0 +1,20 @@
+name: Sync Scope Tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  sync-scope:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install rsync
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rsync
+      - name: Verify sync scope and tracked build inputs
+        run: bash test/sync_pim_scope_test.sh
