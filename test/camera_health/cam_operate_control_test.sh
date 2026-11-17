@@ -595,4 +595,35 @@ echo "=== apply intake lifecycle guard ==="
 cam_owner_set_lifecycle STOPPING
 expect_rc 69 cam_request_submit apply_config test stopped
 
+echo "=== durable QA maintenance marker blocks restarts; no writer fence issued ==="
+reset_case boot-qa-maintenance
+write_source barrier-base 640
+cam_daemon_startup "$DAEMON_PID"
+owner_before=$(cksum "$PIM_CAMERA_RUN_DIR/owner.json")
+runtime_before=$(cksum "$PIM_CAMERA_RUNTIME_JSON")
+marker=$PIM_CAMERA_STATE_DIR/qa-maintenance.json
+: > "$PIM_CAMERA_CALL_LOG"
+# A malformed durable marker must never be interpreted as "no maintenance".
+# This is a test fixture, NOT an acquire or release API.
+printf '{corrupt record}\n' > "$marker"
+expect_rc 75 cam_request_submit gstapp_restart operator "restore-pending must block"
+expect_rc 75 cam_monitor_control_iteration
+[ ! -s "$PIM_CAMERA_CALL_LOG" ] || fail "maintenance marker allowed liveness/recovery action"
+[ ! -e "$PIM_CAMERA_RUN_DIR/recovery/pending.json" ] || fail "maintenance marker allowed queued request"
+[ "$owner_before" = "$(cksum "$PIM_CAMERA_RUN_DIR/owner.json")" ] || fail "blocked request modified owner"
+[ "$runtime_before" = "$(cksum "$PIM_CAMERA_RUNTIME_JSON")" ] || fail "blocked request modified runtime"
+# After a daemon crash the new invocation MUST NOT clear this durable marker,
+# create a new owner or run startup module reload.
+fake_stat 222
+expect_rc 75 cam_daemon_startup "$DAEMON_PID"
+[ "$owner_before" = "$(cksum "$PIM_CAMERA_RUN_DIR/owner.json")" ] || fail "reboot guard modified previous owner"
+[ ! -s "$PIM_CAMERA_CALL_LOG" ] || fail "startup barrier allowed consumer restart"
+# A dangling link is a present but invalid marker, not permission to restart.
+rm -f "$marker"
+ln -s "$WORK/nonexistent-qa-marker" "$marker"
+expect_rc 75 cam_monitor_control_iteration
+expect_rc 75 cam_daemon_startup "$DAEMON_PID"
+[ -L "$marker" ] || fail "barrier removed dangling marker"
+rm -f "$marker"
+
 echo "cam operate control: PASS"

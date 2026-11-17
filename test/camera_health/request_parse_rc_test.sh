@@ -50,6 +50,8 @@ FILES=(pending active history result state)
 # cam_execute_action_step uses: counter begin and finish while RUNNING.
 to_point() {
     rm -rf "$PIM_CAMERA_RUN_DIR" "$PIM_CAMERA_STATE_DIR" "$PIM_CAMERA_PROC_ROOT"
+    # Match systemd's persistent directory preparation before Owner startup.
+    mkdir -p "$PIM_CAMERA_STATE_DIR"
     printf 'test-boot-id\n' > "$PIM_CAMERA_BOOT_ID_FILE"
     fake_stat 111
     cam_owner_create "$DAEMON_PID"; cam_owner_set_lifecycle ACTIVE; _cr_state_init

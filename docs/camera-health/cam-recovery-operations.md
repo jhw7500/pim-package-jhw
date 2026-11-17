@@ -18,6 +18,31 @@ reboot fallback은 모두 같은 owner와 단일 executor 아래에서 직렬 �
 `ord_vcm_conf.json`이다. `/var/lib/pim-camera`의 상태는 systemd
 `StateDirectory`이며 package upgrade, remove, purge 뒤에도 보존한다.
 
+## QA maintenance 영속 차단 — Phase 1 코드 경계 (미완성)
+
+`/var/lib/pim-camera/qa-maintenance.json` 파일의 **존재 자체**를 fail-closed
+`RESTORE_PENDING` 장벽으로 취급한다. 내용이 손상됐거나 깨진 symlink여도
+"없음"으로 간주하지 않는다. `cam_recovery.sh`의 소유자 생성,
+재시작 요청/기동 재시작 예약과 `cam_operate_control.sh`의 모니터 실행,
+`cam_liveness.sh`의 직접 재시작 경로, `cam_recovery_actions.sh`의
+실행자 경계에서 확인한다. 정상적인 시스템 상태 디렉터리가 없으면
+변경 명령을 계속 수행하지 않는다. 이 장벽은 재부팅으로 지워지지 않는다.
+
+**절대 이 파일을 수동으로 생성하여 4채널 QA를 시작하지 않는다.** 이 단계에는
+Owner가 공식 보드 exclusive lease와 boot/invocation/generation을 확인해
+`QUIESCING → QUIESCED`로 진입하는 API가 **없고**, writer EOS/fsync/
+Writable-FD 종료의 증명과 원본 설정·LED OFF 독립 복구 확인, release API도
+**없다**. 이 장벽은 "재기동이 위험할 때 자동 작업을 거부"하는 초기
+방어선일 뿐, `writer_fence_session`이나 `writer_cannot_reopen`의
+증거가 아니다. 원래의 `gstapp_stop`은 장벽이 없는 평상시와 같이
+일시적 정지이고 곧 재시작될 수 있다.
+
+파일이 실제로 남으면 안전한 Owner 복구 프로토콜이 마련되기 전까지
+복구 완료를 주장하거나 자동 제거하지 않는다. 종료 경로의 명시적
+`STOPPING` executor는 복구/정리 목적의 정지를 계속 허용한다.
+제품#230의 완성 조건은 이 Phase 1 바깥에 남아 있다. 이 변경은
+코드 리뷰 전까지 보드 배포나 실제 4ch 설정 변경의 근거가 아니다.
+
 ## 시작과 재시작
 
 `pim-camera-config.service`는 `/root/shared_v` 접근과 필요한 도구만 확인하는 선행

@@ -15,6 +15,20 @@ _cr_state_file() { printf '%s/recovery/state.json' "$PIM_CAMERA_STATE_DIR"; }
 _cr_monitor_wait_file() { printf '%s/monitor_wait.pid' "$PIM_CAMERA_RUN_DIR"; }
 _cr_history_file() { printf '%s/recovery/history/%s.json' "$PIM_CAMERA_STATE_DIR" "$1"; }
 _cr_service_file() { printf '%s/service-state.json' "$PIM_CAMERA_STATE_DIR"; }
+
+# Phase 1 of QA maintenance: a durable RESTORE_PENDING marker is strictly a
+# restart barrier, NOT proof of writer closure, permission to change config,
+# or a session token. Only a future owner-approved, lease-bound maintenance
+# transaction may create/remove it. Never auto-delete it on reboot or startup.
+_cr_qa_maintenance_marker() { printf '%s/qa-maintenance.json' "$PIM_CAMERA_STATE_DIR"; }
+_cr_qa_maintenance_barrier() {
+    local marker
+    [ -d "$PIM_CAMERA_STATE_DIR" ] || return 70
+    marker=$(_cr_qa_maintenance_marker)
+    # Also reject a broken symlink: -e alone treats it as absent.
+    [ ! -e "$marker" ] && [ ! -L "$marker" ] || return 75
+    return 0
+}
 _cr_now() { date +%s; }
 # 구간 계측. PIM_CAMERA_TIMING_LOG 가 설정될 때만 기록한다(기본 off).
 # EPOCHREALTIME 은 bash 5.0+ 내장이라 fork 가 없다 — 보드 실측 100회 8ms.
@@ -852,6 +866,8 @@ _cr_reconcile_abandoned_lease_locked() {
 _cr_owner_create_locked() {
     local pid=${1:-$$} boot start invocation token now record current actual owner_boot owner_start
     [[ $pid =~ ^[0-9]+$ ]] || return 64
+    # Persisted maintenance must block even a fresh daemon invocation.
+    _cr_qa_maintenance_barrier || return $?
     boot=$(cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null) || return 70
     start=$(_cr_proc_start "$pid"); [ -n "$start" ] || return 69
     if [ -e "$(_cr_owner_file)" ]; then
@@ -966,6 +982,7 @@ _cr_startup_request_reserve_locked() {
     local type=$1 source=$2 reason=$3 source_path=${4:-} source_mtime=${5:-} owner id now request history
     _cr_public_action "$type" || return 64
     [ -n "$source" ] && [ -n "$reason" ] || return 64
+    _cr_qa_maintenance_barrier || return $?
     [ -z "$source_mtime" ] || [[ $source_mtime =~ ^[0-9]+$ ]] || return 64
     owner=$(_cr_owner_json) || return 69
     _cr_owner_snapshot_live "$owner" || return 69
@@ -1019,6 +1036,7 @@ _cr_request_new() {
     local type=$1 source=$2 reason=$3 source_path=${4:-} source_mtime=${5:-} id now owner out rc owner_bytes boot plan=()
     _cr_request_type "$type" || return 64; [ -n "$source" ] && [ -n "$reason" ] || return 64
     [ -z "$source_mtime" ] || [[ $source_mtime =~ ^[0-9]+$ ]] || return 64
+    _cr_qa_maintenance_barrier || return $?
     _cr_owner_lifecycle_in ACTIVE DEGRADED || return 69
     [ ! -e "$(_cr_pending_file)" ] && [ ! -e "$(_cr_active_file)" ] || return 75
     id=$(_cr_uuid) || return 70; now=$(_cr_now); owner=$(_cr_owner_json)
