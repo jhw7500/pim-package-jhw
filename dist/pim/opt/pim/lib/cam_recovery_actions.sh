@@ -163,6 +163,11 @@ _CR_EXECUTOR_CACHE_KEY=""
 _CR_EXECUTOR_CACHE_VAL=""
 cam_executor_assert_context() {
     local owner active boot fields pid start lifecycle actual skip_live=0 key stamp active_id
+    # Do not run a previously claimed start/reset after a persistent QA barrier
+    # appears. Explicit STOPPING executor retains shutdown/cleanup capability.
+    if [ "${PIM_CAMERA_STOP_EXECUTOR:-}" != 1 ]; then
+        _cr_qa_maintenance_barrier || return $?
+    fi
     [ "${PIM_CAMERA_STOP_EXECUTOR:-}" != 1 ] || skip_live=1
     boot=$(cat "$PIM_CAMERA_BOOT_ID_FILE" 2>/dev/null) || return 69
     stamp=$(stat -c '%d:%i:%s:%y' "$(_cr_owner_file)" 2>/dev/null) || stamp=""

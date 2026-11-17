@@ -5,6 +5,8 @@ After=pim-camera-config.service sd-mount.service
 
 [Service]
 User=root
+# Keep QA RESTORE_PENDING effective across systemd restarts.
+ExecCondition=/bin/sh /opt/pim/bin/qa_maintenance_exec_condition.sh
 WorkingDirectory=/root
 ExecStart=/opt/pim/bin/chk_cam_operate.sh
 ExecStartPost=/bin/sh -c 'until test -f /run/pim-camera/config/pim_runtime.json && /opt/pim/bin/camera_runtime_config.py validate --file /run/pim-camera/config/pim_runtime.json; do sleep 1; done'

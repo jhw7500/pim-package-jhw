@@ -57,6 +57,8 @@ unchanged() {
 # A fresh ACTIVE owner with no request.
 fresh_owner() {
     rm -rf "$PIM_CAMERA_RUN_DIR" "$PIM_CAMERA_STATE_DIR" "$PIM_CAMERA_PROC_ROOT"
+    # The real systemd unit prepares StateDirectory before creating an Owner.
+    mkdir -p "$PIM_CAMERA_STATE_DIR"
     printf 'test-boot-id\n' > "$PIM_CAMERA_BOOT_ID_FILE"
     fake_stat 111
     cam_owner_create "$DAEMON_PID"; cam_owner_set_lifecycle ACTIVE

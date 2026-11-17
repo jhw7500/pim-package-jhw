@@ -13,6 +13,12 @@ StartLimitBurst=5
 [Service]
 Type=simple
 User=root
+# VSD's TCP set_config can write edgeconf; deny NEW service starts while
+# the persistent QA restore marker exists. A running VSD still requires
+# Owner-controlled quiesce; this condition is NOT a complete Writer Fence.
+StateDirectory=pim-camera
+StateDirectoryMode=0750
+ExecCondition=/bin/sh /opt/pim/bin/qa_maintenance_exec_condition.sh
 WorkingDirectory=/root
 ExecStart=vsd
 Restart=on-failure
