@@ -303,6 +303,14 @@ cd ${BASEDIR}
 # 배포 가능한 형태로 남는다 — 수동 배포가 그대로 집어갈 수 있다.
 verify_glibc || exit $?
 
+# The finalizer invokes a compiled no-replace rename helper. Full release
+# packaging must create and GLIBC-verify the target executable first.
+# docker/build.sh uses the ARM64 Ubuntu 20.04 environment.
+if [ -z "$TARGET_MODULE" ]; then
+    bash "${BASEDIR}/tools/build_finalizer_noreplace.sh" \
+        "${BASEDIR}/dist/pim/opt/pim/bin/finalizer_noreplace" || exit $?
+fi
+
 # Only do full release packaging when building all modules
 if [ -z "$TARGET_MODULE" ]; then
     rm -rf ${BASEDIR}/release

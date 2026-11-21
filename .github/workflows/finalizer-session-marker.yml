@@ -1,0 +1,39 @@
+name: Finalizer Session Marker
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'dist/pim/opt/pim/bin/chk_cam_operate.sh'
+      - 'test/finalizer/**'
+      - '.github/workflows/finalizer-session-marker.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'dist/pim/opt/pim/bin/chk_cam_operate.sh'
+      - 'test/finalizer/**'
+      - '.github/workflows/finalizer-session-marker.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  marker-contract:
+    name: Finalizer marker offline regression
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Validate finalizer and package build Bash syntax
+        run: |
+          bash -n dist/pim/opt/pim/bin/chk_cam_operate.sh
+          bash -n tools/build_finalizer_noreplace.sh
+          bash -n build.sh
+      - name: Test actual finalizer and compiled renameat2 helper
+        run: python3 -m unittest discover -s test/finalizer -p 'test_*.py' -v
+      - name: Ensure handoff DEB rejects missing/wrong target executable
+        run: python3 test/tools/build_handoff_deb_test.py -v
