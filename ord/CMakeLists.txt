@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.0)
 project(ord)
-set(SOURCE main.cpp tcpServer.cpp util.cpp)
+set(SOURCE main.cpp tcpServer.cpp util.cpp recording_retention.cpp)
 SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread")
 
 # Remove hardcoded host paths - let CMake find libs in SDK sysroot

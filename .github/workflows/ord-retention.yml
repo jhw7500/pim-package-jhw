@@ -1,0 +1,67 @@
+name: ORD Retention
+
+# Only ORD and its offline native fixtures need this fast, board-free suite.
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'ord/**'
+      - 'test/ord/**'
+      - '.github/workflows/ord-retention.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'ord/**'
+      - 'test/ord/**'
+      - '.github/workflows/ord-retention.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  retention:
+    name: ORD native retention regression
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Ensure native compiler exists
+        run: |
+          set -euo pipefail
+          command -v g++
+          command -v python3
+          g++ --version
+
+      - name: Verify scoped deletion is wired into waitingDisk
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path("ord/tcpServer.cpp").read_text()
+          beginning = source.index("int CTCPServer::waitingDisk()")
+          ending = source.index("\nint CTCPServer::waitingCopy(", beginning)
+          body = source[beginning:ending]
+          required = (
+              "ord_retention::rotate_oldest(",
+              "ord_retention::prune_recycle(",
+              "ord_retention::prune_recording(",
+              "ord_retention::prune_event(",
+          )
+          assert all(symbol in body for symbol in required)
+          assert "system(" not in body
+          assert "xargs" not in body
+          assert "rm -f" not in body
+          assert "rm -rf" not in body
+          print("ORD scoped retention source wiring PASS")
+          PY
+
+      - name: Test retention scope on temporary files only
+        run: python3 test/ord/test_retention_scope.py -v
+
+      - name: Retain existing ORD package version contract
+        run: bash test/ord/version_query_test.sh

@@ -1,0 +1,49 @@
+name: ORD Retention ARM64 Focal
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'ord/recording_retention.cpp'
+      - 'ord/recording_retention.h'
+      - 'test/ord/test_retention_scope.py'
+      - '.github/workflows/ord-retention-arm64.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-aarch64:
+    name: Ubuntu 20.04 AArch64 retention compile and isolated tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact ORD Draft source
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Enable AArch64 QEMU in GitHub runner only
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - name: Compile and test retained code with ARM64 GLIBC 2.31
+        run: |
+          set -euo pipefail
+          docker run --rm --platform linux/arm64 \
+            -v "$GITHUB_WORKSPACE":/src -w /src \
+            ubuntu:20.04 bash -euc '
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update -qq
+              apt-get install -y -qq --no-install-recommends \
+                build-essential binutils python3 tzdata
+              test -f /usr/share/zoneinfo/America/New_York
+              test "$(uname -m)" = aarch64
+              getconf GNU_LIBC_VERSION
+              g++ -std=c++11 -Wall -Wextra -Werror \
+                -I ord -c ord/recording_retention.cpp \
+                -o /tmp/ord-retention-aarch64.o
+              readelf -h /tmp/ord-retention-aarch64.o | grep -Eq "Machine: *AArch64"
+              python3 test/ord/test_retention_scope.py -v
+              echo "ORD AArch64 native scoped retention PASS"
+            '

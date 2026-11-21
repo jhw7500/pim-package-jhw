@@ -1,5 +1,6 @@
 
 #include "tcpServer.h"
+#include "recording_retention.h"
 #include "socket_diagnostics.h"
 
 static void ord_set_machine_id(const TVhlConf *conf, uint8_t out_machine_id[6])
@@ -519,401 +520,77 @@ int CTCPServer::waitingError()
 
 int CTCPServer::waitingDisk()
 {
-	int ret = 0;
-	FILE *fp;
-	char str[STR_LEN];
-	char tmp[128];
-	uint16_t disk_file_cnt_mnt;
-	uint16_t disk_file_cnt_evt;
-	double disk_use_mnt;
-	double disk_use_evt;
-	SysTime sysTime;
-	char mv_time[64];
-	char mv_path[128];
-	bool disk_op_f;
-	uint16_t tail_recycle = 1;
-	uint16_t tail_event = 1;
-	uint16_t tail_mnt = 1;
-	uint8_t fileSet_cnt = _TOrdConf.cameraNum+_TOrdConf.srt_enable+_TOrdConf.vib_enable;
-
-#if 0
-	while(1)
-	{
-		sleep(1);
-	    sprintf(str, "cat %s 2>/dev/null | tr -d '\n'", PATH_START_VIDEO_TIME);
-
-		fp = popen(str, "r");
-		if (NULL == fp) {
-			ret = -1;
-			perror("popen() fail");
-			__LOG(LOG_ERR, "[SRT][%s:%d] ret:%d", _FILE_, __LINE__, ret);
-			continue;
-		}
-		while (fgets(str, 128, fp));
-		ret = pclose(fp);
-
-		if(strchr(str, ':') != NULL) break;
-	}
-	sleep(10);
-#endif
-
-	//getRecycleMovePath(move_path);
-	//getRecycleDelPath(del_path);
-
     checkSD();
 
-	while(1)
-	{
-		if(m_flagDestroy)
-			break ;
+    while (!m_flagDestroy) {
+        // SD inserted/remounted: keep the existing mount-flags contract.
+        FILE *flag = fopen("/dev/shm/sd_mount_flag", "r");
+        if (flag != NULL) {
+            char buffer[16] = {0};
+            if (fgets(buffer, sizeof(buffer), flag) != NULL &&
+                strchr(buffer, '1') != NULL) {
+                checkSD();
+                if (ord_write_file_atomic("/dev/shm/sd_mount_flag", "2\n") != 0)
+                    __LOG(LOG_ERR, "[DSK][%s:%d] failed to reset sd_mount_flag", _FILE_, __LINE__);
+            }
+            fclose(flag);
+        }
 
-        sprintf(str, "cat %s 2>/dev/null | tr -d '\n'", "/dev/shm/sd_mount_flag");
-        fp = popen(str, "r");
-        if (NULL == fp) {
-            ret = -1;
-            perror("popen() fail");
-            __LOG(LOG_ERR, "[DSK][%s:%d] ret:%d", _FILE_, __LINE__, ret);
-			sleep(1);
+        if (access(PATH_MOUNT, W_OK) != 0) {
+            __LOG(LOG_INFO, "[DSK][%s:%d] SD mount not writable, skip cleanup", _FILE_, __LINE__);
+            sleep(_TOrdConf.disk_manage_period ? _TOrdConf.disk_manage_period : 10);
             continue;
         }
-        while (fgets(str, 128, fp));
-        ret = pclose(fp);
 
-		if(strchr(str, '1') != NULL) {
-			__LOG(LOG_NOTICE, "[DSK][%s:%d] new sd card mount : /dev/shm/sd_mount_flag set", _FILE_, __LINE__);
-			checkSD();
-			if (ord_write_file_atomic("/dev/shm/sd_mount_flag", "2\n") < 0) {
-				__LOG(LOG_ERR, "[DSK][%s:%d] failed to reset sd_mount_flag. errno=%d(%s)", _FILE_, __LINE__, errno, strerror(errno));
-			}
-			__LOG(LOG_NOTICE, "[DSK][%s:%d] sd_mount_flag reset", _FILE_, __LINE__);
-		}
+        const uint16_t recording_files = get_file_cnt(PATH_MOUNT, 1);
+        const uint16_t event_files = get_file_cnt(PATH_EVENT, 1);
+        uint64_t used_bytes = 0;
+        uint64_t available_bytes = 0;
+        const double recording_gb =
+            ord_get_fs_used_avail_bytes(PATH_MOUNT, &used_bytes, &available_bytes) == 0 ?
+                (double)used_bytes / GB :
+                (double)get_disk_use_size(PATH_MOUNT) / GB;
+        const double event_gb = (double)get_dir_use_size(PATH_EVENT) / GB;
+        bool changed = false;
 
-		if (access(PATH_MOUNT, W_OK) != 0) {
-			__LOG(LOG_INFO, "[DSK][%s:%d] %s not writable, skip disk management", _FILE_, __LINE__, PATH_MOUNT);
-			sleep(_TOrdConf.disk_manage_period);
-			continue;
-		}
+        // Never fall back to an unfiltered ls|tail|rm pipeline. Every file
+        // selected below must match the configured VHL, format, time, age and
+        // regular-file status. Failed/unknown inputs mean no deletion.
+        if (recording_files > _TOrdConf.disk_limit_file) {
+            const int rc = ord_retention::rotate_oldest(
+                PATH_MOUNT, PATH_RECYCLE, vhlConf.vhl_name, vhlConf.muxer);
+            if (rc < 0)
+                __LOG(LOG_ERR, "[DSK][%s:%d] recording rotation denied/failed", _FILE_, __LINE__);
+            else if (rc > 0) changed = true;
+        }
 
-		do
-		{
-			disk_op_f = FALSE;
-			memset(tmp, 0, sizeof(tmp));
-			memset(str, 0, sizeof(str));
-			disk_file_cnt_mnt = get_file_cnt(PATH_MOUNT, 1);
-			disk_file_cnt_evt = get_file_cnt(PATH_EVENT, 1);
-			{
-				uint64_t used_bytes = 0;
-				uint64_t avail_bytes = 0;
-				if (ord_get_fs_used_avail_bytes(PATH_MOUNT, &used_bytes, &avail_bytes) == 0) {
-					disk_use_mnt = (double)used_bytes / GB;
-				} else {
-					disk_use_mnt = (double)get_disk_use_size(PATH_MOUNT) / GB;
-				}
-			}
-			disk_use_evt = (double)get_dir_use_size(PATH_EVENT)/GB;
+        if (recording_gb > disk_use_limit) {
+            int rc = ord_retention::prune_recycle(
+                PATH_RECYCLE, vhlConf.vhl_name, vhlConf.muxer);
+            if (rc == 0) {
+                rc = ord_retention::prune_recording(
+                    PATH_MOUNT, vhlConf.vhl_name, vhlConf.muxer);
+            }
+            if (rc < 0)
+                __LOG(LOG_ERR, "[DSK][%s:%d] recording retention denied/failed", _FILE_, __LINE__);
+            else if (rc > 0) changed = true;
+        }
 
-			__LOG(LOG_INFO, "[DSK][%s:%d] %s : %0.1f/%0.1fGB, %d/%d", _FILE_, __LINE__, PATH_MOUNT, disk_use_mnt, disk_use_limit, disk_file_cnt_mnt, _TOrdConf.disk_limit_file);
-			__LOG(LOG_INFO, "[DSK][%s:%d] evt : %0.1f/%0.1fGB", _FILE_, __LINE__, disk_use_evt, disk_size_evt);
+        if (vhlConf.event_auto_remove &&
+            (event_gb > disk_size_evt || event_files > 15000)) {
+            const int rc = ord_retention::prune_event(
+                PATH_EVENT, vhlConf.vhl_name, vhlConf.muxer);
+            if (rc < 0)
+                __LOG(LOG_ERR, "[DSK][%s:%d] event retention denied/failed", _FILE_, __LINE__);
+            else if (rc > 0) changed = true;
+        }
 
-			if (disk_file_cnt_mnt > _TOrdConf.disk_limit_file)
-			{
-				disk_op_f = TRUE;
-                __LOG(LOG_NOTICE, "[DSK][%s:%d] %s file cnt : %d > %d", _FILE_, __LINE__, PATH_MOUNT, disk_file_cnt_mnt, _TOrdConf.disk_limit_file);
-				ret = sprintf(str, "ls -pt %s | grep -v '/$' | tail -n %d | head -1", PATH_MOUNT, tail_mnt);
-				fp = popen(str, "r");
-				if (NULL == fp)
-				{
-					ret = -1;
-					perror("popen() fail");
-					__LOG(LOG_CRIT, "[DSK][%s:%d] ret:%d", _FILE_, __LINE__, ret);
-					break;
-				}
-				while (fgets(tmp, sizeof(tmp), fp));
-				ord_chomp(tmp);
+        sleep(changed ? 10 :
+              (_TOrdConf.disk_manage_period ? _TOrdConf.disk_manage_period : 10));
+    }
 
-				ret = pclose(fp);
-				if (ret < 0)
-				{
-					__LOG(LOG_CRIT, "[DSK][%s:%d] ret:%d", _FILE_, __LINE__, ret);
-					break;
-				}
-
-				__LOG(LOG_INFO, "[DSK][%s:%d] move target : %s", _FILE_, __LINE__, tmp);
-				//__LOG(LOG_NOTICE, "[DSK][%s:%d] log_level : %d, %d, %d", _FILE_, __LINE__, LOG_INFO, log_level, _TOrdConf.log_level);
-				//__LOG(LOG_NOTICE, "[DSK][%s:%d] strlen : %d, sizeof : %d", _FILE_, __LINE__, strlen(tmp), sizeof(tmp));
-				if ((strstr(tmp, vhlConf.muxer) != NULL || strstr(tmp, ".srt") != NULL || strstr(tmp, ".bin") != NULL) && (strstr(tmp, vhlConf.vhl_name) != NULL))
-				{
-					char *date_ptr = strchr(tmp, '_');
-					int date_index = (int)(date_ptr - tmp) + 1;
-					sysTime = getTimeFromChar(tmp, date_index);
-					__LOG(LOG_INFO, "[DSK][%s:%d] file date_index:%d", _FILE_, __LINE__, date_index);
-                    if(sysTime.wYear >= 1900 && sysTime.wMonth <= 12 && sysTime.wDay <= 31 && sysTime.wHour <= 23 && sysTime.wMinute <= 59 && sysTime.wSecond <= 59)
-                    {
-						if (snprintf(mv_time, sizeof(mv_time), "%04d%02d%02d_%02d", sysTime.wYear, sysTime.wMonth, sysTime.wDay, sysTime.wHour) >= (int)sizeof(mv_time)) {
-							ret = -1;
-							break;
-						}
-					    //__LOG(LOG_NOTICE, "[DSK][%s:%d] mv_dir : %s", _FILE_, __LINE__, mv_time);
-					    if (snprintf(mv_path, sizeof(mv_path), "%s/%s", PATH_RECYCLE, mv_time) >= (int)sizeof(mv_path)) {
-							ret = -1;
-							break;
-						}
-					    //__LOG(LOG_NOTICE, "[DSK][%s:%d] mv_path : %s", _FILE_, __LINE__, mv_path);
-					    //makeDir(mv_path);
-							if (snprintf(str, sizeof(str), "mkdir -p %s", mv_path) >= (int)sizeof(str)) {
-								ret = -1;
-								break;
-							}
-							ret = system(str);
-							if (ret < 0) {
-								__LOG(LOG_CRIT, "[DSK][%s:%d] ret:%d", _FILE_, __LINE__, ret);
-								break;
-							}
-					    //makeDir(my_strdup_printf("%s_%04d%02d%02d_%02d", vhlConf.vhl_name, sysTime.wYear, sysTime.wMonth, sysTime.wDay, sysTime.wHour));
-					    if (snprintf(str, sizeof(str), "mv -f %s/*%s* %s/", PATH_MOUNT, mv_time, mv_path) >= (int)sizeof(str)) {
-							ret = -1;
-							break;
-						}
-							//sprintf(str, "mv -f %s/%s_%s* %s/", PATH_MOUNT, vhlConf.vhl_name, mv_time, mv_path);
-					}
-					else
-					{
-						__LOG(LOG_ERR, "[DSK][%s:%d] %s is not available format in %s", _FILE_, __LINE__, tmp, PATH_MOUNT);
-						{
-							char list_cmd[STR_LEN];
-							sprintf(list_cmd, "ls -pt %s | grep -v '/$' | tail -n %d", PATH_MOUNT, fileSet_cnt);
-							if (!ord_validate_cmd_token_lines(list_cmd)) {
-								ret = -1;
-								break;
-							}
-							sprintf(str, "ls -pt %s | grep -v '/$' | tail -n %d | xargs -t -I %% sh -c '{ rm -f %s/%%; }'", PATH_MOUNT, fileSet_cnt, PATH_MOUNT);
-						}
-					}
-				}
-				else
-				{
-					//sprintf(str, "rm -f %s/%s", PATH_MOUNT, tmp);
-					__LOG(LOG_ERR, "[DSK][%s:%d] %s is not available format in %s", _FILE_, __LINE__, tmp, PATH_MOUNT);
-					{
-						char list_cmd[STR_LEN];
-						sprintf(list_cmd, "ls -pt %s | grep -v '/$' | tail -n %d", PATH_MOUNT, fileSet_cnt);
-						if (!ord_validate_cmd_token_lines(list_cmd)) {
-							ret = -1;
-							break;
-						}
-						sprintf(str, "ls -pt %s | grep -v '/$' | tail -n %d | xargs -t -I %% sh -c '{ rm -f %s/%%; }'", PATH_MOUNT, fileSet_cnt, PATH_MOUNT);
-					}
-				}
-
-				__LOG(LOG_NOTICE, "[DSK][%s:%d] %s", _FILE_, __LINE__, str);
-				ret = system(str);
-				if (ret < 0) {
-					__LOG(LOG_CRIT, "[DSK][%s:%d] ret:%d", _FILE_, __LINE__, ret);
-					tail_mnt+=_TOrdConf.cameraNum;
-				}
-				else tail_mnt = 1;
-			}
-
-			if (disk_use_mnt > disk_use_limit)
-            {
-				disk_op_f = TRUE;
-				__LOG(LOG_NOTICE, "[DSK][%s:%d] %s %0.1f/%0.1f/%0.1fGB file %d/%d", _FILE_, __LINE__, PATH_MOUNT, \
-					disk_use_mnt, disk_use_limit, disk_size_mnt, disk_file_cnt_mnt, _TOrdConf.disk_limit_file);
-
-				// ret = sprintf(str, "find %s -maxdepth 1 -type f | grep -E '%s' | sort -r | tail -n 1 | head -n 1 | cut -d'/' -f6-", del_path, CAM_FILE_EXTENSION);
-				// ret = sprintf(str, "ls -pt %s | grep -v '/$' | grep -E '%s' | tail -1", del_path, CAM_FILE_EXTENSION);
-				//ret = sprintf(str, "find %s -maxdepth 1 -type d -exec stat --format='%%Y %%n' {} + | sort -r | tail -n 1 | head -n 1 | cut -d' ' -f2-", PATH_RECYCLE);	//time
-				//ret = sprintf(str, "ls -d %s/*/ | sort -r |tail -1 |head -1", PATH_RECYCLE);		//name*/
-                ret = sprintf(str, "find %s -mindepth 1 -maxdepth 1 -type d | sort -r |tail -n %d |head -1 |xargs basename", PATH_RECYCLE, tail_recycle);  //name
-				__LOG(LOG_NOTICE, "[DSK][%s:%d] %s", _FILE_, __LINE__, str);
-				fp = popen(str, "r");
-				if (NULL == fp)
-				{
-					ret = -1;
-					perror("popen() fail");
-					__LOG(LOG_CRIT, "[DSK][%s:%d] ret:%d", _FILE_, __LINE__, ret);
-					break;
-				}
-				while (fgets(tmp, sizeof(tmp), fp));
-				ord_chomp(tmp);
-				//__E(LOG_LEVEL_TRA, "%s\n", str);
-
-				ret = pclose(fp);
-				if (ret < 0)
-				{
-					__LOG(LOG_CRIT, "[DSK][%s:%d] ret:%d", _FILE_, __LINE__, ret);
-					break;
-				}
-				__LOG(LOG_INFO, "[DSK][%s:%d] remove target : %s", _FILE_, __LINE__, tmp);
-
-				if (tmp[0] == 0)
-                {
-                    sprintf(str, "ls -l %s | grep ^- | wc -l", PATH_RECYCLE);
-                    fp = popen(str, "r");
-                    if (NULL == fp)
-                    {
-                        ret = -1;
-                        perror("popen() fail");
-                        __LOG(LOG_CRIT, "[DSK][%s:%d] ret:%d", _FILE_, __LINE__, ret);
-                        break;
-                    }
-					while (fgets(tmp, sizeof(tmp), fp));
-					ord_chomp(tmp);
-                    ret = pclose(fp);
-
-					__LOG(LOG_ERR, "[DSK][%s:%d] no file in recycle folder, delete file in %s", _FILE_, __LINE__, PATH_MOUNT);
-					{
-						char list_cmd[STR_LEN];
-						sprintf(list_cmd, "ls -pt %s | grep -v '/$' | tail -n %d", PATH_MOUNT, fileSet_cnt);
-						if (!ord_validate_cmd_token_lines(list_cmd)) {
-							ret = -1;
-							break;
-						}
-						sprintf(str, "ls -pt %s | grep -v '/$' | tail -n %d | xargs -t -I %% sh -c '{ rm -f %s/%%; }'", PATH_MOUNT, fileSet_cnt, PATH_MOUNT);
-					}
-				}
-				else
-				{
-					sysTime = getTimeFromChar(tmp, 0);
-					if(sysTime.wYear >= 1900 && sysTime.wMonth <= 12 && sysTime.wDay <= 31 && sysTime.wHour <= 23)
-                    {
-						int n = snprintf(str, sizeof(str), "rm -r %s/%04d%02d%02d_%02d*", PATH_RECYCLE,
-								sysTime.wYear, sysTime.wMonth, sysTime.wDay, sysTime.wHour);
-						if (n < 0 || n >= (int)sizeof(str)) {
-							ret = -1;
-							break;
-						}
-					}
-					else
-					{
-						__LOG(LOG_ERR, "[DSK][%s:%d] %s is not available format in %s", _FILE_, __LINE__, tmp, PATH_RECYCLE);
-						memset(mv_path, 0, sizeof(mv_path));
-						memcpy(mv_path, tmp, 11);
-						if (!ord_is_safe_shell_token(mv_path)) {
-							__LOG(LOG_ERR, "[DSK][%s:%d] unsafe recycle token: %s", _FILE_, __LINE__, mv_path);
-							ret = -1;
-							break;
-						}
-						if (snprintf(str, sizeof(str), "rm -r %s/%s*", PATH_RECYCLE, mv_path) >= (int)sizeof(str)) {
-							ret = -1;
-							break;
-						}
-					}
-				}
-
-				__LOG(LOG_NOTICE, "[DSK][%s:%d] %s", _FILE_, __LINE__, str);
-				ret = system(str);
-                if (ret != 0) {
-                    __LOG(LOG_CRIT, "[DSK][%s:%d] ret:%d", _FILE_, __LINE__, ret);
-					tail_recycle++;
-                    //break;
-                }
-				else tail_recycle = 1;
-			}
-
-  			(disk_use_evt > disk_size_evt) ? (disk_size_over_evt=true):(disk_size_over_evt=false);
-			//__LOG(LOG_NOTICE, "[DSK][%s:%d] _TOrdConf.event_auto_remove:%d", _FILE_, __LINE__, _TOrdConf.event_auto_remove);
-			if((disk_size_over_evt || disk_file_cnt_evt > 15000) && vhlConf.event_auto_remove)
-			{
-				disk_op_f = TRUE;
-				__LOG(LOG_NOTICE, "[DSK][%s:%d] evt : %0.1f/%0.1fGB %d/%d", _FILE_, __LINE__, disk_use_evt, disk_size_evt, disk_file_cnt_evt, 15000);
-				ret = snprintf(str, sizeof(str), "ls -pt %s | grep -v '/$' | tail -n %d | head -1", PATH_EVENT, tail_event);
-				if (ret < 0 || ret >= (int)sizeof(str)) {
-					ret = -1;
-					break;
-				}
-				__LOG(LOG_NOTICE, "[DSK][%s:%d] %s", _FILE_, __LINE__, str);
-				// ret = sprintf(str, "ls -ptr /mnt/event | grep -v '/$' | awk 'NR == 1 {print $0; exit}'");
-				fp = popen(str, "r");
-				if (NULL == fp)
-				{ 
-					ret = -1;
-					perror("popen() fail");
-					__LOG(LOG_CRIT, "[DSK][%s:%d] ret:%d", _FILE_, __LINE__, ret);
-					break;
-				}
-				while (fgets(tmp, sizeof(tmp), fp));
-				ord_chomp(tmp);
-				ret = pclose(fp);
-				if (ret < 0)
-				{
-					__LOG(LOG_CRIT, "[DSK][%s:%d] ret:%d", _FILE_, __LINE__, ret);
-					break;
-				}
-				// memset(tmp, 0, 25);
-				// memcpy(tmp, str, 24);
-				__LOG(LOG_INFO, "[DSK][%s:%d] evt remove target : %s", _FILE_, __LINE__, tmp);
-				if((strstr(tmp, vhlConf.muxer) != NULL || strstr(tmp, ".srt") != NULL || strstr(tmp, ".bin") != NULL) && (strstr(tmp, vhlConf.vhl_name) != NULL))
-				{
-                    sysTime = getTimeFromChar(tmp, strlen(vhlConf.vhl_name)+1+4);
-					if(sysTime.wYear >= 1900 && sysTime.wMonth <= 12 && sysTime.wDay <= 31 && sysTime.wHour <= 23 && sysTime.wMinute <= 59 && sysTime.wSecond <= 59)
-                    {
-						ret = snprintf(str, sizeof(str), "rm -r %s/%s_%s_%04d%02d%02d_%02d%02d*", PATH_EVENT, EVENT_FILE_NAME_PREFIX, vhlConf.vhl_name, \
-								sysTime.wYear, sysTime.wMonth, sysTime.wDay, sysTime.wHour, sysTime.wMinute);
-						if (ret < 0 || ret >= (int)sizeof(str)) {
-							ret = -1;
-							break;
-						}
-					}
-					else
-					{
-						__LOG(LOG_ERR, "[DSK][%s:%d] %s is not available format in %s", _FILE_, __LINE__, tmp, PATH_EVENT);
-						ord_chomp(tmp);
-						if (!ord_is_safe_shell_token(tmp)) {
-							__LOG(LOG_ERR, "[DSK][%s:%d] unsafe evt token: %s", _FILE_, __LINE__, tmp);
-							ret = -1;
-							break;
-						}
-						ret = snprintf(str, sizeof(str), "rm -r %s/%s*", PATH_EVENT, tmp);
-						if (ret < 0 || ret >= (int)sizeof(str)) {
-							ret = -1;
-							break;
-						}
-					}
-				}
-				else
-				{
-					__LOG(LOG_ERR, "[DSK][%s:%d] %s is not available format in %s", _FILE_, __LINE__, tmp, PATH_EVENT);
-					{
-						char list_cmd[STR_LEN];
-						ret = snprintf(list_cmd, sizeof(list_cmd), "ls -pt %s | grep -v '/$' | tail -n %d | head -n %d", PATH_EVENT, fileSet_cnt, fileSet_cnt);
-						if (ret < 0 || ret >= (int)sizeof(list_cmd)) {
-							ret = -1;
-							break;
-						}
-						if (!ord_validate_cmd_token_lines(list_cmd)) {
-							ret = -1;
-							break;
-						}
-						ret = snprintf(str, sizeof(str), "ls -pt %s | grep -v '/$' | tail -n %d | head -n %d | xargs -t -I %% sh -c '{ rm -rf %s/%%; }'", \
-									PATH_EVENT, fileSet_cnt, fileSet_cnt, PATH_EVENT);
-						if (ret < 0 || ret >= (int)sizeof(str)) {
-							ret = -1;
-							break;
-						}
-					}
-				}
-
-				//ret = sprintf(str, "rm -f /%s/%s*", PATH_EVENT, tmp);
-				__LOG(LOG_NOTICE, "[DSK][%s:%d] %s", _FILE_, __LINE__, str);
-				ret = system(str);
-				if (ret < 0) {
-					__LOG(LOG_CRIT, "[DSK][%s:%d] ret:%d", _FILE_, __LINE__, ret);
-					tail_event++;
-				}
-				else tail_event = 1;
-			}
-		} while (0);
-
-        if (disk_op_f || tail_mnt > 1 || tail_recycle > 1 || tail_event > 1)
-            sleep(10);
-        else
-		    sleep(_TOrdConf.disk_manage_period);
-	}
-
-	__LOG(LOG_NOTICE, "[DSK][%s:%d] thread end", _FILE_, __LINE__);
-
-	return ret;
+    __LOG(LOG_NOTICE, "[DSK][%s:%d] thread end", _FILE_, __LINE__);
+    return 0;
 }
 
 int CTCPServer::waitingCopy(void* pData)
