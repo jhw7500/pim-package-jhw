@@ -3,7 +3,7 @@
 > 기준: 2026-08-25 `master`. 코드 행 번호 대신 함수/변수명을 기준으로 설명한다.
 
 `ord_vcm_conf.json`의 `.ETC.file_check_reboot`는 복구 사다리 전체를 켜고 끄는
-옵션이 아니다. `gstapp_restart`와 `module_reload` 요청을 거친 뒤 마지막 단계에서
+옵션이 아니다. `gstapp_restart`, `module_reload`, `camera_hard_reset` 요청을 거친 뒤 마지막 단계에서
 `reboot_fallback` 요청을 허용할지를 결정하는 공통 게이트다. 복구 사다리는 스크립트를
 직접 실행하지 않고 복구 요청을 낸다(`kill_test.sh`와 `init_cam.sh`도 지금은 요청을 내는
 래퍼다).
@@ -75,9 +75,13 @@ disconnect 상태라면 이 분기에서는 retry와 reboot를 실행하지 않�
 활성 채널과 SRT 설정으로 계산한 기대 파일 수가 실제 파일 수와 다를 때:
 
 - `retry_total <= 3`: `gstapp_restart`
-- `retry_total <= 5`: `module_reload`
+- `retry_total` 4: `module_reload`
+- `retry_total` 5: `camera_hard_reset`
 - `retry_total > 5`: `file_check_reboot=true`면 `reboot_fallback`, 아니면 retry 카운터 초기화
 
+이 사다리만 이어질 때는 모듈 재적재 한 번 뒤에 CSI·ISI까지 다시 묶는 하드 리셋으로 넘어간다(#192).
+2.4의 사다리와 `retry_total`을 함께 쓰므로 두 실패가 섞이면 한쪽 단계를 건너뛰거나 되풀이할 수 있다.
+재부팅을 요청하는 조건은 섞여도 위와 같다.
 재기동 직후 첫 조각이 아직 없고 앱이 `init_cooldown_sec`보다 어리면 파일 검사를 보류한다(#190).
 모듈 재적재 뒤 쿨다운 판정은 #214에서 제거했다. disconnect가 감지되면 이 사다리 대신
 disconnect 전용 주기 복구 경로에 맡긴다.
@@ -87,7 +91,8 @@ disconnect 전용 주기 복구 경로에 맡긴다.
 `/tmp/start_video_time_chk`가 비어 있고 `timer >= rst_time`인 상태가 계속될 때:
 
 - `retry_total <= 2`: `gstapp_restart`
-- `retry_total <= 4`: `module_reload`
+- `retry_total` 3: `module_reload`
+- `retry_total` 4: `camera_hard_reset`
 - `retry_total > 4`: `file_check_reboot=true`면 `reboot_fallback`, 아니면 retry 카운터 초기화
 
 모든 채널이 비활성인 경우에는 실패가 아니라 설정상 비활성으로 보고 건너뛴다.
@@ -99,7 +104,8 @@ cooldown과 disconnect 처리 원칙은 파일 수 불일치 분기와 같다.
 확인한다.
 
 - `final_stall_cnt` 1~2: `gstapp_restart`
-- `final_stall_cnt` 3~4: `module_reload`
+- `final_stall_cnt` 3: `module_reload`
+- `final_stall_cnt` 4: `camera_hard_reset`
 - `final_stall_cnt` 5 이상: `file_check_reboot=true`면 `reboot_fallback`, 아니면
   `final_stall_cnt=0`
 
@@ -124,8 +130,12 @@ cooldown과 disconnect 처리 원칙은 파일 수 불일치 분기와 같다.
 
 ### `false` 또는 키 누락
 
-- `reboot`만 억제한다.
-- `gstapp_restart`, `module_reload` 요청과 disconnect 주기 복구는 계속 동작한다.
+- 사다리 마지막 단계의 `reboot_fallback` 요청만 억제한다.
+- `gstapp_restart`, `module_reload`, `camera_hard_reset` 요청과 disconnect 주기 복구는 계속 동작한다.
+- `module_reload`나 `camera_hard_reset` 요청이 실행 중에 실패하면 실행기가 같은 요청 안에서 다음 단계로
+  넘어가고(`module_reload` → `camera_hard_reset` → `reboot_fallback`), 그 재부팅은 이 설정을 보지 않는다.
+  `module_reload` 요청은 모듈 재적재와 하드 리셋이 둘 다 실패해야 재부팅하고, `camera_hard_reset` 요청은
+  하드 리셋 한 번이 실패하면 재부팅한다.
 - 일반 retry 사다리는 한계에서 카운터를 초기화해 다시 시작하고, FINAL STALL은
   `final_stall_cnt`만 초기화한다.
 - 하드웨어 수준 장애가 소프트 복구로 해결되지 않으면 복구 사이클이 반복될 수 있다.
@@ -141,6 +151,8 @@ cooldown과 disconnect 처리 원칙은 파일 수 불일치 분기와 같다.
 - `dist/pim/opt/pim/bin/update_ordvcmconf.sh`
 - `dist/pim/opt/pim/config/ord_vcm_conf.json`
 - `test/cam_link/escalation_test.sh`
+- `test/cam_link/monitor_ladder_test.sh`
+- `test/camera_health/final_stall_watch_test.sh`
 
 ## 5. 운영 권장
 

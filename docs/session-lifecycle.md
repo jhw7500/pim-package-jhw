@@ -141,7 +141,8 @@ CheckFinalArrival
 채널과 SRT 설정으로 기대 파일 수를 만들고 실제 파일 수와 비교한다.
 
 - `retry_total` 1~3: `gstapp_restart`
-- `retry_total` 4~5: `module_reload`
+- `retry_total` 4: `module_reload`
+- `retry_total` 5: `camera_hard_reset`
 - `retry_total` 6 이상: `file_check_reboot=true`면 `reboot_fallback`
 
 성공하면 `retry`, `retry_boot`, `retry_total`과 `/tmp/file_check`를
@@ -154,7 +155,8 @@ disconnect 중에는 이 사다리를 그대로 진행하지 않는다.
 실패로 본다. `rst_time`은 카메라 그룹 구성에 따라 기본 25초 또는 35초다.
 
 - `retry_total` 1~2: `gstapp_restart`
-- `retry_total` 3~4: `module_reload`
+- `retry_total` 3: `module_reload`
+- `retry_total` 4: `camera_hard_reset`
 - `retry_total` 5 이상: `file_check_reboot=true`면 `reboot_fallback`
 
 모든 카메라 채널이 비활성인 경우에는 실패로 보지 않는다.
@@ -186,7 +188,8 @@ heartbeat가 없거나 stale이면 설정된 final 경로의 최근
 | 워밍업 중 | `WARMUP` |
 | 최근 도착 확인 | `OK` 또는 `OK_FB` |
 | `stall_cnt` 1~2 | `STALL`, `gstapp_restart` |
-| `stall_cnt` 3~4 | `STALL`, `module_reload` |
+| `stall_cnt` 3 | `STALL`, `module_reload` |
+| `stall_cnt` 4 | `STALL`, `camera_hard_reset` |
 | `stall_cnt` 5 이상 | `file_check_reboot=true`면 `reboot_fallback`, 아니면 카운터 초기화 |
 
 상세 진단은 [runbook_final_stall.md](./runbook_final_stall.md)를 참조한다.

@@ -96,7 +96,7 @@ cam_submit_internal_action() {
     fi
     printf '%s %s\n' "$1" "$((NOW - T0))" >> "$REQUESTS"
     case "$1" in
-        gstapp_restart|module_reload)
+        gstapp_restart|module_reload|camera_hard_reset)
             if [ "$EFFECT" = 1 ]; then
                 APP_PID=$((APP_PID + 1))
                 REC_START=$((NOW + START_DELAY))
@@ -214,7 +214,7 @@ fi
 scenario 'silent stall, restarts take effect' 1
 ARRIVE=0
 sim_run 2400
-expect_requests 'gstapp_restart gstapp_restart module_reload module_reload reboot_fallback'
+expect_requests 'gstapp_restart gstapp_restart module_reload camera_hard_reset reboot_fallback'
 expect_spacing 140
 
 # 3. The same stall when the requests change nothing (same pid keeps recording): still one
@@ -223,7 +223,7 @@ scenario 'silent stall, requests change nothing' 1
 ARRIVE=0
 EFFECT=0
 sim_run 2400
-expect_requests 'gstapp_restart gstapp_restart module_reload module_reload reboot_fallback'
+expect_requests 'gstapp_restart gstapp_restart module_reload camera_hard_reset reboot_fallback'
 expect_spacing 140
 
 # 4. file_check_reboot is off: after the fourth step the counter starts over, no reboot.
@@ -233,7 +233,7 @@ EFFECT=0
 file_chk_reboot=false
 sim_run 1500
 case "$(requests)" in
-    'gstapp_restart gstapp_restart module_reload module_reload'*) ;;
+    'gstapp_restart gstapp_restart module_reload camera_hard_reset'*) ;;
     *) fail "$name: requests were [$(requests)]" ;;
 esac
 grep -q reboot_fallback "$REQUESTS" && fail "$name: a reboot was requested with file_check_reboot off"
