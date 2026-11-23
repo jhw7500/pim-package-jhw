@@ -96,6 +96,22 @@ candidate publish 뒤 action이 실패하면 새 runtime을 유지하고 `DEGRAD
 `cam-recoveryctl`을 실행해 usage에서 본다. 별칭은 CLI 진입점에서만 해석되므로 요청 기록과
 `CAM_RECOVERY_RESULT`의 `type=`은 항상 위 정규명이다.
 
+`request`와 `apply-config`의 `--source`, `--reason`, `--wait`는 모두 선택 사항이다.
+`--source`를 생략하면 `operator`, `--reason`을 생략하면 `manual <정규 동작명>`으로
+기록한다. 예를 들어 `request restart`의 사유는 `manual gstapp_restart`,
+`apply-config`의 사유는 `manual apply_config`다. 명시한 값은 그대로 사용하며
+빈 문자열을 지정하면 종료 코드 64로 거절한다.
+
+```sh
+cam-recoveryctl request restart
+cam-recoveryctl request restart --wait 120
+cam-recoveryctl apply-config --wait 300
+```
+
+`--wait`를 생략하면 요청 UUID만 출력하고 접수 성공 시 0으로 종료한다. 동작 완료까지
+확인하려면 `--wait SEC`를 지정한다. 자동 호출은 호출 주체와 사유를 구분할 수 있도록
+기존 `--source`와 `--reason` 값을 계속 전달한다.
+
 `gstapp_stop`은 gstApp과 BG_Check를 정지시키고 부재를 확인하는 것까지만 한다 —
 SIGTERM 후 `PIM_CAMERA_QUIESCE_TIMEOUT_SEC`(기본값 10초. 대상은 런타임 앱이라 gstApp, streamApp 설정이면 PIMCAM)까지 대기하고, 남아 있으면 SIGKILL 후 다시
 대기해 부재를 확인한다. 다시 띄우지는 않는다. `cam_liveness_tick`이 이후 순회에서

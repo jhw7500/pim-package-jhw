@@ -165,7 +165,7 @@ error가 복구를 유발하지 않는지, 25초 이후 정상 프레임과 녹�
 >   `/opt/pim/bin/cam-recoveryctl status | jq -r '.owner.lifecycle'` 가 **`ACTIVE` 또는
 >   `DEGRADED`** 이고(수락 조건이 그 둘이다) `.pending`·`.active` 가 비었는지 본 뒤
 >   `/opt/pim/bin/cam-recoveryctl request camera_hard_reset --source operator --reason '<사유>' --wait 300`
->   (`--source`·`--reason` 필수, 빠지면 64). 판정은 stdout 한 줄
+>   (`--source`·`--reason` 생략 시 각각 `operator`·`manual camera_hard_reset`, 명시한 빈 값은 64). 판정은 stdout 한 줄
 >   `CAM_RECOVERY_RESULT ... status=SUCCEEDED rc=0` 이다.
 > - 서비스가 내려가 있으면 그 요청은 **69** 로 실패한다(다른 복구 진행 중이면 75).
 > - `status=FAILED rc=70` 은 **일반 소프트웨어 실패**다 — lock 획득 실패·요청 스키마 검증 실패·
