@@ -16,6 +16,7 @@ python3 ord_startup_failure_test.py
 python3 config_expectation_test.py
 python3 runtime_config_test.py
 bash test_cam_state.sh
+python3 recovery_cli_defaults_test.py
 bash recovery_protocol_test.sh
 bash recovery_guard_rc_test.sh
 bash ord_single_owner_test.sh
