@@ -131,6 +131,54 @@ class RecoveryCliDefaultsTest(unittest.TestCase):
                     self.assertEqual(self.request_log.read_bytes(), b"")
                     self.assertEqual(self.status_log.read_bytes(), b"")
 
+    def test_option_tokens_are_not_metadata_values(self):
+        for command in (["request", "reboot"], ["request", "reboot_fallback"],
+                        ["apply-config"]):
+            for flag in ("--source", "--reason"):
+                for token in ("--wait", "--source", "--reason", "--unknown",
+                              "--wait=0", "-w", "-", "--wait\n"):
+                    with self.subTest(command=command, flag=flag, token=token):
+                        result = self.drive(*command, flag, token)
+                        self.assertEqual(result.returncode, 64)
+                        self.assertEqual(result.stdout, b"")
+                        self.assertIn(b"usage:", result.stderr)
+                        self.assertEqual(self.request_log.read_bytes(), b"")
+                        self.assertEqual(self.status_log.read_bytes(), b"")
+            # A later valid value must not hide an earlier missing operand.
+            for options in (["--source", "--reason", "--reason", "recorded"],
+                            ["--source", "operator", "--reason", "--wait"],
+                            ["--reason", "--wait=0", "--reason=recorded"]):
+                with self.subTest(command=command, options=options):
+                    result = self.drive(*command, *options)
+                    self.assertEqual(result.returncode, 64)
+                    self.assertEqual(self.request_log.read_bytes(), b"")
+                    self.assertEqual(self.status_log.read_bytes(), b"")
+
+    def test_attached_metadata_is_unambiguous_and_preserved(self):
+        for command, action in ((["request", "restart"], "gstapp_restart"),
+                                (["apply-config"], "apply_config")):
+            for source, reason in (("--wait", "--source"), ("-ops", "-"),
+                                   ("ops=x", "capture=check\nsecond line\n")):
+                with self.subTest(command=command, source=source, reason=reason):
+                    self.assert_no_wait(self.drive(
+                        *command, f"--source={source}", f"--reason={reason}",
+                    ))
+                    self.assert_request(action, source, reason)
+            self.assert_no_wait(self.drive(*command, "--source=--reason"))
+            self.assert_request(action, source="--reason")
+            self.assert_no_wait(self.drive(*command, "--reason=--wait"))
+            self.assert_request(action, reason="--wait")
+            self.assert_no_wait(self.drive(
+                *command, "--source=operator", "--reason", "manual check",
+            ))
+            self.assert_request(action, reason="manual check")
+            for option in ("--source=", "--reason="):
+                with self.subTest(command=command, option=option):
+                    result = self.drive(*command, option)
+                    self.assertEqual(result.returncode, 64)
+                    self.assertEqual(self.request_log.read_bytes(), b"")
+                    self.assertEqual(self.status_log.read_bytes(), b"")
+
     def test_wait_result_and_timeout_contract(self):
         for args, action in ((["request", "restart"], "gstapp_restart"),
                              (["apply-config"], "apply_config")):
