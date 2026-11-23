@@ -11,9 +11,14 @@ source "$PIM_LIB/cam_recovery.sh"
 # 어디에도 안 적혀 있었다 — module_reload 를 요청한 사람이 실패가 이어지면 재부팅을 받는다.
 # 목록의 출처는 _cr_public_action 하나다(cam_recovery.sh). 거기에 action 을 더하면 여기도 더한다.
 usage() { cat >&2 <<'USAGE'
-usage: cam-recoveryctl request ACTION --source NAME --reason TEXT [--wait SEC]
-     | apply-config --source NAME --reason TEXT [--wait SEC]
+usage: cam-recoveryctl request ACTION [--source NAME] [--reason TEXT] [--wait SEC]
+     | apply-config [--source NAME] [--reason TEXT] [--wait SEC]
      | status [--request-id UUID] [--json]
+
+생략 시 --source 는 operator, --reason 은 "manual <정규 동작명>" 이다.
+명시한 --source/--reason 값은 비어 있으면 안 된다.
+- 로 시작하는 값은 --source=NAME 또는 --reason=TEXT 형식으로 지정한다.
+--wait 는 선택 사항이며, 생략하면 접수된 요청 UUID 만 출력한다.
 
 ACTION (괄호는 별칭) 과 실패 시 에스컬레이션:
   gstapp_restart    (restart)  gstApp 만 재시작. 에스컬레이션 없음
@@ -74,8 +79,24 @@ wait_for_result() {
     done
 }
 request() {
-    local type=$1; shift; local source= reason= wait=
-    while [ $# -gt 0 ]; do case "$1" in --source) [ $# -ge 2 ] || bad; source=$2; shift 2;; --reason) [ $# -ge 2 ] || bad; reason=$2; shift 2;; --wait) [ $# -ge 2 ] || bad; wait=$2; shift 2;; *) bad;; esac; done
+    local type=$1; shift; local source=operator reason="manual $type" wait=
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --source=*) source=${1#*=}; shift;;
+            --reason=*) reason=${1#*=}; shift;;
+            --source|--reason|--wait)
+                # Another option cannot supply a missing operand. Literal leading
+                # hyphens in metadata require the unambiguous --name=value form.
+                [ $# -ge 2 ] && [[ $2 != -* ]] || bad
+                case "$1" in
+                    --source) source=$2;;
+                    --reason) reason=$2;;
+                    --wait) wait=$2;;
+                esac
+                shift 2;;
+            *) bad;;
+        esac
+    done
     _cr_request_type "$type" || bad
     [ -n "$source" ] && [ -n "$reason" ] || bad
     [ -z "$wait" ] || [[ $wait =~ ^[0-9]+$ ]] || bad

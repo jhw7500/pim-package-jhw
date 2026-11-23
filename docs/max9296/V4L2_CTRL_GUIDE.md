@@ -101,7 +101,7 @@ V4L2 컨트롤은 기본적으로 정수값으로 노출된다. 대부분은 레
 >   `DEGRADED`** 이고 `.pending`·`.active` 가 비었는지 본다 — 수락 조건이 그 둘이므로
 >   `ACTIVE` 만 기다리면 DEGRADED 보드에서 영원히 기다리게 된다.
 > - 그 뒤 `/opt/pim/bin/cam-recoveryctl request camera_hard_reset --source operator --reason '<사유>' --wait 300`
->   (`--source`·`--reason` 은 **필수**이며 빠지면 64). 판정은 stdout 한 줄
+>   (`--source`·`--reason` 생략 시 각각 `operator`·`manual camera_hard_reset`, 명시한 빈 값은 64). 판정은 stdout 한 줄
 >   `CAM_RECOVERY_RESULT ... status=SUCCEEDED rc=0` 이다.
 > - **서비스가 내려가 있으면 이 요청은 69 로 실패한다**(다른 복구가 진행 중이면 75). 즉 그
 >   상태에서 래퍼가 0 을 돌려주는 일은 없다. 위험은 종료코드가 아니라, 래퍼가 옛 명령과 같아
