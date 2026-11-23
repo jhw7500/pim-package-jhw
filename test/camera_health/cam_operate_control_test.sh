@@ -80,7 +80,7 @@ reset_case() {
     : > "$PIM_CAMERA_CALL_LOG"
     : > "$PIM_CAMERA_HELPER_LOG"
     fake_stat
-    unset FAIL_ACTION FAIL_VERIFY FAIL_PUBLISH
+    unset FAIL_ACTION FAIL_ACTIONS FAIL_VERIFY FAIL_PUBLISH
     unset VERIFY_STARTUP_EXECUTOR VERIFY_REQUEST_EXECUTOR VERIFY_OWNER_LIFECYCLE
     unset PROCESS_VERIFY_STARTUP_EXECUTOR PROCESS_VERIFY_REQUEST_EXECUTOR PROCESS_VERIFY_OWNER_LIFECYCLE
 }
@@ -145,6 +145,7 @@ cam_execute_action_step() {
     printf 'action:%s\n' "$1" >> "$PIM_CAMERA_CALL_LOG"
     rc=0
     [ "${FAIL_ACTION:-}" != "$1" ] || rc=1
+    case " ${FAIL_ACTIONS:-} " in *" $1 "*) rc=1 ;; esac
     if [ "${REAL_COUNTER_STUB:-}" = 1 ]; then
         if [ "$rc" -eq 0 ]; then cam_action_counter_finish "$1" "$PIM_CAMERA_REQUEST_ID" SUCCEEDED 0 || return $?; else cam_action_counter_finish "$1" "$PIM_CAMERA_REQUEST_ID" FAILED "$rc" || return $?; fi
     fi
@@ -590,6 +591,57 @@ cam_poll_pending_request
 expect_log action:module_reload
 expect_log verify:processes:1
 reject_log verify:processes:0
+
+echo "=== #192: file_check_reboot off keeps the daemon's own recoveries from ending in a reboot ==="
+# 실행기는 실패한 module_reload 를 camera_hard_reset 으로, 실패한 camera_hard_reset 을 reboot_fallback 으로
+# 올린다.  데몬이 PIM_CAMERA_AUTO_REBOOT=0 을 세웠고(file_check_reboot 꺼짐) 요청을 데몬이 스스로 냈으면
+# (source 가 monitor 또는 liveness) 마지막 승격만 건너뛴다 — 요청은 FAILED, owner 는 DEGRADED 다.
+# 그 밖의 출처(operator, pim-guardian)와, 변수가 1 이거나 없는 경우는 지금까지처럼 reboot_fallback 까지 간다.
+# 사유를 칸마다 다르게 써서, 앞 칸이 남긴 상태로 단언이 통과하지 않게 한다.
+reset_case boot-a
+write_source escalation 640 one one one
+cam_daemon_startup "$DAEMON_PID"
+export PIM_CAMERA_ACTION_LOG="$WORK/actions.log"
+FAIL_ACTIONS="module_reload camera_hard_reset"
+for auto in 0 1 unset; do
+    for src in monitor liveness operator pim-guardian; do
+        for type in module_reload camera_hard_reset; do
+            cell="auto=$auto source=$src type=$type"
+            : > "$PIM_CAMERA_CALL_LOG"
+            : > "$PIM_CAMERA_ACTION_LOG"
+            if [ "$auto" = unset ]; then unset PIM_CAMERA_AUTO_REBOOT; else PIM_CAMERA_AUTO_REBOOT=$auto; fi
+            esc_id=$(cam_request_submit "$type" "$src" "escalation gate $cell")
+            if [ "$auto" = 0 ] && { [ "$src" = monitor ] || [ "$src" = liveness ]; }; then
+                expect_rc 1 cam_poll_pending_request
+                expect_log action:camera_hard_reset
+                reject_log action:reboot_fallback
+                jq -e '.lifecycle=="DEGRADED"' "$PIM_CAMERA_RUN_DIR/owner.json" >/dev/null || fail "#192 $cell: owner is not DEGRADED"
+                jq -e '.request.status=="FAILED" and .request.rc==1' "$PIM_CAMERA_STATE_DIR/recovery/history/$esc_id.json" >/dev/null || fail "#192 $cell: request did not end FAILED rc=1"
+                jq -e --arg reason "escalation gate $cell" '.dirty==true and .degraded_reason==$reason' "$PIM_CAMERA_STATE_DIR/service-state.json" >/dev/null || fail "#192 $cell: service state is not dirty/degraded by this request"
+                grep -Fq "reboot_fallback skipped after camera_hard_reset failed: file_check_reboot is off (source=$src)" "$PIM_CAMERA_ACTION_LOG" || fail "#192 $cell: the skipped reboot left no log line"
+            else
+                expect_rc 0 cam_poll_pending_request
+                expect_log action:camera_hard_reset
+                expect_log action:reboot_fallback
+                jq -e '.lifecycle=="ACTIVE"' "$PIM_CAMERA_RUN_DIR/owner.json" >/dev/null || fail "#192 $cell: owner is not ACTIVE after the chain ran"
+                jq -e '.request.status=="SUCCEEDED"' "$PIM_CAMERA_STATE_DIR/recovery/history/$esc_id.json" >/dev/null || fail "#192 $cell: request did not end SUCCEEDED"
+                ! grep -Fq "reboot_fallback skipped" "$PIM_CAMERA_ACTION_LOG" || fail "#192 $cell: a reboot that ran was logged as skipped"
+            fi
+            [ "$type" != module_reload ] || expect_log action:module_reload
+        done
+    done
+done
+# 첫 단계만 실패하면(하드 리셋이 성공) 변수가 0 이어도 요청은 성공으로 끝난다.
+: > "$PIM_CAMERA_CALL_LOG"
+# shellcheck disable=SC2034  # 실행기(cam_operate_control.sh)가 읽는다
+PIM_CAMERA_AUTO_REBOOT=0
+FAIL_ACTIONS="module_reload"
+cam_request_submit module_reload monitor "escalation gate, hard reset recovers" >/dev/null
+expect_rc 0 cam_poll_pending_request
+expect_log action:camera_hard_reset
+reject_log action:reboot_fallback
+jq -e '.lifecycle=="ACTIVE"' "$PIM_CAMERA_RUN_DIR/owner.json" >/dev/null || fail "#192: a hard reset that recovered did not end ACTIVE"
+unset FAIL_ACTIONS PIM_CAMERA_AUTO_REBOOT PIM_CAMERA_ACTION_LOG
 
 echo "=== apply intake lifecycle guard ==="
 cam_owner_set_lifecycle STOPPING

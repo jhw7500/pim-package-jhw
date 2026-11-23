@@ -52,11 +52,24 @@ echo "=== 정상 설정 파일 로드 (기대값은 패키지 배포 설정에�
 FILE_JSON_="$PKG_JSON"; GetConfig_
 check_all "정상"
 t_eq "정상 · DISCONNECT_MAX_SEC (배포 설정에 키 없음 → 0)" "$DISCONNECT_MAX_SEC" 0
+# file_check_reboot 가 켜져 있을 때만 데몬이 스스로 낸 복구가 재부팅으로 올라갈 수 있다(#192).
+exp_auto=0; [ "$(jq -r '.ETC.file_check_reboot // false' "$PKG_JSON")" != true ] || exp_auto=1
+t_eq "정상 · PIM_CAMERA_AUTO_REBOOT (배포 설정의 file_check_reboot 를 따른다)" "$PIM_CAMERA_AUTO_REBOOT" "$exp_auto"
+jq '.ETC.file_check_reboot = false' "$PKG_JSON" > "$WORK/reboot-off.json"
+FILE_JSON_="$WORK/reboot-off.json"; GetConfig_
+t_eq "file_check_reboot=false → PIM_CAMERA_AUTO_REBOOT" "$PIM_CAMERA_AUTO_REBOOT" 0
+jq '.ETC.file_check_reboot = true' "$PKG_JSON" > "$WORK/reboot-on.json"
+FILE_JSON_="$WORK/reboot-on.json"; GetConfig_
+t_eq "file_check_reboot=true → PIM_CAMERA_AUTO_REBOOT" "$PIM_CAMERA_AUTO_REBOOT" 1
+jq 'del(.ETC.file_check_reboot)' "$PKG_JSON" > "$WORK/reboot-missing.json"
+FILE_JSON_="$WORK/reboot-missing.json"; GetConfig_
+t_eq "키 없음 → PIM_CAMERA_AUTO_REBOOT (사다리처럼 꺼진 것으로 본다)" "$PIM_CAMERA_AUTO_REBOOT" 0
 
 echo
 echo "=== 설정 파일 없음 (jq 실패) → 선언 기본값 복귀 ==="
 FILE_JSON_="$WORK/does-not-exist.json"; GetConfig_ 2>/dev/null
 check_all "파일없음"
+t_eq "파일없음 · PIM_CAMERA_AUTO_REBOOT" "$PIM_CAMERA_AUTO_REBOOT" 0
 
 echo
 echo "=== 손상된 JSON → 선언 기본값 복귀 ==="

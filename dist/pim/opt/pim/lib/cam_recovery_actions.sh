@@ -874,6 +874,8 @@ cam_execute_recovery_request() {
         # gstapp_stop 은 위에서 거부되므로 여기 없다.  _cr_request_type 이 통과시키는
         # 나머지 type 은 전부 아래에 있으므로 이 case 는 여전히 빠짐없다 — *) 가 없는 것이
         # 조용한 SUCCEEDED 로 이어지지 않는다.
+        # 운영 경로(_coc_execute_recovery_active)와 달리 이 진입점은 file_check_reboot 가 꺼져 있어도
+        # 재부팅 승격을 건너뛰지 않는다. 이 함수를 부르는 곳은 시험뿐이다.
         module_reload)
             cam_execute_action_step module_reload "$runtime"; rc=$?
             if [ "$rc" -ne 0 ]; then cam_execute_action_step camera_hard_reset "$runtime"; rc=$?; fi

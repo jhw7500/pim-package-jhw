@@ -4,7 +4,8 @@
 
 `ord_vcm_conf.json`의 `.ETC.file_check_reboot`는 복구 사다리 전체를 켜고 끄는
 옵션이 아니다. `gstapp_restart`, `module_reload`, `camera_hard_reset` 요청을 거친 뒤 마지막 단계에서
-`reboot_fallback` 요청을 허용할지를 결정하는 공통 게이트다. 복구 사다리는 스크립트를
+`reboot_fallback` 요청을 허용할지를 결정하는 공통 게이트다. 꺼져 있으면 데몬이 스스로 낸 복구 요청이
+실패했을 때 실행기가 재부팅으로 넘어가는 것도 막는다(3절). 복구 사다리는 스크립트를
 직접 실행하지 않고 복구 요청을 낸다(`kill_test.sh`와 `init_cam.sh`도 지금은 요청을 내는
 래퍼다).
 
@@ -28,8 +29,9 @@
 
 패키지의 `update_ordvcmconf.sh`는 키가 없을 때 `true`를 주입하지만,
 `chk_cam_operate.sh` 자체는 누락된 키를 안전측인 `false`로 해석한다.
-설정은 데몬 시작 시 한 번만 읽으며 실행 중 JSON을 다시 읽지 않는다. 값을 바꾼
-뒤에는 `chk_cam_operate.sh`가 다시 시작되는 정식 카메라 재기동 절차가 필요하다.
+설정은 데몬 시작 때 읽고, `cam-recoveryctl apply-config`가 `.ETC` 변경을 반영할 때(`policy_reload`
+단계) 다시 읽는다. JSON을 직접 고친 경우에는 `chk_cam_operate.sh`가 다시 시작되는 정식 카메라 재기동
+절차가 필요하다.
 
 ## 2. 현재 재부팅 분기
 
@@ -42,6 +44,9 @@
 | 채널별 파일 수 불일치 | 파일 생성 검사 | `check_num != file_cnt`, cooldown/disconnect 아님, `retry_total > 5` | 공통 retry 카운터 초기화 |
 | 초기 시작 마커 없음 | `start_f == 0` 분기 | 적어도 한 카메라 그룹이 활성, cooldown/disconnect 아님, `retry_total > 4` | 공통 retry 카운터 초기화 |
 | Final-path 정체 | `CheckFinalArrival()` | `final_stall_cnt >= 5`이고 정체 가드에 걸리지 않음 | `final_stall_cnt`만 초기화 |
+
+이 다섯 분기와 별도로, 이 설정이 꺼져 있으면 데몬이 스스로 낸 복구 요청의 실패가 실행기 안에서
+`reboot_fallback`으로 올라가는 것도 막는다(3절, #192).
 
 ### 2.1 장기 disconnect
 
@@ -130,12 +135,20 @@ cooldown과 disconnect 처리 원칙은 파일 수 불일치 분기와 같다.
 
 ### `false` 또는 키 누락
 
-- 사다리 마지막 단계의 `reboot_fallback` 요청만 억제한다.
+- 사다리 마지막 단계의 `reboot_fallback` 요청을 억제한다.
 - `gstapp_restart`, `module_reload`, `camera_hard_reset` 요청과 disconnect 주기 복구는 계속 동작한다.
-- `module_reload`나 `camera_hard_reset` 요청이 실행 중에 실패하면 실행기가 같은 요청 안에서 다음 단계로
-  넘어가고(`module_reload` → `camera_hard_reset` → `reboot_fallback`), 그 재부팅은 이 설정을 보지 않는다.
-  `module_reload` 요청은 모듈 재적재와 하드 리셋이 둘 다 실패해야 재부팅하고, `camera_hard_reset` 요청은
-  하드 리셋 한 번이 실패하면 재부팅한다.
+- 데몬이 스스로 낸 복구 요청(출처가 `monitor` 또는 `liveness`: 사다리, disconnect 주기 복구, 드라이버 적재
+  실패, liveness)은 실행 중에 실패해도 재부팅으로 올라가지 않는다(#192). `module_reload`가 실패하면
+  `camera_hard_reset`까지는 시도하고, 그것도 실패하면 요청이 `FAILED`로 끝나고 상태가 `DEGRADED`가 된다.
+  `true`일 때는 지금처럼 `reboot_fallback`까지 올라간다.
+- `DEGRADED`에서는 사다리, disconnect 주기 복구, liveness의 요청이 모두 거부된다. 자동 복구가 멈추고,
+  운영자가 조치할 때까지 녹화가 멈춘 채 남을 수 있다. 벗어나려면 `cam-recoveryctl request hard`를 내거나
+  `cam-operate` 서비스를 재시작한다(시작 경로가 하드 리셋을 다시 시도한다). 그래도 돌아오지 않으면
+  `cam-recoveryctl request reboot`로 재부팅한다.
+- 판정 기준은 요청의 source 값이다. source가 `monitor`나 `liveness`가 아닌 요청(`cam-recoveryctl
+  request ...`의 기본값 `operator`, `pim_guardian.py --recovery`의 `pim-guardian`)은 이 설정과 무관하게,
+  실패하면 `reboot_fallback`까지 올라간다. `cam-recoveryctl`에 `--source monitor`를 주면 데몬이 낸
+  요청처럼 다뤄진다.
 - 일반 retry 사다리는 한계에서 카운터를 초기화해 다시 시작하고, FINAL STALL은
   `final_stall_cnt`만 초기화한다.
 - 하드웨어 수준 장애가 소프트 복구로 해결되지 않으면 복구 사이클이 반복될 수 있다.
@@ -153,13 +166,18 @@ cooldown과 disconnect 처리 원칙은 파일 수 불일치 분기와 같다.
 - `test/cam_link/escalation_test.sh`
 - `test/cam_link/monitor_ladder_test.sh`
 - `test/camera_health/final_stall_watch_test.sh`
+- `dist/pim/opt/pim/lib/cam_operate_control.sh`
+  - `_coc_reboot_escalation_blocked()`
+- `test/camera_health/cam_operate_control_test.sh`
+- `test/cam_link/config_default_test.sh`
 
 ## 5. 운영 권장
 
 - 정상 운영 기본값은 `true`다.
 - 재부팅 없이 로그를 오래 수집해야 하는 진단 환경에서는 일시적으로 `false`를
-  사용할 수 있다.
+  사용할 수 있다. 이때 하드 리셋까지 실패하면 재부팅 없이 `DEGRADED`로 멈추므로,
+  `cam-recoveryctl status`로 상태를 확인하고 3절의 방법으로 벗어난다.
 - 장기 disconnect 재부팅은 기본 비활성이므로 필요한 장비에서만
   `disconnect_max_sec`와 플래그 보존 정책을 함께 검토해 활성화한다.
 - 설정 변경 후에는 현재 JSON 값과 재기동 이후의 시작 로그에 출력되는
-  `file_chk_reboot` 값을 함께 확인한다.
+  `file_chk_reboot` 값을 함께 확인한다. `apply-config`로 반영한 경우에는 시작 로그가 다시 찍히지 않는다.

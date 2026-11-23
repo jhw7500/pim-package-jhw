@@ -473,6 +473,11 @@ GetConfig_() {
     DISCONNECT_MAX_SEC=$(_cfg_num "$DISCONNECT_MAX_SEC" "$DISCONNECT_MAX_SEC_DEFAULT")
     # 불리언(srt_en, file_chk_reboot, time_rec_en)은 빈 값이면 비활성으로 판정되어
     # 이미 안전측이므로 건드리지 않는다.
+    # 실행기가 본다(cam_operate_control.sh 의 _coc_reboot_escalation_blocked). file_check_reboot 가 꺼져
+    # 있으면 데몬이 스스로 낸 복구 요청은 실패해도 재부팅으로 올라가지 않는다. 사다리의 재부팅 단계와 같은
+    # 술어로 만들고, apply-config 의 policy_reload 가 이 함수를 다시 부르므로 여기서 세운다.
+    # shellcheck disable=SC2034  # 같은 셸에서 도는 실행기가 읽는다
+    if [[ "$file_chk_reboot" == *"${ENABLE_VAL:-true}"* ]]; then PIM_CAMERA_AUTO_REBOOT=1; else PIM_CAMERA_AUTO_REBOOT=0; fi
 
     #read  srt_en file_chk_reboot time_rec_en file_check_delay < <(jq -r '[.VCM.srt_enable, .ETC.file_check_reboot, .VCM.file_time_check, .ETC.file_check_delay] | @tsv' $FILE_JSON_)
 }
@@ -1906,9 +1911,9 @@ do
                         cam_submit_internal_action module_reload "file check failure"
                     elif [ "$retry_total" -le 5 ]; then
                         # 이 사다리만 이어질 때, 모듈 재적재가 성공으로 끝나도 증상이 남으면 같은 동작을 되풀이하지 않고
-                        # CSI·ISI 까지 다시 묶는다(#192). 하드 리셋이 실패하면 실행기가 같은 요청 안에서 재부팅으로 넘어가며
-                        # 그 재부팅은 file_chk_reboot 를 보지 않는다. module_reload 요청은 모듈 재적재와 하드 리셋이 둘 다
-                        # 실패해야 재부팅하지만, 이 요청은 하드 리셋 한 번의 실패로 재부팅한다.
+                        # CSI·ISI 까지 다시 묶는다(#192). 하드 리셋이 실패하면 실행기가 같은 요청 안에서 재부팅으로 넘어간다.
+                        # file_chk_reboot 가 꺼져 있으면 넘어가지 않는다 — 요청이 FAILED 로 끝나고 owner 가 DEGRADED 가 되어
+                        # 운영자가 조치할 때까지 자동 복구가 멈춘다(GetConfig_ 의 PIM_CAMERA_AUTO_REBOOT).
                         logger -p local0.error  "[$KEY][$tag:$LINENO] request camera_hard_reset (retry=$retry boot=$retry_boot total=$retry_total, next: reboot fallback at total>5 if file_chk_reboot=$file_chk_reboot)"
                         cam_submit_internal_action camera_hard_reset "file check failure"
                     else
