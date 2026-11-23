@@ -101,6 +101,9 @@ candidate publish 뒤 action이 실패하면 새 runtime을 유지하고 `DEGRAD
 기록한다. 예를 들어 `request restart`의 사유는 `manual gstapp_restart`,
 `apply-config`의 사유는 `manual apply_config`다. 명시한 값은 그대로 사용하며
 빈 문자열을 지정하면 종료 코드 64로 거절한다.
+옵션 뒤에 값 없이 다른 옵션을 쓰면 종료 코드 64로 거절하며 요청을 제출하지 않는다.
+`-`로 시작하는 출처나 사유를 기록하려면 `--source=-ops`, `--reason=--wait`처럼
+`=`로 값을 붙여 지정한다. 이 형식에서도 빈 값은 허용하지 않는다.
 
 ```sh
 cam-recoveryctl request restart
