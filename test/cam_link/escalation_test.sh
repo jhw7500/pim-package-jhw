@@ -319,7 +319,7 @@ run_f "보존 뒤 앱 부재 → 다음 끊김 표본은 새 grace, reboot_fallb
       "1000 1 UP P 0" "1060 1 UP P 0" "1062 0 UP A -1" "1064 0 DOWN A -1" "1300 1 UP P 0"
 
 # #216 A-R1-002: module_reload 뒤 앱이 재생 전에 죽기를 되풀이해도(플래그 0, drv 0, 버스 모두 -1) 시작 마커
-# 경로가 master 처럼 세는 사다리(gstapp_restart ×2 → module_reload ×2 → reboot_fallback)를 타 끝나는지 본다.
+# 경로가 master 처럼 세는 사다리(gstapp_restart ×2 → module_reload → camera_hard_reset → reboot_fallback)를 타 끝나는지 본다.
 # 끊김 분기로 가면 조치 횟수를 세지 않는 module_reload 가 끝없이 돈다. 이력은 끝까지 남는다.
 # $1=설명 $2=기대 "<제출 목록> state=<KEEP|GONE>"
 run_l() {
@@ -356,7 +356,8 @@ run_l() {
             else
                 rb=$((rb + 1))
                 if (( rb <= 2 )); then cam_submit_internal_action gstapp_restart
-                elif (( rb <= 4 )); then cam_submit_internal_action module_reload
+                elif (( rb <= 3 )); then cam_submit_internal_action module_reload
+                elif (( rb <= 4 )); then cam_submit_internal_action camera_hard_reset
                 else cam_submit_internal_action reboot_fallback; break; fi
             fi
         done
@@ -368,6 +369,6 @@ run_l() {
     t_eq "$1" "$got" "$2"
 }
 run_l "재기동마다 재생 전에 죽음 → master 와 같은 사다리로 reboot_fallback, 이력 유지" \
-      "module_reload gstapp_restart gstapp_restart module_reload module_reload reboot_fallback state=KEEP"
+      "module_reload gstapp_restart gstapp_restart module_reload camera_hard_reset reboot_fallback state=KEEP"
 
 t_summary "에스컬레이션"

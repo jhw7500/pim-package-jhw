@@ -157,7 +157,9 @@ cam-recoveryctl status --request-id 01234567-89ab-cdef-0123-456789abcdef --json
 ```
 
 `reboot_fallback`은 보통 executor의 terminal fallback으로만 사용한다. 실제 reboot가
-허용된 maintenance window가 아니면 수동 요청하지 않는다.
+허용된 maintenance window가 아니면 수동 요청하지 않는다. `.ETC.file_check_reboot`가 꺼져 있으면
+데몬이 스스로 낸 요청(source가 `monitor` 또는 `liveness`)은 실패해도 이 fallback으로 올라가지 않고
+`FAILED`와 `DEGRADED`로 끝난다(`docs/file_check_reboot-behavior.md` 3절).
 
 한 pending 또는 active lease가 있으면 다음 요청은 queue되지 않고 `BUSY`/75로 즉시
 종료한다. `--wait` timeout은 기다리는 CLI만 124로 종료하며 실행 중 action을 취소하지

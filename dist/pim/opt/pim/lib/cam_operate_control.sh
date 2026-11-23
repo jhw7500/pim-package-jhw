@@ -502,6 +502,21 @@ cam_apply_config_transaction() {
     cam_owner_set_lifecycle ACTIVE
 }
 
+# 실패한 액션을 reboot_fallback 으로 올리지 않을지 판정한다 (이슈 #192).
+# file_check_reboot 가 꺼져 있으면 데몬이 GetConfig_ 에서 PIM_CAMERA_AUTO_REBOOT=0 을 세운다. 그때 데몬이
+# 스스로 낸 요청(source 가 monitor 또는 liveness)은 실패해도 재부팅으로 올리지 않는다. 요청은 FAILED 로
+# 끝나고 owner 는 DEGRADED 가 된다. 운영자를 비롯한 다른 출처의 요청과, 변수가 없거나 0 이 아닌 경우는
+# 지금까지처럼 올린다. 변수를 먼저 보므로 기본 설정에서는 jq 를 띄우지 않는다. source 를 읽지 못해도
+# 지금까지처럼 올린다.  $1=active 요청 문서  $2=방금 실패한 액션
+_coc_reboot_escalation_blocked() {
+    local source
+    [ "${PIM_CAMERA_AUTO_REBOOT:-1}" = 0 ] || return 1
+    source=$(jq -r 'select(.source=="monitor" or .source=="liveness") | .source' <<<"$1" 2>/dev/null) || return 1
+    [ -n "$source" ] || return 1
+    PIM_CAMERA_ACTION_TAG=cam_operate_control _cra_log notice "reboot_fallback skipped after $2 failed: file_check_reboot is off (source=$source)"
+    return 0
+}
+
 _coc_execute_recovery_active() {
     local active type reason rc=0 dirty=false target=camera_health projection entry_lifecycle followup_rc
     active=$(cat "$(_cr_active_file)" 2>/dev/null) || return 69
@@ -535,11 +550,11 @@ _coc_execute_recovery_active() {
         module_reload)
             cam_execute_action_step module_reload "$PIM_CAMERA_RUNTIME_JSON" || rc=$?
             if [ "$rc" -ne 0 ]; then rc=0; cam_execute_action_step camera_hard_reset "$PIM_CAMERA_RUNTIME_JSON" || rc=$?; fi
-            if [ "$rc" -ne 0 ]; then rc=0; cam_execute_action_step reboot_fallback "$PIM_CAMERA_RUNTIME_JSON" || rc=$?; fi
+            if [ "$rc" -ne 0 ] && ! _coc_reboot_escalation_blocked "$active" camera_hard_reset; then rc=0; cam_execute_action_step reboot_fallback "$PIM_CAMERA_RUNTIME_JSON" || rc=$?; fi
             ;;
         camera_hard_reset)
             cam_execute_action_step camera_hard_reset "$PIM_CAMERA_RUNTIME_JSON" || rc=$?
-            if [ "$rc" -ne 0 ]; then rc=0; cam_execute_action_step reboot_fallback "$PIM_CAMERA_RUNTIME_JSON" || rc=$?; fi
+            if [ "$rc" -ne 0 ] && ! _coc_reboot_escalation_blocked "$active" camera_hard_reset; then rc=0; cam_execute_action_step reboot_fallback "$PIM_CAMERA_RUNTIME_JSON" || rc=$?; fi
             ;;
         reboot_fallback) cam_execute_action_step reboot_fallback "$PIM_CAMERA_RUNTIME_JSON" || rc=$? ;;
         *) return 64 ;;

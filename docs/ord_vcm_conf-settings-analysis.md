@@ -78,7 +78,7 @@ GitHub `master`의 코드가 동작 정본이다. 이 문서의 “패키지 값
 | 키 | 패키지 값 | 소비 시 fallback | 효과 |
 |---|---:|---:|---|
 | `file_check_delay` | `10` | `10` | 시작 파일 검사 유예와 파일 미생성 타임아웃에 사용 |
-| `file_check_reboot` | `true` | `false` | 복구 사다리의 마지막 reboot 단계 허용 |
+| `file_check_reboot` | `true` | `false` | 복구 사다리의 마지막 reboot 단계 허용. 꺼져 있으면 데몬이 낸 복구 요청의 실패도 재부팅으로 올라가지 않는다 |
 | `startup_grace_extra_sec` | `10` | `10` | FINAL STALL 워밍업 계산에 추가 |
 | `camera_startup_grace_sec` | `25` | `25` | 앱 시작 시각부터 cold-start 카메라 오류를 무시하는 총 시간. gstApp `-d`와 독립 |
 | `init_cooldown_sec` | `40` | `40` | 재기동 직후 카메라 앱이 이 시간보다 어리고 첫 조각 신호가 없으면 파일 검사를 보류(#190). 보류는 이 시간을 넘기지 않는다 |
@@ -92,7 +92,8 @@ GitHub `master`의 코드가 동작 정본이다. 이 문서의 “패키지 값
 
 `file_check_reboot=false`는 retry 카운터를 무기한 유지한다는 뜻이 아니다.
 kill/init 복구는 계속 수행하며 한계에 도달하면 일반 retry 카운터 또는
-`final_stall_cnt`를 초기화하고 복구 사다리를 다시 시작한다. 현재 제어하는 5개
+`final_stall_cnt`를 초기화하고 복구 사다리를 다시 시작한다. 다만 복구 요청이 하드 리셋까지
+실패하면 재부팅하지 않고 `DEGRADED`로 멈추며, 그때는 사다리 요청도 거부된다. 현재 제어하는 5개
 재부팅 분기와 정확한 임계값은
 [`file_check_reboot-behavior.md`](./file_check_reboot-behavior.md)를 따른다.
 

@@ -71,7 +71,8 @@
 - **기대**:
   - `Heartbeat:OK`인 동안 `cam_final_health=STALL` 발생
   - stall_cnt 1~2: `FINAL STALL request gstapp_restart` 로그
-  - stall_cnt 3~4: `FINAL STALL request module_reload` 로그
+  - stall_cnt 3: `FINAL STALL request module_reload` 로그
+  - stall_cnt 4: `FINAL STALL request camera_hard_reset` 로그
   - stall_cnt 5: `FINAL STALL request reboot_fallback` 로그(file_chk_reboot=true 시) 또는 카운터 리셋
 
 물리 disconnect는 이 시나리오의 대체 수단이 아니다. 현재 기본값에서는

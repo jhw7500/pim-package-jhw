@@ -55,7 +55,8 @@
 | `stall_cnt` | 자동 동작 |
 |---:|---|
 | 1~2 | `gstapp_restart` 요청 |
-| 3~4 | `module_reload` 요청 |
+| 3 | `module_reload` 요청 |
+| 4 | `camera_hard_reset` 요청 |
 | 5 이상 | `file_check_reboot=true`면 `reboot_fallback` 요청, 아니면 카운터 초기화 |
 
 유지보수 블록이 돌 때마다 다시 평가한다. `MovePartFile()`이 실제 final 도착을

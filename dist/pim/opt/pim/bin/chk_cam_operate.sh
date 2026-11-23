@@ -473,6 +473,11 @@ GetConfig_() {
     DISCONNECT_MAX_SEC=$(_cfg_num "$DISCONNECT_MAX_SEC" "$DISCONNECT_MAX_SEC_DEFAULT")
     # 불리언(srt_en, file_chk_reboot, time_rec_en)은 빈 값이면 비활성으로 판정되어
     # 이미 안전측이므로 건드리지 않는다.
+    # 실행기가 본다(cam_operate_control.sh 의 _coc_reboot_escalation_blocked). file_check_reboot 가 꺼져
+    # 있으면 데몬이 스스로 낸 복구 요청은 실패해도 재부팅으로 올라가지 않는다. 사다리의 재부팅 단계와 같은
+    # 술어로 만들고, apply-config 의 policy_reload 가 이 함수를 다시 부르므로 여기서 세운다.
+    # shellcheck disable=SC2034  # 같은 셸에서 도는 실행기가 읽는다
+    if [[ "$file_chk_reboot" == *"${ENABLE_VAL:-true}"* ]]; then PIM_CAMERA_AUTO_REBOOT=1; else PIM_CAMERA_AUTO_REBOOT=0; fi
 
     #read  srt_en file_chk_reboot time_rec_en file_check_delay < <(jq -r '[.VCM.srt_enable, .ETC.file_check_reboot, .VCM.file_time_check, .ETC.file_check_delay] | @tsv' $FILE_JSON_)
 }
@@ -1250,7 +1255,8 @@ _write_final_health() {
 # Escalation (사용자 escalation 정책: 정체 지속 시 단계적 강도 증가. 판정 한 번에 한 단계이고
 # 요청이 접수됐을 때만 센다):
 #   stall_cnt 1-2: gstapp_restart
-#   stall_cnt 3-4: module_reload (cooldown 무관, 정체는 cooldown보다 우선)
+#   stall_cnt 3  : module_reload (cooldown 무관, 정체는 cooldown보다 우선)
+#   stall_cnt 4  : camera_hard_reset (모듈 재적재 뒤에도 정체가 남으면 같은 동작을 되풀이하지 않는다, #192)
 #   stall_cnt 5+ : reboot_fallback (file_chk_reboot=true 시. 아니면 카운터를 0 으로)
 #
 # 이 감시의 시각은 모두 /proc/uptime(단조 시계) 초다. 벽시계는 RTC 설정과 NTP 가 옮긴다. 도착은 도착
@@ -1408,8 +1414,11 @@ CheckFinalArrival() {
     if [ "$next" -le 2 ]; then
         action=gstapp_restart
         level=error
-    elif [ "$next" -le 4 ]; then
+    elif [ "$next" -le 3 ]; then
         action=module_reload
+        level=error
+    elif [ "$next" -le 4 ]; then
+        action=camera_hard_reset
         level=error
     elif [[ "$file_chk_reboot" == *"$ENABLE_VAL"* ]]; then
         action=reboot_fallback
@@ -1897,9 +1906,16 @@ do
                     if [ "$retry_total" -le 3 ]; then
                         logger -p local0.error  "[$KEY][$tag:$LINENO] request gstapp_restart (retry=$retry boot=$retry_boot total=$retry_total, next: module_reload at total>3)"
                         cam_submit_internal_action gstapp_restart "file check failure"
-                    elif [ "$retry_total" -le 5 ]; then
-                        logger -p local0.error  "[$KEY][$tag:$LINENO] request module_reload (retry=$retry boot=$retry_boot total=$retry_total, next: reboot fallback at total>5 if file_chk_reboot=$file_chk_reboot)"
+                    elif [ "$retry_total" -le 4 ]; then
+                        logger -p local0.error  "[$KEY][$tag:$LINENO] request module_reload (retry=$retry boot=$retry_boot total=$retry_total, next: camera_hard_reset at total>4)"
                         cam_submit_internal_action module_reload "file check failure"
+                    elif [ "$retry_total" -le 5 ]; then
+                        # 이 사다리만 이어질 때, 모듈 재적재가 성공으로 끝나도 증상이 남으면 같은 동작을 되풀이하지 않고
+                        # CSI·ISI 까지 다시 묶는다(#192). 하드 리셋이 실패하면 실행기가 같은 요청 안에서 재부팅으로 넘어간다.
+                        # file_chk_reboot 가 꺼져 있으면 넘어가지 않는다 — 요청이 FAILED 로 끝나고 owner 가 DEGRADED 가 되어
+                        # 운영자가 조치할 때까지 자동 복구가 멈춘다(GetConfig_ 의 PIM_CAMERA_AUTO_REBOOT).
+                        logger -p local0.error  "[$KEY][$tag:$LINENO] request camera_hard_reset (retry=$retry boot=$retry_boot total=$retry_total, next: reboot fallback at total>5 if file_chk_reboot=$file_chk_reboot)"
+                        cam_submit_internal_action camera_hard_reset "file check failure"
                     else
                         logger -p local0.error "[$KEY][$tag:$LINENO] retry total $retry_total is over"
                         if [[ "$file_chk_reboot" == *"$ENABLE_VAL"* ]]; then
@@ -1966,9 +1982,14 @@ do
                     # 같이 남겨 재부팅이 임박했는지 로그만으로 보이게 한다.
                     logger -p local0.error  "[$KEY][$tag:$LINENO] request gstapp_restart (retry=$retry boot=$retry_boot total=$retry_total, next: module_reload at total>2)"
                     cam_submit_internal_action gstapp_restart "gstapp start marker missing"
-                elif [ "$retry_total" -le 4 ]; then
-                    logger -p local0.error  "[$KEY][$tag:$LINENO] request module_reload (retry=$retry boot=$retry_boot total=$retry_total, next: reboot fallback at total>4 if file_chk_reboot=$file_chk_reboot)"
+                elif [ "$retry_total" -le 3 ]; then
+                    logger -p local0.error  "[$KEY][$tag:$LINENO] request module_reload (retry=$retry boot=$retry_boot total=$retry_total, next: camera_hard_reset at total>3)"
                     cam_submit_internal_action module_reload "gstapp start marker missing"
+                elif [ "$retry_total" -le 4 ]; then
+                    # 파일 검사 사다리와 같은 자리다(#192). 두 사다리는 retry_total 을 함께 쓰므로 실패가 섞이면 한쪽
+                    # 단계를 건너뛰거나 되풀이할 수 있다. 재부팅을 요청하는 조건은 이 변경으로 바뀌지 않았다.
+                    logger -p local0.error  "[$KEY][$tag:$LINENO] request camera_hard_reset (retry=$retry boot=$retry_boot total=$retry_total, next: reboot fallback at total>4 if file_chk_reboot=$file_chk_reboot)"
+                    cam_submit_internal_action camera_hard_reset "gstapp start marker missing"
                 else
                     logger -p local0.error "[$KEY][$tag:$LINENO] retry_total $retry_total is over"
                     if [[ "$file_chk_reboot" == *"$ENABLE_VAL"* ]]; then
