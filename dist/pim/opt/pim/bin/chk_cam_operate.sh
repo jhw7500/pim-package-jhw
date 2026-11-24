@@ -1328,7 +1328,6 @@ _final_watch_uptime_into() {
 # 복구와 같은 간격(DISCONNECT_INIT_CAM_INTERVAL_SEC, 기본 180초)만큼 쉰 뒤 1 부터 다시 센다.
 # 쉬는 동안 파일 검사·시작 마커·드라이버 미적재·최종 경로 정체 사다리는 세지도 요청하지도 않는다. 끊김
 # 주기 복구와 liveness 는 그대로 돈다. 쉬는 시간은 증상이 사라져도 줄지 않는다(끊김 주기와 같은 방식).
-# 예외는 하나다: 파일 검사가 prepare 실패로 채널이 빠진 채 뜬 앱을 보면 쉬는 중에도 module_reload 를 낸다.
 # 간격을 아주 짧게 설정해도 하드 리셋이 연달아 나가지 않게 하한을 둔다. 시각은 /proc/uptime 이다.
 LADDER_RETRY_MIN_SEC=60
 ladder_hold_until=0
@@ -2011,14 +2010,11 @@ do
                 echo "NG" > $FILE_CHECK
                 cam_disconnect_flag=$(get_cam_disconnect_flag)
                 if (( cam_disconnect_flag == 0x0 )) && ladder_on_hold "file check failure"; then
-                    # 쉬는 중에는 세지도 요청하지도 않는다(ladder_on_hold 가 남긴다). 다만 prepare 실패로 채널이
-                    # 빠진 채 뜬 앱은 재적재 한 번으로 풀리는 실패라 기다리지 않는다(.6 2026-11-24: 대기와 겹쳐
-                    # 회복이 대기만큼 늦어졌다). 월반 판정이 횟수를 재적재 단계(4)로 올려 두고 그 판정은 횟수
-                    # 3 이하에서만 서므로, 검사가 통과하기 전에는 같은 대기 안에서 두 번 내지 않는다.
-                    if file_check_partial_floor "${missing_chs[@]}"; then
-                        logger -p local0.error  "[$KEY][$tag:$LINENO] request module_reload while the ladder is paused (retry=$retry boot=$retry_boot total=$retry_total)"
-                        cam_submit_internal_action module_reload "file check failure"
-                    fi
+                    # 쉬는 중에는 세지도 요청하지도 않는다(ladder_on_hold 가 남긴다). prepare 실패로 채널이 빠진 채
+                    # 뜬 앱도 예외가 아니다. 쉬는 중에 재적재를 내면 횟수가 4 로 남은 채 대기가 이어지고, 대기
+                    # 직후 시작 마커 사다리가 그 횟수를 한계 초과로 봐 하드 리셋 없이 다시 쉰다(.6 2026-11-24
+                    # 실측: 3주기 모두 module_reload 만 나갔다). 쉰 뒤에 사다리가 다룬다.
+                    :
                 elif (( cam_disconnect_flag == 0x0 )); then
                     ((retry++))
                     retry_total=$(($retry+$retry_boot))
