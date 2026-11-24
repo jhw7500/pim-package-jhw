@@ -159,7 +159,8 @@ cam-recoveryctl status --request-id 01234567-89ab-cdef-0123-456789abcdef --json
 `reboot_fallback`은 보통 executor의 terminal fallback으로만 사용한다. 실제 reboot가
 허용된 maintenance window가 아니면 수동 요청하지 않는다. `.ETC.file_check_reboot`가 꺼져 있으면
 데몬이 스스로 낸 요청(source가 `monitor` 또는 `liveness`)은 실패해도 이 fallback으로 올라가지 않고
-`FAILED`와 `DEGRADED`로 끝난다(`docs/file_check_reboot-behavior.md` 3절).
+`FAILED`와 `DEGRADED`로 끝난다. 그 뒤에는 데몬이 주기적으로 `camera_hard_reset`을 다시 낸다
+(`docs/file_check_reboot-behavior.md` 3절).
 
 한 pending 또는 active lease가 있으면 다음 요청은 queue되지 않고 `BUSY`/75로 즉시
 종료한다. `--wait` timeout은 기다리는 CLI만 124로 종료하며 실행 중 action을 취소하지
@@ -252,7 +253,12 @@ history를 남기고 `DEGRADED`로 전이한다. `DEGRADED`에서는 임의 live
 operator가 status/history를 확인한 뒤 명시적 recovery 또는 `apply-config`를 수행한다.
 이 정책은 사다리 요청 `reboot_fallback`까지 포함해 `DEGRADED`의 모든 사다리 요청을 계속 거부한다
 (사용자 결정, 2026-10-20). 거부는 이제 `chk_cam_operate.sh`가 action과 lifecycle을 로그로 남기며,
-같은 owner 안에서 `DEGRADED`를 벗어나는 길은 명시적 recovery 또는 `apply-config`뿐이다. `gstapp_restart`의 성공 검증은
+같은 owner 안에서 `DEGRADED`를 벗어나는 길은 명시적 recovery 또는 `apply-config`뿐이다.
+예외는 `.ETC.file_check_reboot`가 꺼진 경우다(사용자 결정, 2026-11-24, #192). 마지막 요청이 실패한 복구
+요청(`gstapp_restart`, `module_reload`, `camera_hard_reset`)인 `DEGRADED`에서는 데몬이
+`disconnect_init_interval_sec`마다 `camera_hard_reset`을 한 번 내고, 성공하면 `ACTIVE`로 돌아온다.
+`apply-config` 실패로 생긴 `DEGRADED`는 이때도 operator가 처리한다. 사다리와 disconnect 주기 복구의 요청은
+이때도 거부된다. `gstapp_restart`의 성공 검증은
 ord/vcm을 요구하지 않는다 — 성공 후 `ACTIVE`로 복귀하면 같은 순회의 liveness가 둘을 되살린다.
 
 runtime 정책에는 config SHA, digest, immutable generation, runtime manifest가 없다.

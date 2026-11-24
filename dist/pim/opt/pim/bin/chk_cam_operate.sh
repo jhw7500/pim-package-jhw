@@ -180,10 +180,12 @@ modules_loaded() {
     [ -d "/sys/module/max9296" ] && [ -d "/sys/module/imx8_media_dev" ]
 }
 
+# $3 이 1 이면 lifecycle 이 DEGRADED 여도 제출한다. file_check_reboot 가 꺼진 채 DEGRADED 에 머물 때의
+# 주기 재시도(maybe_retry_degraded)만 쓴다. 사다리와 끊김 주기 복구의 요청은 지금까지처럼 거부된다.
 cam_submit_internal_action() {
-    local action=$1 reason=$2 rc lifecycle
+    local action=$1 reason=$2 allow_degraded=${3:-0} rc lifecycle
     lifecycle=$(jq -r '.lifecycle // empty' "$PIM_CAMERA_RUN_DIR/owner.json" 2>/dev/null)
-    if [ "$lifecycle" != ACTIVE ]; then
+    if [ "$lifecycle" != ACTIVE ] && ! { [ "$allow_degraded" = 1 ] && [ "$lifecycle" = DEGRADED ]; }; then
         logger -p local0.warning "[$KEY][$tag:$LINENO] request $action refused: lifecycle=${lifecycle:-unknown} (not ACTIVE): $reason"
         return 69
     fi
@@ -429,6 +431,53 @@ maybe_init_cam_on_disconnect() {
     fi
 
     printf "%s,%s" "$first_seen" "$last_init" > "$DISCONNECT_INIT_CAM_STATE_FILE" 2>/dev/null
+    return 1
+}
+
+# file_check_reboot 가 꺼진 채 복구 실패로 DEGRADED 에 머물 때의 주기 재시도 (#192).
+# 꺼진 설정에서 데몬이 낸 복구가 실패하면 실행기는 재부팅으로 넘어가지 않고 owner 를 DEGRADED 로 둔다
+# (cam_operate_control.sh 의 _coc_reboot_escalation_blocked). DEGRADED 에서는 사다리와 끊김 주기 복구의
+# 요청이 모두 거부되고 liveness 도 돌지 않으므로, 그대로 두면 녹화가 멈춘 채 남는다(.6 2026-11-24 실측).
+# 끊김 주기 복구와 같은 간격마다 camera_hard_reset 을 한 번 낸다. 성공하면 실행기가 ACTIVE 로 되돌리고,
+# 실패하면 다시 DEGRADED 가 되어, 그 실패를 본 때부터 간격을 다시 잰 뒤 또 낸다. 하드 리셋은 모듈 재적재나
+# 하드 리셋이 실패한 뒤(dirty) apply-config 와 기동이 고르는 단계와 같다(_coc_effective_steps).
+# gstapp_restart 실패 뒤에도 같은 단계를 낸다 — 가벼운 단계가 이미 실패한 자리다.
+# 대상은 마지막 요청이 실패한 복구 요청(gstapp_restart, module_reload, camera_hard_reset)일 때뿐이다.
+# apply-config 실패, 정지 요청, 설정 오류, 소비자 기동 실패로 생긴 DEGRADED 는 건드리지 않는다. 재부팅이
+# 켜진 설정에서는 아무것도 하지 않는다. lifecycle 은 cam_monitor_control_iteration 이 반복마다 내놓은
+# 값이라 평소에는 jq 를 띄우지 않고, service-state 와 이력은 간격이 찬 반복에서만 읽는다(jq 한 번).
+degraded_since=0
+maybe_retry_degraded() {
+    local up iv hist last cause target type status
+    if [ "${PIM_CAMERA_MONITOR_LIFECYCLE:-}" != DEGRADED ] || [ "${PIM_CAMERA_AUTO_REBOOT:-1}" != 0 ]; then
+        degraded_since=0
+        return 1
+    fi
+    _final_watch_uptime_into up || return 1
+    # 처음 본 반복은 시각만 적는다(경과 0 이라 아래에서 걸러진다).
+    [ "$degraded_since" -ne 0 ] || degraded_since=$up
+    ladder_retry_interval_into iv
+    [ $((up - degraded_since)) -ge "$iv" ] || return 1
+    degraded_since=$up
+    hist=$PIM_CAMERA_STATE_DIR/recovery/history
+    last=$(ls -t "$hist" 2>/dev/null | head -n 1)
+    cause=$(jq -rs '[(.[0].degraded_target // ""), (.[1].request.type // ""), (.[1].request.status // "")] | join("|")' \
+        "$PIM_CAMERA_STATE_DIR/service-state.json" "$hist/$last" 2>/dev/null)
+    IFS='|' read -r target type status <<<"$cause"
+    case "$target:$type:$status" in
+        camera_health:module_reload:FAILED|camera_health:camera_hard_reset:FAILED|gstapp:gstapp_restart:FAILED) ;;
+        *)
+            logger -p local0.notice "[$KEY][$tag:$LINENO] DEGRADED retry skipped: not a failed recovery request (degraded_target=${target:-unknown} last request=${type:-unknown}/${status:-unknown})"
+            return 1
+            ;;
+    esac
+    logger -p local0.error "[$KEY][$tag:$LINENO] DEGRADED for ${iv}s with file_check_reboot off after $type failed: request camera_hard_reset"
+    # 접수됐으면 시계를 지운다. 요청은 다음 반복에서 실행되고, 실패하면 그 뒤 DEGRADED 를 처음 본 때부터
+    # 간격을 다시 잰다(제출 시각부터 재면 실행 시간만큼 쉬는 시간이 줄어든다). 접수되지 않았으면 한 간격 뒤다.
+    if cam_submit_internal_action camera_hard_reset "degraded periodic recovery" 1; then
+        degraded_since=0
+        return 0
+    fi
     return 1
 }
 
@@ -1280,6 +1329,57 @@ _final_watch_uptime_into() {
     printf -v "$1" '%s' "$_fwu_up"
 }
 
+# --- file_check_reboot 가 꺼져 있을 때의 사다리 대기 (#192) -------------------------------------------
+# 재부팅으로 넘어가지 않는 설정에서는 사다리가 한계를 넘으면 횟수를 0 으로 되돌린다. 곧바로 다시 세면 증상이
+# 남아 있는 동안 재시작·재적재·하드 리셋이 쉬지 않고 되풀이된다(.6 2026-11-24 실측 약 4분 주기). 끊김 주기
+# 복구와 같은 간격(DISCONNECT_INIT_CAM_INTERVAL_SEC, 기본 180초)만큼 쉰 뒤 1 부터 다시 센다.
+# 쉬는 동안 파일 검사·시작 마커·드라이버 미적재·최종 경로 정체 사다리는 세지도 요청하지도 않는다. 끊김
+# 주기 복구와 liveness 는 그대로 돈다. 쉬는 시간은 증상이 사라져도 줄지 않는다(끊김 주기와 같은 방식).
+# 간격을 아주 짧게 설정해도 하드 리셋이 연달아 나가지 않게 하한을 둔다. 시각은 /proc/uptime 이다.
+LADDER_RETRY_MIN_SEC=60
+ladder_hold_until=0
+ladder_hold_log_up=0
+ladder_retry_interval_into() {
+    local _lri=${DISCONNECT_INIT_CAM_INTERVAL_SEC:-}
+    [[ "$_lri" =~ ^[0-9]+$ ]] || _lri=${DISCONNECT_INIT_CAM_INTERVAL_SEC_DEFAULT:-180}
+    # 설정이 "0180" 같은 문자열이면 산술식이 8진수로 읽는다. 8·9 가 있으면 산술 오류가 본문 루프를
+    # 통째로 버리므로(데몬이 rc 0 으로 끝난다) 10진으로 고쳐 둔다.
+    _lri=$((10#$_lri))
+    [ "$_lri" -ge "$LADDER_RETRY_MIN_SEC" ] || _lri=$LADDER_RETRY_MIN_SEC
+    printf -v "$1" '%s' "$_lri"
+}
+
+# 사다리가 한계를 넘어 횟수를 되돌린 자리에서 부른다. 가동 시간을 못 읽으면 쉬지 않는다(예전 동작).
+ladder_hold_start() {
+    local up iv
+    _final_watch_uptime_into up || return 0
+    ladder_retry_interval_into iv
+    ladder_hold_until=$((up + iv))
+    ladder_hold_log_up=$up
+    logger -p local0.notice "[$KEY][$tag:$LINENO] ladder paused for ${iv}s because file_check_reboot is not true"
+}
+
+# 쉬는 중이면 0 을 돌려준다. $1=이번에 건너뛰는 사유. 건너뛴 사실은 30초에 한 번만 남긴다.
+ladder_on_hold() {
+    local up
+    [ "$ladder_hold_until" -gt 0 ] || return 1
+    # 쉬는 중에 설정이 켜졌으면(apply-config) 곧바로 푼다. 켜진 설정에서는 사다리가 쉬지 않는다.
+    if [[ "${file_chk_reboot:-}" == *"${ENABLE_VAL:-true}"* ]]; then
+        ladder_hold_until=0
+        return 1
+    fi
+    _final_watch_uptime_into up || return 1
+    if [ "$up" -ge "$ladder_hold_until" ]; then
+        ladder_hold_until=0
+        return 1
+    fi
+    if [ $((up - ladder_hold_log_up)) -ge 30 ]; then
+        ladder_hold_log_up=$up
+        logger -p local0.notice "[$KEY][$tag:$LINENO] ladder paused, $((ladder_hold_until - up))s left: no request for $1"
+    fi
+    return 0
+}
+
 # 지금 떠 있는 카메라 앱의 pid 목록(오름차순, 공백 구분). 앱이 없으면 빈 값.
 _final_watch_app_pids() {
     local app="" pids
@@ -1403,6 +1503,16 @@ CheckFinalArrival() {
         return 0
     fi
 
+    # file_check_reboot 가 꺼진 채 사다리가 한계를 넘었으면 쉬는 동안의 정체는 세지도 요청하지도 않는다.
+    # 감시는 아래와 같이 풀어, 같은 정체를 반복마다 다시 보지 않게 한다.
+    if ladder_on_hold "final path stall"; then
+        echo "NG" > "$FILE_CHECK"
+        final_watch_since=0
+        final_watch_pids=""
+        _write_final_health "STALL" "$final_stall_cnt"
+        return 0
+    fi
+
     next=$(( final_stall_cnt + 1 ))
     logger -p local0.emerg "[$KEY][$tag:$LINENO] FINAL STALL: no new ${vhl_name}_* in ${final_dir} for >${window_min}m (stall_cnt=$next)"
     echo "NG" > "$FILE_CHECK"
@@ -1426,6 +1536,7 @@ CheckFinalArrival() {
     else
         logger -p local0.notice "[$KEY][$tag:$LINENO] FINAL STALL persistent but file_chk_reboot=false — reset counter"
         final_stall_cnt=0
+        ladder_hold_start
         _write_final_health "STALL" "$next"
         return 0
     fi
@@ -1670,6 +1781,9 @@ do
         continue
     fi
 
+    # file_check_reboot 가 꺼진 채 복구 실패로 DEGRADED 에 머물면 주기적으로 하드 리셋을 다시 낸다(#192).
+    maybe_retry_degraded || :
+
     if [ -f /tmp/kill_flag ]; then
         logger -p local0.notice "[$KEY][$tag:$LINENO] kill_flag set"
         rm /tmp/kill_flag
@@ -1710,7 +1824,9 @@ do
         cam_disconnect_flag=$(get_cam_disconnect_flag)
         logger -p local0.error "[$KEY][$tag:$LINENO] driver module not loaded (max9296/imx8_media_dev)"
         echo "NG" > $FILE_CHECK
-        if (( cam_disconnect_flag == 0x0 )); then
+        if (( cam_disconnect_flag == 0x0 )) && ladder_on_hold "driver load failure"; then
+            :   # 쉬는 중에는 세지도 요청하지도 않는다(ladder_on_hold 가 남긴다)
+        elif (( cam_disconnect_flag == 0x0 )); then
             ((retry_boot++))
             retry_total=$(($retry+$retry_boot))
             if [ "$retry_total" -le 5 ]; then
@@ -1726,6 +1842,7 @@ do
                     retry=0
                     retry_boot=0
                     retry_total=0
+                    ladder_hold_start
                 fi
             fi
         else
@@ -1899,7 +2016,9 @@ do
                 start_f=0
                 echo "NG" > $FILE_CHECK
                 cam_disconnect_flag=$(get_cam_disconnect_flag)
-                if (( cam_disconnect_flag == 0x0 )); then
+                if (( cam_disconnect_flag == 0x0 )) && ladder_on_hold "file check failure"; then
+                    :   # 쉬는 중에는 세지도 요청하지도 않는다(ladder_on_hold 가 남긴다)
+                elif (( cam_disconnect_flag == 0x0 )); then
                     ((retry++))
                     retry_total=$(($retry+$retry_boot))
                     file_check_partial_floor "${missing_chs[@]}"
@@ -1912,8 +2031,8 @@ do
                     elif [ "$retry_total" -le 5 ]; then
                         # 이 사다리만 이어질 때, 모듈 재적재가 성공으로 끝나도 증상이 남으면 같은 동작을 되풀이하지 않고
                         # CSI·ISI 까지 다시 묶는다(#192). 하드 리셋이 실패하면 실행기가 같은 요청 안에서 재부팅으로 넘어간다.
-                        # file_chk_reboot 가 꺼져 있으면 넘어가지 않는다 — 요청이 FAILED 로 끝나고 owner 가 DEGRADED 가 되어
-                        # 운영자가 조치할 때까지 자동 복구가 멈춘다(GetConfig_ 의 PIM_CAMERA_AUTO_REBOOT).
+                        # file_chk_reboot 가 꺼져 있으면 넘어가지 않는다 — 요청이 FAILED 로 끝나고 owner 가 DEGRADED 가 된다
+                        # (GetConfig_ 의 PIM_CAMERA_AUTO_REBOOT). 그 뒤로는 maybe_retry_degraded 가 주기적으로 다시 낸다.
                         logger -p local0.error  "[$KEY][$tag:$LINENO] request camera_hard_reset (retry=$retry boot=$retry_boot total=$retry_total, next: reboot fallback at total>5 if file_chk_reboot=$file_chk_reboot)"
                         cam_submit_internal_action camera_hard_reset "file check failure"
                     else
@@ -1926,6 +2045,7 @@ do
                             retry=0
                             retry_boot=0
                             retry_total=0
+                            ladder_hold_start
                         fi
                     fi
                 else
@@ -1974,7 +2094,11 @@ do
 
             echo "NG" > $FILE_CHECK
             cam_disconnect_flag=$(get_cam_disconnect_flag)
-            if ! start_marker_disconnect_path "$cam_disconnect_flag"; then
+            marker_disc=1
+            if ! start_marker_disconnect_path "$cam_disconnect_flag"; then marker_disc=0; fi
+            if [ "$marker_disc" -eq 0 ] && ladder_on_hold "gstapp start marker missing"; then
+                :   # 쉬는 중에는 세지도 요청하지도 않는다(ladder_on_hold 가 남긴다)
+            elif [ "$marker_disc" -eq 0 ]; then
                 ((retry_boot++))
                 retry_total=$(($retry+$retry_boot))
                 if [ "$retry_total" -le 2 ]; then
@@ -2000,6 +2124,7 @@ do
                         retry=0
                         retry_boot=0
                         retry_total=0
+                        ladder_hold_start
                     fi
                 fi
             else

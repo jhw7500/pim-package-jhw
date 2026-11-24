@@ -190,7 +190,7 @@ heartbeat가 없거나 stale이면 설정된 final 경로의 최근
 | `stall_cnt` 1~2 | `STALL`, `gstapp_restart` |
 | `stall_cnt` 3 | `STALL`, `module_reload` |
 | `stall_cnt` 4 | `STALL`, `camera_hard_reset` |
-| `stall_cnt` 5 이상 | `file_check_reboot=true`면 `reboot_fallback`, 아니면 카운터 초기화 |
+| `stall_cnt` 5 이상 | `file_check_reboot=true`면 `reboot_fallback`, 아니면 카운터 초기화 뒤 `disconnect_init_interval_sec`만큼 대기 |
 
 상세 진단은 [runbook_final_stall.md](./runbook_final_stall.md)를 참조한다.
 

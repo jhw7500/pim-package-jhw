@@ -37,7 +37,7 @@
 | `REC_DISABLED` | 0 | 모든 채널 비활성 또는 capture 녹화 비활성 |
 | `BUSY` | 0 | init/restart/kill 진행 중, 또는 복구 요청이 거절됨(다른 요청이 진행 중) |
 | `WARMUP` | 감시를 건 뒤 경과(초). 대기 중이면 0 | 앱이 조각을 열기를 기다리거나 유예 중 |
-| `STALL` | `stall_cnt` | final 도착 정체, 자동 복구 사다리 진행. 복구를 요청한 뒤 도착이 다시 확인될 때까지 유지(`file_check_reboot=false`로 카운터가 0으로 돌아가면 `WARMUP`으로 바뀐다) |
+| `STALL` | `stall_cnt` | final 도착 정체, 자동 복구 사다리 진행. 복구를 요청한 뒤 도착이 다시 확인될 때까지 유지(`file_check_reboot=false`로 카운터가 0으로 돌아가면 `WARMUP`으로 바뀐다. 사다리가 쉬는 동안 다시 정체로 판정되면 세지 않고 `STALL 0`으로 남는다) |
 
 검사 윈도우는 `max(rec_min * 2, 2)`분이다. 여기에
 `file_check_delay + startup_grace_extra_sec`를 더한 시간(기본 `recording_time=1`분
@@ -57,7 +57,7 @@
 | 1~2 | `gstapp_restart` 요청 |
 | 3 | `module_reload` 요청 |
 | 4 | `camera_hard_reset` 요청 |
-| 5 이상 | `file_check_reboot=true`면 `reboot_fallback` 요청, 아니면 카운터 초기화 |
+| 5 이상 | `file_check_reboot=true`면 `reboot_fallback` 요청, 아니면 카운터를 초기화하고 `disconnect_init_interval_sec`(기본 180초)만큼 사다리를 쉰다 |
 
 유지보수 블록이 돌 때마다 다시 평가한다. `MovePartFile()`이 실제 final 도착을
 완료하면 `/tmp/cam_last_final_ts`를 갱신하고 다음 검사에서 `OK`로 복귀한다.

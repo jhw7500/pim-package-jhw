@@ -306,11 +306,14 @@ cold_jq_spawns=$(wc -l < "$PIM_CAMERA_JQ_LOG")
 expect_rc 1 cam_monitor_control_iteration monitor_config_reload
 warm_jq_spawns=$(wc -l < "$PIM_CAMERA_JQ_LOG")
 [ "$warm_jq_spawns" -eq "$cold_jq_spawns" ] || fail 'warm monitor iteration spawned periodic jq'
+# 데몬 루프가 jq 없이 lifecycle 을 볼 수 있게 반복마다 내놓는다(#192 의 DEGRADED 주기 재시도가 읽는다).
+[ "${PIM_CAMERA_MONITOR_LIFECYCLE:-}" = ACTIVE ] || fail "monitor iteration exposed lifecycle [${PIM_CAMERA_MONITOR_LIFECYCLE:-}] instead of ACTIVE"
 owner=$(cat "$PIM_CAMERA_RUN_DIR/owner.json")
 stopping=$("$PIM_CAMERA_REAL_JQ" -c '.lifecycle="STOPPING" | .updated_at=(now|floor)' <<<"$owner")
 _cr_atomic_write "$PIM_CAMERA_RUN_DIR/owner.json" "$stopping"
 expect_rc 1 cam_monitor_control_iteration monitor_config_reload
 [ "$PIM_CAMERA_MONITOR_STOPPING" -eq 1 ] || fail 'warm monitor cache hid ACTIVE to STOPPING transition'
+[ "${PIM_CAMERA_MONITOR_LIFECYCLE:-}" = STOPPING ] || fail "monitor iteration exposed lifecycle [${PIM_CAMERA_MONITOR_LIFECYCLE:-}] instead of STOPPING"
 transition_jq_spawns=$(wc -l < "$PIM_CAMERA_JQ_LOG")
 [ "$transition_jq_spawns" -eq $((cold_jq_spawns + 1)) ] || fail 'owner transition did not trigger exactly one lifecycle reparse'
 

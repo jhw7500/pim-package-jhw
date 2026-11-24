@@ -73,7 +73,7 @@
   - stall_cnt 1~2: `FINAL STALL request gstapp_restart` 로그
   - stall_cnt 3: `FINAL STALL request module_reload` 로그
   - stall_cnt 4: `FINAL STALL request camera_hard_reset` 로그
-  - stall_cnt 5: `FINAL STALL request reboot_fallback` 로그(file_chk_reboot=true 시) 또는 카운터 리셋
+  - stall_cnt 5: `FINAL STALL request reboot_fallback` 로그(file_chk_reboot=true 시) 또는 카운터 리셋과 `ladder paused for 180s` 로그
 
 물리 disconnect는 이 시나리오의 대체 수단이 아니다. 현재 기본값에서는
 `maybe_init_cam_on_disconnect()`가 주기적 `module_reload` 요청을 소유하고
