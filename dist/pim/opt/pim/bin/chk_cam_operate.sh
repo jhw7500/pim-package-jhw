@@ -1658,6 +1658,10 @@ DISABLE_VAL="false"
 retry=0
 retry_boot=0
 retry_total=0
+ladder_hard_reset_sent=0
+# ladder_hard_reset_sent: 이번 주기에 파일 검사·시작 마커 사다리가 camera_hard_reset 을 낸 적이 있으면 1 (#192).
+# 두 사다리는 한계를 넘어도 이 값이 0 이면 포기(재부팅 요청이나 초기화·대기)하기 전에 하드 리셋을 한 번 낸다.
+# 횟수를 0 으로 되돌리는 자리마다 바로 뒤에서 함께 내린다.
 final_stall_cnt=0
 #touch $FILE_
 
@@ -1835,6 +1839,7 @@ do
                     retry=0
                     retry_boot=0
                     retry_total=0
+                    ladder_hard_reset_sent=0
                     ladder_hold_start
                 fi
             fi
@@ -2031,6 +2036,14 @@ do
                         # file_chk_reboot 가 꺼져 있으면 넘어가지 않는다 — 요청이 FAILED 로 끝나고 owner 가 DEGRADED 가 된다
                         # (GetConfig_ 의 PIM_CAMERA_AUTO_REBOOT). 그 뒤로는 maybe_retry_degraded 가 주기적으로 다시 낸다.
                         logger -p local0.error  "[$KEY][$tag:$LINENO] request camera_hard_reset (retry=$retry boot=$retry_boot total=$retry_total, next: reboot fallback at total>5 if file_chk_reboot=$file_chk_reboot)"
+                        ladder_hard_reset_sent=1
+                        cam_submit_internal_action camera_hard_reset "file check failure"
+                    elif [ "$ladder_hard_reset_sent" -eq 0 ]; then
+                        # 한계를 넘었지만 이번 주기에 사다리가 하드 리셋을 낸 적이 없다. 두 사다리가 횟수를 함께 써서 실패가
+                        # 섞이면 하드 리셋 자리(이 사다리 5, 시작 마커 4)를 건너뛴다. 포기하기 전에 한 번 낸다(#192).
+                        # 횟수는 그대로 두므로 다음 실패는 포기로 간다.
+                        logger -p local0.error  "[$KEY][$tag:$LINENO] request camera_hard_reset before giving up (retry=$retry boot=$retry_boot total=$retry_total): none requested in this cycle"
+                        ladder_hard_reset_sent=1
                         cam_submit_internal_action camera_hard_reset "file check failure"
                     else
                         logger -p local0.error "[$KEY][$tag:$LINENO] retry total $retry_total is over"
@@ -2042,6 +2055,7 @@ do
                             retry=0
                             retry_boot=0
                             retry_total=0
+                            ladder_hard_reset_sent=0
                             ladder_hold_start
                         fi
                     fi
@@ -2064,6 +2078,7 @@ do
 				retry=0
                 retry_boot=0
                 retry_total=0
+                ladder_hard_reset_sent=0
                 echo "OK" > $FILE_CHECK
 			fi
 		fi
@@ -2108,8 +2123,16 @@ do
                     cam_submit_internal_action module_reload "gstapp start marker missing"
                 elif [ "$retry_total" -le 4 ]; then
                     # 파일 검사 사다리와 같은 자리다(#192). 두 사다리는 retry_total 을 함께 쓰므로 실패가 섞이면 한쪽
-                    # 단계를 건너뛰거나 되풀이할 수 있다. 재부팅을 요청하는 조건은 이 변경으로 바뀌지 않았다.
+                    # 단계를 건너뛰거나 되풀이할 수 있다. 이 자리를 건너뛴 채 한계를 넘으면 아래 분기가 포기하기 전에
+                    # 하드 리셋을 한 번 낸다.
                     logger -p local0.error  "[$KEY][$tag:$LINENO] request camera_hard_reset (retry=$retry boot=$retry_boot total=$retry_total, next: reboot fallback at total>4 if file_chk_reboot=$file_chk_reboot)"
+                    ladder_hard_reset_sent=1
+                    cam_submit_internal_action camera_hard_reset "gstapp start marker missing"
+                elif [ "$ladder_hard_reset_sent" -eq 0 ]; then
+                    # 파일 검사 사다리의 같은 분기와 같다. 재적재(횟수 4) 뒤에 이 검사가 먼저 실패하면 횟수 5 로 한계를
+                    # 넘는데, 그때까지 하드 리셋을 낸 적이 없다.
+                    logger -p local0.error  "[$KEY][$tag:$LINENO] request camera_hard_reset before giving up (retry=$retry boot=$retry_boot total=$retry_total): none requested in this cycle"
+                    ladder_hard_reset_sent=1
                     cam_submit_internal_action camera_hard_reset "gstapp start marker missing"
                 else
                     logger -p local0.error "[$KEY][$tag:$LINENO] retry_total $retry_total is over"
@@ -2121,6 +2144,7 @@ do
                         retry=0
                         retry_boot=0
                         retry_total=0
+                        ladder_hard_reset_sent=0
                         ladder_hold_start
                     fi
                 fi

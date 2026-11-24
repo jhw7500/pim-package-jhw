@@ -143,7 +143,8 @@ CheckFinalArrival
 - `retry_total` 1~3: `gstapp_restart`
 - `retry_total` 4: `module_reload`
 - `retry_total` 5: `camera_hard_reset`
-- `retry_total` 6 이상: `file_check_reboot=true`면 `reboot_fallback`
+- `retry_total` 6 이상: 이번 주기에 사다리가 `camera_hard_reset`을 낸 적이 없으면 먼저 한 번 내고, 낸 적이
+  있으면 `file_check_reboot=true`일 때 `reboot_fallback`
 
 성공하면 `retry`, `retry_boot`, `retry_total`과 `/tmp/file_check`를
 정상 상태로 되돌린다. 재기동 직후 첫 조각이 아직 없으면 파일 검사를 보류하고(#190),
@@ -157,7 +158,8 @@ disconnect 중에는 이 사다리를 그대로 진행하지 않는다.
 - `retry_total` 1~2: `gstapp_restart`
 - `retry_total` 3: `module_reload`
 - `retry_total` 4: `camera_hard_reset`
-- `retry_total` 5 이상: `file_check_reboot=true`면 `reboot_fallback`
+- `retry_total` 5 이상: 이번 주기에 사다리가 `camera_hard_reset`을 낸 적이 없으면 먼저 한 번 내고, 낸 적이
+  있으면 `file_check_reboot=true`일 때 `reboot_fallback`
 
 모든 카메라 채널이 비활성인 경우에는 실패로 보지 않는다.
 

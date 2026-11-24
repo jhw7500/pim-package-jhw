@@ -40,18 +40,20 @@ extract_block() {
 }
 
 # 블록을 한 번 실행한다. $1=블록 파일  $2=retry_total  $3=file_chk_reboot
+# $4=이번 주기에 사다리가 하드 리셋을 이미 냈으면 1(기본값 - 사다리 하나만 이어지면 한계를 넘기 전에 낸다)
 # 출력: "<요청>|<사유> <실행 뒤 retry_total>". 요청이 없으면 요청 자리는 "-" 다. 블록이 사다리 대기를
-# 시작했으면(ladder_hold_start) 끝에 " hold" 가 붙는다.
+# 시작했으면(ladder_hold_start) 끝에 " hold" 가 붙는다. SHOW_SENT=1 이면 실행 뒤의 표시 값을 덧붙인다.
 step() {
     (
         KEY=test tag=test ENABLE_VAL=true
         retry=$2 retry_boot=0 retry_total=$2 file_chk_reboot=$3 req= hold=
+        ladder_hard_reset_sent=${4:-1}
         logger() { :; }
         cam_submit_internal_action() { req="${req:+$req,}$1|$2"; }
         ladder_hold_start() { hold=1; }
         # shellcheck disable=SC1090  # 대상 스크립트에서 잘라낸 블록이다
         source "$1"
-        printf '%s %s%s\n' "${req:--}" "$retry_total" "${hold:+ hold}"
+        printf '%s %s%s%s\n' "${req:--}" "$retry_total" "${hold:+ hold}" "${SHOW_SENT:+ sent=$ladder_hard_reset_sent}"
     )
 }
 
@@ -75,6 +77,12 @@ t_eq "file_check_reboot 가 꺼져도 하드 리셋까지 간다" "$(walk "$WORK
     "gstapp_restart gstapp_restart gstapp_restart module_reload camera_hard_reset"
 t_eq "꺼져 있으면 그다음은 요청 없이 횟수를 0 으로 하고 쉰다" "$(step "$WORK/file.sh" 6 false)" "- 0 hold"
 t_eq "켜져 있으면 쉬지 않고 재부팅을 요청한다" "$(step "$WORK/file.sh" 6 true)" "reboot_fallback|file check failure exhausted 6"
+# 두 사다리가 횟수를 함께 써서 하드 리셋 자리(5)를 건너뛴 채 한계를 넘을 수 있다. 그때는 포기하기 전에 하드
+# 리셋을 한 번 낸다(#192). 횟수는 그대로라 다음 실패는 포기로 간다.
+t_eq "한계를 넘었는데 낸 적이 없으면 재부팅 대신 하드 리셋" "$(SHOW_SENT=1 step "$WORK/file.sh" 6 true 0)" "camera_hard_reset|file check failure 6 sent=1"
+t_eq "꺼진 설정도 쉬기 전에 하드 리셋" "$(SHOW_SENT=1 step "$WORK/file.sh" 6 false 0)" "camera_hard_reset|file check failure 6 sent=1"
+t_eq "자리 하드 리셋(5)이 표시를 세운다" "$(SHOW_SENT=1 step "$WORK/file.sh" 5 true 0)" "camera_hard_reset|file check failure 5 sent=1"
+t_eq "꺼진 설정의 초기화가 표시를 내린다" "$(SHOW_SENT=1 step "$WORK/file.sh" 6 false 1)" "- 0 hold sent=0"
 
 echo "=== 시작 마커 사다리 ==="
 extract_block 'if [ "$retry_total" -le 2 ]; then' "$WORK/marker.sh" || exit 1
@@ -85,6 +93,10 @@ t_eq "file_check_reboot 가 꺼져도 하드 리셋까지 간다" "$(walk "$WORK
     "gstapp_restart gstapp_restart module_reload camera_hard_reset"
 t_eq "꺼져 있으면 그다음은 요청 없이 횟수를 0 으로 하고 쉰다" "$(step "$WORK/marker.sh" 5 false)" "- 0 hold"
 t_eq "켜져 있으면 쉬지 않고 재부팅을 요청한다" "$(step "$WORK/marker.sh" 5 true)" "reboot_fallback|gstapp start marker missing exhausted 5"
+t_eq "한계를 넘었는데 낸 적이 없으면 재부팅 대신 하드 리셋" "$(SHOW_SENT=1 step "$WORK/marker.sh" 5 true 0)" "camera_hard_reset|gstapp start marker missing 5 sent=1"
+t_eq "꺼진 설정도 쉬기 전에 하드 리셋" "$(SHOW_SENT=1 step "$WORK/marker.sh" 5 false 0)" "camera_hard_reset|gstapp start marker missing 5 sent=1"
+t_eq "자리 하드 리셋(4)이 표시를 세운다" "$(SHOW_SENT=1 step "$WORK/marker.sh" 4 true 0)" "camera_hard_reset|gstapp start marker missing 4 sent=1"
+t_eq "꺼진 설정의 초기화가 표시를 내린다" "$(SHOW_SENT=1 step "$WORK/marker.sh" 5 false 1)" "- 0 hold sent=0"
 
 echo "=== 쉬는 동안 ==="
 # file_check_reboot 가 꺼진 채 한계를 넘으면 사다리는 끊김 주기와 같은 간격만큼 쉰다. 사다리를 감싼 분기
@@ -97,7 +109,7 @@ echo "=== 쉬는 동안 ==="
 gate() {
     (
         KEY=test tag=test ENABLE_VAL=true file_chk_reboot=false
-        retry=0 retry_boot=0 retry_total=0 req= asked=
+        retry=0 retry_boot=0 retry_total=0 req= asked= ladder_hard_reset_sent=0
         cam_disconnect_flag=$3 marker_disc=${4:-0} missing_chs=() disc_note=
         DISCONNECT_INIT_CAM_STATE_FILE="$WORK/disc_state"
         logger() { :; }
@@ -141,14 +153,15 @@ t_eq "시작 마커: 쉬지 않으면 1 부터 센다" "$(gate "$WORK/marker_gat
 t_eq "시작 마커: 끊김 분기는 쉬는 것과 무관하다" "$(gate "$WORK/marker_gate.sh" 1 5 1)" \
     "module_reload|disconnect startup failure retry=0 boot=0 total=0 asked=[]"
 # 두 사다리는 횟수를 함께 쓴다. 쉬는 동안 횟수가 0 으로 남아 있어야, 쉰 직후 시작 마커 사다리가 먼저 돌아도
-# 1 부터 센다. 쉬는 중에 횟수를 올려 두면 시작 마커 사다리가 그 자리에서 한계 초과로 보고 요청 없이 다시
-# 쉰다(.6 2026-11-24 실측의 순서). 하드 리셋까지 가는 것은 재적재 뒤에 파일 검사가 이어서 실패할 때다.
-# 재적재 뒤에 시작 마커 검사가 먼저 실패하면 하드 리셋 없이 한계를 넘는다(아래 "알려진 한계").
+# 1 부터 센다. 쉬는 중에 횟수를 올려 두면 시작 마커 사다리가 그 자리에서 한계 초과로 본다(.6 2026-11-24
+# 실측의 순서). 재적재 뒤에 시작 마커 검사가 먼저 실패하면 횟수 5 로 한계를 넘는데, 그때까지 하드 리셋을 낸
+# 적이 없으면 포기하기 전에 한 번 낸다(#192).
 # both <"file|marker:쉬는 중이면 1" …> : PARTIAL 기동이 이어지는 동안 두 블록을 차례로 돌린다.
+# REBOOT=true 면 file_check_reboot 가 켜진 설정이다(기본은 꺼짐).
 both() {
     (
-        KEY=test tag=test ENABLE_VAL=true file_chk_reboot=false
-        retry=0 retry_boot=0 retry_total=0 req= asked= holds=0
+        KEY=test tag=test ENABLE_VAL=true file_chk_reboot=${REBOOT:-false}
+        retry=0 retry_boot=0 retry_total=0 req= asked= holds=0 ladder_hard_reset_sent=0
         cam_disconnect_flag=0 marker_disc=0 missing_chs=() disc_note=
         DISCONNECT_INIT_CAM_STATE_FILE="$WORK/disc_state"
         logger() { :; }
@@ -172,13 +185,24 @@ t_eq "쉰 뒤 시작 마커가 먼저 돌고 파일 검사가 이어지면 재�
     "gstapp_restart,module_reload,camera_hard_reset total=5 holds=0"
 t_eq "쉰 뒤 파일 검사가 먼저 돌면 재적재, 하드 리셋 순으로 간다" "$(both file:1 marker:1 file:0 file:0)" \
     "module_reload,camera_hard_reset total=5 holds=0"
-# 알려진 한계: 재적재(횟수 4) 뒤에 시작 마커 검사가 먼저 실패하면 그 사다리는 5 를 한계 초과로 본다. 꺼진
-# 설정에서는 하드 리셋 없이 횟수를 되돌리고 다시 쉰다. 이 변경 전에도 같고 보드에서는 나오지 않았다. 지금
-# 동작을 적어 두는 시험이라, 횟수 공유를 고치면 이 기대값을 함께 바꾼다.
-t_eq "알려진 한계: 재적재 뒤 시작 마커가 먼저 실패하면 하드 리셋 없이 다시 쉰다" "$(both file:1 file:0 marker:0)" \
-    "module_reload total=0 holds=1"
-t_eq "알려진 한계: 재시작, 재적재 뒤 시작 마커가 먼저 실패해도 같다" "$(both file:1 marker:0 file:0 marker:0)" \
-    "gstapp_restart,module_reload total=0 holds=1"
+# 재적재(횟수 4) 뒤에 시작 마커 검사가 먼저 실패하면 그 사다리는 5 를 한계 초과로 본다. 그때까지 하드 리셋을
+# 낸 적이 없으므로 포기하지 않고 하드 리셋을 낸다. 그다음 실패에서 포기한다(꺼진 설정은 초기화하고 쉰다).
+t_eq "재적재 뒤 시작 마커가 먼저 실패하면 포기 전에 하드 리셋을 낸다" "$(both file:1 file:0 marker:0)" \
+    "module_reload,camera_hard_reset total=5 holds=0"
+t_eq "그다음 실패에서 쉰다" "$(both file:1 file:0 marker:0 marker:0)" \
+    "module_reload,camera_hard_reset total=0 holds=1"
+t_eq "재시작, 재적재 뒤 시작 마커가 먼저 실패해도 같다" "$(both file:1 marker:0 file:0 marker:0)" \
+    "gstapp_restart,module_reload,camera_hard_reset total=5 holds=0"
+t_eq "켜진 설정: 재적재, 하드 리셋, 재부팅 순이다" "$(REBOOT=true both file:0 marker:0 marker:0)" \
+    "module_reload,camera_hard_reset,reboot_fallback total=6 holds=0"
+t_eq "켜진 설정: 파일 검사가 끝에 와도 같다" "$(REBOOT=true both file:0 marker:0 file:0)" \
+    "module_reload,camera_hard_reset,reboot_fallback total=6 holds=0"
+# 이미 하드 리셋을 거치는 순서는 바뀌지 않는다(한 단계도 늘지 않는다).
+t_eq "켜진 설정: 파일 검사만 이어지면 그대로다" "$(REBOOT=true both file:0 file:0 file:0)" \
+    "module_reload,camera_hard_reset,reboot_fallback total=6 holds=0"
+# 쉰 뒤의 새 주기는 표시가 내려간 채 시작한다. 내려가지 않으면 둘째 주기가 하드 리셋 없이 쉰다.
+t_eq "꺼진 설정: 주기마다 포기 전에 하드 리셋을 낸다" "$(both file:0 marker:0 marker:0 file:0 marker:0 marker:0)" \
+    "module_reload,camera_hard_reset,module_reload,camera_hard_reset total=0 holds=2"
 extract_block 'if (( cam_disconnect_flag == 0x0 )) && ladder_on_hold "driver load failure"; then' "$WORK/driver_gate.sh" || exit 1
 t_eq "드라이버 미적재: 쉬는 중이면 세지도 요청하지도 않는다" "$(gate "$WORK/driver_gate.sh" 1 0)" \
     "- retry=0 boot=0 total=0 asked=[driver load failure]"
@@ -188,12 +212,16 @@ t_eq "드라이버 미적재: 꺼진 설정의 한계 초과도 쉰다" "$(grep 
 
 echo "=== 하드 리셋을 내는 곳 ==="
 # 끊김 경로(케이블이 빠진 상태의 주기 복구)와 드라이버 적재 실패는 하드 리셋을 내지 않는다.
-# 감시가 내는 곳은 위 두 블록, 최종 경로 정체(action 변수로 고른다), 그리고 file_check_reboot 가 꺼진 채
-# DEGRADED 에 머물 때의 주기 재시도(maybe_retry_degraded)다.
-t_eq "직접 제출은 세 곳" "$(grep -c 'cam_submit_internal_action camera_hard_reset ' "$CHK")" 3
+# 감시가 내는 곳은 위 두 블록(각각 자리와 포기 전), 최종 경로 정체(action 변수로 고른다), 그리고
+# file_check_reboot 가 꺼진 채 DEGRADED 에 머물 때의 주기 재시도(maybe_retry_degraded)다.
+t_eq "직접 제출은 다섯 곳" "$(grep -c 'cam_submit_internal_action camera_hard_reset ' "$CHK")" 5
 t_eq "그중 하나는 DEGRADED 주기 재시도" "$(grep -c 'cam_submit_internal_action camera_hard_reset "degraded periodic recovery" 1; then$' "$CHK")" 1
-t_eq "파일 검사 블록 안에 하나" "$(grep -c 'cam_submit_internal_action camera_hard_reset ' "$WORK/file.sh")" 1
-t_eq "시작 마커 블록 안에 하나" "$(grep -c 'cam_submit_internal_action camera_hard_reset ' "$WORK/marker.sh")" 1
+t_eq "파일 검사 블록 안에 둘(자리, 포기 전)" "$(grep -c 'cam_submit_internal_action camera_hard_reset ' "$WORK/file.sh")" 2
+t_eq "시작 마커 블록 안에 둘(자리, 포기 전)" "$(grep -c 'cam_submit_internal_action camera_hard_reset ' "$WORK/marker.sh")" 2
+# 표시는 횟수를 0 으로 되돌리는 모든 자리에서 함께 내린다. 한 곳이라도 빠지면 다음 주기가 하드 리셋 없이 포기한다.
+t_eq "횟수를 0 으로 되돌리는 자리는 다섯" "$(grep -c -E '^[[:space:]]*retry_total=0$' "$CHK")" 5
+t_eq "그 다섯 자리 모두 바로 뒤에서 표시를 내린다" "$(grep -A1 -E '^[[:space:]]*retry_total=0$' "$CHK" | grep -c -E '^[[:space:]]*ladder_hard_reset_sent=0$')" 5
+t_eq "표시를 세우는 곳은 넷(두 사다리의 자리와 포기 전)" "$(grep -c -E '^[[:space:]]+ladder_hard_reset_sent=1$' "$CHK")" 4
 t_eq "변수로 고르는 곳은 최종 경로 정체 하나" "$(grep -c 'action=camera_hard_reset' "$CHK")" 1
 
 t_summary "감시 사다리"
