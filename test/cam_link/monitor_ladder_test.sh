@@ -90,22 +90,29 @@ echo "=== 쉬는 동안 ==="
 # file_check_reboot 가 꺼진 채 한계를 넘으면 사다리는 끊김 주기와 같은 간격만큼 쉰다. 사다리를 감싼 분기
 # (쉬는 중 / 사다리 / 끊김)를 원문 그대로 잘라 실행한다. 대기 자체(시작·끝·간격)는
 # test/cam_link/ladder_hold_retry_test.sh 가 본다.
-# gate <블록 파일> <쉬는 중이면 1> <cam_disconnect_flag> [marker_disc]
+# gate <블록 파일> <쉬는 중이면 1, 여러 번 돌리려면 "1 1 0" 처럼 차례로> <cam_disconnect_flag> [marker_disc]
+# PARTIAL=1 이면 지금 떠 있는 앱이 prepare 실패로 채널이 빠진 채 뜬 것으로 본다. 월반 판정 대역은 원문과
+# 같은 일을 한다(횟수 3 이하일 때만 서고, 서면 횟수를 재적재 단계 4 로 올린다). 판정 자체는
+# test/cam_link/partial_prepare_floor_test.sh 가 본다.
 gate() {
     (
         KEY=test tag=test ENABLE_VAL=true file_chk_reboot=false
         retry=0 retry_boot=0 retry_total=0 req= asked=
         cam_disconnect_flag=$3 marker_disc=${4:-0} missing_chs=() disc_note=
         DISCONNECT_INIT_CAM_STATE_FILE="$WORK/disc_state"
-        HOLD=$2
         logger() { :; }
         ladder_on_hold() { asked=$1; [ "$HOLD" = 1 ]; }
         ladder_hold_start() { :; }
-        file_check_partial_floor() { :; }
+        file_check_partial_floor() {
+            [ "${PARTIAL:-0}" = 1 ] && [ "$retry_total" -le 3 ] || return 1
+            retry=$((4 - retry_boot)); retry_total=4
+        }
         read_driver_disconnect() { echo 0; }
-        cam_submit_internal_action() { req="${req:+$req,}$1|$2"; }
-        # shellcheck disable=SC1090  # 대상 스크립트에서 잘라낸 블록이다
-        source "$1"
+        cam_submit_internal_action() { req="${req:+$req,}$1|$2"; return "${SUBMIT_RC:-0}"; }
+        for HOLD in $2; do
+            # shellcheck disable=SC1090  # 대상 스크립트에서 잘라낸 블록이다
+            source "$1"
+        done
         printf '%s retry=%s boot=%s total=%s asked=[%s]\n' "${req:--}" "$retry" "$retry_boot" "$retry_total" "$asked"
     )
 }
@@ -116,6 +123,22 @@ t_eq "파일 검사: 쉬지 않으면 1 부터 센다" "$(gate "$WORK/file_gate.
     "gstapp_restart|file check failure retry=1 boot=0 total=1 asked=[file check failure]"
 t_eq "파일 검사: 끊김 분기는 쉬는 것과 무관하다" "$(gate "$WORK/file_gate.sh" 1 5)" \
     "module_reload|disconnect file check failure retry=0 boot=0 total=0 asked=[]"
+# 예외 하나: prepare 실패로 채널이 빠진 채 뜬 앱은 쉬는 중에도 재적재를 낸다(.6 2026-11-24: 대기와 겹친
+# 실제 실패의 회복이 대기만큼 늦어졌다). 횟수는 재적재 단계(4)로 올라가므로 같은 대기 안에서는 한 번뿐이고,
+# 대기가 끝난 뒤에도 실패가 남아 있으면 사다리는 그다음 단계인 하드 리셋으로 이어진다.
+t_eq "파일 검사: 쉬는 중이라도 PARTIAL 기동이면 재적재를 낸다" "$(PARTIAL=1 gate "$WORK/file_gate.sh" 1 0)" \
+    "module_reload|file check failure retry=4 boot=0 total=4 asked=[file check failure]"
+t_eq "파일 검사: 같은 대기 안에서는 재적재를 한 번만 낸다" "$(PARTIAL=1 gate "$WORK/file_gate.sh" "1 1 1" 0)" \
+    "module_reload|file check failure retry=4 boot=0 total=4 asked=[file check failure]"
+# 요청이 거부돼도(진행 중인 요청이 있으면 75) 횟수는 올라가 있어 같은 대기 안에서 다시 내지 않는다.
+# 쉬지 않을 때의 PARTIAL 월반과 같은 동작이다.
+t_eq "파일 검사: 쉬는 중 재적재가 거부돼도 다시 내지 않는다" "$(PARTIAL=1 SUBMIT_RC=75 gate "$WORK/file_gate.sh" "1 1" 0)" \
+    "module_reload|file check failure retry=4 boot=0 total=4 asked=[file check failure]"
+t_eq "파일 검사: 대기 뒤에도 남아 있으면 하드 리셋으로 이어진다" "$(PARTIAL=1 gate "$WORK/file_gate.sh" "1 1 0" 0)" \
+    "module_reload|file check failure,camera_hard_reset|file check failure retry=5 boot=0 total=5 asked=[file check failure]"
+t_eq "파일 검사: 쉬지 않을 때의 PARTIAL 월반은 그대로다" "$(PARTIAL=1 gate "$WORK/file_gate.sh" 0 0)" \
+    "module_reload|file check failure retry=4 boot=0 total=4 asked=[file check failure]"
+t_eq "파일 검사: 쉬는 중 재적재는 대기 분기 안의 한 곳" "$(awk '/ladder_on_hold "file check failure"/ { p = 1 } p && /elif \(\( cam_disconnect_flag == 0x0 \)\); then/ { exit } p' "$WORK/file_gate.sh" | grep -c 'cam_submit_internal_action module_reload "file check failure"$')" 1
 extract_block 'if [ "$marker_disc" -eq 0 ] && ladder_on_hold "gstapp start marker missing"; then' "$WORK/marker_gate.sh" || exit 1
 t_eq "시작 마커: 쉬는 중이면 세지도 요청하지도 않는다" "$(gate "$WORK/marker_gate.sh" 1 0 0)" \
     "- retry=0 boot=0 total=0 asked=[gstapp start marker missing]"

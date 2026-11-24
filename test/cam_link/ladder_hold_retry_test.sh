@@ -12,11 +12,14 @@
 # 마지막 요청)과 주기, DEGRADED 에서의 제출 허용. 사다리 블록이 쉬는 동안 세지 않는지는 test/cam_link/monitor_ladder_test.sh 가, 최종 경로
 # 정체 사다리는 test/camera_health/final_stall_watch_test.sh 가 본다.
 #
-# LADDER_HOLD_DAEMON=<경로> 로 다른 사본을 시험할 수 있다. 변경 전 스크립트에는 이 함수들이 없어 추출에서
-# 실패한다.
+# LADDER_HOLD_DAEMON=<경로> 로 다른 감시 스크립트 사본을, LADDER_HOLD_CONTROL=<경로> 로 다른 실행기
+# 라이브러리 사본을 시험할 수 있다. 변경 전 스크립트에는 이 함수들이 없어 추출에서 실패한다.
+# DEGRADED 가 실패한 복구 요청에서 왔는지는 실행기 쪽 cam_degraded_by_failed_recovery 가 판정한다(상태·이력
+# 파일을 읽는 곳을 라이브러리로 모았다). 여기서는 감시 스크립트의 함수와 그 함수를 함께 읽어 들여 본다.
 source "$(dirname "$0")/lib.sh"
 
 CHK=${LADDER_HOLD_DAEMON:-$PIM_BIN/chk_cam_operate.sh}
+CTL=${LADDER_HOLD_CONTROL:-$PIM_LIB/cam_operate_control.sh}
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
@@ -24,6 +27,10 @@ FUNCS="_final_watch_uptime_into ladder_retry_interval_into ladder_hold_start lad
 for fn in $FUNCS; do
     t_extract_func "$CHK" "$fn" "$WORK/$fn.sh" || exit 1
 done
+t_extract_func "$CTL" cam_degraded_by_failed_recovery "$WORK/cam_degraded_by_failed_recovery.sh" || exit 1
+# 한 줄짜리 경로 함수는 원문 줄을 그대로 가져온다.
+grep '^_cr_service_file() ' "$PIM_LIB/cam_recovery.sh" > "$WORK/_cr_service_file.sh"
+[ "$(wc -l < "$WORK/_cr_service_file.sh")" -eq 1 ] || { echo "함수 추출 실패: _cr_service_file" >&2; exit 1; }
 
 # 잘라낸 함수를 읽어 들이고 가짜 시계·로그를 준비한다. 서브셸 안에서 부른다.
 prep() {
@@ -38,7 +45,7 @@ prep() {
     DISCONNECT_INIT_CAM_INTERVAL_SEC_DEFAULT=180
     ENABLE_VAL=true; file_chk_reboot=false
     local f
-    for f in $FUNCS; do
+    for f in $FUNCS cam_degraded_by_failed_recovery _cr_service_file; do
         # shellcheck disable=SC1090  # 대상 스크립트에서 잘라낸 함수다
         source "$WORK/$f.sh"
     done
@@ -98,12 +105,13 @@ deg() {
         rm -rf "$PIM_CAMERA_STATE_DIR"; mkdir -p "$PIM_CAMERA_STATE_DIR/recovery/history"
         [ "$target" = nofile ] || printf '{"dirty":true,"degraded_reason":"file check failure","degraded_target":%s}\n' \
             "$([ "$target" = null ] && echo null || echo "\"$target\"")" > "$PIM_CAMERA_STATE_DIR/service-state.json"
-        # 예전 요청 하나(성공한 재적재)와 마지막 요청. 마지막 것은 수정 시각으로 고른다.
-        printf '{"request":{"type":"module_reload","status":"SUCCEEDED"}}\n' > "$PIM_CAMERA_STATE_DIR/recovery/history/old.json"
-        touch -d '2 hours ago' "$PIM_CAMERA_STATE_DIR/recovery/history/old.json"
+        # 예전 요청 하나(성공한 재적재)와 마지막 요청. 마지막 것은 수정 시각으로 고른다. 이름순으로는 예전
+        # 것이 앞에 오게 지어, 이름순으로 고르는 구현이면 시험이 깨진다.
+        printf '{"request":{"type":"module_reload","status":"SUCCEEDED"}}\n' > "$PIM_CAMERA_STATE_DIR/recovery/history/a-old.json"
+        touch -d '2 hours ago' "$PIM_CAMERA_STATE_DIR/recovery/history/a-old.json"
         [ "$last" = none ] || printf '{"request":{"type":"%s","status":"%s"}}\n' "${last%%/*}" "${last##*/}" \
-            > "$PIM_CAMERA_STATE_DIR/recovery/history/last.json"
-        [ "$last" != none ] || rm -f "$PIM_CAMERA_STATE_DIR/recovery/history/old.json"
+            > "$PIM_CAMERA_STATE_DIR/recovery/history/z-last.json"
+        [ "$last" != none ] || rm -f "$PIM_CAMERA_STATE_DIR/recovery/history/a-old.json"
         cam_submit_internal_action() { printf '%s|%s|%s\n' "$1" "$2" "${3:-}" >> "$WORK/req"; return "${SUBMIT_RC:-0}"; }
         for t in "$@"; do
             up "$t"
@@ -122,6 +130,8 @@ t_eq "접수 뒤에는 다시 본 때부터 간격을 잰다" "$(deg DEGRADED 0 
 t_eq "접수되지 않으면 한 간격 뒤에 다시 낸다" "$(SUBMIT_RC=75; export SUBMIT_RC; deg DEGRADED 0 camera_health $F 1000 1180 1181 1359 1360 | cut -d' ' -f1)" "1180,1360"
 t_eq "모듈 재적재 실패 뒤에도 낸다" "$(deg DEGRADED 0 camera_health module_reload/FAILED 1000 1180 | cut -d' ' -f1)" 1180
 t_eq "gstapp_restart 실패로 멈춘 경우도 낸다" "$(deg DEGRADED 0 gstapp gstapp_restart/FAILED 1000 1180 | cut -d' ' -f1)" 1180
+# gstapp_restart 는 액션이 끝난 뒤의 검증에서 실패하면 대상이 camera_health 로 적힌다(_coc_verify_all 실패).
+t_eq "gstapp_restart 뒤 검증 실패로 멈춘 경우도 낸다" "$(deg DEGRADED 0 camera_health gstapp_restart/FAILED 1000 1180 | cut -d' ' -f1)" 1180
 t_eq "기본 설정(재부팅 켜짐)에서는 내지 않는다" "$(deg DEGRADED 1 camera_health $F 1000 1180 1400)" "- "
 t_eq "값이 없으면 켜짐으로 본다" "$(deg DEGRADED unset camera_health $F 1000 1180 1400)" "- "
 t_eq "ACTIVE 에서는 내지 않는다" "$(deg ACTIVE 0 camera_health $F 1000 1180 1400)" "- "
@@ -135,9 +145,35 @@ t_eq "apply-config 실패는 건드리지 않는다(camera_health)" "$(deg DEGRA
 t_eq "apply-config 실패는 건드리지 않는다(gstapp)" "$(deg DEGRADED 0 gstapp apply_config/FAILED 1000 1180 1400)" "- "
 t_eq "정지 요청 뒤에는 건드리지 않는다" "$(deg DEGRADED 0 gstapp gstapp_stop/SUCCEEDED 1000 1180 1400)" "- "
 t_eq "마지막 요청이 성공이면 건드리지 않는다" "$(deg DEGRADED 0 camera_health camera_hard_reset/SUCCEEDED 1000 1180 1400)" "- "
+t_eq "정지 요청이 실패한 경우도 건드리지 않는다" "$(deg DEGRADED 0 gstapp gstapp_stop/FAILED 1000 1180 1400)" "- "
+t_eq "재부팅 요청이 실패한 경우는 건드리지 않는다" "$(deg DEGRADED 0 camera_health reboot_fallback/FAILED 1000 1180 1400)" "- "
 t_eq "대상과 요청 종류가 어긋나면 건드리지 않는다" "$(deg DEGRADED 0 gstapp camera_hard_reset/FAILED 1000 1180 1400)" "- "
+t_eq "대상과 요청 종류가 어긋나면 건드리지 않는다(재적재)" "$(deg DEGRADED 0 gstapp module_reload/FAILED 1000 1180 1400)" "- "
 t_eq "이력이 없으면 건드리지 않는다" "$(deg DEGRADED 0 camera_health none 1000 1180 1400)" "- "
-t_eq "건드리지 않은 사실과 근거를 남긴다" "$( deg DEGRADED 0 camera_health apply_config/FAILED 1000 1180 >/dev/null; grep -c 'DEGRADED retry skipped: not a failed recovery request (degraded_target=camera_health last request=apply_config/FAILED)' "$WORK/log" )" 1
+t_eq "건드리지 않은 사실과 근거를 남긴다" "$( deg DEGRADED 0 camera_health apply_config/FAILED 1000 1180 >/dev/null; grep -c 'DEGRADED retry skipped: not a failed recovery request (camera_health apply_config/FAILED)' "$WORK/log" )" 1
+t_eq "낼 때는 근거가 된 대상과 요청을 남긴다" "$( deg DEGRADED 0 camera_health $F 1000 1180 >/dev/null; grep -c 'DEGRADED for 180s with file_check_reboot off after a failed recovery (camera_health camera_hard_reset/FAILED): request camera_hard_reset' "$WORK/log" )" 1
+t_eq "이력을 읽지 못하면 내지 않고 unknown 으로 남긴다" "$(
+    prep
+    mkdir -p "$PIM_CAMERA_STATE_DIR/recovery/history"
+    printf '{"degraded_target":"camera_health"}\n' > "$PIM_CAMERA_STATE_DIR/service-state.json"
+    printf 'not json' > "$PIM_CAMERA_STATE_DIR/recovery/history/last.json"
+    cam_submit_internal_action() { echo x >> "$WORK/req"; }
+    PIM_CAMERA_AUTO_REBOOT=0; PIM_CAMERA_MONITOR_LIFECYCLE=DEGRADED
+    up 1000; maybe_retry_degraded; up 1180; maybe_retry_degraded
+    echo "$(wc -l < "$WORK/req") $(grep -c 'DEGRADED retry skipped: not a failed recovery request (unknown)' "$WORK/log")"
+)" "0 1"
+t_eq "가장 최근 항목을 읽지 못하면 내지 않는다" "$(
+    prep
+    mkdir -p "$PIM_CAMERA_STATE_DIR/recovery/history"
+    printf '{"degraded_target":"camera_health"}\n' > "$PIM_CAMERA_STATE_DIR/service-state.json"
+    printf '{"request":{"type":"camera_hard_reset","status":"FAILED"}}\n' > "$PIM_CAMERA_STATE_DIR/recovery/history/a-old.json"
+    touch -d '2 hours ago' "$PIM_CAMERA_STATE_DIR/recovery/history/a-old.json"
+    mkdir "$PIM_CAMERA_STATE_DIR/recovery/history/z-dir"
+    cam_submit_internal_action() { echo x >> "$WORK/req"; }
+    PIM_CAMERA_AUTO_REBOOT=0; PIM_CAMERA_MONITOR_LIFECYCLE=DEGRADED
+    up 1000; maybe_retry_degraded; up 1180; maybe_retry_degraded
+    echo "$(wc -l < "$WORK/req") $(grep -c 'DEGRADED retry skipped: not a failed recovery request (unknown)' "$WORK/log")"
+)" "0 1"
 t_eq "설정 간격을 따른다(300)" "$( DISCONNECT_INIT_CAM_INTERVAL_SEC=300; export DISCONNECT_INIT_CAM_INTERVAL_SEC; deg DEGRADED 0 camera_health $F 1000 1180 1299 1300 | cut -d' ' -f1 )" 1300
 # DEGRADED 를 벗어났다가 다시 들어오면 처음부터 다시 잰다.
 t_eq "벗어나면 관측 시각을 지운다" "$(
@@ -197,5 +233,8 @@ for why in "file check failure" "gstapp start marker missing" "driver load failu
 done
 t_eq "대기를 시작하는 곳은 넷(사다리 넷의 초기화 자리)" "$(grep -c -E '^[[:space:]]+ladder_hold_start$' "$CHK")" 4
 t_eq "실행기가 lifecycle 을 내놓는다" "$(grep -c -F 'PIM_CAMERA_MONITOR_LIFECYCLE=$lifecycle' "$PIM_LIB/cam_operate_control.sh")" 1
+# 상태·이력 파일은 실행기 라이브러리만 읽는다(test/camera_health/runtime_consumer_path_test.py 의 경계).
+t_eq "원인 판정은 실행기 함수에 맡긴다" "$(grep -c -E '^[[:space:]]+if ! cam_degraded_by_failed_recovery; then$' "$CHK")" 1
+t_eq "감시 스크립트는 복구 이력을 직접 읽지 않는다" "$(grep -c 'recovery/history' "$CHK")" 0
 
 t_summary "사다리 대기·DEGRADED 재시도"

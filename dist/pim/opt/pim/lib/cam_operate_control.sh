@@ -664,6 +664,26 @@ cam_poll_pending_request() {
     cam_execute_pending_request
 }
 
+# DEGRADED 가 실패한 복구 요청에서 왔으면 0 (이슈 #192, chk_cam_operate.sh 의 maybe_retry_degraded 가 부른다).
+# CAM_DEGRADED_CAUSE 에 "<degraded_target> <마지막 요청 종류>/<상태>" 를 남긴다(못 읽으면 unknown).
+# 마지막 요청은 이력 디렉터리에서 가장 늦게 쓰인 파일이다. 정지 요청과 apply-config 도 이력에 남으므로,
+# 실패한 복구 뒤에 그런 요청이 왔으면 대상이 아니다. degraded_target 은 액션이 실패하면 요청 종류를 따르고
+# (gstapp_restart 는 gstapp, 재적재와 하드 리셋은 camera_health), 액션 뒤 검증이 실패하면 종류와 무관하게
+# camera_health 다. 그래서 아래 네 조합만 받고, 그 밖의 대상과 요청 종류는 모두 대상에서 뺀다.
+cam_degraded_by_failed_recovery() {
+    local dir=$PIM_CAMERA_STATE_DIR/recovery/history last service history
+    CAM_DEGRADED_CAUSE=unknown
+    last=$(ls -t "$dir" 2>/dev/null | head -n 1)
+    [ -n "$last" ] || return 1
+    service=$(cat "$(_cr_service_file)" 2>/dev/null) || return 1
+    history=$(cat "$dir/$last" 2>/dev/null) || return 1
+    CAM_DEGRADED_CAUSE=$(jq -rn --argjson s "$service" --argjson h "$history" '"\($s.degraded_target // "none") \($h.request.type // "none")/\($h.request.status // "none")"' 2>/dev/null) || { CAM_DEGRADED_CAUSE=unknown; return 1; }
+    case "$CAM_DEGRADED_CAUSE" in
+        "camera_health gstapp_restart/FAILED"|"camera_health module_reload/FAILED"|"camera_health camera_hard_reset/FAILED"|"gstapp gstapp_restart/FAILED") return 0 ;;
+    esac
+    return 1
+}
+
 cam_monitor_control_iteration() {
     local reload_config=${1:-:} control_rc=0 lifecycle
     PIM_CAMERA_MONITOR_WORK_TYPE=

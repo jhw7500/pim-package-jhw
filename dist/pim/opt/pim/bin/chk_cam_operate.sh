@@ -443,12 +443,13 @@ maybe_init_cam_on_disconnect() {
 # 하드 리셋이 실패한 뒤(dirty) apply-config 와 기동이 고르는 단계와 같다(_coc_effective_steps).
 # gstapp_restart 실패 뒤에도 같은 단계를 낸다 — 가벼운 단계가 이미 실패한 자리다.
 # 대상은 마지막 요청이 실패한 복구 요청(gstapp_restart, module_reload, camera_hard_reset)일 때뿐이다.
-# apply-config 실패, 정지 요청, 설정 오류, 소비자 기동 실패로 생긴 DEGRADED 는 건드리지 않는다. 재부팅이
-# 켜진 설정에서는 아무것도 하지 않는다. lifecycle 은 cam_monitor_control_iteration 이 반복마다 내놓은
-# 값이라 평소에는 jq 를 띄우지 않고, service-state 와 이력은 간격이 찬 반복에서만 읽는다(jq 한 번).
+# apply-config 실패, 정지 요청, 설정 오류, 소비자 기동 실패로 생긴 DEGRADED 는 건드리지 않는다. 판정은
+# 상태·이력 파일의 형식을 아는 실행기 쪽 cam_degraded_by_failed_recovery 가 한다. 재부팅이 켜진 설정에서는
+# 아무것도 하지 않는다. lifecycle 은 cam_monitor_control_iteration 이 반복마다 내놓은 값이라 평소에는 jq 를
+# 띄우지 않고, 상태와 이력은 간격이 찬 반복에서만 읽는다.
 degraded_since=0
 maybe_retry_degraded() {
-    local up iv hist last cause target type status
+    local up iv
     if [ "${PIM_CAMERA_MONITOR_LIFECYCLE:-}" != DEGRADED ] || [ "${PIM_CAMERA_AUTO_REBOOT:-1}" != 0 ]; then
         degraded_since=0
         return 1
@@ -459,19 +460,11 @@ maybe_retry_degraded() {
     ladder_retry_interval_into iv
     [ $((up - degraded_since)) -ge "$iv" ] || return 1
     degraded_since=$up
-    hist=$PIM_CAMERA_STATE_DIR/recovery/history
-    last=$(ls -t "$hist" 2>/dev/null | head -n 1)
-    cause=$(jq -rs '[(.[0].degraded_target // ""), (.[1].request.type // ""), (.[1].request.status // "")] | join("|")' \
-        "$PIM_CAMERA_STATE_DIR/service-state.json" "$hist/$last" 2>/dev/null)
-    IFS='|' read -r target type status <<<"$cause"
-    case "$target:$type:$status" in
-        camera_health:module_reload:FAILED|camera_health:camera_hard_reset:FAILED|gstapp:gstapp_restart:FAILED) ;;
-        *)
-            logger -p local0.notice "[$KEY][$tag:$LINENO] DEGRADED retry skipped: not a failed recovery request (degraded_target=${target:-unknown} last request=${type:-unknown}/${status:-unknown})"
-            return 1
-            ;;
-    esac
-    logger -p local0.error "[$KEY][$tag:$LINENO] DEGRADED for ${iv}s with file_check_reboot off after $type failed: request camera_hard_reset"
+    if ! cam_degraded_by_failed_recovery; then
+        logger -p local0.notice "[$KEY][$tag:$LINENO] DEGRADED retry skipped: not a failed recovery request (${CAM_DEGRADED_CAUSE:-unknown})"
+        return 1
+    fi
+    logger -p local0.error "[$KEY][$tag:$LINENO] DEGRADED for ${iv}s with file_check_reboot off after a failed recovery (${CAM_DEGRADED_CAUSE}): request camera_hard_reset"
     # 접수됐으면 시계를 지운다. 요청은 다음 반복에서 실행되고, 실패하면 그 뒤 DEGRADED 를 처음 본 때부터
     # 간격을 다시 잰다(제출 시각부터 재면 실행 시간만큼 쉬는 시간이 줄어든다). 접수되지 않았으면 한 간격 뒤다.
     if cam_submit_internal_action camera_hard_reset "degraded periodic recovery" 1; then
@@ -1335,6 +1328,7 @@ _final_watch_uptime_into() {
 # 복구와 같은 간격(DISCONNECT_INIT_CAM_INTERVAL_SEC, 기본 180초)만큼 쉰 뒤 1 부터 다시 센다.
 # 쉬는 동안 파일 검사·시작 마커·드라이버 미적재·최종 경로 정체 사다리는 세지도 요청하지도 않는다. 끊김
 # 주기 복구와 liveness 는 그대로 돈다. 쉬는 시간은 증상이 사라져도 줄지 않는다(끊김 주기와 같은 방식).
+# 예외는 하나다: 파일 검사가 prepare 실패로 채널이 빠진 채 뜬 앱을 보면 쉬는 중에도 module_reload 를 낸다.
 # 간격을 아주 짧게 설정해도 하드 리셋이 연달아 나가지 않게 하한을 둔다. 시각은 /proc/uptime 이다.
 LADDER_RETRY_MIN_SEC=60
 ladder_hold_until=0
@@ -2017,7 +2011,14 @@ do
                 echo "NG" > $FILE_CHECK
                 cam_disconnect_flag=$(get_cam_disconnect_flag)
                 if (( cam_disconnect_flag == 0x0 )) && ladder_on_hold "file check failure"; then
-                    :   # 쉬는 중에는 세지도 요청하지도 않는다(ladder_on_hold 가 남긴다)
+                    # 쉬는 중에는 세지도 요청하지도 않는다(ladder_on_hold 가 남긴다). 다만 prepare 실패로 채널이
+                    # 빠진 채 뜬 앱은 재적재 한 번으로 풀리는 실패라 기다리지 않는다(.6 2026-11-24: 대기와 겹쳐
+                    # 회복이 대기만큼 늦어졌다). 월반 판정이 횟수를 재적재 단계(4)로 올려 두고 그 판정은 횟수
+                    # 3 이하에서만 서므로, 검사가 통과하기 전에는 같은 대기 안에서 두 번 내지 않는다.
+                    if file_check_partial_floor "${missing_chs[@]}"; then
+                        logger -p local0.error  "[$KEY][$tag:$LINENO] request module_reload while the ladder is paused (retry=$retry boot=$retry_boot total=$retry_total)"
+                        cam_submit_internal_action module_reload "file check failure"
+                    fi
                 elif (( cam_disconnect_flag == 0x0 )); then
                     ((retry++))
                     retry_total=$(($retry+$retry_boot))
