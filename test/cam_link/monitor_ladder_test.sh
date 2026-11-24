@@ -141,8 +141,9 @@ t_eq "시작 마커: 쉬지 않으면 1 부터 센다" "$(gate "$WORK/marker_gat
 t_eq "시작 마커: 끊김 분기는 쉬는 것과 무관하다" "$(gate "$WORK/marker_gate.sh" 1 5 1)" \
     "module_reload|disconnect startup failure retry=0 boot=0 total=0 asked=[]"
 # 두 사다리는 횟수를 함께 쓴다. 쉬는 동안 횟수가 0 으로 남아 있어야, 쉰 직후 시작 마커 사다리가 먼저 돌아도
-# 1 부터 세어 재시작, 재적재, 하드 리셋 순으로 간다. 쉬는 중에 횟수를 올려 두면 시작 마커 사다리가 그
-# 자리에서 한계 초과로 보고 요청 없이 다시 쉰다(.6 2026-11-24 실측의 순서).
+# 1 부터 센다. 쉬는 중에 횟수를 올려 두면 시작 마커 사다리가 그 자리에서 한계 초과로 보고 요청 없이 다시
+# 쉰다(.6 2026-11-24 실측의 순서). 하드 리셋까지 가는 것은 재적재 뒤에 파일 검사가 이어서 실패할 때다.
+# 재적재 뒤에 시작 마커 검사가 먼저 실패하면 하드 리셋 없이 한계를 넘는다(아래 "알려진 한계").
 # both <"file|marker:쉬는 중이면 1" …> : PARTIAL 기동이 이어지는 동안 두 블록을 차례로 돌린다.
 both() {
     (
@@ -167,10 +168,17 @@ both() {
         printf '%s total=%s holds=%s\n' "${req:--}" "$retry_total" "$holds"
     )
 }
-t_eq "쉰 뒤 시작 마커가 먼저 돌아도 재시작, 재적재, 하드 리셋 순으로 간다" "$(both file:1 file:1 marker:0 file:0 file:0)" \
+t_eq "쉰 뒤 시작 마커가 먼저 돌고 파일 검사가 이어지면 재시작, 재적재, 하드 리셋 순으로 간다" "$(both file:1 file:1 marker:0 file:0 file:0)" \
     "gstapp_restart,module_reload,camera_hard_reset total=5 holds=0"
 t_eq "쉰 뒤 파일 검사가 먼저 돌면 재적재, 하드 리셋 순으로 간다" "$(both file:1 marker:1 file:0 file:0)" \
     "module_reload,camera_hard_reset total=5 holds=0"
+# 알려진 한계: 재적재(횟수 4) 뒤에 시작 마커 검사가 먼저 실패하면 그 사다리는 5 를 한계 초과로 본다. 꺼진
+# 설정에서는 하드 리셋 없이 횟수를 되돌리고 다시 쉰다. 이 변경 전에도 같고 보드에서는 나오지 않았다. 지금
+# 동작을 적어 두는 시험이라, 횟수 공유를 고치면 이 기대값을 함께 바꾼다.
+t_eq "알려진 한계: 재적재 뒤 시작 마커가 먼저 실패하면 하드 리셋 없이 다시 쉰다" "$(both file:1 file:0 marker:0)" \
+    "module_reload total=0 holds=1"
+t_eq "알려진 한계: 재시작, 재적재 뒤 시작 마커가 먼저 실패해도 같다" "$(both file:1 marker:0 file:0 marker:0)" \
+    "gstapp_restart,module_reload total=0 holds=1"
 extract_block 'if (( cam_disconnect_flag == 0x0 )) && ladder_on_hold "driver load failure"; then' "$WORK/driver_gate.sh" || exit 1
 t_eq "드라이버 미적재: 쉬는 중이면 세지도 요청하지도 않는다" "$(gate "$WORK/driver_gate.sh" 1 0)" \
     "- retry=0 boot=0 total=0 asked=[driver load failure]"
