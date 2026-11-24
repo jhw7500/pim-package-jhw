@@ -505,7 +505,8 @@ cam_apply_config_transaction() {
 # 실패한 액션을 reboot_fallback 으로 올리지 않을지 판정한다 (이슈 #192).
 # file_check_reboot 가 꺼져 있으면 데몬이 GetConfig_ 에서 PIM_CAMERA_AUTO_REBOOT=0 을 세운다. 그때 데몬이
 # 스스로 낸 요청(source 가 monitor 또는 liveness)은 실패해도 재부팅으로 올리지 않는다. 요청은 FAILED 로
-# 끝나고 owner 는 DEGRADED 가 된다. 운영자를 비롯한 다른 출처의 요청과, 변수가 없거나 0 이 아닌 경우는
+# 끝나고 owner 는 DEGRADED 가 된다. 그 뒤로는 데몬이 끊김 주기와 같은 간격마다 하드 리셋을 다시 낸다
+# (chk_cam_operate.sh 의 maybe_retry_degraded). 운영자를 비롯한 다른 출처의 요청과, 변수가 없거나 0 이 아닌 경우는
 # 지금까지처럼 올린다. 변수를 먼저 보므로 기본 설정에서는 jq 를 띄우지 않는다. source 를 읽지 못해도
 # 지금까지처럼 올린다.  $1=active 요청 문서  $2=방금 실패한 액션
 _coc_reboot_escalation_blocked() {
@@ -663,12 +664,33 @@ cam_poll_pending_request() {
     cam_execute_pending_request
 }
 
+# DEGRADED 가 실패한 복구 요청에서 왔으면 0 (이슈 #192, chk_cam_operate.sh 의 maybe_retry_degraded 가 부른다).
+# CAM_DEGRADED_CAUSE 에 "<degraded_target> <마지막 요청 종류>/<상태>" 를 남긴다(못 읽으면 unknown).
+# 마지막 요청은 이력 디렉터리에서 가장 늦게 쓰인 파일이다. 정지 요청과 apply-config 도 이력에 남으므로,
+# 실패한 복구 뒤에 그런 요청이 왔으면 대상이 아니다. degraded_target 은 액션이 실패하면 요청 종류를 따르고
+# (gstapp_restart 는 gstapp, 재적재와 하드 리셋은 camera_health), 액션 뒤 검증이 실패하면 종류와 무관하게
+# camera_health 다. 그래서 아래 네 조합만 받고, 그 밖의 대상과 요청 종류는 모두 대상에서 뺀다.
+cam_degraded_by_failed_recovery() {
+    local dir=$PIM_CAMERA_STATE_DIR/recovery/history last service history
+    CAM_DEGRADED_CAUSE=unknown
+    last=$(ls -t "$dir" 2>/dev/null | head -n 1)
+    [ -n "$last" ] || return 1
+    service=$(cat "$(_cr_service_file)" 2>/dev/null) || return 1
+    history=$(cat "$dir/$last" 2>/dev/null) || return 1
+    CAM_DEGRADED_CAUSE=$(jq -rn --argjson s "$service" --argjson h "$history" '"\($s.degraded_target // "none") \($h.request.type // "none")/\($h.request.status // "none")"' 2>/dev/null) || { CAM_DEGRADED_CAUSE=unknown; return 1; }
+    case "$CAM_DEGRADED_CAUSE" in
+        "camera_health gstapp_restart/FAILED"|"camera_health module_reload/FAILED"|"camera_health camera_hard_reset/FAILED"|"gstapp gstapp_restart/FAILED") return 0 ;;
+    esac
+    return 1
+}
+
 cam_monitor_control_iteration() {
     local reload_config=${1:-:} control_rc=0 lifecycle
     PIM_CAMERA_MONITOR_WORK_TYPE=
     PIM_CAMERA_MONITOR_DID_WORK=0
     PIM_CAMERA_MONITOR_STOPPING=0
     PIM_CAMERA_MONITOR_LIVENESS_RC=0
+    PIM_CAMERA_MONITOR_LIFECYCLE=
     cam_poll_pending_request || control_rc=$?
     PIM_CAMERA_MONITOR_WORK_TYPE=${PIM_CAMERA_POLL_WORK_TYPE:-}
     case "$control_rc" in
@@ -683,6 +705,9 @@ cam_monitor_control_iteration() {
     esac
     _cr_load_owner_lifecycle || return 70
     lifecycle=$_CR_LIFECYCLE_VAL
+    # 데몬 루프가 jq 없이 지금 lifecycle 을 보게 한다(chk_cam_operate.sh 의 maybe_retry_degraded).
+    # shellcheck disable=SC2034  # 같은 셸에서 도는 데몬 루프가 읽는다
+    PIM_CAMERA_MONITOR_LIFECYCLE=$lifecycle
     if [ "$lifecycle" = STOPPING ]; then
         PIM_CAMERA_MONITOR_STOPPING=1
     elif [ "$lifecycle" = ACTIVE ]; then

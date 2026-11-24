@@ -141,16 +141,35 @@ cooldown과 disconnect 처리 원칙은 파일 수 불일치 분기와 같다.
   실패, liveness)은 실행 중에 실패해도 재부팅으로 올라가지 않는다(#192). `module_reload`가 실패하면
   `camera_hard_reset`까지는 시도하고, 그것도 실패하면 요청이 `FAILED`로 끝나고 상태가 `DEGRADED`가 된다.
   `true`일 때는 지금처럼 `reboot_fallback`까지 올라간다.
-- `DEGRADED`에서는 사다리, disconnect 주기 복구, liveness의 요청이 모두 거부된다. 자동 복구가 멈추고,
-  운영자가 조치할 때까지 녹화가 멈춘 채 남을 수 있다. 벗어나려면 `cam-recoveryctl request hard`를 내거나
-  `cam-operate` 서비스를 재시작한다(시작 경로가 하드 리셋을 다시 시도한다). 그래도 돌아오지 않으면
-  `cam-recoveryctl request reboot`로 재부팅한다.
+- `DEGRADED`에서는 사다리, disconnect 주기 복구, liveness의 요청이 모두 거부된다. 대신 데몬이
+  `disconnect_init_interval_sec`(기본 180초, 하한 60초)마다 `camera_hard_reset`을 한 번 낸다(#192, reason
+  `degraded periodic recovery`). 성공하면 `ACTIVE`로 돌아오고, 실패하면 그 실패 뒤부터 간격을 다시 재고
+  또 낸다. 원인이 남아 있는 동안에는 하드 리셋이 되풀이되고, 그 사이 녹화는 멈춰 있다.
+  - 이 재시도는 마지막 요청이 실패한 복구 요청(`gstapp_restart`, `module_reload`, `camera_hard_reset`)일
+    때만 한다. `service-state.json`의 `degraded_target`(`camera_health` 또는 `gstapp`)과 복구 이력의 마지막
+    요청을 함께 본다. `gstapp_restart`가 앱을 다시 띄운 뒤의 검증에서 실패하면 대상이 `camera_health`로
+    적히는데, 그 경우도 포함한다. `apply-config` 실패, 정지 요청, 설정 오류, ord·vcm 기동 실패로 생긴
+    `DEGRADED`는 건드리지 않는다. `true`일 때는 이 재시도가 없다.
+  - 기다리지 않고 벗어나려면 `cam-recoveryctl request hard`를 내거나 `cam-operate` 서비스를
+    재시작한다(시작 경로가 하드 리셋을 다시 시도한다). 모듈 재적재나 하드 리셋이 실패한 뒤라면
+    `cam-recoveryctl apply-config`도 하드 리셋부터 돈다. 그래도 돌아오지 않으면
+    `cam-recoveryctl request reboot`로 재부팅한다.
 - 판정 기준은 요청의 source 값이다. source가 `monitor`나 `liveness`가 아닌 요청(`cam-recoveryctl
   request ...`의 기본값 `operator`, `pim_guardian.py --recovery`의 `pim-guardian`)은 이 설정과 무관하게,
   실패하면 `reboot_fallback`까지 올라간다. `cam-recoveryctl`에 `--source monitor`를 주면 데몬이 낸
   요청처럼 다뤄진다.
-- 일반 retry 사다리는 한계에서 카운터를 초기화해 다시 시작하고, FINAL STALL은
-  `final_stall_cnt`만 초기화한다.
+- 일반 retry 사다리는 한계에서 카운터를 초기화하고, FINAL STALL은 `final_stall_cnt`만 초기화한다.
+  초기화한 뒤에는 `disconnect_init_interval_sec`만큼 쉬고 1부터 다시 센다(#192). 쉬는 동안 파일 검사,
+  시작 마커, 드라이버 적재 실패, FINAL STALL 사다리는 세지도 요청하지도 않는다. disconnect 주기 복구와
+  liveness는 계속 돈다. 쉬는 시간은 증상이 사라져도 줄지 않으므로, 그 안에 새로 생긴 파일 누락은 쉬는
+  시간이 끝난 뒤에 다뤄진다. 쉬는 중에 설정을 `true`로 바꾸면 곧바로 풀린다.
+  - 예외가 하나 있다. 파일 검사가 MAX9296 prepare 실패로 채널이 빠진 채 뜬 앱을 보면 쉬는 중에도
+    `module_reload`를 낸다. 그 실패는 재적재로 풀리는 것이라 쉬는 시간만큼 채널이 빠진 채 두지 않는다.
+    끊김 플래그가 0이고, 이번에 빠진 채널이 prepare 실패 채널과 겹치고, 횟수가 3 이하일 때만 낸다. 이때
+    횟수를 재적재 단계인 4로 올려 두므로 파일 검사가 다시 통과하기 전에는 한 번만 내고(요청이 거부돼도
+    다시 내지 않는다), 쉬는 시간이 끝난 뒤에도 파일 누락이 남아 있으면 사다리는 1이 아니라 그다음 단계인
+    `camera_hard_reset`부터 이어진다. 횟수는 사다리들이 함께 쓰므로, 이 재적재 뒤에 시작 마커 실패가
+    이어지면 그 사다리는 한계를 넘은 것으로 보고 요청 없이 한 번 더 쉰다.
 - 하드웨어 수준 장애가 소프트 복구로 해결되지 않으면 복구 사이클이 반복될 수 있다.
 
 ## 4. 관련 구현
@@ -158,6 +177,7 @@ cooldown과 disconnect 처리 원칙은 파일 수 불일치 분기와 같다.
 - `dist/pim/opt/pim/bin/chk_cam_operate.sh`
   - `GetConfig_()`
   - `maybe_init_cam_on_disconnect()`
+  - `maybe_retry_degraded()`, `ladder_hold_start()`, `ladder_on_hold()`
   - `modules_loaded()` 검사 분기
   - 파일 수 불일치 및 시작 마커 검사 분기
   - `CheckFinalArrival()`
@@ -165,6 +185,7 @@ cooldown과 disconnect 처리 원칙은 파일 수 불일치 분기와 같다.
 - `dist/pim/opt/pim/config/ord_vcm_conf.json`
 - `test/cam_link/escalation_test.sh`
 - `test/cam_link/monitor_ladder_test.sh`
+- `test/cam_link/ladder_hold_retry_test.sh`
 - `test/camera_health/final_stall_watch_test.sh`
 - `dist/pim/opt/pim/lib/cam_operate_control.sh`
   - `_coc_reboot_escalation_blocked()`
@@ -175,8 +196,9 @@ cooldown과 disconnect 처리 원칙은 파일 수 불일치 분기와 같다.
 
 - 정상 운영 기본값은 `true`다.
 - 재부팅 없이 로그를 오래 수집해야 하는 진단 환경에서는 일시적으로 `false`를
-  사용할 수 있다. 이때 하드 리셋까지 실패하면 재부팅 없이 `DEGRADED`로 멈추므로,
-  `cam-recoveryctl status`로 상태를 확인하고 3절의 방법으로 벗어난다.
+  사용할 수 있다. 이때 하드 리셋까지 실패하면 재부팅 없이 `DEGRADED`가 되고 데몬이 주기적으로 하드
+  리셋을 다시 시도한다. `cam-recoveryctl status`로 상태를 확인하고, 기다릴 수 없으면 3절의 방법으로
+  바로 벗어난다.
 - 장기 disconnect 재부팅은 기본 비활성이므로 필요한 장비에서만
   `disconnect_max_sec`와 플래그 보존 정책을 함께 검토해 활성화한다.
 - 설정 변경 후에는 현재 JSON 값과 재기동 이후의 시작 로그에 출력되는

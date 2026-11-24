@@ -82,7 +82,7 @@ GitHub `master`의 코드가 동작 정본이다. 이 문서의 “패키지 값
 | `startup_grace_extra_sec` | `10` | `10` | FINAL STALL 워밍업 계산에 추가 |
 | `camera_startup_grace_sec` | `25` | `25` | 앱 시작 시각부터 cold-start 카메라 오류를 무시하는 총 시간. gstApp `-d`와 독립 |
 | `init_cooldown_sec` | `40` | `40` | 재기동 직후 카메라 앱이 이 시간보다 어리고 첫 조각 신호가 없으면 파일 검사를 보류(#190). 보류는 이 시간을 넘기지 않는다 |
-| `disconnect_init_interval_sec` | `180` | `180` | disconnect 중 주기적 `module_reload` 요청 간격 |
+| `disconnect_init_interval_sec` | `180` | `180` | disconnect 중 주기적 `module_reload` 요청 간격. `file_check_reboot`가 꺼져 있으면 사다리가 한계 뒤 쉬는 시간과 `DEGRADED`에서의 하드 리셋 재시도 간격으로도 쓴다(이 두 용도의 하한은 60초) |
 | `disconnect_init_grace_sec` | `60` | `60` | disconnect 후 첫 `module_reload` 요청 전 유예 |
 | `disconnect_max_sec` | 키 없음 | `0` | 선택적 장기 disconnect reboot. `0`이면 비활성 |
 
@@ -92,8 +92,9 @@ GitHub `master`의 코드가 동작 정본이다. 이 문서의 “패키지 값
 
 `file_check_reboot=false`는 retry 카운터를 무기한 유지한다는 뜻이 아니다.
 kill/init 복구는 계속 수행하며 한계에 도달하면 일반 retry 카운터 또는
-`final_stall_cnt`를 초기화하고 복구 사다리를 다시 시작한다. 다만 복구 요청이 하드 리셋까지
-실패하면 재부팅하지 않고 `DEGRADED`로 멈추며, 그때는 사다리 요청도 거부된다. 현재 제어하는 5개
+`final_stall_cnt`를 초기화하고, `disconnect_init_interval_sec`만큼 쉰 뒤 복구 사다리를 다시 시작한다.
+복구 요청이 하드 리셋까지 실패하면 재부팅하지 않고 `DEGRADED`가 되며, 그때는 사다리 요청이 거부되는
+대신 같은 간격마다 하드 리셋을 다시 시도한다. 현재 제어하는 5개
 재부팅 분기와 정확한 임계값은
 [`file_check_reboot-behavior.md`](./file_check_reboot-behavior.md)를 따른다.
 

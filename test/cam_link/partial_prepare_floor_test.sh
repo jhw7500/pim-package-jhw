@@ -11,7 +11,8 @@ source "$(dirname "$0")/lib.sh"
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
-CHK="$PIM_BIN/chk_cam_operate.sh"
+# PARTIAL_FLOOR_DAEMON=<경로> 로 다른 사본을 시험할 수 있다.
+CHK="${PARTIAL_FLOOR_DAEMON:-$PIM_BIN/chk_cam_operate.sh}"
 t_extract_func "$CHK" file_check_partial_floor "$WORK/floor.sh" || exit 1
 
 # snap <pid> <ch2 reason_detail(빈 값=설정상 끈 채널)> [ch2 code] [schema 값(none=키 없음)]
@@ -96,10 +97,19 @@ printf 'not json' > "$WORK/run/gstApp.json"
 run_f "스냅샷이 JSON 이 아님"                                        4242   1 0  1 1 1  ch2 ch3
 
 echo "=== 사다리 호출 위치 ==="
-# 파일검사 사다리(끊김 플래그 0 분기)의 retry_total 계산과 gstapp_restart 판정 사이에서 한 번만 부른다.
-# 기동 마커 누락 사다리는 PARTIAL 과 무관하므로 부르지 않는다.
-calls=$(grep -n 'file_check_partial_floor "${missing_chs\[@\]}"' "$CHK" | cut -d: -f1)
-t_eq "호출 지점은 하나" "$(printf '%s\n' "$calls" | grep -c .)" 1
+# 파일검사 사다리(끊김 플래그 0 분기)의 retry_total 계산과 gstapp_restart 판정 사이에서 부른다. 사다리가
+# 쉬는 중인 분기에서도 한 번 부른다 - 그때는 월반이 선 경우에만 재적재를 낸다(#192, 쉬는 동안 생긴
+# PARTIAL 기동의 회복이 대기만큼 늦어지지 않게). 기동 마커 누락 사다리는 PARTIAL 과 무관하므로 부르지 않는다.
+all_calls=$(grep -n 'file_check_partial_floor "${missing_chs\[@\]}"' "$CHK" | cut -d: -f1)
+t_eq "호출 지점은 둘(쉬는 중 분기, 사다리)" "$(printf '%s\n' "$all_calls" | grep -c .)" 2
+hold_call=$(printf '%s\n' "$all_calls" | head -n 1)
+calls=$(printf '%s\n' "$all_calls" | tail -n 1)
+gate=$(grep -n 'ladder_on_hold "file check failure"' "$CHK" | cut -d: -f1)
+ladder=$(awk -v n="$gate" 'NR > n && /elif \(\( cam_disconnect_flag == 0x0 \)\); then/ { print NR; exit }' "$CHK")
+in_hold=no
+[ -n "$hold_call" ] && [ -n "$gate" ] && [ -n "$ladder" ] && [ "$gate" -lt "$hold_call" ] && [ "$hold_call" -lt "$ladder" ] && in_hold=yes
+t_eq "첫 호출은 쉬는 중 분기 안" "$in_hold" yes
+t_eq "쉬는 중 분기는 월반이 설 때만 요청한다" "$(sed -n "${hold_call}p" "$CHK" | grep -c 'if file_check_partial_floor "${missing_chs\[@\]}"; then$')" 1
 req=$(grep -n 'next: module_reload at total>3' "$CHK" | head -1 | cut -d: -f1)
 tot=$(awk -v n="$req" 'NR < n && /retry_total=\$\(\(\$retry\+\$retry_boot\)\)/ { l = NR } END { print l }' "$CHK")
 disc=$(awk -v n="$req" 'NR < n && /if \(\( cam_disconnect_flag == 0x0 \)\); then/ { l = NR } END { print l }' "$CHK")

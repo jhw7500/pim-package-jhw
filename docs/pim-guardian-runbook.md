@@ -207,7 +207,7 @@ TMP 라인 바로 다음에 별행으로 출력됨. Final-path 워치독 상태 
 | `REC_DISABLED` | 0 | 모든 채널 disabled 또는 capture 모드+record off → 녹화 없음 |
 | `BUSY` | 0 | restart/init/kill 사이클 진행 중 → 검사 일시 skip. 복구 요청이 거절됐을 때도 쓴다 |
 | `WARMUP` | 감시를 건 뒤 경과 초(대기 중이면 0) | 앱이 조각을 열기를 기다리거나 워밍업 중. 기준은 `rec_time*2 + file_check_delay + startup_grace_extra_sec`이며 기본 140초 |
-| `STALL` | stall_cnt | **정체 감지**. escalation 진행 중 (자동 복구 시도). 복구 요청 뒤 도착이 다시 확인될 때까지 유지(`file_chk_reboot=false`로 카운터가 0으로 돌아가면 `WARMUP`) |
+| `STALL` | stall_cnt | **정체 감지**. escalation 진행 중 (자동 복구 시도). 복구 요청 뒤 도착이 다시 확인될 때까지 유지(`file_chk_reboot=false`로 카운터가 0으로 돌아가면 `WARMUP`, 사다리가 쉬는 동안의 정체 판정은 `STALL 0`) |
 
 #### 운영 시 빠른 확인
 

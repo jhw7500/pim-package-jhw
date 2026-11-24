@@ -238,6 +238,21 @@ case "$(requests)" in
 esac
 grep -q reboot_fallback "$REQUESTS" && fail "$name: a reboot was requested with file_check_reboot off"
 
+# 4b. With the reboot off the ladder rests after the counter starts over (issue #192).  The
+#     verdicts of this stall come 180s apart, so with the default 180s interval the rest ends
+#     exactly at the next verdict.  A 300s interval makes that verdict (1080s) fall inside the
+#     rest: it is not counted and asks for nothing, and the ladder starts over at 1260s.
+scenario 'silent stall, reboot disabled, ladder rests' 1
+ARRIVE=0
+EFFECT=0
+file_chk_reboot=false
+DISCONNECT_INIT_CAM_INTERVAL_SEC=300
+sim_run 1400
+unset DISCONNECT_INIT_CAM_INTERVAL_SEC
+expect_requests 'gstapp_restart gstapp_restart module_reload camera_hard_reset gstapp_restart'
+[ "$(request_times)" = '180 360 540 720 1260' ] \
+    || fail "$name: request times were [$(request_times)], expected the ladder to start over at 1260s after the rest"
+
 # 5. The app is up but has not opened a fragment (slow camera prepare) while vcm keeps
 #    writing the minute marker: no verdict however long it takes.  Once it records and
 #    fragments arrive the watch reports OK.
