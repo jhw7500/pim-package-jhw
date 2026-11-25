@@ -91,7 +91,7 @@ disconnect 상태라면 이 분기에서는 retry와 reboot를 실행하지 않�
 드라이버 모듈 미로딩 사다리(2.2)도 같은 횟수를 올리는데 5까지 `module_reload`만 낸다. 그 실패가 섞여
 하드 리셋 자리(4)를 건너뛴 채 한계를 넘으면, 포기(재부팅 요청이나 초기화)하기 전에 하드 리셋을 한 번 낸다.
 그래서 두 사다리가 포기할 때는 그 주기에 하드 리셋 요청이 한 번 이상 나간 뒤다. 이미 하드 리셋을 거치는
-순서는 바뀌지 않는다. 드라이버 모듈 미로딩 사다리(2.2)의 포기에는 이 규칙이 없다. 요청이 거부된
+순서는 바뀌지 않는다. 드라이버 모듈 미로딩 사다리(2.2)의 포기에는 이 규칙이 없다(이유는 2.7). 요청이 거부된
 경우(진행 중인 요청이 있거나 owner가 `ACTIVE`가 아님)도 낸 것으로 센다.
 재기동 직후 첫 조각이 아직 없고 앱이 `init_cooldown_sec`보다 어리면 파일 검사를 보류한다(#190).
 모듈 재적재 뒤 쿨다운 판정은 #214에서 제거했다. disconnect가 감지되면 이 사다리 대신
@@ -159,6 +159,49 @@ isp evidence before file check failure request: ch0=ok(119>134) ch1=ok(120>135) 
 줄로 가른다. 기록 전용이다. 요청의 종류와 횟수는 이 값에 따라 달라지지 않고, 읽지 못해도 사다리는 그대로
 간다. 쉬는 중인 사다리, disconnect 분기, 드라이버 모듈 미로딩 사다리(2.2)는 이 줄을 남기지 않는다. 한 번
 남길 때마다 요청이 약 1.5초 늦어진다(두 읽기 사이 1초와 값 정리).
+
+### 2.7 재부팅 전에 하드 리셋: 경로별 적용
+
+이슈 #192 의 규칙은 "재부팅을 요청하기 전에 `camera_hard_reset`을 먼저 시도한다"이다. 복구 요청을 내는
+경로마다 이 규칙이 어떻게 지켜지는지 적는다. lifecycle이 `ACTIVE`일 때의 길이다.
+
+재부팅에 이르는 길은 둘이다.
+
+- **사다리의 직접 요청**: 감시 데몬(`chk_cam_operate.sh`)의 사다리가 `reboot_fallback`을 요청한다.
+- **실행기의 승격**: `module_reload` 요청이 실패하면 실행기가 같은 요청 안에서 `camera_hard_reset`을 하고,
+  그것도 실패하면 `reboot_fallback`을 한다. `camera_hard_reset` 요청이 실패해도 `reboot_fallback`으로
+  간다(`cam_operate_control.sh`의 `_coc_execute_recovery_active`). 승격은 항상 하드 리셋을 거친다.
+  `gstapp_restart` 요청은 실패해도 승격하지 않는다.
+
+| 경로 | 내는 요청 | 재부팅에 이르는 길 | 하드 리셋이 먼저인가 |
+|---|---|---|---|
+| 파일 수 불일치(2.3), 시작 마커 없음(2.4) | `gstapp_restart` → `module_reload` → `camera_hard_reset` → `reboot_fallback` | 사다리의 직접 요청 | 예. 그 주기에 사다리가 하드 리셋을 낸 뒤에만 요청한다 |
+| Final-path 정체(2.5) | 같은 순서 | 사다리의 직접 요청 | 예. 4번째 판정이 하드 리셋이다 |
+| liveness(앱 프로세스 없음, `cam_liveness.sh`) | `gstapp_restart`. 연속 실패가 5회(`PIM_CAMERA_LIVENESS_ESCALATION_THRESHOLD`)에 이르면 `module_reload` | 실행기의 승격 | 예. 직접 재부팅을 요청하지 않는다 |
+| guardian(`pim_guardian.py --recovery`) | 카메라 수 불일치면 `module_reload`, heartbeat 정지면 `gstapp_restart` | 실행기의 승격 | 예. 직접 재부팅을 요청하지 않는다 |
+| 드라이버 모듈 미로딩(2.2) | `module_reload` 5번 → `reboot_fallback` | 실행기의 승격, 또는 사다리의 직접 요청 | 승격은 예. 사다리의 직접 요청은 아니오 |
+| 장기 disconnect(2.1, 기본 꺼짐) | 주기적 `module_reload`, 제한 시간 뒤 `reboot_fallback` | 사다리의 직접 요청 | 아니오 |
+
+규칙을 적용하지 않는 두 곳과 그 이유는 다음과 같다.
+
+- **드라이버 모듈 미로딩 사다리의 직접 요청.** 모듈을 올리지 못하는 고장은 이 사다리가 낸 `module_reload`가
+  실패하는 것으로 나타나고, 그때는 실행기가 첫 요청에서 하드 리셋을 거쳐 재부팅한다. 사다리가 횟수 6까지
+  가서 직접 재부팅을 요청하는 것은 두 경우뿐이다. 요청이 실행되지 않았거나(다른 요청이 진행 중이거나
+  lifecycle이 `ACTIVE`가 아니어서 거부), 재적재가 성공으로 끝났는데도 다음 검사에서 모듈이 다시 없는
+  경우다. 앞의 경우에는 하드 리셋 요청도 똑같이 거부되고, 뒤의 경우에는 하드 리셋도 같은 모듈 적재를
+  하므로 얻는 것이 없다.
+  - .6 실측(2026-11-25, 1.0.0.2): 모듈을 내린 시험에서 `module_reload` 요청 5번이 실행되지 않았다(1번은 다른
+    요청이 진행 중, 4번은 `DEGRADED`라 거부). 횟수 6에서 낸 `reboot_fallback` 요청도 거부됐다
+    (`request reboot_fallback refused: lifecycle=DEGRADED`).
+  - 그 시험 전까지 .6의 감시 로그(2026-09-15~)에는 `driver module not loaded` 판정이 없었고, .4의 로그
+    (2025-12-02~2026-11-25)에는 27건이 있었으나 횟수는 3을 넘지 않았다.
+- **장기 disconnect의 재부팅.** 케이블이나 링크가 끊긴 상태가 `disconnect_max_sec`을 넘겼을 때만 타고,
+  기본값이 0이라 꺼져 있다. 그 사이 `module_reload`가 주기적으로 이미 돈다. 하드 리셋이 재적재보다 더
+  하는 일은 SoC 쪽 CSI·ISI를 다시 묶는 것이라, 끊긴 링크를 되살리지 못한다.
+
+`DEGRADED`에서는 사다리와 liveness의 요청이 `reboot_fallback`까지 모두 거부된다
+(`docs/camera-health/cam-recovery-operations.md`). `file_check_reboot`가 꺼져 있으면 데몬이 낸 요청
+(출처 `monitor`, `liveness`)의 승격은 하드 리셋에서 멈춘다(3절).
 
 ## 3. 운영 해석
 
