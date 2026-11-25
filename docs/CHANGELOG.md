@@ -28,10 +28,12 @@
     사다리를 되풀이했다. 쉬는 동안 생긴 실패는 쉰 뒤에 다룬다.
   - 실패한 복구 요청 때문에 `DEGRADED`가 됐으면 같은 간격마다 데몬이 `camera_hard_reset`을 한 번 요청한다. 전에는
     운영자가 조치할 때까지 멈춰 있었다.
-- **복구 요청 직전의 ISP 근거 로그**(PR #264): 세 사다리가 복구를 요청하기 직전에 드라이버의 `health_raw`를 1초
-  간격으로 두 번 읽어, 채널별 ISP 프레임 카운터가 나아갔는지를 감시 로그에 한 줄로 남긴다
-  (`isp evidence before <요청> request: ch0=ok(…) ch1=ok(…) | ch2=STALL(…) ch3=ok(…)`). 기록 전용이라 요청의
-  종류와 횟수는 그대로이고, 요청이 약 1.5초 늦게 나간다. 사다리가 요청을 내지 않는 동안에는 남지 않는다.
+- **복구 요청 직전의 ISP 근거 로그**(PR #264): 세 사다리가 실패를 판정해 단계를 고르기 직전에 드라이버의
+  `health_raw`를 1초 간격으로 두 번 읽어, 채널별 ISP 프레임 카운터가 나아갔는지를 감시 로그에 한 줄로 남긴다
+  (`isp evidence before <사유> request: ch0=ok(…) ch1=ok(…) | ch2=STALL(…) ch3=ok(…)`). `<사유>`는 사다리의
+  실패 사유로, `file check failure`, `gstapp start marker missing`, `final path stall` 가운데 하나다. 기록
+  전용이라 요청의 종류와 횟수는 그대로이고, 요청이 약 1.5초 늦게 나간다. 사다리가 실패를 판정하지 않는
+  동안에는 남지 않는다. `file_check_reboot`를 끈 설정에서 횟수를 되돌리는 단계(요청 없음)에서도 남는다.
 - **복구 CLI**(PR #258): `cam-recoveryctl request`와 `apply-config`에서 `--source`와 `--reason`을 생략할 수 있다.
   생략하면 출처는 `operator`, 사유는 `manual <정규 동작명>`이다. 값이 빠진 옵션(다음 인자가 `-`로 시작)은
   거절하고, `-`로 시작하는 값은 `--source=값`, `--reason=값`으로 준다.

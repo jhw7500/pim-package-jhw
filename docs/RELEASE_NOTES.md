@@ -39,12 +39,15 @@
     A failure that appears during the pause is handled after it.
   - When the lifecycle is `DEGRADED` because a recovery request failed, the daemon requests
     `camera_hard_reset` once per interval. Before, it stayed there until an operator acted.
-- **ISP evidence line before a recovery request** (PR #264). Just before one of the three
-  ladders requests a recovery, the daemon reads the driver's `health_raw` twice, one second
-  apart, and logs whether each channel's ISP frame counter advanced
-  (`isp evidence before <request> request: ch0=ok(…) ch1=ok(…) | ch2=STALL(…) ch3=ok(…)`).
-  It only records: the kind and number of requests are unchanged, and the request goes out
-  about 1.5 s later. Nothing is logged while the ladders request nothing.
+- **ISP evidence line before a recovery request** (PR #264). When one of the three ladders
+  has judged a failure and is about to choose its step, the daemon reads the driver's
+  `health_raw` twice, one second apart, and logs whether each channel's ISP frame counter
+  advanced (`isp evidence before <reason> request: ch0=ok(…) ch1=ok(…) | ch2=STALL(…) ch3=ok(…)`).
+  `<reason>` is the ladder's failure reason: `file check failure`,
+  `gstapp start marker missing` or `final path stall`. It only records: the kind and number
+  of requests are unchanged, and the request goes out about 1.5 s later. Nothing is logged
+  while no ladder judges a failure. With `file_check_reboot` off, the step that resets the
+  counter (no request) logs the line too.
 - **Recovery CLI** (PR #258). `cam-recoveryctl request` and `apply-config` accept a missing
   `--source` and `--reason`; the defaults are `operator` and `manual <canonical action>`.
   An option whose value is missing (the next argument starts with `-`) is rejected; a value
