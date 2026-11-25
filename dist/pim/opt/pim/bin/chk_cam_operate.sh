@@ -232,14 +232,14 @@ file_check_startup_hold() {
 # 파일검사 사다리 단계를 셈한 직후 부른다(#223). gstApp 이 기동 중 MAX9296 prepare 실패로 CSI 하나를
 # 끄고 떴다면(PARTIAL) 그 CSI 는 gstapp_restart 로 돌아오지 않는다 - 같은 전원 epoch 에서는 다시 cold init
 # 할 수 없고, 정상 CSI 의 전원 참조가 앱 재시작을 넘어 남아 epoch 가 넘어가지 않는다(gstApp#148, .6 에서
-# 3회 모두 errno=-116). 그런 실행이면 retry_total 을 module_reload 단계 하한(4)으로 올린다.
+# 3회 모두 errno=-116). 그런 실행이면 retry_total 을 module_reload 단계 하한(3)으로 올린다.
 # 판정은 지금 떠 있는 앱 pid 가 쓴 health 스냅샷의 reason_detail 접두로만 한다. code 는 #222 에서 바뀔 수 있다.
-# 이번에 빠진 채널과 겹칠 때만, gstapp_restart 구간(≤3)에서만 올리므로 module_reload·reboot 상한은 그대로다.
+# 이번에 빠진 채널과 겹칠 때만, gstapp_restart 구간(≤2)에서만 올리므로 module_reload·reboot 상한은 그대로다.
 # 스냅샷·jq·앱이 없거나, schema 가 1 이 아니거나, pid 가 다르면 손대지 않는다. health 계약의 예외 하나로
 # 적어 두었다(docs/camera-health/health-contract-v1.md §6). $@=이번 검사에서 빠진 채널(ch0..ch3)
 file_check_partial_floor() {
     local snapshot="${PIM_CAMERA_RUN_DIR:-/run/pim-camera}/gstApp.json" app="" fields snap_pid off ch m hit=()
-    [ "$retry_total" -le 3 ] || return 1
+    [ "$retry_total" -le 2 ] || return 1
     [ -r "$snapshot" ] || return 1
     fields=$(jq -r 'select(.schema == 1) | [(.pid // "" | tostring)] + [.observations[]? | select(.block == "gstreamer" and ((.reason_detail // "") | startswith("MAX9296 prepare failed"))) | .scope.id // empty] | join(" ")' "$snapshot" 2>/dev/null) || return 1
     read -r snap_pid off <<<"$fields"
@@ -250,8 +250,8 @@ file_check_partial_floor() {
         for m in "$@"; do [ "$ch" = "$m" ] && hit+=("$ch"); done
     done
     [ "${#hit[@]}" -gt 0 ] || return 1
-    retry=$((4 - retry_boot))
-    retry_total=4
+    retry=$((3 - retry_boot))
+    retry_total=3
     logger -p local0.error "[$KEY][$tag:$LINENO] skip gstapp_restart: $app pid=$snap_pid started with $(IFS=,; echo "${hit[*]}") off by MAX9296 prepare failure, which only module_reload clears (retry=$retry boot=$retry_boot total=$retry_total)"
     return 0
 }
@@ -2016,32 +2016,34 @@ do
                 cam_disconnect_flag=$(get_cam_disconnect_flag)
                 if (( cam_disconnect_flag == 0x0 )) && ladder_on_hold "file check failure"; then
                     # 쉬는 중에는 세지도 요청하지도 않는다(ladder_on_hold 가 남긴다). prepare 실패로 채널이 빠진 채
-                    # 뜬 앱도 예외가 아니다. 쉬는 중에 재적재를 내면 횟수가 4 로 남은 채 대기가 이어지고, 대기
-                    # 직후 시작 마커 사다리가 그 횟수를 한계 초과로 봐 하드 리셋 없이 다시 쉰다(.6 2026-11-24
-                    # 실측: 3주기 모두 module_reload 만 나갔다). 쉰 뒤에 사다리가 다룬다.
+                    # 뜬 앱도 예외가 아니다. 쉰 뒤에 사다리가 다룬다. 예외를 두었던 판에서는 쉬는 중의 재적재가
+                    # 횟수를 올려 둔 채 대기가 이어져, 대기 직후 시작 마커 사다리가 그 횟수를 한계 초과로 봤다
+                    # (.6 2026-11-24 실측: 3주기 모두 module_reload 만 나갔다).
                     :
                 elif (( cam_disconnect_flag == 0x0 )); then
                     ((retry++))
                     retry_total=$(($retry+$retry_boot))
                     file_check_partial_floor "${missing_chs[@]}"
-                    if [ "$retry_total" -le 3 ]; then
-                        logger -p local0.error  "[$KEY][$tag:$LINENO] request gstapp_restart (retry=$retry boot=$retry_boot total=$retry_total, next: module_reload at total>3)"
+                    # 단계표는 시작 마커 사다리와 같다(재시작 2, 재적재 3, 하드 리셋 4, 5 부터 포기). 두 사다리는
+                    # retry_total 을 함께 쓰므로, 표가 같아야 실패가 섞여도 같은 횟수에서 같은 요청이 나간다(#192).
+                    if [ "$retry_total" -le 2 ]; then
+                        logger -p local0.error  "[$KEY][$tag:$LINENO] request gstapp_restart (retry=$retry boot=$retry_boot total=$retry_total, next: module_reload at total>2)"
                         cam_submit_internal_action gstapp_restart "file check failure"
-                    elif [ "$retry_total" -le 4 ]; then
-                        logger -p local0.error  "[$KEY][$tag:$LINENO] request module_reload (retry=$retry boot=$retry_boot total=$retry_total, next: camera_hard_reset at total>4)"
+                    elif [ "$retry_total" -le 3 ]; then
+                        logger -p local0.error  "[$KEY][$tag:$LINENO] request module_reload (retry=$retry boot=$retry_boot total=$retry_total, next: camera_hard_reset at total>3)"
                         cam_submit_internal_action module_reload "file check failure"
-                    elif [ "$retry_total" -le 5 ]; then
+                    elif [ "$retry_total" -le 4 ]; then
                         # 이 사다리만 이어질 때, 모듈 재적재가 성공으로 끝나도 증상이 남으면 같은 동작을 되풀이하지 않고
                         # CSI·ISI 까지 다시 묶는다(#192). 하드 리셋이 실패하면 실행기가 같은 요청 안에서 재부팅으로 넘어간다.
                         # file_chk_reboot 가 꺼져 있으면 넘어가지 않는다 — 요청이 FAILED 로 끝나고 owner 가 DEGRADED 가 된다
                         # (GetConfig_ 의 PIM_CAMERA_AUTO_REBOOT). 그 뒤로는 maybe_retry_degraded 가 주기적으로 다시 낸다.
-                        logger -p local0.error  "[$KEY][$tag:$LINENO] request camera_hard_reset (retry=$retry boot=$retry_boot total=$retry_total, next: reboot fallback at total>5 if file_chk_reboot=$file_chk_reboot)"
+                        logger -p local0.error  "[$KEY][$tag:$LINENO] request camera_hard_reset (retry=$retry boot=$retry_boot total=$retry_total, next: reboot fallback at total>4 if file_chk_reboot=$file_chk_reboot)"
                         ladder_hard_reset_sent=1
                         cam_submit_internal_action camera_hard_reset "file check failure"
                     elif [ "$ladder_hard_reset_sent" -eq 0 ]; then
-                        # 한계를 넘었지만 이번 주기에 사다리가 하드 리셋을 낸 적이 없다. 두 사다리가 횟수를 함께 써서 실패가
-                        # 섞이면 하드 리셋 자리(이 사다리 5, 시작 마커 4)를 건너뛴다. 포기하기 전에 한 번 낸다(#192).
-                        # 횟수는 그대로 두므로 다음 실패는 포기로 간다.
+                        # 한계를 넘었지만 이번 주기에 사다리가 하드 리셋을 낸 적이 없다. 드라이버 미적재 사다리도 이
+                        # 횟수를 올리는데 5 까지 module_reload 만 내므로, 그 실패가 섞이면 하드 리셋 자리(4)를 건너뛴다.
+                        # 포기하기 전에 한 번 낸다(#192). 횟수는 그대로 두므로 다음 실패는 포기로 간다.
                         logger -p local0.error  "[$KEY][$tag:$LINENO] request camera_hard_reset before giving up (retry=$retry boot=$retry_boot total=$retry_total): none requested in this cycle"
                         ladder_hard_reset_sent=1
                         cam_submit_internal_action camera_hard_reset "file check failure"
@@ -2122,15 +2124,14 @@ do
                     logger -p local0.error  "[$KEY][$tag:$LINENO] request module_reload (retry=$retry boot=$retry_boot total=$retry_total, next: camera_hard_reset at total>3)"
                     cam_submit_internal_action module_reload "gstapp start marker missing"
                 elif [ "$retry_total" -le 4 ]; then
-                    # 파일 검사 사다리와 같은 자리다(#192). 두 사다리는 retry_total 을 함께 쓰므로 실패가 섞이면 한쪽
-                    # 단계를 건너뛰거나 되풀이할 수 있다. 이 자리를 건너뛴 채 한계를 넘으면 아래 분기가 포기하기 전에
-                    # 하드 리셋을 한 번 낸다.
+                    # 파일 검사 사다리와 같은 자리다(#192). 두 사다리는 단계표가 같고 retry_total 을 함께 쓴다.
+                    # 드라이버 미적재 사다리의 실패가 섞여 이 자리를 건너뛴 채 한계를 넘으면 아래 분기가 포기하기
+                    # 전에 하드 리셋을 한 번 낸다.
                     logger -p local0.error  "[$KEY][$tag:$LINENO] request camera_hard_reset (retry=$retry boot=$retry_boot total=$retry_total, next: reboot fallback at total>4 if file_chk_reboot=$file_chk_reboot)"
                     ladder_hard_reset_sent=1
                     cam_submit_internal_action camera_hard_reset "gstapp start marker missing"
                 elif [ "$ladder_hard_reset_sent" -eq 0 ]; then
-                    # 파일 검사 사다리의 같은 분기와 같다. 재적재(횟수 4) 뒤에 이 검사가 먼저 실패하면 횟수 5 로 한계를
-                    # 넘는데, 그때까지 하드 리셋을 낸 적이 없다.
+                    # 파일 검사 사다리의 같은 분기와 같다.
                     logger -p local0.error  "[$KEY][$tag:$LINENO] request camera_hard_reset before giving up (retry=$retry boot=$retry_boot total=$retry_total): none requested in this cycle"
                     ladder_hard_reset_sent=1
                     cam_submit_internal_action camera_hard_reset "gstapp start marker missing"

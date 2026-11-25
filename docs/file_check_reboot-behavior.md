@@ -41,7 +41,7 @@
 |---|---|---|---|
 | 장기 disconnect | `maybe_init_cam_on_disconnect()` | `.ETC.disconnect_max_sec > 0`이고 disconnect가 제한시간 이상 지속 | 주기적 `module_reload` 요청만 계속 |
 | 드라이버 모듈 미로딩 | 메인 루프의 `modules_loaded()` 검사 | `max9296`/`imx8_media_dev` 미로딩, disconnect 아님, `retry_total > 5` | 공통 retry 카운터 초기화 |
-| 채널별 파일 수 불일치 | 파일 생성 검사 | `check_num != file_cnt`, cooldown/disconnect 아님, `retry_total > 5`, 이번 주기에 사다리가 하드 리셋을 이미 냄 | 공통 retry 카운터 초기화 |
+| 채널별 파일 수 불일치 | 파일 생성 검사 | `check_num != file_cnt`, cooldown/disconnect 아님, `retry_total > 4`, 이번 주기에 사다리가 하드 리셋을 이미 냄 | 공통 retry 카운터 초기화 |
 | 초기 시작 마커 없음 | `start_f == 0` 분기 | 적어도 한 카메라 그룹이 활성, cooldown/disconnect 아님, `retry_total > 4`, 이번 주기에 사다리가 하드 리셋을 이미 냄 | 공통 retry 카운터 초기화 |
 | Final-path 정체 | `CheckFinalArrival()` | `final_stall_cnt >= 5`이고 정체 가드에 걸리지 않음 | `final_stall_cnt`만 초기화 |
 
@@ -79,15 +79,17 @@ disconnect 상태라면 이 분기에서는 retry와 reboot를 실행하지 않�
 
 활성 채널과 SRT 설정으로 계산한 기대 파일 수가 실제 파일 수와 다를 때:
 
-- `retry_total <= 3`: `gstapp_restart`
-- `retry_total` 4: `module_reload`
-- `retry_total` 5: `camera_hard_reset`
-- `retry_total > 5`: 이번 주기에 이 사다리나 2.4의 사다리가 `camera_hard_reset`을 낸 적이 없으면 먼저 한 번
+- `retry_total <= 2`: `gstapp_restart`
+- `retry_total` 3: `module_reload`
+- `retry_total` 4: `camera_hard_reset`
+- `retry_total > 4`: 이번 주기에 이 사다리나 2.4의 사다리가 `camera_hard_reset`을 낸 적이 없으면 먼저 한 번
   낸다. 낸 적이 있으면 `file_check_reboot=true`일 때 `reboot_fallback`, 아니면 retry 카운터 초기화
 
 이 사다리만 이어질 때는 모듈 재적재 한 번 뒤에 CSI·ISI까지 다시 묶는 하드 리셋으로 넘어간다(#192).
-2.4의 사다리와 `retry_total`을 함께 쓰므로 두 실패가 섞이면 한쪽 단계를 건너뛰거나 되풀이할 수 있다.
-하드 리셋 자리를 건너뛴 채 한계를 넘으면, 포기(재부팅 요청이나 초기화)하기 전에 하드 리셋을 한 번 낸다.
+단계표는 2.4의 사다리와 같고 `retry_total`을 함께 쓴다. 그래서 두 실패가 어떤 순서로 섞여도 같은 횟수에서
+같은 요청이 나간다. 예전에는 이 사다리의 `gstapp_restart`가 세 번이어서 각 단계가 한 횟수씩 뒤였다.
+드라이버 모듈 미로딩 사다리(2.2)도 같은 횟수를 올리는데 5까지 `module_reload`만 낸다. 그 실패가 섞여
+하드 리셋 자리(4)를 건너뛴 채 한계를 넘으면, 포기(재부팅 요청이나 초기화)하기 전에 하드 리셋을 한 번 낸다.
 그래서 두 사다리가 포기할 때는 그 주기에 하드 리셋 요청이 한 번 이상 나간 뒤다. 이미 하드 리셋을 거치는
 순서는 바뀌지 않는다. 드라이버 모듈 미로딩 사다리(2.2)의 포기에는 이 규칙이 없다. 요청이 거부된
 경우(진행 중인 요청이 있거나 owner가 `ACTIVE`가 아님)도 낸 것으로 센다.
@@ -171,8 +173,7 @@ cooldown과 disconnect 처리 원칙은 파일 수 불일치 분기와 같다.
   - MAX9296 prepare 실패로 채널이 빠진 채 뜬 앱도 쉬는 동안에는 그대로 둔다. 사다리의 마지막 단계인
     하드 리셋이 그런 기동을 남기면, 쉬는 시간만큼 그 채널이 빠진 채 있다가 쉰 뒤에 사다리가 다룬다.
     파일 검사가 이어서 실패하면 `module_reload`, `camera_hard_reset` 순으로 간다(.6 2026-11-24 실측 8주기
-    모두). `module_reload` 뒤에 시작 마커 검사가 먼저 실패해 한계를 넘는 순서에서도, 포기하기 전에
-    `camera_hard_reset`을 한 번 낸다(2.3).
+    모두). `module_reload` 뒤에 시작 마커 검사가 먼저 실패해도 그 자리가 `camera_hard_reset`이다(2.3).
 - 하드웨어 수준 장애가 소프트 복구로 해결되지 않으면 복구 사이클이 반복될 수 있다.
 
 ## 4. 관련 구현
