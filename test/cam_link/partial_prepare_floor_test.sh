@@ -64,21 +64,23 @@ mkdir -p "$WORK/run"
 echo "=== 월반하는 경우 ==="
 snap 4242 "MAX9296 prepare failed (errno=-5)"
 : > "$WORK/log"
-run_f "현재 앱이 ch2·ch3 을 끄고 떴고 그 채널이 빠짐, 첫 실패" 4242   1 0  0 4 4  ch2 ch3
+run_f "현재 앱이 ch2·ch3 을 끄고 떴고 그 채널이 빠짐, 첫 실패" 4242   1 0  0 3 3  ch2 ch3
 grep -q 'skip gstapp_restart' "$WORK/log"; t_eq "월반 이유가 local0 에 남는다" "$?" 0
 grep -q 'ch2,ch3' "$WORK/log"; t_eq "로그에 월반 근거 채널이 남는다" "$?" 0
-run_f "retry_boot 가 있어도 합계를 4 로 맞춘다"                      4242   1 2  0 4 2  ch2 ch3
-run_f "빠진 채널 일부만 겹쳐도 월반"                                 4242   2 0  0 4 4  ch0 ch3
-run_f "앱 pid 가 여럿이어도 스냅샷 pid 가 그중 하나면 월반"          "9 4242" 1 0  0 4 4  ch2
+run_f "retry_boot 가 있어도 합계를 3 으로 맞춘다"                    4242   1 1  0 3 2  ch2 ch3
+run_f "빠진 채널 일부만 겹쳐도 월반"                                 4242   2 0  0 3 3  ch0 ch3
+run_f "앱 pid 가 여럿이어도 스냅샷 pid 가 그중 하나면 월반"          "9 4242" 1 0  0 3 3  ch2
 snap 4242 "MAX9296 prepare failed (errno=-116)" BLOCKED
-run_f "code 가 바뀌어도(#222) reason_detail 접두로 월반"             4242   1 0  0 4 4  ch2 ch3
+run_f "code 가 바뀌어도(#222) reason_detail 접두로 월반"             4242   1 0  0 3 3  ch2 ch3
 
 echo "=== 월반하지 않는 경우(기존 사다리 그대로) ==="
 snap 4242 "MAX9296 prepare failed (errno=-5)"
 run_f "이전 실행이 쓴 스냅샷(pid 불일치)"                            5555   1 0  1 1 1  ch2 ch3
 run_f "앱이 떠 있지 않음"                                            ""     1 0  1 1 1  ch2 ch3
 run_f "빠진 채널이 끈 채널과 겹치지 않음"                            4242   1 0  1 1 1  ch0
-run_f "이미 module_reload 구간(retry_total=4)"                       4242   4 0  1 4 4  ch2 ch3
+run_f "이미 module_reload 구간(retry_total=3)"                       4242   3 0  1 3 3  ch2 ch3
+run_f "retry_boot 로 module_reload 구간에 든 경우(1+2)"              4242   1 2  1 3 1  ch2 ch3
+run_f "하드 리셋 구간(retry_total=4)은 손대지 않는다"                 4242   4 0  1 4 4  ch2 ch3
 run_f "reboot 구간(retry_total=6)은 손대지 않는다"                    4242   6 0  1 6 6  ch2 ch3
 snap 4242 "VideoBin build failed"
 run_f "다른 기동 실패 사유"                                          4242   1 0  1 1 1  ch2 ch3
@@ -98,12 +100,14 @@ run_f "스냅샷이 JSON 이 아님"                                        4242
 
 echo "=== 사다리 호출 위치 ==="
 # 파일검사 사다리(끊김 플래그 0 분기)의 retry_total 계산과 gstapp_restart 판정 사이에서 한 번만 부른다.
-# 사다리가 쉬는 중인 분기에서는 부르지 않는다 - 쉬는 중에 횟수를 올리면 대기 직후 시작 마커 사다리가 한계
-# 초과로 봐 하드 리셋에 가지 못한다(#192, .6 2026-11-24 실측). 기동 마커 누락 사다리는 PARTIAL 과 무관하므로
-# 부르지 않는다.
+# 사다리가 쉬는 중인 분기에서는 부르지 않는다 - 쉬는 동안은 세지도 요청하지도 않는다(#192. 쉬는 중에 횟수를
+# 올려 두었던 판은 .6 2026-11-24 실측에서 하드 리셋에 가지 못했다). 기동 마커 누락 사다리는 PARTIAL 과
+# 무관하므로 부르지 않는다.
 calls=$(grep -n 'file_check_partial_floor "${missing_chs\[@\]}"' "$CHK" | cut -d: -f1)
 t_eq "호출 지점은 하나" "$(printf '%s\n' "$calls" | grep -c .)" 1
-req=$(grep -n 'next: module_reload at total>3' "$CHK" | head -1 | cut -d: -f1)
+# gstapp_restart 판정 자리는 사유 문자열로 찾는다. 로그 문구는 시작 마커 사다리와 같아 하나로 정해지지 않는다.
+req=$(grep -n 'cam_submit_internal_action gstapp_restart "file check failure"' "$CHK" | cut -d: -f1)
+t_eq "파일 검사 사다리의 gstapp_restart 제출은 하나" "$(printf '%s\n' "$req" | grep -c .)" 1
 tot=$(awk -v n="$req" 'NR < n && /retry_total=\$\(\(\$retry\+\$retry_boot\)\)/ { l = NR } END { print l }' "$CHK")
 disc=$(awk -v n="$req" 'NR < n && /if \(\( cam_disconnect_flag == 0x0 \)\); then/ { l = NR } END { print l }' "$CHK")
 order=no
