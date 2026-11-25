@@ -16,6 +16,7 @@ TESTS=(
     file_check_startup_hold_test.sh
     partial_prepare_floor_test.sh
     monitor_ladder_test.sh
+    isp_evidence_log_test.sh
     ladder_hold_retry_test.sh
     submit_internal_action_log_test.sh
     startup_timing_policy_test.sh

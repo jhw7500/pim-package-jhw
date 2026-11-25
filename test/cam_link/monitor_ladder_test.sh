@@ -125,18 +125,20 @@ echo "=== 쉬는 동안 ==="
 # (쉬는 중 / 사다리 / 끊김)를 원문 그대로 잘라 실행한다. 대기 자체(시작·끝·간격)는
 # test/cam_link/ladder_hold_retry_test.sh 가 본다.
 # gate <블록 파일> <쉬는 중이면 1, 여러 번 돌리려면 "1 1 0" 처럼 차례로> <cam_disconnect_flag> [marker_disc]
+# SHOW_EV=1 이면 ISP 근거 로그(ladder_isp_evidence_log)를 부른 사유를 끝에 덧붙인다.
 # PARTIAL=1 이면 지금 떠 있는 앱이 prepare 실패로 채널이 빠진 채 뜬 것으로 본다. 월반 판정 대역은 원문과
 # 같은 일을 한다(횟수 2 이하일 때만 서고, 서면 횟수를 재적재 단계 3 으로 올린다). 판정 자체는
 # test/cam_link/partial_prepare_floor_test.sh 가 본다.
 gate() {
     (
         KEY=test tag=test ENABLE_VAL=true file_chk_reboot=false
-        retry=0 retry_boot=0 retry_total=0 req= asked= ladder_hard_reset_sent=0
+        retry=0 retry_boot=0 retry_total=0 req= asked= ladder_hard_reset_sent=0 ev=
         cam_disconnect_flag=$3 marker_disc=${4:-0} missing_chs=() disc_note=
         DISCONNECT_INIT_CAM_STATE_FILE="$WORK/disc_state"
         logger() { :; }
         ladder_on_hold() { asked=$1; [ "$HOLD" = 1 ]; }
         ladder_hold_start() { :; }
+        ladder_isp_evidence_log() { ev="${ev:+$ev,}$1"; }
         file_check_partial_floor() {
             [ "${PARTIAL:-0}" = 1 ] && [ "$retry_total" -le 2 ] || return 1
             retry=$((3 - retry_boot)); retry_total=3
@@ -147,7 +149,7 @@ gate() {
             # shellcheck disable=SC1090  # 대상 스크립트에서 잘라낸 블록이다
             source "$1"
         done
-        printf '%s retry=%s boot=%s total=%s asked=[%s]\n' "${req:--}" "$retry" "$retry_boot" "$retry_total" "$asked"
+        printf '%s retry=%s boot=%s total=%s asked=[%s]%s\n' "${req:--}" "$retry" "$retry_boot" "$retry_total" "$asked" "${SHOW_EV:+ ev=[$ev]}"
     )
 }
 t_eq "파일 검사: 쉬는 중이면 세지도 요청하지도 않는다" "$(gate "$WORK/file_gate.sh" 1 0)" \
@@ -188,6 +190,7 @@ both() {
         logger() { :; }
         ladder_on_hold() { asked=$1; [ "$HOLD" = 1 ]; }
         ladder_hold_start() { holds=$((holds + 1)); }
+        ladder_isp_evidence_log() { :; }
         file_check_partial_floor() {
             [ "$retry_total" -le 2 ] || return 1
             retry=$((3 - retry_boot)); retry_total=3
@@ -242,6 +245,22 @@ t_eq "드라이버 미적재: 쉬는 중이면 세지도 요청하지도 않는�
 t_eq "드라이버 미적재: 쉬지 않으면 1 부터 센다" "$(gate "$WORK/driver_gate.sh" 0 0)" \
     "module_reload|driver load failure retry=0 boot=1 total=1 asked=[driver load failure]"
 t_eq "드라이버 미적재: 꺼진 설정의 한계 초과도 쉰다" "$(grep -c -E '^[[:space:]]+ladder_hold_start$' "$WORK/driver_gate.sh")" 1
+# ISP 근거 로그는 요청을 고르기 직전에 한 번 남긴다. 쉬는 중이거나 끊김 분기면 남기지 않고, 드라이버가
+# 올라와 있지 않은 드라이버 미적재 사다리에서도 남기지 않는다.
+t_eq "파일 검사: 요청을 낼 때마다 ISP 근거를 한 번 남긴다" "$(SHOW_EV=1 gate "$WORK/file_gate.sh" "0 0" 0)" \
+    "gstapp_restart|file check failure,gstapp_restart|file check failure retry=2 boot=0 total=2 asked=[file check failure] ev=[file check failure,file check failure]"
+t_eq "파일 검사: 쉬는 중에는 ISP 근거도 남기지 않는다" "$(SHOW_EV=1 gate "$WORK/file_gate.sh" 1 0)" \
+    "- retry=0 boot=0 total=0 asked=[file check failure] ev=[]"
+t_eq "파일 검사: 끊김 분기에서는 ISP 근거를 남기지 않는다" "$(SHOW_EV=1 gate "$WORK/file_gate.sh" 0 5)" \
+    "module_reload|disconnect file check failure retry=0 boot=0 total=0 asked=[] ev=[]"
+t_eq "시작 마커: 요청을 낼 때 ISP 근거를 한 번 남긴다" "$(SHOW_EV=1 gate "$WORK/marker_gate.sh" 0 0 0)" \
+    "gstapp_restart|gstapp start marker missing retry=0 boot=1 total=1 asked=[gstapp start marker missing] ev=[gstapp start marker missing]"
+t_eq "시작 마커: 쉬는 중에는 ISP 근거도 남기지 않는다" "$(SHOW_EV=1 gate "$WORK/marker_gate.sh" 1 0 0)" \
+    "- retry=0 boot=0 total=0 asked=[gstapp start marker missing] ev=[]"
+t_eq "시작 마커: 끊김 분기에서는 ISP 근거를 남기지 않는다" "$(SHOW_EV=1 gate "$WORK/marker_gate.sh" 0 5 1)" \
+    "module_reload|disconnect startup failure retry=0 boot=0 total=0 asked=[] ev=[]"
+t_eq "드라이버 미적재: ISP 근거를 남기지 않는다" "$(SHOW_EV=1 gate "$WORK/driver_gate.sh" 0 0)" \
+    "module_reload|driver load failure retry=0 boot=1 total=1 asked=[driver load failure] ev=[]"
 
 echo "=== 하드 리셋을 내는 곳 ==="
 # 끊김 경로(케이블이 빠진 상태의 주기 복구)와 드라이버 적재 실패는 하드 리셋을 내지 않는다.
