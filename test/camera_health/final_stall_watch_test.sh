@@ -79,6 +79,9 @@ date() {
 }
 _cam_runtime_app_into() { printf -v "$1" '%s' gstApp; }
 logger() { :; }
+# The ISP evidence line is written once per stall verdict, just before the request is chosen.
+ISP_EVIDENCE=0
+ladder_isp_evidence_log() { ISP_EVIDENCE=$((ISP_EVIDENCE + 1)); }
 is_ram_only_mode() { [ "$RAM_ONLY" = 1 ]; }
 # The fallback scan sees no recent file unless a scenario says so.
 find() { [ "$FIND_HIT" != 1 ] || echo "$final_path_cfg/${vhl_name}_x"; }
@@ -172,6 +175,7 @@ scenario() {  # name, rec_min
     REFUSED=0
     T0=$NOW
     startTime=""
+    ISP_EVIDENCE=0
     rm -f "$FINAL_HEARTBEAT_FILE" "$FINAL_HEALTH_FILE" "$REQUESTS"
     : > "$REQUESTS"
     # A fresh daemon: forget whatever the previous scenario left in the watch's own state.
@@ -207,6 +211,7 @@ if [ "${FINAL_STALL_SKIP_STEADY:-0}" != 1 ]; then
     sim_run 900
     expect_requests ''
     expect_status OK
+    [ "$ISP_EVIDENCE" -eq 0 ] || fail "$name: ISP evidence was logged $ISP_EVIDENCE times without a stall verdict"
 fi
 
 # 2. Fragments keep starting but none arrives; each restart brings a new app instance that
@@ -216,6 +221,7 @@ ARRIVE=0
 sim_run 2400
 expect_requests 'gstapp_restart gstapp_restart module_reload camera_hard_reset reboot_fallback'
 expect_spacing 140
+[ "$ISP_EVIDENCE" -eq 5 ] || fail "$name: ISP evidence was logged $ISP_EVIDENCE times, expected once per verdict (5)"
 
 # 3. The same stall when the requests change nothing (same pid keeps recording): still one
 #    step per verdict, not one per maintenance pass.

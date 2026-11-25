@@ -256,6 +256,50 @@ file_check_partial_floor() {
     return 0
 }
 
+# 사다리가 복구를 요청하기 직전에, 드라이버가 보는 채널별 ISP 프레임 카운터(HINF)가 움직이는지를 남긴다(#192).
+# 파일 검사 실패 로그는 파일이 빠진 채널만 알려 준다. ISP 하나가 멈추면 같은 CSI 의 두 채널이 함께 빠지므로
+# 어느 ISP 가 멈췄는지, ISP 쪽 문제인지(카운터 정지) 그 뒤 단계의 문제인지(카운터 진행)는 복구가 끝나면 알 수 없다.
+# 드라이버의 health_raw 를 ISP_EVIDENCE_GAP_SEC 간격으로 두 번 읽어 hinf_count 를 견준다. 드라이버가 주는
+# hinf_progress 는 모든 독자가 함께 쓰는 직전 읽기와 견준 값이라 쓰지 않는다. health_raw 읽기는 잠금을 기다리지
+# 않고 레지스터를 쓰지 않는다(max9296 docs/health-raw-v1.md). 기록 전용이다 - 판정과 요청은 바꾸지 않고, 읽지
+# 못해도 사다리는 그대로 간다. 채널 표기: ok(전>후) 진행, STALL(전>후) 정지, off 끈 채널, link-down, isp-<상태>
+# (카운터를 못 읽음). 장치 단위: unreadable, schema?, busy(드라이버가 다른 일을 하는 중). $1=요청 사유
+SYSFS_HEALTH_I2C2="/sys/bus/i2c/devices/2-0048/health_raw"
+SYSFS_HEALTH_I2C1="/sys/bus/i2c/devices/1-0048/health_raw"
+ISP_EVIDENCE_GAP_SEC=1
+ISP_EVIDENCE_FILTER='
+def parse($s): try ($s | fromjson) catch null;
+def dev($p; $q):
+  if ($p | type) != "object" or ($q | type) != "object" then "unreadable"
+  elif $p.schema != 1 or $q.schema != 1 then "schema?"
+  elif $p.busy == true or $q.busy == true then "busy"
+  else
+    ([ $q.channels[]? as $c
+       | ([ $p.channels[]? | select(.channel == $c.channel) ] | first) as $o
+       | "ch\($c.channel)=" + (
+           if $c.enabled != true then "off"
+           elif $c.link.up != true then "link-down"
+           elif ($c.isp.hinf_count | type) != "number" or ($o.isp.hinf_count | type) != "number" then "isp-\($c.isp.status // "unknown")"
+           elif $c.isp.hinf_count == $o.isp.hinf_count then "STALL(\($o.isp.hinf_count)>\($c.isp.hinf_count))"
+           else "ok(\($o.isp.hinf_count)>\($c.isp.hinf_count))" end)
+     ] | join(" ")) as $chs
+    | (if $chs == "" then "no-channels" else $chs end) + (if $q.streaming != true then " not-streaming" else "" end)
+  end;
+[ dev(parse($a1); parse($a2)), dev(parse($b1); parse($b2)) ] | join(" | ")'
+ladder_isp_evidence_log() {
+    local a1 b1 a2="" b2="" out=""
+    a1=$(timeout 2 cat "$SYSFS_HEALTH_I2C2" 2>/dev/null)
+    b1=$(timeout 2 cat "$SYSFS_HEALTH_I2C1" 2>/dev/null)
+    if [ -n "$a1" ] || [ -n "$b1" ]; then
+        sleep "$ISP_EVIDENCE_GAP_SEC"
+        a2=$(timeout 2 cat "$SYSFS_HEALTH_I2C2" 2>/dev/null)
+        b2=$(timeout 2 cat "$SYSFS_HEALTH_I2C1" 2>/dev/null)
+        out=$(jq -rn --arg a1 "$a1" --arg a2 "$a2" --arg b1 "$b1" --arg b2 "$b2" "$ISP_EVIDENCE_FILTER" 2>/dev/null) || out=""
+    fi
+    logger -p local0.error "[$KEY][$tag:$LINENO] isp evidence before $1 request: ${out:-unavailable}"
+    return 0
+}
+
 # 런타임 앱 프로세스가 없으면 0. file_check_startup_hold 와 같은 앱 이름 해석을 쓰되 전역 app 은 덮지 않는다.
 cam_app_absent() {
     local runtime_app rc=0
@@ -1509,6 +1553,7 @@ CheckFinalArrival() {
     next=$(( final_stall_cnt + 1 ))
     logger -p local0.emerg "[$KEY][$tag:$LINENO] FINAL STALL: no new ${vhl_name}_* in ${final_dir} for >${window_min}m (stall_cnt=$next)"
     echo "NG" > "$FILE_CHECK"
+    ladder_isp_evidence_log "final path stall"
     # 요청이 접수되든 아니든 다음 판정은 앱이 다시 조각을 열고 limit_sec 가 지난 뒤다. 유지보수 블록은
     # 시작 마커가 있는 동안 반복마다 돌므로, 여기서 감시를 풀지 않으면 같은 정체를 여러 번 센다.
     final_watch_since=0
@@ -2021,6 +2066,7 @@ do
                     # (.6 2026-11-24 실측: 3주기 모두 module_reload 만 나갔다).
                     :
                 elif (( cam_disconnect_flag == 0x0 )); then
+                    ladder_isp_evidence_log "file check failure"
                     ((retry++))
                     retry_total=$(($retry+$retry_boot))
                     file_check_partial_floor "${missing_chs[@]}"
@@ -2113,6 +2159,7 @@ do
             if [ "$marker_disc" -eq 0 ] && ladder_on_hold "gstapp start marker missing"; then
                 :   # 쉬는 중에는 세지도 요청하지도 않는다(ladder_on_hold 가 남긴다)
             elif [ "$marker_disc" -eq 0 ]; then
+                ladder_isp_evidence_log "gstapp start marker missing"
                 ((retry_boot++))
                 retry_total=$(($retry+$retry_boot))
                 if [ "$retry_total" -le 2 ]; then

@@ -99,6 +99,13 @@ dual-wide에서 한쪽 link가 끊기면 origin link를 보존하되 pair downst
   사다리의 순서와 상한은 그대로다. 판정과 복구는 legacy 사다리가 계속 소유한다. boot ID·TTL 검사는
   하지 않고, 지금 떠 있는 pid 와 맞는지만 본다. `/run` 은 부팅마다 비워지고, 실행이 바뀌면 pid 도
   바뀌기 때문이다. producer 의 `reason_detail` 접두나 `scope.id` 형식을 바꾸면 이 소비자도 함께 고친다.
+- 기록 전용 읽기(pim-package-jhw#192): legacy 사다리(`chk_cam_operate.sh` 의 `ladder_isp_evidence_log`)는
+  복구 요청을 고르기 직전에 드라이버의 `health_raw` 를 1초 간격으로 두 번 읽어 채널별 `hinf_count` 가
+  움직였는지를 로그에 남긴다. 판정과 복구에는 쓰지 않는다. `schema` 가 1 이 아니거나 `busy` 이면 값을 쓰지
+  않는다. 드라이버는 `hinf_progress` 의 기준을 모든 독자가 함께 쓰므로(max9296 `docs/health-raw-v1.md`), 이
+  읽기가 있는 순간에는 `max9296_health_export.py` 의 한 표본이 그 기준을 넘겨받을 수 있다. 이 소비자는
+  `hinf_progress` 를 쓰지 않고 자기가 읽은 두 값만 견준다. `health_raw` 의 `channels[].isp.hinf_count`,
+  `enabled`, `link.up`, `streaming`, `busy` 형식을 바꾸면 이 소비자도 함께 고친다.
 - storage/recording code는 camera module/hard reset을 유발할 수 없다.
 - `AMBIGUOUS_*`, `PRODUCER_STALE`, `CONFIG_DIVERGED`만으로 destructive recovery를
   실행할 수 없다.
