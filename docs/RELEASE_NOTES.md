@@ -1,5 +1,63 @@
 # PIM Package Release Notes
 
+## Unreleased (2026-11-25)
+
+### 1.0.0.3 — the monitor ladders try a camera hard reset before a reboot (issue #192; PRs #258–#265)
+
+- Package version is `1.0.0.3`. `dpkg --compare-versions 1.0.0.3 gt 1.0.0.2` is true.
+- The change history in `DEBIAN/control` has a `1.0.0.3` line.
+- **Hard reset step in the monitor ladders** (#192; PRs #259, #262, #263). The file-check,
+  start-marker and final-path stall ladders in `chk_cam_operate.sh` request
+  `camera_hard_reset` once before they request `reboot_fallback`, and the three ladders now
+  share one step table. The numbers are the failure count the ladder keeps.
+
+  | Ladder | 1.0.0.2 | 1.0.0.3 |
+  |---|---|---|
+  | File check | 1–3 `gstapp_restart`, 4–5 `module_reload`, give up from 6 | 1–2 `gstapp_restart`, 3 `module_reload`, 4 `camera_hard_reset`, give up from 5 |
+  | Start marker | 1–2 `gstapp_restart`, 3–4 `module_reload`, give up from 5 | same as above |
+  | Final-path stall | 1–2 `gstapp_restart`, 3–4 `module_reload`, give up from 5 | same as above |
+
+  - "Give up" is a `reboot_fallback` request when `file_check_reboot` is on (the default),
+    and a counter reset when it is off.
+  - Default behaviour changes: when only the file check keeps failing, the reboot is
+    requested at the 5th failure instead of the 6th.
+  - An application that started with channels missing after a prepare failure skips the
+    restart steps: a count of 2 or less is raised to 3 (before: 3 or less raised to 4).
+  - The file-check and start-marker ladders share their counter with the driver-load
+    ladder. When its failures are mixed in and the limit is passed without the hard-reset
+    step, one hard reset is requested before giving up.
+  - The driver-load ladder and the long-disconnect reboot are unchanged. Section 2.7 of
+    `docs/file_check_reboot-behavior.md` lists how the rule applies per path and why
+    (PR #265).
+- **With `file_check_reboot` off** (PRs #259, #260, #261). None of the following applies to
+  the default (on).
+  - A recovery request issued by the monitor daemon (source `monitor` or `liveness`) is no
+    longer escalated to a reboot when it fails. The request ends `FAILED` and the lifecycle
+    becomes `DEGRADED`. Other sources (for example `operator`) still escalate to a reboot.
+  - After a ladder passes its limit and resets its counter, it pauses for
+    `disconnect_init_interval_sec` (default 180 s). Before, it repeated without a pause.
+    A failure that appears during the pause is handled after it.
+  - When the lifecycle is `DEGRADED` because a recovery request failed, the daemon requests
+    `camera_hard_reset` once per interval. Before, it stayed there until an operator acted.
+- **ISP evidence line before a recovery request** (PR #264). Just before one of the three
+  ladders requests a recovery, the daemon reads the driver's `health_raw` twice, one second
+  apart, and logs whether each channel's ISP frame counter advanced
+  (`isp evidence before <request> request: ch0=ok(…) ch1=ok(…) | ch2=STALL(…) ch3=ok(…)`).
+  It only records: the kind and number of requests are unchanged, and the request goes out
+  about 1.5 s later. Nothing is logged while the ladders request nothing.
+- **Recovery CLI** (PR #258). `cam-recoveryctl request` and `apply-config` accept a missing
+  `--source` and `--reason`; the defaults are `operator` and `manual <canonical action>`.
+  An option whose value is missing (the next argument starts with `-`) is rejected; a value
+  that starts with `-` is given as `--source=VALUE` or `--reason=VALUE`.
+- **Package contents** (PR #256). `/opt/pim/bin/test` no longer carries the whole
+  development test tree, only `test_final_stall_scenarios.md`, which the runbook refers to.
+- **Packaged documents**. The ladder steps in `pim-guardian-runbook.md` and
+  `test_final_stall_scenarios.md` follow the new table. `camera-startup-timing.md` and
+  `V4L2_CTRL_GUIDE.md` replace internal identifiers with plain descriptions (PRs #255, #258).
+- gstApp (`973b1d7`), `max9296.ko` (`172a76a`), `hantro_vc8000e_ext.ko` (`c37edf1`) and the
+  GStreamer replacement libraries are the same as in 1.0.0.2. The ord, vcm and vsd sources
+  did not change either.
+
 ## Unreleased (2026-11-15)
 
 ### 1.0.0.2 — SD writes are re-enabled on a vfat SD (issues #251, #252; PR #253)
