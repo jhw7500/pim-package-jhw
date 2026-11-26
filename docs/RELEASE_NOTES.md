@@ -1,5 +1,24 @@
 # PIM Package Release Notes
 
+## Unreleased (2026-11-26)
+
+### 1.0.0.4 — the per-channel camera error flag clears after the link recovers (follow-up to issue #192)
+
+- Package version is `1.0.0.4`. `dpkg --compare-versions 1.0.0.4 gt 1.0.0.3` is true.
+- The change history in `DEBIAN/control` has a `1.0.0.4` line.
+- **Per-channel error flag.** `/tmp/cam_state/channels/chN_error` follows the link check of the
+  latest `BG_Check_for_pim.sh` cycle: `true` when that cycle reported a link error on the
+  channel, `false` otherwise. Before, the flag was written `true` on a link error and never
+  cleared, so it stayed `true` after the link had recovered, until `/tmp/cam_state` was created
+  again (a reboot). The rule is now the same as for the camera bits of `bg_chk_flag`.
+  - A cycle that skips the link check (gstApp not playing, or a bus whose driver is not
+    initialised) writes `false`. `state` and `streak` return to `healthy` and 0 in the same cycle.
+  - Monitoring and recovery behaviour is unchanged. The only function in the package that reads
+    the flag is `cam_has_channel_error` in `lib/cam_state.sh`, and it has no caller in the package.
+- gstApp (`973b1d7`), `max9296.ko` (`172a76a`), `hantro_vc8000e_ext.ko` (`c37edf1`) and the
+  GStreamer replacement libraries are the same as in 1.0.0.3. The ord, vcm and vsd sources
+  did not change either.
+
 ## Unreleased (2026-11-25)
 
 ### 1.0.0.3 — the monitor ladders try a camera hard reset before a reboot (issue #192; PRs #258–#265)

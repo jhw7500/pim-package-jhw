@@ -12,7 +12,7 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 SRC=${ORD_SRC:-$ROOT/ord/tcpServer.cpp}
-WANT=1.0.0.3
+WANT=1.0.0.4
 
 # The version command is the only sprintf literal in ord that starts with dpkg.
 mapfile -t cmds < <(grep -oE 'sprintf\(str, "dpkg[^"]*"' "$SRC" | sed -E 's/^sprintf\(str, "//; s/"$//')

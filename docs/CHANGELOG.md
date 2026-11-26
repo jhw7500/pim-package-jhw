@@ -1,5 +1,20 @@
 # PIM Package Changelog
 
+## 최신 변경사항 (2026-11-26) — 1.0.0.4 / 채널 오류 표시가 링크 복구 뒤에 지워진다 (이슈 #192 후속)
+
+- 전달 패키지를 `pim-mp 1.0.0.4`로 올렸다. `dpkg --compare-versions 1.0.0.4 gt 1.0.0.3`는 참이다.
+- `DEBIAN/control` 설명의 변경 이력에 `1.0.0.4` 줄을 더했다.
+- **채널 오류 표시**: `/tmp/cam_state/channels/chN_error`가 `BG_Check_for_pim.sh`의 점검 주기마다 그 주기의
+  링크 검사 결과를 따른다. 그 주기에 채널의 링크 오류가 있으면 `true`, 없으면 `false`다. 전에는 링크 오류 때
+  `true`로 쓰기만 하고 지우지 않아, 링크가 복구된 뒤에도 `/tmp/cam_state`가 다시 만들어질 때(재부팅)까지
+  `true`로 남았다. 상위로 보고하는 `bg_chk_flag`의 카메라 비트와 같은 기준이 됐다.
+  - 링크 검사를 건너뛰는 주기(gstApp 이 재생 중이 아닐 때, 드라이버가 초기화되지 않은 버스)에는 `false`가 된다.
+    `state`와 `streak`도 같은 주기에 `healthy`와 0 으로 돌아간다.
+  - 감시와 복구 동작은 바뀌지 않는다. 패키지 안에서 이 표시를 읽는 함수는 `lib/cam_state.sh`의
+    `cam_has_channel_error`뿐이고, 그 함수는 패키지 안에 호출부가 없다.
+- gstApp(`973b1d7`), `max9296.ko`(`172a76a`), `hantro_vc8000e_ext.ko`(`c37edf1`), GStreamer 교체본은 1.0.0.3 과
+  같다. ord·vcm·vsd의 소스도 바뀌지 않았다.
+
 ## 최신 변경사항 (2026-11-25) — 1.0.0.3 / 감시 사다리가 재부팅 전에 카메라 하드 리셋을 한다 (이슈 #192, PR #258~#265)
 
 - 전달 패키지를 `pim-mp 1.0.0.3`으로 올렸다. `dpkg --compare-versions 1.0.0.3 gt 1.0.0.2`는 참이다.

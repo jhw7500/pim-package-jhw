@@ -1,5 +1,5 @@
 Package: pim-mp
-Version: 1.0.0.3
+Version: 1.0.0.4
 Replaces: cis
 Breaks: cis
 Section: test
@@ -83,3 +83,4 @@ Description: PIM application
 1.0.0.1 : cam-operate final-path stall watch fix(CheckFinalArrival)
 1.0.0.2 : SD write re-enable on vfat SD(inode check), recovery ladder names in docs
 1.0.0.3 : camera hard reset before reboot in cam-operate ladders, ISP evidence log, cam-recoveryctl defaults
+1.0.0.4 : camera channel error flag(cam_state chN_error) follows the latest link check, cleared after recovery
