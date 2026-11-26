@@ -269,19 +269,20 @@ streak_set() {
 	printf "%s" "$1" > /tmp/cam_state/streak 2>/dev/null
 }
 
+# channels/chN_error 는 이번 점검 주기의 err_camN.log 유무를 그대로 따른다 — MAKE_RESULT_FLAG 가
+# bg_chk_flag 의 카메라 비트를 정하는 기준과 같다. 세우기만 하고 지우지 않던 때에는 링크가
+# 복구된 뒤에도 재부팅 전까지 true 로 남았다(지우는 cam_reset_state 는 호출부가 없었다).
+# 링크 검사를 건너뛴 주기(gstApp 미재생·드라이버 미초기화)는 err 파일이 없으므로 false 가 된다.
+# state·streak 도 그 주기에 healthy·0 으로 돌아가므로 셋이 같은 조건에서 풀린다.
 update_cam_state_from_errors() {
-	if [ -f "${FLAG_PATH}/err_cam0.log" ]; then
-		cam_channel_error 0
-	fi
-	if [ -f "${FLAG_PATH}/err_cam1.log" ]; then
-		cam_channel_error 1
-	fi
-	if [ -f "${FLAG_PATH}/err_cam2.log" ]; then
-		cam_channel_error 2
-	fi
-	if [ -f "${FLAG_PATH}/err_cam3.log" ]; then
-		cam_channel_error 3
-	fi
+	local ch
+	for ch in 0 1 2 3; do
+		if [ -f "${FLAG_PATH}/err_cam${ch}.log" ]; then
+			cam_channel_error "$ch"
+		else
+			cam_channel_clear "$ch"
+		fi
+	done
 }
 
 CLEAR_CHK_LOG

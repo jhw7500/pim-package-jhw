@@ -12,6 +12,7 @@ VERBOSE=0
 TESTS=(
     ctrl3_classify_test.sh
     streak_test.sh
+    channel_error_clear_test.sh
     escalation_test.sh
     file_check_startup_hold_test.sh
     partial_prepare_floor_test.sh
