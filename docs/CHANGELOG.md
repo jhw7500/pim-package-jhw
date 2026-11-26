@@ -1,5 +1,49 @@
 # PIM Package Changelog
 
+## 최신 변경사항 (2026-11-25) — 1.0.0.3 / 감시 사다리가 재부팅 전에 카메라 하드 리셋을 한다 (이슈 #192, PR #258~#265)
+
+- 전달 패키지를 `pim-mp 1.0.0.3`으로 올렸다. `dpkg --compare-versions 1.0.0.3 gt 1.0.0.2`는 참이다.
+- `DEBIAN/control` 설명의 변경 이력에 `1.0.0.3` 줄을 더했다.
+- **감시 사다리의 하드 리셋 단계**(#192, PR #259·#262·#263): `chk_cam_operate.sh`의 파일 검사, 시작 마커, 최종
+  경로 정체 사다리가 `reboot_fallback`을 요청하기 전에 `camera_hard_reset`을 한 번 요청한다. 세 사다리의 단계표가
+  같아졌다. 숫자는 사다리가 세는 실패 횟수다.
+
+  | 사다리 | 1.0.0.2 | 1.0.0.3 |
+  |---|---|---|
+  | 파일 검사 | 1~3 `gstapp_restart`, 4~5 `module_reload`, 6부터 포기 | 1~2 `gstapp_restart`, 3 `module_reload`, 4 `camera_hard_reset`, 5부터 포기 |
+  | 시작 마커 | 1~2 `gstapp_restart`, 3~4 `module_reload`, 5부터 포기 | 위와 같다 |
+  | 최종 경로 정체 | 1~2 `gstapp_restart`, 3~4 `module_reload`, 5부터 포기 | 위와 같다 |
+
+  - "포기"는 `file_check_reboot`가 켜져 있으면(기본) `reboot_fallback` 요청이고, 꺼져 있으면 횟수를 되돌리는 것이다.
+  - 기본 설정의 동작이 바뀐다. 파일 검사만 이어서 실패하면 6번째가 아니라 5번째 실패에서 재부팅을 요청한다.
+  - prepare 실패로 채널이 빠진 채 뜬 앱은 재시작 단계를 건너뛴다. 횟수가 2 이하면 3으로 올린다(전에는 3 이하면 4).
+  - 파일 검사와 시작 마커 사다리는 횟수를 드라이버 모듈 미로딩 사다리와 함께 쓴다. 그 실패가 섞여 하드 리셋
+    자리를 건너뛴 채 한계를 넘으면, 포기하기 전에 하드 리셋을 한 번 낸다.
+  - 드라이버 모듈 미로딩 사다리와 장기 disconnect의 재부팅은 바꾸지 않았다. 경로별 적용과 그 이유는
+    `docs/file_check_reboot-behavior.md` 2.7 절에 적었다(PR #265).
+- **`file_check_reboot`를 끈 설정**(PR #259·#260·#261). 켜진 기본 설정에는 아래 세 가지가 적용되지 않는다.
+  - 감시 데몬이 낸 복구 요청(출처 `monitor`, `liveness`)은 실패해도 실행기가 재부팅으로 올리지 않는다. 요청은
+    `FAILED`로 끝나고 lifecycle은 `DEGRADED`가 된다. 그 밖의 출처(예: `operator`)는 전처럼 재부팅까지 간다.
+  - 사다리가 한계를 넘어 횟수를 되돌리면 `disconnect_init_interval_sec`(기본 180초) 동안 쉰다. 전에는 쉬지 않고
+    사다리를 되풀이했다. 쉬는 동안 생긴 실패는 쉰 뒤에 다룬다.
+  - 실패한 복구 요청 때문에 `DEGRADED`가 됐으면 같은 간격마다 데몬이 `camera_hard_reset`을 한 번 요청한다. 전에는
+    운영자가 조치할 때까지 멈춰 있었다.
+- **복구 요청 직전의 ISP 근거 로그**(PR #264): 세 사다리가 실패를 판정해 단계를 고르기 직전에 드라이버의
+  `health_raw`를 1초 간격으로 두 번 읽어, 채널별 ISP 프레임 카운터가 나아갔는지를 감시 로그에 한 줄로 남긴다
+  (`isp evidence before <사유> request: ch0=ok(…) ch1=ok(…) | ch2=STALL(…) ch3=ok(…)`). `<사유>`는 사다리의
+  실패 사유로, `file check failure`, `gstapp start marker missing`, `final path stall` 가운데 하나다. 기록
+  전용이라 요청의 종류와 횟수는 그대로이고, 요청이 약 1.5초 늦게 나간다. 사다리가 실패를 판정하지 않는
+  동안에는 남지 않는다. `file_check_reboot`를 끈 설정에서 횟수를 되돌리는 단계(요청 없음)에서도 남는다.
+- **복구 CLI**(PR #258): `cam-recoveryctl request`와 `apply-config`에서 `--source`와 `--reason`을 생략할 수 있다.
+  생략하면 출처는 `operator`, 사유는 `manual <정규 동작명>`이다. 값이 빠진 옵션(다음 인자가 `-`로 시작)은
+  거절하고, `-`로 시작하는 값은 `--source=값`, `--reason=값`으로 준다.
+- **패키지 구성**(PR #256): `/opt/pim/bin/test`에 개발 테스트 전체를 싣지 않고, runbook이 가리키는
+  `test_final_stall_scenarios.md` 하나만 싣는다.
+- **패키지에 실리는 문서**: `pim-guardian-runbook.md`와 `test_final_stall_scenarios.md`의 사다리 단계를 새 표에
+  맞췄다. `camera-startup-timing.md`와 `V4L2_CTRL_GUIDE.md`는 내부 식별자를 일반 설명으로 바꿨다(PR #255·#258).
+- gstApp(`973b1d7`), `max9296.ko`(`172a76a`), `hantro_vc8000e_ext.ko`(`c37edf1`), GStreamer 교체본은 1.0.0.2 와
+  같다. ord·vcm·vsd의 소스도 바뀌지 않았다.
+
 ## 최신 변경사항 (2026-11-15) — 1.0.0.2 / vfat SD 에서 SD 쓰기 차단이 풀린다 (이슈 #251·#252, PR #253)
 
 - 전달 패키지를 `pim-mp 1.0.0.2`로 올렸다. `dpkg --compare-versions 1.0.0.2 gt 1.0.0.1`은 참이다.
